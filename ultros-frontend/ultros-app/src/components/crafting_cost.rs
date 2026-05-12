@@ -82,8 +82,10 @@ pub struct SubcraftInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CostBreakdown {
-    pub hq_cost: i32,
-    pub lq_cost: i32,
+    /// Resolved cost for the `require_hq` flavor of the caller's options.
+    /// Surfaces that need both HQ and LQ totals call `compute_cost` twice
+    /// (once with each flavor) and read `.cost` from each result.
+    pub cost: i32,
     pub shard_cost: i32,
     pub on_hand_savings: i32,
     pub ingredient_lines: Vec<IngredientLine>,
@@ -173,8 +175,7 @@ pub fn compute_cost(
     opts: &CraftingCostOptions<'_>,
     is_shard: &dyn Fn(ItemId) -> bool,
 ) -> CostBreakdown {
-    let mut hq_cost: i64 = 0;
-    let mut lq_cost: i64 = 0;
+    let mut cost: i64 = 0;
     let mut shard_cost: i64 = 0;
     let mut on_hand_savings: i64 = 0;
     let mut ingredient_lines: Vec<IngredientLine> = Vec::new();
@@ -188,41 +189,42 @@ pub fn compute_cost(
         let line_on_hand_value = (line.used_from_on_hand as i64) * (line.unit_price as i64);
 
         if line.is_shard {
-            // Shards are accumulated separately so we can show the user
-            // what they "saved" by excluding them.
+            // Shards always contribute to shard_cost (full replacement value)
+            // so the UI can show "shards excluded: Xg". Whether they contribute
+            // to the headline cost depends on the mode.
             shard_cost = shard_cost.saturating_add(line_market_cost + line_on_hand_value);
             if matches!(opts.shards, ShardsMode::IncludeMarket) {
-                hq_cost = hq_cost.saturating_add(line_market_cost);
-                lq_cost = lq_cost.saturating_add(line_market_cost);
+                cost = cost.saturating_add(line_market_cost);
                 on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
             }
-            // ExcludeShards: don't add to hq/lq_cost; still record the line for UI.
+            // ExcludeShards: shard on-hand savings intentionally excluded from the
+            // aggregate savings — shards are "off the books" entirely.
         } else {
-            hq_cost = hq_cost.saturating_add(line_market_cost);
-            lq_cost = lq_cost.saturating_add(line_market_cost);
+            cost = cost.saturating_add(line_market_cost);
             on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
         }
 
         ingredient_lines.push(line);
     }
 
-    let clamp = |v: i64| -> i32 {
-        if v < 0 {
-            0
-        } else if v > i32::MAX as i64 {
-            i32::MAX
-        } else {
-            v as i32
-        }
-    };
-
     CostBreakdown {
-        hq_cost: clamp(hq_cost),
-        lq_cost: clamp(lq_cost),
-        shard_cost: clamp(shard_cost),
-        on_hand_savings: clamp(on_hand_savings),
+        cost: clamp_i64_to_i32(cost),
+        shard_cost: clamp_i64_to_i32(shard_cost),
+        on_hand_savings: clamp_i64_to_i32(on_hand_savings),
         ingredient_lines,
         sub_crafts,
+    }
+}
+
+/// Saturating cast from i64 accumulator to i32 field. Promoted from a closure
+/// so Task 4's `compute_cost_inner` can reuse it without duplicating logic.
+fn clamp_i64_to_i32(v: i64) -> i32 {
+    if v < 0 {
+        0
+    } else if v > i32::MAX as i64 {
+        i32::MAX
+    } else {
+        v as i32
     }
 }
 
@@ -429,8 +431,7 @@ mod tests {
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 200);
-        assert_eq!(cb.hq_cost, 200);
+        assert_eq!(cb.cost, 200);
         assert_eq!(cb.shard_cost, 0);
     }
 
@@ -449,7 +450,7 @@ mod tests {
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 200);
+        assert_eq!(cb.cost, 200);
         assert_eq!(cb.shard_cost, 25);
         assert_eq!(cb.ingredient_lines.len(), 2);
         assert!(cb.ingredient_lines.iter().any(|l| l.is_shard));
@@ -470,7 +471,7 @@ mod tests {
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 225); // 200 + 25
+        assert_eq!(cb.cost, 225); // 200 + 25
         assert_eq!(cb.shard_cost, 25);
     }
 
@@ -489,7 +490,7 @@ mod tests {
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 100);
+        assert_eq!(cb.cost, 100);
         assert_eq!(cb.on_hand_savings, 100);
     }
 }

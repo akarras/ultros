@@ -11,7 +11,8 @@ use ultros_api_types::cheapest_listings::{
     CheapestListingItem, CheapestListings, CheapestListingsMap,
 };
 
-/// A recipe that takes 1 ingredient (no shards).
+/// A recipe that takes 1 ingredient (no shards). Item 2000 is reserved
+/// for Task 4's subcraft tests (as a craftable intermediate).
 pub fn fixture_simple_recipe_prices() -> CheapestListingsMap {
     CheapestListingsMap::from(CheapestListings {
         cheapest_listings: vec![

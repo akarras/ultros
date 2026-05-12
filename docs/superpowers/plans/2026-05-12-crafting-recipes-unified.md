@@ -118,8 +118,7 @@ pub struct SubcraftInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CostBreakdown {
-    pub hq_cost: i32,
-    pub lq_cost: i32,
+    pub cost: i32,
     pub shard_cost: i32,
     pub on_hand_savings: i32,
     pub ingredient_lines: Vec<IngredientLine>,
@@ -478,7 +477,7 @@ git commit -m "feat(crafting_cost): compute_ingredient_cost with on-hand + HQ fa
 
 Wire `compute_ingredient_cost` into a recipe walk that sums per-ingredient costs into `CostBreakdown`. Skip shards based on `item_search_category == 59`. This task does NOT implement subcrafts — `max_subcraft_depth` is ignored in this task.
 
-The parity test pins the new function's `lq_cost` to match the existing `related_items::calculate_crafting_cost` output, so swapping the call sites in later tasks is safe.
+The parity test pins the new function's `cost` to match the existing `related_items::calculate_crafting_cost` output, so swapping the call sites in later tasks is safe.
 
 - [ ] **Step 1: Create the fixtures file**
 
@@ -560,8 +559,7 @@ pub fn compute_cost(
     opts: &CraftingCostOptions<'_>,
     is_shard: &dyn Fn(ItemId) -> bool,
 ) -> CostBreakdown {
-    let mut hq_cost: i64 = 0;
-    let mut lq_cost: i64 = 0;
+    let mut cost: i64 = 0;
     let mut shard_cost: i64 = 0;
     let mut on_hand_savings: i64 = 0;
     let mut ingredient_lines: Vec<IngredientLine> = Vec::new();
@@ -579,14 +577,12 @@ pub fn compute_cost(
             // what they "saved" by excluding them.
             shard_cost = shard_cost.saturating_add(line_market_cost + line_on_hand_value);
             if matches!(opts.shards, ShardsMode::IncludeMarket) {
-                hq_cost = hq_cost.saturating_add(line_market_cost);
-                lq_cost = lq_cost.saturating_add(line_market_cost);
+                cost = cost.saturating_add(line_market_cost);
                 on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
             }
-            // ExcludeShards: don't add to hq/lq_cost; still record the line for UI.
+            // ExcludeShards: don't add to cost; still record the line for UI.
         } else {
-            hq_cost = hq_cost.saturating_add(line_market_cost);
-            lq_cost = lq_cost.saturating_add(line_market_cost);
+            cost = cost.saturating_add(line_market_cost);
             on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
         }
 
@@ -598,8 +594,7 @@ pub fn compute_cost(
     };
 
     CostBreakdown {
-        hq_cost: clamp(hq_cost),
-        lq_cost: clamp(lq_cost),
+        cost: clamp(cost),
         shard_cost: clamp(shard_cost),
         on_hand_savings: clamp(on_hand_savings),
         ingredient_lines,
@@ -608,7 +603,7 @@ pub fn compute_cost(
 }
 ```
 
-NOTE: For the first cut, `hq_cost == lq_cost` because `compute_ingredient_cost` honors `require_hq` and returns one `unit_price`. A second call site with `require_hq=true` produces the "HQ cost". The item page's `RecipePriceEstimate` (which wants both) will call `compute_cost` twice in Task 7 — once per flavor — matching the current pattern at [`related_items.rs:130`](../../ultros-frontend/ultros-app/src/components/related_items.rs:130).
+NOTE: `CostBreakdown.cost` is the resolved cost for the caller's `require_hq` flavor. Surfaces that need both HQ and LQ totals (currently only the item page's `RecipePriceEstimate`) call `compute_cost` twice and read `.cost` from each result — matching the existing two-pass pattern at [`related_items.rs:130`](../../ultros-frontend/ultros-app/src/components/related_items.rs:130).
 
 - [ ] **Step 4: Write the parity + shards tests**
 
@@ -653,8 +648,7 @@ If `Recipe` doesn't derive `Default`, use `unsafe { std::mem::zeroed() }` instea
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 200);
-        assert_eq!(cb.hq_cost, 200);
+        assert_eq!(cb.cost, 200);
         assert_eq!(cb.shard_cost, 0);
     }
 
@@ -675,7 +669,7 @@ If `Recipe` doesn't derive `Default`, use `unsafe { std::mem::zeroed() }` instea
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 200);
+        assert_eq!(cb.cost, 200);
         assert_eq!(cb.shard_cost, 25);
         assert_eq!(cb.ingredient_lines.len(), 2);
         assert!(cb.ingredient_lines.iter().any(|l| l.is_shard));
@@ -696,7 +690,7 @@ If `Recipe` doesn't derive `Default`, use `unsafe { std::mem::zeroed() }` instea
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 225); // 200 + 25
+        assert_eq!(cb.cost, 225); // 200 + 25
         assert_eq!(cb.shard_cost, 25);
     }
 
@@ -716,7 +710,7 @@ If `Recipe` doesn't derive `Default`, use `unsafe { std::mem::zeroed() }` instea
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let cb = compute_cost(&recipe, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 100);
+        assert_eq!(cb.cost, 100);
         assert_eq!(cb.on_hand_savings, 100);
     }
 ```
@@ -785,7 +779,7 @@ Append to `mod tests`:
 
         let cb = compute_cost(&outer, &prices, &recipes_by_output, &opts, &is_shard);
         // Just verify termination: cost is finite and non-panic.
-        assert!(cb.lq_cost >= 0 && cb.lq_cost < i32::MAX);
+        assert!(cb.cost >= 0 && cb.cost < i32::MAX);
     }
 
     #[test]
@@ -817,7 +811,7 @@ Append to `mod tests`:
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
         let cb = compute_cost(&outer, &prices, &recipes_by_output, &opts, &is_shard);
-        assert_eq!(cb.lq_cost, 30);
+        assert_eq!(cb.cost, 30);
         assert_eq!(cb.sub_crafts.len(), 1);
         assert_eq!(cb.sub_crafts[0].item_id, ItemId(2000));
     }
@@ -849,7 +843,7 @@ Append to `mod tests`:
 
         let cb = compute_cost(&outer, &prices, &recipes_by_output, &opts, &is_shard);
         // Depth=0 means no recursion — pay market price of 50.
-        assert_eq!(cb.lq_cost, 50);
+        assert_eq!(cb.cost, 50);
         assert_eq!(cb.sub_crafts.len(), 0);
     }
 ```
@@ -885,8 +879,7 @@ fn compute_cost_inner(
     is_shard: &dyn Fn(ItemId) -> bool,
     depth: u8,
 ) -> CostBreakdown {
-    let mut hq_cost: i64 = 0;
-    let mut lq_cost: i64 = 0;
+    let mut cost: i64 = 0;
     let mut shard_cost: i64 = 0;
     let mut on_hand_savings: i64 = 0;
     let mut ingredient_lines: Vec<IngredientLine> = Vec::new();
@@ -905,7 +898,7 @@ fn compute_cost_inner(
                 let sub_breakdown =
                     compute_cost_inner(sub, prices, recipes_by_output, opts, is_shard, depth + 1);
                 // Match the active flavor (HQ if require_hq, else LQ).
-                let sub_unit = if opts.require_hq { sub_breakdown.hq_cost } else { sub_breakdown.lq_cost };
+                let sub_unit = sub_breakdown.cost;
                 if sub_unit > 0 && sub_unit < unit_cost {
                     unit_cost = sub_unit;
                     sub_crafts.extend(sub_breakdown.sub_crafts.iter().cloned());
@@ -926,13 +919,11 @@ fn compute_cost_inner(
         if line.is_shard {
             shard_cost = shard_cost.saturating_add(line_market_cost + line_on_hand_value);
             if matches!(opts.shards, ShardsMode::IncludeMarket) {
-                hq_cost = hq_cost.saturating_add(line_market_cost);
-                lq_cost = lq_cost.saturating_add(line_market_cost);
+                cost = cost.saturating_add(line_market_cost);
                 on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
             }
         } else {
-            hq_cost = hq_cost.saturating_add(line_market_cost);
-            lq_cost = lq_cost.saturating_add(line_market_cost);
+            cost = cost.saturating_add(line_market_cost);
             on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
         }
 
@@ -944,8 +935,7 @@ fn compute_cost_inner(
     };
 
     CostBreakdown {
-        hq_cost: clamp(hq_cost),
-        lq_cost: clamp(lq_cost),
+        cost: clamp(cost),
         shard_cost: clamp(shard_cost),
         on_hand_savings: clamp(on_hand_savings),
         ingredient_lines,
@@ -1461,9 +1451,9 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                     Some(view! {
                         <span class="flex flex-row gap-2 items-center flex-wrap">
                             <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
-                            <Gil amount=hq.hq_cost />
+                            <Gil amount=hq.cost />
                             <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">"LQ:"</span>
-                            <Gil amount=lq.lq_cost />
+                            <Gil amount=lq.cost />
                             {(lq.shard_cost > 0 && opts_value.exclude_shards).then(|| view! {
                                 <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] text-[10px] text-[color:var(--color-text-muted)]">
                                     "shards excl. " <Gil amount=lq.shard_cost />
@@ -1548,8 +1538,8 @@ In the `Recipe` component (around line 225), the `Suspense` block computes cost 
                 <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
                     <span class="text-brand-300">"Est. Profit:"</span>
                     <div class="flex gap-2">
-                        {profit_chip("HQ", hq_sell.map(|p| p - hq.hq_cost))}
-                        {profit_chip("LQ", lq_sell.map(|p| p - lq.lq_cost))}
+                        {profit_chip("HQ", hq_sell.map(|p| p - hq.cost))}
+                        {profit_chip("LQ", lq_sell.map(|p| p - lq.cost))}
                     </div>
                 </div>
             })
@@ -1734,7 +1724,7 @@ let opts = CraftingCostOptions {
     on_hand: active,
 };
 let breakdown = compute_cost(recipe, &prices, &recipes_by_output, &opts, &is_shard_item);
-let craft_cost = if require_hq_flag { breakdown.hq_cost } else { breakdown.lq_cost };
+let craft_cost = breakdown.cost;
 let sub_crafts = breakdown.sub_crafts.clone();
 ```
 
