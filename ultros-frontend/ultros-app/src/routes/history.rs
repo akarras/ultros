@@ -3,6 +3,7 @@ use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -11,6 +12,7 @@ use xiv_gen::ItemId;
 
 #[component]
 pub fn History() -> impl IntoView {
+    let i18n = use_i18n();
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
     // Wrap the localStorage-backed signal in a LocalResource so SSR renders the
@@ -21,17 +23,17 @@ pub fn History() -> impl IntoView {
     let local_items = LocalResource::new(move || async move { items() });
     view! {
         <div class="main-content p-6">
-            <MetaTitle title="History - Ultros" />
-            <MetaDescription text="View your recently viewed items on Ultros" />
+            <MetaTitle title=move || t_string!(i18n, history_meta_title).to_string() />
+            <MetaDescription text=move || t_string!(i18n, history_meta_desc).to_string() />
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
-                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">"Viewing History"</h1>
+                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, history_title)}</h1>
                     <button
                         class="btn-secondary"
                         on:click=move |_| item_data.clear_items()
                     >
-                        "Clear History"
+                        {t!(i18n, history_clear)}
                     </button>
                 </div>
 
@@ -52,10 +54,10 @@ pub fn History() -> impl IntoView {
                                             view! {
                                                 <div class="text-center py-12">
                                                     <p class="text-lg text-[color:var(--color-text-muted)]">
-                                                        "No items in your viewing history yet."
+                                                        {t!(i18n, history_empty)}
                                                     </p>
                                                     <p class="text-sm text-[color:var(--color-text-muted)] mt-2">
-                                                        "Items you view will appear here."
+                                                        {t!(i18n, history_empty_hint)}
                                                     </p>
                                                 </div>
                                             },

@@ -451,7 +451,7 @@ pub fn PriceHistoryChart(
                         // VWAP: solid yellow-400 horizontal line
                         reactive_series = reactive_series.line(
                             Line::new(|r: &SaleRow| r.vwap_y)
-                                .with_name("VWAP")
+                                .with_name(t_string!(i18n, chart_legend_vwap).to_string())
                                 .with_width(2.0)
                                 .with_colour(
                                     "#facc15"
@@ -462,7 +462,7 @@ pub fn PriceHistoryChart(
                         // Trendline: slate-400, slightly thinner
                         reactive_series = reactive_series.line(
                             Line::new(|r: &SaleRow| r.trend_y)
-                                .with_name("Trend")
+                                .with_name(t_string!(i18n, chart_legend_trend).to_string())
                                 .with_width(1.5)
                                 .with_colour(
                                     "#94a3b8"
@@ -473,7 +473,7 @@ pub fn PriceHistoryChart(
                         // IQR high: slate-500, thin
                         reactive_series = reactive_series.line(
                             Line::new(|r: &SaleRow| r.iqr_hi)
-                                .with_name("IQR high")
+                                .with_name(t_string!(i18n, chart_legend_iqr_high).to_string())
                                 .with_width(1.0)
                                 .with_colour(
                                     "#64748b"
@@ -484,7 +484,7 @@ pub fn PriceHistoryChart(
                         // IQR low: slate-500, thin
                         reactive_series = reactive_series.line(
                             Line::new(|r: &SaleRow| r.iqr_lo)
-                                .with_name("IQR low")
+                                .with_name(t_string!(i18n, chart_legend_iqr_low).to_string())
                                 .with_width(1.0)
                                 .with_colour(
                                     "#64748b"

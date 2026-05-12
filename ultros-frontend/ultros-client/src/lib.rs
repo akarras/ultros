@@ -3,6 +3,7 @@ use any_spawner::Executor;
 use anyhow::{Result, anyhow};
 use futures::{Future, future::join};
 use gloo_net::http::Request;
+use leptos::leptos_dom::helpers::set_timeout;
 use leptos::{prelude::*, task::spawn_local};
 use log::{Level, error, info};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
@@ -175,7 +176,7 @@ async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     try_populate_xiv_gen_data().await
 }
 
-async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+async fn fetch_world_data_once() -> Result<Arc<WorldHelper>, anyhow::Error> {
     let json: WorldData = Request::get("/api/v1/world_data")
         .send()
         .await
@@ -186,18 +187,25 @@ async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
     Ok(Arc::new(WorldHelper::from(json)))
 }
 
+async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+    retry(fetch_world_data_once, 3).await
+}
+
+async fn fetch_region_once() -> Result<String, anyhow::Error> {
+    Request::get("/api/v1/detectregion")
+        .send()
+        .await
+        .map_err(|e| anyhow!("failed to fetch region: {e}"))?
+        .text()
+        .await
+        .map_err(|e| anyhow!("failed to read region response: {e}"))
+}
+
 async fn get_region() -> String {
-    let response = match Request::get("/api/v1/detectregion").send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            error!("failed to fetch region: {e}");
-            return String::new();
-        }
-    };
-    match response.text().await {
+    match retry(fetch_region_once, 3).await {
         Ok(text) => text,
         Err(e) => {
-            error!("failed to read region response: {e}");
+            error!("region detection failed after retries: {e}");
             String::new()
         }
     }
@@ -211,26 +219,13 @@ fn set_panic_hook() {
 }
 
 fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
-    let global = js_sys::global();
-    let reporter = js_sys::Reflect::get(&global, &JsValue::from_str("__ultrosReportRustPanic"));
-    let Ok(reporter) = reporter else {
-        return;
-    };
-    let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
-        return;
-    };
-
     let message = panic_info
         .payload()
         .downcast_ref::<&str>()
         .copied()
-        .or_else(|| {
-            panic_info
-                .payload()
-                .downcast_ref::<String>()
-                .map(String::as_str)
-        })
-        .unwrap_or("Rust WASM panic");
+        .map(String::from)
+        .or_else(|| panic_info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "Rust WASM panic".to_string());
     let location = panic_info
         .location()
         .map(|location| {
@@ -243,10 +238,30 @@ fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
         })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let _ = reporter.call2(
-        &JsValue::NULL,
-        &JsValue::from_str(message),
-        &JsValue::from_str(&location),
+    // Defer the JS call so it runs after the current task pops off the
+    // wasm-bindgen-futures executor. If a panic fires mid-poll and we call
+    // the reporter synchronously, any executor re-entry from the JS side
+    // (a promise callback, another spawned future being woken) hits the
+    // still-borrowed task-queue RefCell and triggers a secondary
+    // `RefCell already borrowed` panic — see GlitchTip issues 909/881/915.
+    set_timeout(
+        move || {
+            let global = js_sys::global();
+            let Ok(reporter) =
+                js_sys::Reflect::get(&global, &JsValue::from_str("__ultrosReportRustPanic"))
+            else {
+                return;
+            };
+            let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
+                return;
+            };
+            let _ = reporter.call2(
+                &JsValue::NULL,
+                &JsValue::from_str(&message),
+                &JsValue::from_str(&location),
+            );
+        },
+        std::time::Duration::from_millis(0),
     );
 }
 

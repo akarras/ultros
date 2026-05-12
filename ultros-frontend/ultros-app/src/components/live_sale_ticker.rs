@@ -13,6 +13,7 @@ use xiv_gen::ItemId;
 
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
+use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient, SocketMessageType};
 
@@ -36,6 +37,7 @@ fn Item(item_id: i32) -> impl IntoView {
 
 #[component]
 pub fn LiveSaleTicker() -> impl IntoView {
+    let i18n = use_i18n();
     let (done_loading, set_done_loading) = signal(false);
     let sales = RwSignal::<VecDeque<SaleView>>::new(VecDeque::new());
     let (homeworld, _) = use_home_world();
@@ -136,15 +138,16 @@ pub fn LiveSaleTicker() -> impl IntoView {
         <div class="p-6 rounded-xl panel">
             // No homeworld set warning
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
-                <h3 class="text-xl font-bold text-[color:var(--color-text)]">"No Homeworld Set"</h3>
+                <h3 class="text-xl font-bold text-[color:var(--color-text)]">{t!(i18n, live_sale_no_homeworld_title)}</h3>
                 <div class="text-[color:var(--color-text-muted)]">
-                    "No homeworld is currently set. Go to "
+                    {t!(i18n, live_sale_no_homeworld_prefix)}
                     <A
                         href="/settings"
                         attr:class="text-[color:var(--brand-fg)] hover:underline transition-colors"
                     >
-                        "Settings"
-                    </A> " to set your homeworld."
+                        {t!(i18n, settings)}
+                    </A>
+                    {t!(i18n, live_sale_no_homeworld_suffix)}
                 </div>
             </div>
 
@@ -152,7 +155,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
             <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_none())>
                 <div class="flex items-center justify-between">
                     <h3 class="text-xl font-bold text-[color:var(--color-text)]">
-                        "Recent Sales on "
+                        {t!(i18n, live_sale_recent_sales_on)}
                         <span class="text-[color:var(--color-text)]">
                             {move || homeworld().map(|world| world.name).unwrap_or_default()}
                         </span>
@@ -167,7 +170,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                         }
                     >
                         <Icon icon=i::BiRefreshRegular />
-                        "Refresh"
+                        {t!(i18n, refresh)}
                     </button>
                 </div>
 

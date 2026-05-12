@@ -65,18 +65,6 @@ impl ScripType {
         }
     }
 
-    fn name(&self) -> &'static str {
-        match self {
-            ScripType::OrangeCrafters => "Orange Crafters' Scrip",
-            ScripType::OrangeGatherers => "Orange Gatherers' Scrip",
-            ScripType::WhiteCrafters => "White Crafters' Scrip",
-            ScripType::PurpleCrafters => "Purple Crafters' Scrip",
-            ScripType::WhiteGatherers => "White Gatherers' Scrip",
-            ScripType::PurpleGatherers => "Purple Gatherers' Scrip",
-            ScripType::Other(_) => "Other",
-        }
-    }
-
     fn color_class(&self) -> &'static str {
         match self {
             ScripType::OrangeCrafters | ScripType::OrangeGatherers => "text-orange-400",
@@ -437,7 +425,15 @@ fn ScripSourceTable(
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
                                     <span class={format!("text-xs {}", data.scrip_type.color_class())}>
-                                        {data.scrip_type.name()}
+                                        {match data.scrip_type {
+                                            ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+                                            ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+                                            ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+                                            ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+                                            ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+                                            ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+                                            ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+                                        }}
                                     </span>
                                 </div>
                             </div>

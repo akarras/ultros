@@ -379,7 +379,7 @@ fn MarketStatsPanel(
                                         )
                                     } else if recipe_exists {
                                         let summary_view = view! {
-                                            <Suspense fallback=move || "Craftable">
+                                            <Suspense fallback=move || t_string!(i18n, craftable).to_string()>
                                                 {move || {
                                                     if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
                                                         if let Some(prices) = cheapest_prices.as_ref() {
@@ -470,7 +470,7 @@ fn MarketStatsPanel(
 
                                     <div class="grid grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-2 sm:gap-3">
                                         <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-2 sm:p-3 min-h-24">
-                                            <div class="text-xs font-bold uppercase text-brand-300 mb-1">"NQ"</div>
+                                            <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
                                             {if let Some((listing, _)) = cheapest_nq.clone() {
                                                 view! {
                                                     <div>
@@ -490,7 +490,7 @@ fn MarketStatsPanel(
                                         <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[#95c521]/10 p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
-                                                "HQ"
+                                                {t!(i18n, hq)}
                                             </div>
                                             {if let Some((listing, _)) = cheapest_hq.clone() {
                                                 view! {
@@ -516,7 +516,8 @@ fn MarketStatsPanel(
                                                     .unwrap_or_else(|| view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any())}
                                             </div>
                                             <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
-                                                "Median "
+                                                {t!(i18n, median_label)}
+                                                " "
                                                 {median_price
                                                     .map(|price| view! { <Gil amount=price /> }.into_any())
                                                     .unwrap_or_else(|| view! { <span>{t!(i18n, no_data)}</span> }.into_any())}
@@ -634,7 +635,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(7)
                                             >
-                                                "7d"
+                                                {t!(i18n, chart_range_7d)}
                                             </button>
                                             <button
                                                 class=move || [
@@ -643,7 +644,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(30)
                                             >
-                                                "30d"
+                                                {t!(i18n, chart_range_30d)}
                                             </button>
                                             <button
                                                 class=move || [
@@ -652,7 +653,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(90)
                                             >
-                                                "90d"
+                                                {t!(i18n, chart_range_90d)}
                                             </button>
                                             <button
                                                 class=move || [
@@ -661,7 +662,7 @@ pub fn ChartWrapper(
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(0)
                                             >
-                                                "All"
+                                                {t!(i18n, chart_range_all)}
                                             </button>
                                         </div>
                                         <Toggle
@@ -673,8 +674,8 @@ pub fn ChartWrapper(
                                         <Toggle
                                             checked=filter_outliers
                                             set_checked=set_filter_outliers
-                                            checked_label="Filtering outliers"
-                                            unchecked_label="No filter"
+                                            checked_label=t_string!(i18n, filtering_outliers).to_string()
+                                            unchecked_label=t_string!(i18n, no_filter).to_string()
                                         />
                                         <a
                                             class="btn-primary text-sm"
@@ -1082,16 +1083,18 @@ pub fn ItemView() -> impl IntoView {
     };
 
     let description = Memo::new(move |_| {
-        format!(
-            "Current market board listings for {} within {}. Find the lowest prices in your region.",
-            item_name(),
-            world(),
+        t_string!(
+            i18n,
+            item_view_meta_description,
+            name = item_name().to_string(),
+            world = world()
         )
+        .to_string()
     });
 
     view! {
         <MetaTitle title=move || {
-            format!("{} - 🌍{} - Market board - Ultros", item_name(), world())
+            t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
         } />
         <MetaDescription text=description />
         <MetaImage url=move || format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) />
@@ -1139,19 +1142,19 @@ pub fn ItemView() -> impl IntoView {
                                 class="btn-primary"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                aria-label="Open Universalis market page in a new tab"
+                                aria-label=move || t_string!(i18n, open_universalis_aria_label).to_string()
                                 href=move || format!("https://universalis.app/market/{}", item_id())
                             >
-                                "Universalis"
+                                {t!(i18n, universalis)}
                             </a>
                             <a
                                 class="btn-primary"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                aria-label="Open Garlandtools item page in a new tab"
+                                aria-label=move || t_string!(i18n, open_garlandtools_aria_label).to_string()
                                 href=move || format!("https://garlandtools.org/db/#item/{}", item_id())
                             >
-                                "Garlandtools"
+                                {t!(i18n, garlandtools)}
                             </a>
                         </div>
                     </div>

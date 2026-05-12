@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use leptos::prelude::*;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
@@ -48,6 +49,7 @@ fn get_cheapest_listing(
 fn calculate_list_totals(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
     world_data: &ultros_api_types::world_helper::WorldHelper,
+    unknown_label: &str,
 ) -> (i32, HashMap<i32, WorldPrice>) {
     let mut grand_total = 0;
     let mut world_prices: HashMap<i32, WorldPrice> = HashMap::new();
@@ -84,10 +86,10 @@ fn calculate_list_totals(
                             let datacenter_name = dc_result
                                 .and_then(|dc| dc.as_datacenter())
                                 .map(|dc| dc.name.clone())
-                                .unwrap_or_else(|| "Unknown".to_string());
+                                .unwrap_or_else(|| unknown_label.to_string());
                             (world.name.clone(), world.datacenter_id, datacenter_name)
                         } else {
-                            ("Unknown".to_string(), 0, "Unknown".to_string())
+                            (unknown_label.to_string(), 0, unknown_label.to_string())
                         };
 
                     WorldPrice {
@@ -106,8 +108,10 @@ fn calculate_list_totals(
 
 #[component]
 pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let game_items = &data.items;
+    let unknown_label = t_string!(i18n, list_summary_unknown).to_string();
 
     // Get world data from context
     let world_data = use_context::<LocalWorldData>()
@@ -130,20 +134,21 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         return view! {
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4">
                 <div class="text-center text-sm text-[color:var(--color-text-muted)]">
-                    "No marketable items in list"
+                    {t!(i18n, list_summary_no_marketable)}
                 </div>
             </div>
         }
         .into_any();
     }
 
-    let (grand_total, world_prices) = calculate_list_totals(marketable_items, &world_data);
+    let (grand_total, world_prices) =
+        calculate_list_totals(marketable_items, &world_data, &unknown_label);
 
     if grand_total == 0 && world_prices.is_empty() {
         return view! {
             <div class="rounded-lg border border-[color:var(--brand-ring)]/40 bg-[color:var(--color-background-panel)] p-4">
                 <div class="text-center text-lg font-bold text-[color:var(--brand-fg)]">
-                    "All items acquired."
+                    {t!(i18n, list_summary_all_acquired)}
                 </div>
             </div>
         }
@@ -202,7 +207,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]">
             <div class="flex flex-col gap-2 border-b border-[color:var(--color-outline)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <span class="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                    "Estimated remaining cost"
+                    {t!(i18n, list_summary_estimated_remaining_cost)}
                 </span>
                 <div class="text-lg font-bold text-[color:var(--brand-fg)]">
                     <Gil amount=Signal::derive(move || grand_total) />
@@ -254,11 +259,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                     <div class="flex flex-row items-center gap-2">
                                         <Gil amount=Signal::derive(move || dc_total) />
                                         <span class="text-[color:var(--color-text-muted)] font-normal">
-                                            {format!(
-                                                "({} item{})",
-                                                dc_count,
-                                                if dc_count == 1 { "" } else { "s" },
-                                            )}
+                                            {t!(i18n, list_summary_item_count, count = dc_count)}
                                         </span>
                                     </div>
                                 </div>
@@ -278,11 +279,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                                     <div class="flex flex-row items-center gap-2">
                                                         <Gil amount=Signal::derive(move || total_price) />
                                                         <span class="text-[color:var(--color-text-muted)]">
-                                                            {format!(
-                                                                "({} item{})",
-                                                                item_count,
-                                                                if item_count == 1 { "" } else { "s" },
-                                                            )}
+                                                            {t!(i18n, list_summary_item_count, count = item_count)}
                                                         </span>
                                                     </div>
                                                 </div>

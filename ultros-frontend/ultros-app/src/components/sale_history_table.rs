@@ -2,6 +2,7 @@ use std::ops::RangeInclusive;
 
 use super::{datacenter_name::*, gil::*, relative_time::*, world_name::*};
 use crate::components::icon::Icon;
+use crate::i18n::*;
 use chrono::{Duration, NaiveDateTime, TimeDelta, Utc};
 use icondata as i;
 use leptos::prelude::*;
@@ -11,6 +12,7 @@ use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    let i18n = use_i18n();
     let (show_more, set_show_more) = signal(false);
     // Optimization: Avoid cloning the entire sales vector when we only need a slice.
     // Using `sales.with` allows us to inspect the vector without cloning it.
@@ -29,14 +31,14 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             <table class="w-full text-sm min-w-[720px]">
             <thead class="text-xs uppercase">
                 <tr>
-                    <th scope="col">"hq"</th>
-                    <th scope="col">"price"</th>
-                    <th scope="col">"qty."</th>
-                    <th scope="col">"total"</th>
-                    <th scope="col">"purchaser"</th>
-                    <th scope="col">"world"</th>
-                    <th scope="col">"datacenter"</th>
-                    <th scope="col">"time sold"</th>
+                    <th scope="col">{t!(i18n, sale_history_col_hq)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_price)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_qty)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_total)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_purchaser)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_world)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_datacenter)}</th>
+                    <th scope="col">{t!(i18n, sale_history_col_time_sold)}</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-[color:var(--color-outline)]">
@@ -52,7 +54,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                         .hq
                                         .then(|| {
                                             view! {
-                                                <span class="sr-only">"High Quality"</span>
+                                                <span class="sr-only">{t!(i18n, sale_history_high_quality_sr)}</span>
                                                 <Icon icon=i::BsCheck aria_hidden=true />
                                             }
                                             .into_view()
@@ -90,7 +92,7 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                                             class="btn btn-primary w-full"
                                             on:click=move |_| set_show_more(true)
                                         >
-                                            "Show more"
+                                            {t!(i18n, sale_history_show_more)}
                                         </button>
                                     </td>
                                 </tr>
@@ -270,6 +272,7 @@ impl SalesSummaryData {
 
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
+    let i18n = use_i18n();
     let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
     let average_unit_price =
         Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
@@ -284,39 +287,39 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     view! {
         <div class="flex flex-wrap gap-2">
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Gil sold"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_gil_sold)}</span>
                 <GenericGil<u64> amount=total_gil />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Avg price"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_avg_price)}</span>
                 <Gil amount=average_unit_price />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Median price"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_median_price)}</span>
                 <Gil amount=median_unit_price />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Min"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_min)}</span>
                 <Gil amount=min_unit_price />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Max"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_max)}</span>
                 <Gil amount=max_unit_price />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Typical stack"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_typical_stack)}</span>
                 {median_stack_size}
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"HQ %"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_hq_percent)}</span>
                 {move || format!("{}%", hq_percent())}
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Next sale (est.)"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_next_sale)}</span>
                 <Gil amount=guessed_next_sale_price />
             </div>
             <div class="rounded-md px-3 py-1.5 text-sm border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)]">
-                <span class="text-[color:var(--color-text-muted)] mr-1">"Time between sales"</span>
+                <span class="text-[color:var(--color-text-muted)] mr-1">{t!(i18n, sale_history_stat_time_between_sales)}</span>
                 {move || {
                     time_between_sales()
                         .abs()
@@ -345,18 +348,19 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 
 #[component]
 pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
+    let i18n = use_i18n();
     let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
-        <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">"Sales at a glance"</h3>
+        <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, sale_history_insights_title)}</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div class:hidden=move || sales.with(|s| s.past_day.is_none())>
-                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">"Last 24 hours"</h4>
+                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">{t!(i18n, sale_history_last_24h)}</h4>
                 <WindowStats sales=day_sales />
             </div>
             <div class:hidden=move || sales.with(|s| s.month.is_none())>
-                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">"Last 30 days"</h4>
+                <h4 class="text-sm text-[color:var(--color-text-muted)] mb-1">{t!(i18n, sale_history_last_30d)}</h4>
                 <WindowStats sales=month_sales />
             </div>
         </div>
