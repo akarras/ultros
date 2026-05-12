@@ -116,7 +116,7 @@ pub fn HomePage() -> impl IntoView {
                     <div>
                         <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)] mb-3 px-1">{t!(i18n, side_nav_tools)}</h2>
                         <div class="flex max-w-full gap-3 overflow-x-auto pb-2 -mx-2 px-2 scroll-snap-x snap-x">
-                            <ToolChip href="/items?menu-open=true" label=t!(i18n, item_explorer).into_any()>
+                            <ToolChip href="/items" label=t!(i18n, item_explorer).into_any()>
                                 <Icon width="1.75em" height="1.75em" icon=i::FaScrewdriverWrenchSolid />
                             </ToolChip>
                             <ToolChip href="/flip-finder" label=t!(i18n, flip_finder).into_any()>

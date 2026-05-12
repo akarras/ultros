@@ -13,11 +13,6 @@ use xiv_gen::{ClassJob, ItemSearchCategoryId};
 /// 3=Items, 4=Housing, 5=Job Sets) from route params. Both args come
 /// directly from `ParamsMap::get(...).as_deref()` at the call site, so
 /// this helper has no router dependency and is trivial to unit-test.
-///
-/// `#[allow(dead_code)]`: `ItemExplorerToolbar` is not yet wired into
-/// any route (Task 4), so this helper has no reachable call site from
-/// the crate root. Remove this annotation when Task 4 lands.
-#[allow(dead_code)]
 pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&str>) -> Option<u8> {
     if jobset.is_some() {
         return Some(5);
@@ -37,9 +32,6 @@ pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&st
 /// (1..=4), sorted by `cat.order`. Each entry is
 /// `(display_name, ItemSearchCategoryId)`. Group 5 returns empty —
 /// jobs use `job_chips_sorted` instead.
-///
-/// `#[allow(dead_code)]`: see note on `active_group_from_route`.
-#[allow(dead_code)]
 pub(crate) fn category_chips_for_group(group: u8) -> Vec<(&'static str, ItemSearchCategoryId)> {
     if group == 5 || group == 0 {
         return Vec::new();
@@ -56,12 +48,9 @@ pub(crate) fn category_chips_for_group(group: u8) -> Vec<(&'static str, ItemSear
 }
 
 /// Return the visible class jobs sorted by `ui_priority`. Mirrors the
-/// filter used by `routes::item_explorer::JobsList` and the existing
+/// filter used by the original sidebar `JobsList` and the existing
 /// `test_job_filtering` test: only jobs with `job_index > 0` or
 /// `doh_dol_job_index >= 0`, and with a non-empty abbreviation or name.
-///
-/// `#[allow(dead_code)]`: see note on `active_group_from_route`.
-#[allow(dead_code)]
 pub(crate) fn job_chips_sorted() -> Vec<&'static ClassJob> {
     let data = xiv_gen_db::data();
     let mut jobs: Vec<&'static ClassJob> = data
@@ -76,11 +65,8 @@ pub(crate) fn job_chips_sorted() -> Vec<&'static ClassJob> {
 }
 
 /// Segment label shown on a job chip: prefer the abbreviation, fall
-/// back to the full name. Matches the path-segment logic that
-/// `routes::item_explorer::JobsList` uses for the `href`.
-///
-/// `#[allow(dead_code)]`: see note on `active_group_from_route`.
-#[allow(dead_code)]
+/// back to the full name. Matches the path-segment logic that the
+/// original sidebar `JobsList` used for the `href`.
 pub(crate) fn job_chip_label(job: &ClassJob) -> &str {
     if job.abbreviation.is_empty() {
         job.name.as_str()
