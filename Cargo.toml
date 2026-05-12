@@ -117,10 +117,6 @@ opt-level = "z"
 strip = "debuginfo"
 # codegen-units = 1
 
-[profile.wasm-release]
-inherits = "release"
-debug = 1
-
 [profile.dev]
 # opt-level = 1
 # codegen-units = 256
@@ -139,14 +135,7 @@ opt-level = 1
 name = "ultros"
 bin-package = "ultros"
 lib-package = "ultros-client"
-lib-profile-release = "wasm-release"
 output-name = "ultros"
-wasm-opt-features = [
-    "-Oz",
-    "-g",
-    "--enable-bulk-memory",
-    "--enable-nontrapping-float-to-int",
-]
 # The site root folder is where cargo-leptos generate all output.
 # NOTE: It is relative to the workspace root when running in a workspace.
 # WARNING: all content of this folder will be erased on a rebuild.
