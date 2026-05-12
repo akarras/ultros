@@ -622,27 +622,36 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
                                     <div class="flex flex-col gap-2 text-sm">
                                         <CheapestPrice item_id=*id show_hq=false label=t_string!(i18n, nq).to_string() />
-                                        {if item.can_be_hq {
-                                            view! {
-                                                <CheapestPrice item_id=*id show_hq=true label=t_string!(i18n, hq).to_string() />
-                                            }.into_any()
-                                        } else {
-                                            view! { <div/> }.into_any()
-                                        }}
-                                        {
-                                            if let Some(price) = crate::components::related_items::get_vendor_price(id.0) {
+                                        // Always emit a stable wrapper div so the SSR and CSR view
+                                        // trees agree on element shape/count for this tuple slot.
+                                        // Conditional rendering inside the wrapper keeps the
+                                        // outer (AnyView, AnyView, AnyView) tuple types matching
+                                        // between server and client (fixes tachys hydration panic).
+                                        <div>
+                                            {if item.can_be_hq {
                                                 view! {
-                                                    <div class="flex items-center gap-2">
-                                                        <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                            {t!(i18n, item_explorer_vendor)}
-                                                        </span>
-                                                        <Gil amount=price as i32 />
-                                                    </div>
+                                                    <CheapestPrice item_id=*id show_hq=true label=t_string!(i18n, hq).to_string() />
                                                 }.into_any()
                                             } else {
                                                 ().into_any()
+                                            }}
+                                        </div>
+                                        <div>
+                                            {
+                                                if let Some(price) = crate::components::related_items::get_vendor_price(id.0) {
+                                                    view! {
+                                                        <div class="flex items-center gap-2">
+                                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                                                {t!(i18n, item_explorer_vendor)}
+                                                            </span>
+                                                            <Gil amount=price as i32 />
+                                                        </div>
+                                                    }.into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }
                                             }
-                                        }
+                                        </div>
                                     </div>
                                     <div class="flex items-center gap-2 mt-1">
                                         <div class="flex-1">
