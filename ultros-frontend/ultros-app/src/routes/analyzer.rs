@@ -1351,14 +1351,29 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             // Preset Filters
                             <div class="flex flex-wrap gap-4">
                                 <PresetFilterButton
-                                    href="?next-sale=7d&roi=300&profit=0&sort=profit&"
+                                    href="?min-buy=5000&last-sold=7d&roi=30&sort=profit-per-day"
+                                    label=t_string!(i18n, analyzer_preset_realistic).to_string()
+                                />
+                                <PresetFilterButton
+                                    href="?min-buy=100000&last-sold=14d&roi=20&sort=profit"
+                                    label=t_string!(i18n, analyzer_preset_big_ticket).to_string()
+                                />
+                                <PresetFilterButton
+                                    href="?min-buy=1000&last-sold=3d&sort=profit-per-day"
+                                    label=t_string!(i18n, analyzer_preset_volume).to_string()
+                                />
+                                <PresetFilterButton
+                                    href="?min-buy=1000&last-sold=7d&roi=300&profit=0&sort=profit"
                                     label=t_string!(i18n, analyzer_preset_300_return).to_string()
                                 />
                                 <PresetFilterButton
-                                    href="?next-sale=1M&roi=500&profit=200000&"
+                                    href="?min-buy=10000&last-sold=1M&roi=500&profit=200000"
                                     label=t_string!(i18n, analyzer_preset_500_return).to_string()
                                 />
-                                <PresetFilterButton href="?profit=100000" label=t_string!(i18n, analyzer_preset_100k_profit).to_string() />
+                                <PresetFilterButton
+                                    href="?min-buy=1000&profit=100000"
+                                    label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
+                                />
                             </div>
                         </div>
                     </div>
