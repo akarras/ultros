@@ -78,13 +78,31 @@ fn compute_summary(sale: SaleData) -> SaleSummary {
         .last()
         .map(|last| (last.sale_date - now).num_milliseconds().abs() / sales.len() as i64);
     let avg_sale_duration = t.map(Duration::milliseconds);
+    let days_since_last_sale = sales
+        .first()
+        .map(|first| Duration::milliseconds((now - first.sale_date).num_milliseconds().max(0)));
+    let mut prices = sales
+        .iter()
+        .map(|price| price.price_per_unit)
+        .collect::<Vec<_>>();
+    prices.sort_unstable();
+    let median_price = match prices.as_slice() {
+        [] => 0,
+        values if values.len() % 2 == 1 => values[values.len() / 2],
+        values => {
+            let upper = values.len() / 2;
+            ((values[upper - 1] as i64 + values[upper] as i64) / 2) as i32
+        }
+    };
     SaleSummary {
         item_id,
         hq,
         num_sold: sales.len(),
         avg_sale_duration,
+        days_since_last_sale,
         max_price,
         avg_price,
+        median_price,
         min_price,
     }
 }
