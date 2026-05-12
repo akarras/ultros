@@ -12,7 +12,7 @@ Effort is a rough T-shirt size (`S` ≤ half-day, `M` 1–2 days, `L` ≥ 3 days
 
 The single most important epic. Retainer-ownership currently has no proof of ownership; lists trust the handler layer. Fix the security gap first, then tighten the ownership story everywhere.
 
-### B-1.1 · Gate retainer claims on verified character ownership · P0 · L
+### [shipped 2026-05-12] B-1.1 · Gate retainer claims on verified character ownership · P0 · L
 **Problem.** `/ffxiv retainer add` calls [`register_retainer`](ultros-db/src/retainers.rs:49) which only checks that the retainer row exists. Any Discord user can claim any retainer ID returned by the global autocomplete in [retainer.rs:63](ultros/src/discord/ffxiv/retainer.rs:63). This pollutes "my retainers" semantics and lets users register undercut alerts on retainers they don't own.
 
 **Proposal.**
@@ -67,7 +67,7 @@ The bot works but is unforgiving to first-time users. The `prices` group is the 
 
 **Proposal.** Make `minimum_profit` (10_000), `number_recently_sold` (5), `threshold_days` (7) optional. Only `world` stays required. Add an example in the command description.
 
-### B-2.4 · Fill placeholder subgroup descriptions · P2 · S
+### [partial — retainer parent shipped] B-2.4 · Fill placeholder subgroup descriptions · P2 · S
 **Problem.** [`character.rs:5`](ultros/src/discord/ffxiv/character.rs:5), [`retainer.rs:25`](ultros/src/discord/ffxiv/retainer.rs:25), [`analyze.rs:12`](ultros/src/discord/ffxiv/analyze.rs:12) all show `"Hello world"` or placeholders. These render in `/help` output.
 
 **Acceptance.** Every command in the tree has a one-sentence description that reads cleanly in `/help`.

@@ -22,14 +22,19 @@ use super::{Context, Error};
     )
 )]
 pub(crate) async fn retainer(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say(
-        "Use one of the subcommands `list`,
-        `add`,
-        `remove`,
-        `check_listings`,
-        `check_undercuts`,
-        `add_undercut_alert`
-        `remove_undercut_alert`",
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("Retainers")
+                .description(
+                    "Manage retainers tied to your verified FFXIV character.\n\n\
+                     **Setup:**\n\
+                     1. Verify your character at https://ultros.app\n\
+                     2. `/ffxiv retainer add` — claim one of your retainers\n\
+                     3. `/ffxiv retainer add_undercut_alert` — get alerts in this channel\n\n\
+                     **See also:** `/ffxiv retainer list`, `check_listings`, `check_undercuts`.",
+                ),
+        ),
     )
     .await?;
     Ok(())
@@ -65,12 +70,14 @@ async fn autocomplete_retainer_id(
     partial: &str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
     let world_cache = ctx.data().world_cache.clone();
+    let partial = partial.to_ascii_lowercase();
     ctx.data()
         .db
-        .search_retainers(partial)
+        .get_retainers_for_user_characters(ctx.author().id.get())
         .await
         .unwrap_or_default()
         .into_iter()
+        .filter(move |retainer| retainer.name.to_ascii_lowercase().contains(&partial))
         .flat_map(move |retainer| {
             Some(poise::serenity_prelude::AutocompleteChoice::new(
                 format!(
@@ -253,7 +260,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Adds a retainer to your profile
+/// Adds a retainer to your profile (requires a verified FFXIV character)
 #[poise::command(slash_command)]
 async fn add(
     ctx: Context<'_>,
@@ -262,6 +269,51 @@ async fn add(
     retainer_id: i32,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    let characters = ctx
+        .data()
+        .db
+        .get_all_characters_for_discord_user(ctx.author().id.get() as i64)
+        .await?;
+    if characters.is_empty() {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                poise::serenity_prelude::CreateEmbed::new()
+                    .title("Verify a character first")
+                    .description(
+                        "Claiming a retainer requires a verified FFXIV character. \
+                         Visit https://ultros.app and link your character via the \
+                         Lodestone challenge, then come back and run this command.",
+                    )
+                    .color(Color::from_rgb(200, 80, 80)),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+    // Defense in depth: even though autocomplete only shows claimable retainers,
+    // a power user can type a raw retainer_id. Reject if it doesn't belong to
+    // one of the caller's characters.
+    let claimable = ctx
+        .data()
+        .db
+        .get_retainers_for_user_characters(ctx.author().id.get())
+        .await?;
+    if !claimable.iter().any(|r| r.id == retainer_id) {
+        ctx.send(
+            poise::CreateReply::default().embed(
+                poise::serenity_prelude::CreateEmbed::new()
+                    .title("Retainer not claimable")
+                    .description(
+                        "That retainer doesn't belong to any of your verified characters. \
+                         If this is your retainer, make sure the character it belongs to \
+                         is verified on ultros.app.",
+                    )
+                    .color(Color::from_rgb(200, 80, 80)),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
     let _register_retainer = ctx
         .data()
         .db

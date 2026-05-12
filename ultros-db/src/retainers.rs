@@ -45,6 +45,38 @@ pub struct ListingUndercutData {
 }
 
 impl UltrosDb {
+    /// Returns all retainers in the DB whose `world_id` matches one of the
+    /// `final_fantasy_character` rows that the Discord user owns (i.e. has a
+    /// row in `owned_ffxiv_character`). This is the source of truth for
+    /// "retainers the caller is allowed to claim" — a retainer can only belong
+    /// to a character on the same world, so filtering by the user's verified
+    /// characters' worlds is the strictest schema-level claim filter available
+    /// (the `retainer` table has no direct character link; ownership is only
+    /// recorded after the fact on `owned_retainers.character_id`).
+    #[instrument]
+    pub async fn get_retainers_for_user_characters(
+        &self,
+        discord_user_id: u64,
+    ) -> Result<Vec<retainer::Model>> {
+        let world_ids: Vec<i32> = owned_ffxiv_character::Entity::find()
+            .find_also_related(final_fantasy_character::Entity)
+            .filter(owned_ffxiv_character::Column::DiscordUserId.eq(discord_user_id as i64))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .filter_map(|(_, character)| character.map(|c| c.world_id))
+            .collect();
+
+        if world_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(retainer::Entity::find()
+            .filter(retainer::Column::WorldId.is_in(world_ids))
+            .all(&self.db)
+            .await?)
+    }
+
     #[instrument]
     pub async fn register_retainer(
         &self,
