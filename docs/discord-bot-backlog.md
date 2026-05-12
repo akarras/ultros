@@ -47,7 +47,7 @@ The single most important epic. Retainer-ownership currently has no proof of own
 
 The bot works but is unforgiving to first-time users. The `prices` group is the gold standard; bring everything else up to that bar.
 
-### B-2.1 · Autocomplete for list-name and item-name in `/ffxiv list *` · P1 · M
+### [shipped 2026-05-12 — partial: list-name on all four, item-name on add_item only] B-2.1 · Autocomplete for list-name and item-name in `/ffxiv list *` · P1 · M
 **Problem.** [lists.rs:120](ultros/src/discord/ffxiv/lists.rs:120), [lists.rs:160](ultros/src/discord/ffxiv/lists.rs:160), [lists.rs:192](ultros/src/discord/ffxiv/lists.rs:192) take raw strings with exact-match lookup. Users must type list names from memory and items character-perfect.
 
 **Proposal.**
