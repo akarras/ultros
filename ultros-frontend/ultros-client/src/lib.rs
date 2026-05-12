@@ -9,7 +9,9 @@ use log::{Level, error, info};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ultros_api_types::{bootstrap::Bootstrap, world::WorldData, world_helper::WorldHelper};
+use ultros_api_types::{
+    bootstrap::Bootstrap, user::UserData, world::WorldData, world_helper::WorldHelper,
+};
 use ultros_app::*;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
@@ -211,6 +213,32 @@ async fn get_region() -> String {
     }
 }
 
+/// Best-effort fetch of the current user when the SSR bootstrap is missing.
+///
+/// Returns `Some(user)` if logged in, `None` if the server says we're not
+/// authenticated (401 / etc.). Any other failure also collapses to `None` —
+/// the hydration view tree just renders as logged-out, which matches what
+/// the SSR side would have rendered for an unauthenticated request.
+async fn fetch_current_user_fallback() -> Option<UserData> {
+    let response = match Request::get("/api/v1/current_user").send().await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("current_user fetch failed: {e}");
+            return None;
+        }
+    };
+    if !response.ok() {
+        return None;
+    }
+    match response.json::<UserData>().await {
+        Ok(user) => Some(user),
+        Err(e) => {
+            error!("current_user parse failed: {e}");
+            None
+        }
+    }
+}
+
 fn set_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
         console_error_panic_hook::hook(panic_info);
@@ -308,15 +336,23 @@ pub fn hydrate() {
                 Some(b.current_user),
             )
         } else {
-            info!("bootstrap missing — falling back to HTTP for world_data + region");
-            let (_, (worlds, region)) = join(
+            info!(
+                "bootstrap missing — falling back to HTTP for world_data + region + current_user"
+            );
+            // Fetch current_user alongside the other fallbacks so we can
+            // provide BootstrapUser context before hydration runs. Otherwise
+            // the SSR DOM (rendered with the server's view of auth state)
+            // and the client view tree (auth state still loading) diverge
+            // and tachys hydration panics at hydration.rs:163.
+            let (_, ((worlds, region), current_user)) = join(
                 populate_xiv_gen_data(),
-                join(get_world_data(), get_region()),
+                join(
+                    join(get_world_data(), get_region()),
+                    fetch_current_user_fallback(),
+                ),
             )
             .await;
-            // current_user remains absent here; ProfileDisplay will hit
-            // /api/v1/current_user via the existing fetch path.
-            (worlds, region, None)
+            (worlds, region, Some(current_user))
         };
         info!("hydrating body");
         let world_data = match worlds {
