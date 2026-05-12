@@ -25,6 +25,8 @@ mod m20240424_000001_create_notification_endpoints;
 mod m20240520_000001_shared_lists;
 mod m20260510_000001_price_alert_phase1;
 mod m20260512_000001_push_subscription;
+mod m20260513_000001_list_item_target_price;
+mod m20260513_000002_alert_list_threshold;
 
 pub struct Migrator;
 
@@ -59,6 +61,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20240520_000001_shared_lists::Migration),
             Box::new(m20260510_000001_price_alert_phase1::Migration),
             Box::new(m20260512_000001_push_subscription::Migration),
+            Box::new(m20260513_000001_list_item_target_price::Migration),
+            Box::new(m20260513_000002_alert_list_threshold::Migration),
         ]
     }
 }

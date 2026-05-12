@@ -167,6 +167,7 @@ fn AddToListModal(
                                                                         hq: Some(is_hq),
                                                                         quantity: Some(qty),
                                                                         acquired: None,
+                                                                        target_price: None,
                                                                     },
                                                                 ).await;
                                                                 match res {

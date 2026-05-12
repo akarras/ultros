@@ -13,6 +13,10 @@ pub enum AlertTrigger {
         price_threshold: i32,
         hq_only: bool,
     },
+    /// Fire when any item in the referenced list drops to or below that item's
+    /// per-row `target_price`. The list-scoped trigger lets a single alert
+    /// follow every item in a shopping list (including items added later).
+    ListItemThreshold { list_id: i32 },
 }
 
 /// Where to send a fired alert.
