@@ -4,10 +4,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use std::collections::HashSet;
 use std::sync::LazyLock;
-use ultros_api_types::{
-    cheapest_listings::{CheapestListingMapKey, CheapestListingsMap},
-    icon_size::IconSize,
-};
+use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
 use xiv_gen::{
     ENpcBase, ENpcResidentId, GilShopId, Item, ItemId, Leve, LeveRewardItem, LeveRewardItemGroup,
     Recipe, SpecialShop,
@@ -15,7 +12,13 @@ use xiv_gen::{
 
 use crate::{
     components::{
-        add_recipe_to_list::AddRecipeToList, icon::Icon, item_icon::ItemIcon,
+        add_recipe_to_list::AddRecipeToList,
+        crafting_cost::{
+            CraftingCostOptions, EmptyOnHand, IngredientsIter, ShardsMode, compute_cost,
+        },
+        icon::Icon,
+        item_icon::ItemIcon,
+        on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap},
         skeleton::SingleLineSkeleton,
     },
     global_state::{
@@ -25,6 +28,28 @@ use crate::{
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
+
+fn job_code_from_craft_type(craft_type: i32) -> &'static str {
+    match craft_type {
+        0 => "CRP",
+        1 => "BSM",
+        2 => "ARM",
+        3 => "GSM",
+        4 => "LTW",
+        5 => "WVR",
+        6 => "ALC",
+        7 => "CUL",
+        _ => "",
+    }
+}
+
+pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
+    tracked_data()
+        .items
+        .get(&item_id)
+        .map(|i| i.item_search_category == 59)
+        .unwrap_or(false)
+}
 
 /// Matches against items that start with the same prefix
 /// "Diadochos" -> "Diadochos Helmet" etc
@@ -68,31 +93,6 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
     })
 }
 
-/// Creates an iterator over the ingredients in a recipe
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct IngredientsIter<'a>(&'a Recipe, i32);
-impl<'a> IngredientsIter<'a> {
-    pub(crate) fn new(recipe: &'a Recipe) -> Self {
-        Self(recipe, 0)
-    }
-}
-impl<'a> Iterator for IngredientsIter<'a> {
-    type Item = (ItemId, i32);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while (self.1 as usize) < self.0.ingredient.len() {
-            let idx = self.1 as usize;
-            let raw_id = self.0.ingredient[idx];
-            let amount = self.0.amount_ingredient[idx];
-            self.1 += 1;
-            if raw_id != 0 {
-                return Some((ItemId(raw_id), amount));
-            }
-        }
-        None
-    }
-}
-
 /// This iterator will traverse the recipe tree for items that are related to using this item for crafting
 pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static Recipe> {
     let recipes = &tracked_data().recipes;
@@ -106,65 +106,146 @@ pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static
         .sorted_by_key(|r| r.key_id.0)
 }
 
-pub(crate) fn calculate_crafting_cost(recipe: &Recipe, prices: &CheapestListingsMap) -> (i32, i32) {
-    let items = &tracked_data().items;
-    let sum_for = |prefer_hq: bool| -> i32 {
-        IngredientsIter::new(recipe)
-            .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
-            .flat_map(|(item, quantity)| {
-                let pref_key = CheapestListingMapKey {
-                    item_id: item.key_id.0,
-                    hq: prefer_hq && item.can_be_hq,
-                };
-                let fallback_key = CheapestListingMapKey {
-                    item_id: item.key_id.0,
-                    hq: false,
-                };
-                prices
-                    .map
-                    .get(&pref_key)
-                    .or_else(|| prices.map.get(&fallback_key))
-                    .map(|d| d.price * quantity)
-            })
-            .sum()
-    };
-    (sum_for(true), sum_for(false))
-}
-
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
+    use crate::global_state::cookies::Cookies;
+    use crate::global_state::craft_options::{self, CraftOptions};
+
     let i18n = use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
+    let cookies = use_context::<Cookies>().unwrap();
+    let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+    let on_hand_map = use_context::<OnHandMap>();
 
     view! {
-        <Suspense fallback=move || {
-            view! { <SingleLineSkeleton /> }
-        }>
+        <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
             {move || {
-                cheapest_prices
-                    .read_listings
-                    .with(|prices| {
-                        let prices = prices.as_ref()?;
-                        let prices = prices.as_ref().ok()?;
-                        let (hq_amount, lq_amount) = calculate_crafting_cost(recipe, prices);
-                        let result_view = view! {
-                            <span class="flex flex-row gap-2 items-center">
-                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">{t!(i18n, related_recipe_hq_label)}</span>
-                                <Gil amount=hq_amount />
-                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">{t!(i18n, related_recipe_lq_label)}</span>
-                                <Gil amount=lq_amount />
-                            </span>
-                        };
-                        Some(result_view)
+                cheapest_prices.read_listings.with(|prices| {
+                    let prices = prices.as_ref()?.as_ref().ok()?;
+                    let opts_value = opts_cookie.get().unwrap_or_default();
+                    let shards = if opts_value.exclude_shards {
+                        ShardsMode::ExcludeShards
+                    } else {
+                        ShardsMode::IncludeMarket
+                    };
+
+                    // Snapshot the LocalStorage on-hand if available.
+                    let local = on_hand_map
+                        .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                        .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                    let empty = EmptyOnHand;
+                    let active_on_hand: &dyn crate::components::crafting_cost::OnHand =
+                        if opts_value.use_on_hand { &local } else { &empty };
+
+                    let recipes_by_output = std::collections::HashMap::new();
+
+                    let lq_opts = CraftingCostOptions {
+                        require_hq: false,
+                        max_subcraft_depth: 0,
+                        shards,
+                        on_hand: active_on_hand,
+                    };
+                    let lq = compute_cost(recipe, prices, &recipes_by_output, &lq_opts, &is_shard_item);
+
+                    // Re-snapshot on-hand for the HQ pass (the LQ pass consumed it).
+                    let local_hq = on_hand_map
+                        .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                        .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                    let active_on_hand_hq: &dyn crate::components::crafting_cost::OnHand =
+                        if opts_value.use_on_hand { &local_hq } else { &empty };
+                    let hq_opts = CraftingCostOptions {
+                        require_hq: true,
+                        max_subcraft_depth: 0,
+                        shards,
+                        on_hand: active_on_hand_hq,
+                    };
+                    let hq = compute_cost(recipe, prices, &recipes_by_output, &hq_opts, &is_shard_item);
+
+                    Some(view! {
+                        <span class="flex flex-row gap-2 items-center flex-wrap">
+                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">{t!(i18n, related_recipe_hq_label)}</span>
+                            <Gil amount=hq.cost />
+                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">{t!(i18n, related_recipe_lq_label)}</span>
+                            <Gil amount=lq.cost />
+                            {(lq.shard_cost > 0 && opts_value.exclude_shards).then(|| view! {
+                                <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] text-[10px] text-[color:var(--color-text-muted)]">
+                                    "shards excl. " <Gil amount=lq.shard_cost />
+                                </span>
+                            })}
+                            {(lq.on_hand_savings > 0).then(|| view! {
+                                <span class="px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-300 text-[10px]">
+                                    "saved " <Gil amount=lq.on_hand_savings />
+                                </span>
+                            })}
+                        </span>
                     })
+                })
             }}
         </Suspense>
     }
 }
 
 #[component]
+fn CraftOptionsToggleRow() -> impl IntoView {
+    use crate::global_state::cookies::Cookies;
+    use crate::global_state::craft_options::{self, CraftOptions};
+    let cookies = use_context::<Cookies>().unwrap();
+    let (opts_signal, set_opts) =
+        cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+
+    let opts = move || opts_signal.get().unwrap_or_default();
+    let toggle = move |mutator: Box<dyn Fn(&mut CraftOptions)>| {
+        let mut current = opts();
+        mutator(&mut current);
+        set_opts(Some(current));
+    };
+
+    // The item-page recipe panel always shows both HQ and LQ chips, so a
+    // "Require HQ" toggle would be a no-op here. The analyzers (Tasks 8-9)
+    // get their own filter cards that read/write the same cookie field.
+    view! {
+        <div class="flex flex-row items-center gap-3 text-xs flex-wrap">
+            <label class="flex flex-row items-center gap-1">
+                <input
+                    type="checkbox"
+                    class="checkbox checkbox-xs"
+                    prop:checked=move || opts().exclude_shards
+                    on:change=move |_| toggle(Box::new(|o| o.exclude_shards = !o.exclude_shards))
+                />
+                "Exclude shards"
+            </label>
+            <label class="flex flex-row items-center gap-1">
+                <input
+                    type="checkbox"
+                    class="checkbox checkbox-xs"
+                    prop:checked=move || opts().use_on_hand
+                    on:change=move |_| toggle(Box::new(|o| o.use_on_hand = !o.use_on_hand))
+                />
+                "Use on-hand"
+            </label>
+        </div>
+    }
+}
+
+#[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let i18n = use_i18n();
+    let job = job_code_from_craft_type(recipe.craft_type);
+    let analyzer_href = move || {
+        use crate::global_state::cookies::Cookies;
+        use crate::global_state::craft_options::{self, CraftOptions};
+        let cookies = use_context::<Cookies>().unwrap();
+        let (opts, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+        let o = opts.get().unwrap_or_default();
+        format!(
+            "/recipe-analyzer?job={job}&require-hq={hq}&subcrafts={sub}&shards-exclude={shards}&on-hand={oh}",
+            job = job,
+            hq = o.require_hq,
+            sub = o.include_subcrafts,
+            shards = o.exclude_shards,
+            oh = o.use_on_hand,
+        )
+    };
     let items = &tracked_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
@@ -208,6 +289,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                         </span>
                     })}
                     <AddRecipeToList recipe />
+                    <a
+                        class="btn-secondary text-xs px-2 py-1 flex flex-row items-center gap-1"
+                        href=analyzer_href
+                        aria-label="Open this recipe in the analyzer"
+                    >
+                        <Icon icon=icondata::AiBarChartOutlined />
+                        "Analyzer"
+                    </a>
                 </div>
             </div>
 
@@ -225,79 +314,72 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                 </div>
 
                 // Profitability at a glance
-                <Suspense fallback=move || {
-                    view! { <SingleLineSkeleton /> }
-                }>
+                <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
                     {move || {
-                        use_context::<CheapestPrices>()
-                            .unwrap()
-                            .read_listings
-                            .with(|data| {
-                                let data = data.as_ref()?.as_ref().ok()?;
-                                // compute costs again to compare directly
-                                let sum_for = |prefer_hq: bool| -> i32 {
-                                    IngredientsIter::new(recipe)
-                                        .flat_map(|(ingredient, amount)| {
-                                            items.get(&ingredient).map(|item| (item, amount))
-                                        })
-                                        .flat_map(|(item, quantity)| {
-                                            let pref_key = CheapestListingMapKey {
-                                                item_id: item.key_id.0,
-                                                hq: prefer_hq && item.can_be_hq,
-                                            };
-                                            let fallback_key = CheapestListingMapKey {
-                                                item_id: item.key_id.0,
-                                                hq: false,
-                                            };
-                                            data.map
-                                                        .get(&pref_key)
-                                                        .or_else(|| data.map.get(&fallback_key))
-                                                        .map(|d| d.price * quantity)
-                                                })
-                                                .sum()
-                                        };
-                                        let hq_cost = sum_for(true);
-                                        let lq_cost = sum_for(false);
+                        use crate::global_state::cookies::Cookies;
+                        use crate::global_state::craft_options::{self, CraftOptions};
+                        let cookies = use_context::<Cookies>().unwrap();
+                        let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+                        let on_hand_map = use_context::<OnHandMap>();
 
-                                let lq_sell = data
-                                    .map
-                                    .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false })
-                                    .map(|d| d.price);
-                                let hq_sell = if target_item.can_be_hq {
-                                    data.map
-                                        .get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
-                                        .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
-                                        .map(|d| d.price)
-                                } else {
-                                    None
-                                };
+                        use_context::<CheapestPrices>().unwrap().read_listings.with(|data| {
+                            let data = data.as_ref()?.as_ref().ok()?;
+                            let opts_value = opts_cookie.get().unwrap_or_default();
+                            let shards = if opts_value.exclude_shards {
+                                ShardsMode::ExcludeShards
+                            } else { ShardsMode::IncludeMarket };
 
-                                let profit_chip = |label: String, profit_opt: Option<i32>| {
-                                    profit_opt.map(|profit| {
-                                        let cls = if profit >= 0 {
-                                            "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
-                                        } else {
-                                            "px-2 py-0.5 rounded-full text-xs font-bold bg-red-900/30 text-red-300 border border-red-700/30 flex items-center gap-1"
-                                        };
-                                        view! {
-                                            <span class=cls>
-                                                <span>{label}</span>
-                                                <Gil amount=profit />
-                                            </span>
-                                        }.into_any()
-                                    })
-                                };
+                            let local = on_hand_map
+                                .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                            let empty = EmptyOnHand;
+                            let active: &dyn crate::components::crafting_cost::OnHand =
+                                if opts_value.use_on_hand { &local } else { &empty };
+                            let recipes_by_output = std::collections::HashMap::new();
 
-                                Some(view! {
-                                    <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-                                        <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
-                                        <div class="flex flex-wrap justify-end gap-2">
-                                            {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq_cost))}
-                                            {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq_cost))}
-                                        </div>
-                                    </div>
+                            let lq_opts = CraftingCostOptions {
+                                require_hq: false, max_subcraft_depth: 0, shards, on_hand: active,
+                            };
+                            let lq = compute_cost(recipe, data, &recipes_by_output, &lq_opts, &is_shard_item);
+
+                            let local_hq = on_hand_map
+                                .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
+                            let active_hq: &dyn crate::components::crafting_cost::OnHand =
+                                if opts_value.use_on_hand { &local_hq } else { &empty };
+                            let hq_opts = CraftingCostOptions {
+                                require_hq: true, max_subcraft_depth: 0, shards, on_hand: active_hq,
+                            };
+                            let hq = compute_cost(recipe, data, &recipes_by_output, &hq_opts, &is_shard_item);
+
+                            let lq_sell = data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }).map(|d| d.price);
+                            let hq_sell = if target_item.can_be_hq {
+                                data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: true })
+                                    .or_else(|| data.map.get(&CheapestListingMapKey { item_id: target_item.key_id.0, hq: false }))
+                                    .map(|d| d.price)
+                            } else { None };
+
+                            let profit_chip = |label: String, profit_opt: Option<i32>| {
+                                profit_opt.map(|profit| {
+                                    let cls = if profit >= 0 {
+                                        "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
+                                    } else {
+                                        "px-2 py-0.5 rounded-full text-xs font-bold bg-red-900/30 text-red-300 border border-red-700/30 flex items-center gap-1"
+                                    };
+                                    view! { <span class=cls><span>{label}</span><Gil amount=profit /></span> }.into_any()
                                 })
+                            };
+
+                            Some(view! {
+                                <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
+                                    <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
+                                    <div class="flex flex-wrap justify-end gap-2">
+                                        {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq.cost))}
+                                        {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq.cost))}
+                                    </div>
+                                </div>
                             })
+                        })
                     }}
                 </Suspense>
             </div>
@@ -765,7 +847,11 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 class="panel p-4 sm:p-6"
                 class:hidden=move || recipes.with(|recipes| recipes.is_empty())
             >
-                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Crafting Recipes"</h2>
+                <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
+                    <h2 class="text-xl font-bold text-brand-200 px-1">"Crafting Recipes"</h2>
+                    <CraftOptionsToggleRow />
+                </div>
+                <ActiveListBanner />
                 <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 max-w-6xl">
                     <For
                         each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())

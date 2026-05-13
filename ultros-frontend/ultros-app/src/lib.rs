@@ -20,7 +20,10 @@ use crate::global_state::{
     toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
 use crate::{
-    components::{app_shell::AppShell, patreon::*, toast::*, tooltip::*},
+    components::{
+        app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
+        tooltip::*,
+    },
     routes::{
         about::*,
         alerts::Alerts,
@@ -352,6 +355,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_side_nav_settings();
     provide_toast_context();
     provide_xiv_data_revision();
+    provide_on_hand_context();
     ws::realtime::provide_realtime_context();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();

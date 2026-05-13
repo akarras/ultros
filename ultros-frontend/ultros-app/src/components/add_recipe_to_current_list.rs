@@ -1,8 +1,8 @@
 use crate::api::bulk_add_item_to_list;
+use crate::components::crafting_cost::IngredientsIter;
 use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::modal::Modal;
-use crate::components::related_items::IngredientsIter;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
