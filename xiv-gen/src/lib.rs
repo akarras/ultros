@@ -303,6 +303,26 @@ pub struct SpecialShop {
     pub name: String,
     #[xiv_gen(column = "Item[{}].Item[0]", count = 60)]
     pub item: Vec<u16>,
+    #[xiv_gen(column = "Item[{}].Item[0]", count = 60)]
+    pub item_receive_0: Vec<u16>,
+    #[xiv_gen(column = "Item[{}].ReceiveCount[0]", count = 60)]
+    pub count_receive_0: Vec<u32>,
+    #[xiv_gen(column = "Item[{}].Item[1]", count = 60)]
+    pub item_receive_1: Vec<u16>,
+    #[xiv_gen(column = "Item[{}].ReceiveCount[1]", count = 60)]
+    pub count_receive_1: Vec<u32>,
+    #[xiv_gen(column = "Item[{}].ItemCost[0]", count = 60)]
+    pub item_cost_0: Vec<u16>,
+    #[xiv_gen(column = "Item[{}].CurrencyCost[0]", count = 60)]
+    pub count_cost_0: Vec<u32>,
+    #[xiv_gen(column = "Item[{}].ItemCost[1]", count = 60)]
+    pub item_cost_1: Vec<u16>,
+    #[xiv_gen(column = "Item[{}].CurrencyCost[1]", count = 60)]
+    pub count_cost_1: Vec<u32>,
+    #[xiv_gen(column = "Item[{}].ItemCost[2]", count = 60)]
+    pub item_cost_2: Vec<u16>,
+    #[xiv_gen(column = "Item[{}].CurrencyCost[2]", count = 60)]
+    pub count_cost_2: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]

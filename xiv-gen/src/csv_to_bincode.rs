@@ -100,10 +100,15 @@ fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
                 .replace("<%>", "Percent")
                 .replace("ItemIngredient", "Ingredient");
 
-            // Map SaintCoinach's Item{Receive}[x][0] to English's Item[x].Item[0]
-            if s.starts_with("ItemReceive[") && s.ends_with("][0]") {
-                let num = &s[12..s.len() - 4];
-                s = format!("Item[{}].Item[0]", num);
+            if let Some((slot, item_index)) = split_multi_indexed_column(&s, "ItemReceive[") {
+                s = format!("Item[{slot}].Item[{item_index}]");
+            } else if let Some((slot, item_index)) = split_multi_indexed_column(&s, "CountReceive[")
+            {
+                s = format!("Item[{slot}].ReceiveCount[{item_index}]");
+            } else if let Some((slot, item_index)) = split_multi_indexed_column(&s, "ItemCost[") {
+                s = format!("Item[{slot}].ItemCost[{item_index}]");
+            } else if let Some((slot, item_index)) = split_multi_indexed_column(&s, "CountCost[") {
+                s = format!("Item[{slot}].CurrencyCost[{item_index}]");
             }
             s
         })
@@ -112,6 +117,11 @@ fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
     records
         .map(|r| T::from_csv_row(&header, &r.unwrap()))
         .collect()
+}
+
+fn split_multi_indexed_column<'a>(column: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let indexes = column.strip_prefix(prefix)?.strip_suffix(']')?;
+    indexes.split_once("][")
 }
 
 fn read_csv_to_map<K, T>(path: &str) -> HashMap<K, T>
