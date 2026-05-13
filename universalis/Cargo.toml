@@ -13,7 +13,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = "2"
 tracing = { workspace = true }
-bson = "2.4.0"
+bson = { version = "3.1.0", features = ["serde"] }
 async-tungstenite = {version = "0.24", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
 tokio = { workspace = true, optional = true }
 futures = { workspace = true }
