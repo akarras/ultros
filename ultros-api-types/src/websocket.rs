@@ -70,18 +70,23 @@ impl FilterPredicate {
                 })
                 .unwrap_or(true),
             FilterPredicate::Item(i) => data.item() == *i,
-            FilterPredicate::Retainer(r) => data.retainer().map(|re| re == r).unwrap_or(true), // default to true
-            FilterPredicate::Character(character) => {
-                data.character().map(|c| c == character).unwrap_or(true)
-            }
+            FilterPredicate::Items(items) => items.contains(&data.item()),
+            FilterPredicate::Retainer(r) => data
+                .retainer()
+                .map(|re| re.eq_ignore_ascii_case(r))
+                .unwrap_or(true), // default to true
+            FilterPredicate::Character(character) => data
+                .character()
+                .map(|c| c.eq_ignore_ascii_case(character))
+                .unwrap_or(true),
             FilterPredicate::And((a, b)) => {
                 a.filter(world_helper, data) && b.filter(world_helper, data)
             }
             FilterPredicate::Or((a, b)) => {
                 a.filter(world_helper, data) || b.filter(world_helper, data)
             }
-            FilterPredicate::PriceAtLeast(price) => data.price() <= *price,
-            FilterPredicate::PriceAtMost(price) => data.price() >= *price,
+            FilterPredicate::PriceAtLeast(price) => data.price() >= *price,
+            FilterPredicate::PriceAtMost(price) => data.price() <= *price,
         }
     }
 }
@@ -90,9 +95,10 @@ impl FilterPredicate {
 pub enum FilterPredicate {
     World(AnySelector),
     Item(i32),
-    /// Is technically only a valid filter against a SaleHistory
+    Items(Vec<i32>),
+    /// Is technically only a valid filter against a listing
     Retainer(String),
-    /// Is technically only valid against a listing
+    /// Is technically only valid against a sale history
     Character(String),
     PriceAtLeast(i32),
     PriceAtMost(i32),
@@ -112,21 +118,21 @@ impl FilterPredicate {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum EventType<T> {
     Added(T),
     Removed(T),
     Updated(T),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ListingEventData {
     pub item_id: i32,
     pub world_id: i32,
     pub listings: Vec<(ActiveListing, Retainer)>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct SaleEventData {
     pub sales: Vec<(SaleHistory, UnknownCharacter)>,
 }
@@ -137,28 +143,51 @@ pub enum ListEventData {
     ListItem(crate::list::ListItem),
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum ServerClient {
     Sales(EventType<SaleEventData>),
     Listings(EventType<ListingEventData>),
     ListUpdate(EventType<ListEventData>),
+    SubscriptionEvent {
+        subscription_id: u64,
+        event: Box<ServerClient>,
+    },
+    Subscribed {
+        subscription_id: u64,
+    },
+    Unsubscribed {
+        subscription_id: u64,
+    },
+    Stale {
+        subscription_id: u64,
+    },
+    Error {
+        message: String,
+    },
     SubscriptionCreated,
     SocketConnected,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum SocketMessageType {
     Listings,
     Sales,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum ClientMessage {
     AddSubscribe {
+        #[serde(default)]
+        subscription_id: Option<u64>,
         filter: FilterPredicate,
         msg_type: SocketMessageType,
     },
+    Unsubscribe {
+        subscription_id: u64,
+    },
     SubscribeList {
+        #[serde(default)]
+        subscription_id: Option<u64>,
         list_id: i32,
     },
 }
@@ -294,23 +323,23 @@ mod tests {
     }
 
     #[test]
-    fn predicate_price_at_least_passes_when_price_is_at_or_below_threshold() {
+    fn predicate_price_at_least_passes_when_price_is_at_or_above_threshold() {
         let h = helper();
         let data = listing(100, 1, 100);
-        // PriceAtLeast(threshold) means data.price() <= threshold
+        // PriceAtLeast(threshold) means data.price() >= threshold
         assert!(FilterPredicate::PriceAtLeast(100).filter(&h, &data));
-        assert!(FilterPredicate::PriceAtLeast(200).filter(&h, &data));
-        assert!(!FilterPredicate::PriceAtLeast(50).filter(&h, &data));
+        assert!(FilterPredicate::PriceAtLeast(50).filter(&h, &data));
+        assert!(!FilterPredicate::PriceAtLeast(200).filter(&h, &data));
     }
 
     #[test]
-    fn predicate_price_at_most_passes_when_price_is_at_or_above_threshold() {
+    fn predicate_price_at_most_passes_when_price_is_at_or_below_threshold() {
         let h = helper();
         let data = listing(100, 1, 100);
-        // PriceAtMost(threshold) means data.price() >= threshold
-        assert!(FilterPredicate::PriceAtMost(50).filter(&h, &data));
+        // PriceAtMost(threshold) means data.price() <= threshold
         assert!(FilterPredicate::PriceAtMost(100).filter(&h, &data));
-        assert!(!FilterPredicate::PriceAtMost(200).filter(&h, &data));
+        assert!(FilterPredicate::PriceAtMost(200).filter(&h, &data));
+        assert!(!FilterPredicate::PriceAtMost(50).filter(&h, &data));
     }
 
     #[test]

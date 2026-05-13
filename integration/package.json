@@ -10,7 +10,8 @@
     "test": "npm run test:desktop && npm run test:mobile",
     "test:mobile": "cross-env CONCURRENCY=16 DEVICE=mobile npm run run",
     "test:desktop": "cross-env CONCURRENCY=16 DEVICE=desktop npm run run",
-    "test:login": "node ./login.cjs"
+    "test:login": "node ./login.cjs",
+    "test:shared-list": "node ./shared-list.cjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

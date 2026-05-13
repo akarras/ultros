@@ -4,6 +4,7 @@ use crate::components::icon::Icon;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::modal::Modal;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
@@ -17,6 +18,7 @@ pub fn AddRecipeToCurrentListModal(
     #[prop(into)] set_visible: SignalSetter<bool>,
     #[prop(into, optional)] on_success: Option<Callback<()>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let (search, set_search) = signal(String::new());
     let data = tracked_data();
     let recipes = &data.recipes;
@@ -76,6 +78,7 @@ pub fn AddRecipeToCurrentListModal(
                         hq: Some(hq && can_be_hq),
                         quantity: Some(total_amount),
                         acquired: None,
+                        target_price: None,
                     })
                 })
                 .collect();
@@ -100,8 +103,8 @@ pub fn AddRecipeToCurrentListModal(
         <Modal set_visible max_width="max-w-[90vw] w-[90vw]">
             <div class="space-y-4 h-[80vh] flex flex-col">
                 <div class="flex items-center justify-between shrink-0">
-                    <h2 class="text-xl font-bold">"Add Recipe to List"</h2>
-                    <button class="btn-ghost p-2" aria-label="Close" on:click=move |_| set_visible(false)>
+                    <h2 class="text-xl font-bold">{t!(i18n, add_recipe_title)}</h2>
+                    <button class="btn-ghost p-2" aria-label=t_string!(i18n, add_recipe_close_aria) on:click=move |_| set_visible(false)>
                         <Icon icon=i::BsX width="24" height="24" />
                     </button>
                 </div>
@@ -109,8 +112,8 @@ pub fn AddRecipeToCurrentListModal(
                 <div class="shrink-0">
                     <input
                         class="input w-full"
-                        placeholder="Search for a recipe..."
-                        aria-label="Search for a recipe"
+                        placeholder=t_string!(i18n, add_recipe_search_placeholder)
+                        aria-label=t_string!(i18n, add_recipe_search_aria)
                         autofocus
                         prop:value=search
                         on:input=move |e| set_search(event_target_value(&e))
@@ -133,14 +136,14 @@ pub fn AddRecipeToCurrentListModal(
                                         <div class="flex flex-col min-w-0">
                                             <span class="font-bold whitespace-normal">{item.name.as_str()}</span>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                "Lvl " {item.level_item}
+                                                {t!(i18n, add_recipe_lvl_prefix)} " " {item.level_item}
                                             </span>
                                         </div>
                                     </div>
 
                                     <div class="flex flex-wrap items-center gap-4 shrink-0">
                                         <div class="flex items-center gap-2">
-                                            <label class="text-xs text-[color:var(--color-text-muted)]">"Count"</label>
+                                            <label class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, add_recipe_count_label)}</label>
                                             <input
                                                 type="number"
                                                 class="input w-16 h-8 text-sm"
@@ -154,7 +157,7 @@ pub fn AddRecipeToCurrentListModal(
                                             />
                                         </div>
 
-                                        <div class="flex items-center gap-2" title="Require HQ ingredients where possible">
+                                        <div class="flex items-center gap-2" title=t_string!(i18n, add_recipe_hq_title)>
                                             <label class="text-sm cursor-pointer select-none flex items-center gap-1">
                                                 <input
                                                     type="checkbox"
@@ -162,11 +165,11 @@ pub fn AddRecipeToCurrentListModal(
                                                     prop:checked=hq
                                                     on:change=move |e| set_hq(event_target_checked(&e))
                                                 />
-                                                "HQ"
+                                                {t!(i18n, add_to_list_hq)}
                                             </label>
                                         </div>
 
-                                        <div class="flex items-center gap-2" title="Do not add crystals/shards to the list">
+                                        <div class="flex items-center gap-2" title=t_string!(i18n, add_recipe_no_shards_title)>
                                             <label class="text-sm cursor-pointer select-none flex items-center gap-1">
                                                 <input
                                                     type="checkbox"
@@ -174,7 +177,7 @@ pub fn AddRecipeToCurrentListModal(
                                                     prop:checked=no_crystals
                                                     on:change=move |e| set_no_crystals(event_target_checked(&e))
                                                 />
-                                                "No Shards"
+                                                {t!(i18n, add_recipe_no_shards)}
                                             </label>
                                         </div>
 
@@ -186,7 +189,7 @@ pub fn AddRecipeToCurrentListModal(
                                         >
                                             <div class="flex items-center gap-1">
                                                 <Icon icon=i::BiPlusRegular />
-                                                "Add"
+                                                {t!(i18n, add_recipe_add_button)}
                                             </div>
                                         </button>
                                     </div>
@@ -196,12 +199,12 @@ pub fn AddRecipeToCurrentListModal(
                     />
                     <Show when=move || { let s = search.get(); !s.is_empty() && search_results.with(|r| r.is_empty()) }>
                         <div class="text-center text-[color:var(--color-text-muted)] py-8">
-                            "No recipes found matching \"" {search} "\""
+                            {move || t_string!(i18n, add_recipe_no_results, query = search.get()).to_string()}
                         </div>
                     </Show>
                     <Show when=move || search.get().is_empty()>
                         <div class="text-center text-[color:var(--color-text-muted)] py-8">
-                            "Start typing to search for a recipe..."
+                            {t!(i18n, add_recipe_start_typing)}
                         </div>
                     </Show>
                 </div>

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
-use futures::future::try_join_all;
 use migration::sea_orm::IntoActiveModel;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
@@ -45,6 +45,38 @@ pub struct ListingUndercutData {
 }
 
 impl UltrosDb {
+    /// Returns all retainers in the DB whose `world_id` matches one of the
+    /// `final_fantasy_character` rows that the Discord user owns (i.e. has a
+    /// row in `owned_ffxiv_character`). This is the source of truth for
+    /// "retainers the caller is allowed to claim" — a retainer can only belong
+    /// to a character on the same world, so filtering by the user's verified
+    /// characters' worlds is the strictest schema-level claim filter available
+    /// (the `retainer` table has no direct character link; ownership is only
+    /// recorded after the fact on `owned_retainers.character_id`).
+    #[instrument]
+    pub async fn get_retainers_for_user_characters(
+        &self,
+        discord_user_id: u64,
+    ) -> Result<Vec<retainer::Model>> {
+        let world_ids: Vec<i32> = owned_ffxiv_character::Entity::find()
+            .find_also_related(final_fantasy_character::Entity)
+            .filter(owned_ffxiv_character::Column::DiscordUserId.eq(discord_user_id as i64))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .filter_map(|(_, character)| character.map(|c| c.world_id))
+            .collect();
+
+        if world_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(retainer::Entity::find()
+            .filter(retainer::Column::WorldId.is_in(world_ids))
+            .all(&self.db)
+            .await?)
+    }
+
     #[instrument]
     pub async fn register_retainer(
         &self,
@@ -288,48 +320,38 @@ impl UltrosDb {
             .iter()
             .flat_map(|(owned, _)| owned.character_id)
             .collect();
-        let mut characters = if !character_ids.is_empty() {
-            try_join_all(character_ids.into_iter().map(|character| {
-                final_fantasy_character::Entity::find()
-                    .filter(final_fantasy_character::Column::Id.eq(character))
-                    .one(&self.db)
-            }))
-            .await?
-            .into_iter()
-            .flatten()
-            .collect()
+        let characters: HashMap<i32, final_fantasy_character::Model> = if character_ids.is_empty() {
+            HashMap::new()
         } else {
-            vec![]
+            final_fantasy_character::Entity::find()
+                .filter(final_fantasy_character::Column::Id.is_in(character_ids))
+                .all(&self.db)
+                .await?
+                .into_iter()
+                .map(|c| (c.id, c))
+                .collect()
         };
-        let mut value = owned_retainers
+        // Group retainers by character_id in a HashMap (O(n)) before flattening to FullRetainersList.
+        // The owned_retainers query was find_also_related(retainer::Entity), so each row is
+        // (owned_retainers::Model, Option<retainer::Model>); drop the rows that lack a related retainer.
+        let mut grouped: HashMap<Option<i32>, Vec<(owned_retainers::Model, retainer::Model)>> =
+            HashMap::new();
+        for (owned, retainer) in owned_retainers
             .into_iter()
-            .flat_map(|(retainer, owned)| owned.map(|o| (retainer.character_id, retainer, o)))
-            .fold(
-                Vec::<(
-                    Option<final_fantasy_character::Model>,
-                    Vec<(owned_retainers::Model, retainer::Model)>,
-                )>::new(),
-                |mut v, (character, retainer, owned)| {
-                    if let Some((_key, value)) = v
-                        .iter_mut()
-                        .find(|(c, _): &&mut (_, _)| c.as_ref().map(|c| c.id).eq(&character))
-                    {
-                        value.push((retainer, owned));
-                    } else {
-                        let character = character.map(|character_id| {
-                            let idx = characters
-                                .iter()
-                                .enumerate()
-                                .find(|(_, c)| c.id == character_id)
-                                .map(|(i, _)| i)
-                                .expect("Should have a character.");
-                            characters.remove(idx)
-                        });
-                        v.push((character, vec![(retainer, owned)]));
-                    }
-                    v
-                },
-            );
+            .flat_map(|(owned, retainer)| retainer.map(|r| (owned, r)))
+        {
+            grouped
+                .entry(owned.character_id)
+                .or_default()
+                .push((owned, retainer));
+        }
+        let mut value: FullRetainersList = grouped
+            .into_iter()
+            .map(|(character_id, retainers)| {
+                let character = character_id.and_then(|id| characters.get(&id).cloned());
+                (character, retainers)
+            })
+            .collect();
         value
             .iter_mut()
             .for_each(|(_, i)| i.sort_by_key(|(o, _)| o.weight));

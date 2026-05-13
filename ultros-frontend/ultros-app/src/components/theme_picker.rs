@@ -1,4 +1,5 @@
 use crate::components::icon::Icon;
+use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 
@@ -6,6 +7,7 @@ use crate::global_state::theme::{ThemeMode, ThemePalette, provide_theme_settings
 
 #[component]
 pub fn ThemePicker() -> impl IntoView {
+    let i18n = use_i18n();
     // ensure settings exist in context
     let settings = provide_theme_settings();
 
@@ -15,7 +17,7 @@ pub fn ThemePicker() -> impl IntoView {
     let set_mode = move |m: ThemeMode| mode.set(m);
     let set_palette = move |p: ThemePalette| palette.set(p);
 
-    let mode_button = move |label: &'static str, val: ThemeMode| {
+    let mode_button = move |label: Signal<String>, val: ThemeMode| {
         let is_active = Signal::derive(move || mode.get() == val);
         view! {
             <button
@@ -30,7 +32,7 @@ pub fn ThemePicker() -> impl IntoView {
                 aria-checked=move || is_active().to_string()
                 on:click=move |_| set_mode(val)
             >
-                {label}
+                {move || label.get()}
             </button>
         }
     };
@@ -58,22 +60,22 @@ pub fn ThemePicker() -> impl IntoView {
     view! {
         <div class="panel p-6 rounded-xl space-y-6">
             <div class="space-y-2">
-                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Theme"</h3>
-                <p class="text-sm text-[color:var(--color-text-muted)]">"choose your vibe and brand color palette"</p>
+                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, theme_title)}</h3>
+                <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, theme_subtitle)}</p>
             </div>
 
             <div class="space-y-4">
                 <div class="space-y-2">
-                    <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-mode-label">"Mode"</div>
+                    <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-mode-label">{t!(i18n, theme_mode_label)}</div>
                     <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="theme-mode-label">
-                        {mode_button("Dark", ThemeMode::Dark)}
-                        {mode_button("Light", ThemeMode::Light)}
-                        {mode_button("System", ThemeMode::System)}
+                        {mode_button(Signal::derive(move || t_string!(i18n, theme_mode_dark).to_string()), ThemeMode::Dark)}
+                        {mode_button(Signal::derive(move || t_string!(i18n, theme_mode_light).to_string()), ThemeMode::Light)}
+                        {mode_button(Signal::derive(move || t_string!(i18n, theme_mode_system).to_string()), ThemeMode::System)}
                     </div>
                 </div>
 
                 <div class="space-y-2">
-                    <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-palette-label">"Palette"</div>
+                    <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-palette-label">{t!(i18n, theme_palette_label)}</div>
                     <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="theme-palette-label">
                         {palette_button("Ultros", ThemePalette::Ultros)}
                         {palette_button("Maelstrom", ThemePalette::Maelstrom)}
@@ -96,7 +98,7 @@ pub fn ThemePicker() -> impl IntoView {
             <div class="flex items-center gap-2 text-sm text-gray-400">
                 <Icon icon=i::BiInfoCircleRegular />
                 <span>
-                    "theme is saved to your browser and applied instantly. no reloads, no drama."
+                    {t!(i18n, theme_persistence_note)}
                 </span>
             </div>
         </div>
@@ -107,6 +109,7 @@ pub fn ThemePicker() -> impl IntoView {
 /// A compact button for the navbar that cycles theme mode Dark -> Light -> System
 #[component]
 pub fn QuickThemeToggle() -> impl IntoView {
+    let i18n = use_i18n();
     let settings = provide_theme_settings();
     let mode = settings.mode;
 
@@ -117,9 +120,9 @@ pub fn QuickThemeToggle() -> impl IntoView {
     });
 
     let label = Signal::derive(move || match mode.get() {
-        ThemeMode::Dark => "Dark",
-        ThemeMode::Light => "Light",
-        ThemeMode::System => "System",
+        ThemeMode::Dark => t_string!(i18n, theme_mode_dark).to_string(),
+        ThemeMode::Light => t_string!(i18n, theme_mode_light).to_string(),
+        ThemeMode::System => t_string!(i18n, theme_mode_system).to_string(),
     });
 
     let cycle = move || {
@@ -134,8 +137,8 @@ pub fn QuickThemeToggle() -> impl IntoView {
     view! {
         <button
             class="nav-link"
-            title="Toggle theme"
-            aria-label=move || format!("Toggle theme (Current: {})", label.get())
+            title=move || t_string!(i18n, theme_toggle_title).to_string()
+            aria-label=move || t_string!(i18n, theme_toggle_aria, theme = label.get()).to_string()
             on:click=move |_| cycle()
         >
             <Icon icon=icon />

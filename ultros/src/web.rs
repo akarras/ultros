@@ -4,24 +4,23 @@ pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
+pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod sitemap;
+pub(crate) mod state;
+pub(crate) mod static_files;
 
 use anyhow::Error;
-use axum::body::Body;
-use axum::extract::{FromRef, Path, Query, State};
-use axum::http::{HeaderValue, Response, StatusCode};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
-use axum::{Json, Router, body, middleware};
-use axum_extra::TypedHeader;
+use axum::{Json, Router, middleware};
 use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::{Cookie, Key};
-use axum_extra::headers::{CacheControl, ContentType, HeaderMapExt};
+use axum_extra::extract::cookie::Cookie;
+use axum_extra::headers::{CacheControl, HeaderMapExt};
 use futures::future::{try_join, try_join_all};
 use hyper::header;
 use itertools::Itertools;
-use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -30,43 +29,41 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
+use tower::ServiceBuilder;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
-use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
-    ShareListGroup, ShareListUser,
+    ListWithPermission, ShareListGroup, ShareListUser,
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
 use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
-use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_db::ActiveValue;
-use ultros_db::common_type_conversions::ApiConversionError;
 use ultros_db::world_data::world_cache::AnySelector;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
-use ultros_xiv_icons::get_item_image;
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
 use self::character_verifier_service::CharacterVerifierService;
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
-use self::oauth::{AuthDiscordUser, AuthUserCache, DiscordAuthConfig};
-use crate::analyzer_service::AnalyzerService;
-use crate::event::{EventReceivers, EventSenders, EventType};
+use self::oauth::{AuthDiscordUser, AuthUserCache};
+use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
 use crate::web::api::alerts::{
-    create_alert, delete_alert, list_alert_events, list_alerts, update_alert,
+    create_alert, delete_alert, list_alert_events, list_alerts, resend_alert_event, update_alert,
+};
+use crate::web::api::endpoints::{
+    create_endpoint, delete_endpoint, list_endpoints, test_endpoint, update_endpoint,
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, get_best_deals, get_trends, recent_sales};
@@ -77,6 +74,57 @@ use crate::web::{
     oauth::{begin_login, logout},
 };
 use crate::web_metrics::{start_metrics_server, track_metrics};
+
+fn legacy_book_help_path(path: &str) -> &'static str {
+    match path.trim_end_matches(".html").trim_end_matches('/') {
+        "" | "/" | "/intro/intro" | "/intro/homeworld" => "/help/getting-started",
+        "/search/search" | "/item_explorer" => "/help/getting-started",
+        "/retainers/retainers"
+        | "/retainers/managing"
+        | "/retainers/viewing"
+        | "/retainers/alerts"
+        | "/characters/characters"
+        | "/characters/add_character" => "/help/lists-alerts-retainers",
+        "/lists/lists" | "/lists/import_makeplace" => "/help/lists-alerts-retainers",
+        "/analyzer/analyzer" => "/help/flip-finder",
+        "/analyzer/recipe" => "/help/recipe-analyzer",
+        "/analyzer/leve" => "/help/leve-analyzer",
+        "/currency/exchange" => "/help/scrip-sources",
+        _ => "/help",
+    }
+}
+
+/// Send a list event; log at warn level if delivery fails. Send errors
+/// here are best-effort — they only matter for observability, so they
+/// must never propagate into handler results.
+fn send_list_event(
+    senders: &EventSenders,
+    event: crate::event::EventType<std::sync::Arc<ultros_api_types::websocket::ListEventData>>,
+) {
+    if let Err(e) = senders.lists.send(event) {
+        warn!(error = %e, "failed to broadcast list event");
+    }
+}
+
+async fn redirect_legacy_book_host(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let is_book_host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .map(|host| host.split(':').next().unwrap_or(host))
+        .map(|host| host.eq_ignore_ascii_case("book.ultros.app"))
+        .unwrap_or(false);
+
+    if is_book_host {
+        let target = legacy_book_help_path(req.uri().path());
+        Redirect::permanent(&format!("https://ultros.app{target}")).into_response()
+    } else {
+        next.run(req).await
+    }
+}
 
 async fn add_retainer(
     State(db): State<UltrosDb>,
@@ -200,191 +248,10 @@ async fn refresh_world_item_listings(
     Ok(Redirect::to(&format!("/item/{world}/{item_id}")))
 }
 
-#[derive(Clone)]
-pub(crate) struct WebState {
-    pub(crate) db: UltrosDb,
-    pub(crate) key: Key,
-    pub(crate) oauth_config: DiscordAuthConfig,
-    pub(crate) user_cache: AuthUserCache,
-    pub(crate) event_receivers: EventReceivers,
-    pub(crate) event_senders: EventSenders,
-    pub(crate) world_cache: Arc<WorldCache>,
-    /// Common variant of world_cache. Maybe get rid of world_cache?
-    pub(crate) world_helper: Arc<WorldHelper>,
-    pub(crate) analyzer_service: AnalyzerService,
-    pub(crate) character_verification: CharacterVerifierService,
-    pub(crate) leptos_options: LeptosOptions,
-    pub(crate) search_service: SearchService,
-    pub(crate) token: CancellationToken,
-}
-
-impl FromRef<WebState> for UltrosDb {
-    fn from_ref(input: &WebState) -> Self {
-        input.db.clone()
-    }
-}
-
-impl FromRef<WebState> for Key {
-    fn from_ref(input: &WebState) -> Self {
-        input.key.clone()
-    }
-}
-
-impl FromRef<WebState> for DiscordAuthConfig {
-    fn from_ref(input: &WebState) -> Self {
-        input.oauth_config.clone()
-    }
-}
-
-impl FromRef<WebState> for AuthUserCache {
-    fn from_ref(input: &WebState) -> Self {
-        input.user_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for EventReceivers {
-    fn from_ref(input: &WebState) -> Self {
-        input.event_receivers.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<WorldCache> {
-    fn from_ref(input: &WebState) -> Self {
-        input.world_cache.clone()
-    }
-}
-
-impl FromRef<WebState> for Arc<WorldHelper> {
-    fn from_ref(input: &WebState) -> Self {
-        input.world_helper.clone()
-    }
-}
-
-impl FromRef<WebState> for AnalyzerService {
-    fn from_ref(input: &WebState) -> Self {
-        input.analyzer_service.clone()
-    }
-}
-
-impl FromRef<WebState> for EventSenders {
-    fn from_ref(input: &WebState) -> Self {
-        input.event_senders.clone()
-    }
-}
-
-impl FromRef<WebState> for CharacterVerifierService {
-    fn from_ref(input: &WebState) -> Self {
-        input.character_verification.clone()
-    }
-}
-
-impl FromRef<WebState> for LeptosOptions {
-    fn from_ref(input: &WebState) -> Self {
-        input.leptos_options.clone()
-    }
-}
-
-impl FromRef<WebState> for SearchService {
-    fn from_ref(input: &WebState) -> Self {
-        input.search_service.clone()
-    }
-}
-
-/// In release mode, return the files from a statically included dir
-#[cfg(not(debug_assertions))]
-fn get_static_file(path: &str) -> Option<&'static [u8]> {
-    use include_dir::include_dir;
-    static STATIC_DIR: include_dir::Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
-    let dir = &STATIC_DIR;
-    let file = dir.get_file(path)?;
-    Some(file.contents())
-}
-
-/// In debug mode, just load the files from disk
-#[cfg(debug_assertions)]
-fn get_static_file(path: &str) -> Option<Vec<u8>> {
-    use std::{io::Read, path::PathBuf};
-
-    let file = PathBuf::from("./ultros/static").join(path);
-    let mut file = std::fs::File::open(file).ok()?;
-    let mut vec = Vec::new();
-    file.read_to_end(&mut vec).ok()?;
-    Some(vec)
-}
-
-async fn get_file(path: &str) -> Result<impl IntoResponse + use<>, WebError> {
-    let mime_type = mime_guess::from_path(path).first_or_text_plain();
-    match get_static_file(path) {
-        None => Ok(Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::new(http_body_util::Empty::new()))?),
-        Some(file) => Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_str(mime_type.as_ref()).unwrap(),
-            )
-            .header(
-                header::CACHE_CONTROL,
-                #[cfg(not(debug_assertions))]
-                HeaderValue::from_str("public, max-age=86400").unwrap(),
-                #[cfg(debug_assertions)]
-                HeaderValue::from_str("none").unwrap(),
-            )
-            .body(Body::new(http_body_util::Full::from(file)))?),
-    }
-}
-
-async fn favicon() -> impl IntoResponse {
-    get_file("favicon.ico").await
-}
-
-async fn robots() -> impl IntoResponse {
-    get_file("robots.txt").await
-}
-
-async fn static_path(Path(path): Path<String>) -> impl IntoResponse {
-    let path = path.trim_start_matches('/');
-    get_file(path).await
-}
-
-#[derive(Deserialize)]
-struct IconQuery {
-    size: IconSize,
-}
-
-async fn fallback_item_icon() -> impl IntoResponse {
-    let fallback_image = include_bytes!("../static/fallback-image.png");
-    (TypedHeader(ContentType::png()), fallback_image)
-}
-
-async fn get_item_icon(
-    Path(item_id): Path<u32>,
-    Query(query): Query<IconQuery>,
-) -> Result<Response<body::Body>, WebError> {
-    // When an item has no icon (or the requested size variant is missing),
-    // serve the static fallback PNG with 200 instead of throwing a 500.
-    // Browsers render the placeholder cleanly and no console errors fire.
-    if let Some(bytes) = get_item_image(item_id as i32, query.size) {
-        let mime_type = mime_guess::from_path("icon.webp").first_or_text_plain();
-        Ok(Response::builder()
-            .header(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("max-age=86400"),
-            )
-            .header(header::CONTENT_TYPE, mime_type.as_ref())
-            .body(body::Body::new(http_body_util::Full::from(bytes)))?)
-    } else {
-        let fallback: &'static [u8] = include_bytes!("../static/fallback-image.png");
-        Ok(Response::builder()
-            .header(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("max-age=3600"),
-            )
-            .header(header::CONTENT_TYPE, "image/png")
-            .body(body::Body::new(http_body_util::Full::from(fallback)))?)
-    }
-}
+pub(crate) use self::state::WebState;
+use self::static_files::{
+    fallback_item_icon, favicon, get_item_icon, robots, service_worker_js, static_path,
+};
 
 pub(crate) async fn invite() -> Redirect {
     let client_id = std::env::var("DISCORD_CLIENT_ID").expect("Unable to get DISCORD_CLIENT_ID");
@@ -523,31 +390,44 @@ pub(crate) async fn unclaim_retainer(
 pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
-) -> Result<Json<Vec<List>>, ApiError> {
-    let lists = db
-        .get_lists_for_user(user.id as i64)
-        .await?
-        .into_iter()
-        .map(List::try_from)
-        .collect::<Result<Vec<_>, ApiConversionError>>()?;
+) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
+    let lists = try_join_all(
+        db.get_lists_for_user(user.id as i64)
+            .await?
+            .into_iter()
+            .map(|list| {
+                let db = db.clone();
+                let user_id = user.id as i64;
+                async move {
+                    let permission = db.get_permission(list.id, user_id).await?;
+                    Ok::<_, ApiError>(ListWithPermission {
+                        list: List::try_from(list)?,
+                        permission,
+                    })
+                }
+            }),
+    )
+    .await?;
     Ok(Json(lists))
 }
 
 pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
-    Path(id): Path<i32>,
-    user: AuthDiscordUser,
-) -> Result<Json<(List, Vec<ListItem>)>, ApiError> {
+    perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
+) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
-        db.get_list(id, user.id as i64),
-        db.get_list_items(id, user.id as i64),
+        db.get_list(perm.list_id, perm.user_id),
+        db.get_list_items(perm.list_id, perm.user_id),
     )
     .await?;
     let list_items = list_items
         .into_iter()
         .map(ListItem::from)
         .collect::<Vec<_>>();
-    let list = List::try_from(list)?;
+    let list = ListWithPermission {
+        list: List::try_from(list)?,
+        permission: perm.permission,
+    };
     Ok(Json((list, list_items)))
 }
 
@@ -556,12 +436,13 @@ pub(crate) async fn get_list_with_listings(
     State(world_cache): State<Arc<WorldCache>>,
     Path(id): Path<i32>,
     user: AuthDiscordUser,
-) -> Result<Json<(List, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
+) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
     let (list, list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
     .await?;
+    let permission = db.get_permission(id, user.id as i64).await?;
     // tbd: probably don't need to send clients all listings, but for now keep it this way.
     let selector = AnySelector::try_from(&list)?;
     let world = world_cache.lookup_selector(&selector)?;
@@ -588,22 +469,28 @@ pub(crate) async fn get_list_with_listings(
         })
         .collect();
 
-    Ok(Json((List::try_from(list)?, list_items)))
+    Ok(Json((
+        ListWithPermission {
+            list: List::try_from(list)?,
+            permission,
+        },
+        list_items,
+    )))
 }
 
 pub(crate) async fn delete_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
-    Path(list_id): Path<i32>,
-    user: AuthDiscordUser,
+    perm: crate::web::list_permission::RequireListPermission<
+        { crate::web::list_permission::OWNER },
+    >,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(list_id, user.id as i64).await?;
-    db.delete_list(list_id, user.id as i64).await?;
-    let _ = senders
-        .lists
-        .send(EventType::removed(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    db.delete_list(perm.list_id, perm.user_id).await?;
+    send_list_event(
+        &senders,
+        EventType::removed(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -617,9 +504,10 @@ pub(crate) async fn create_list(
     let list = db
         .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
         .await?;
-    let _ = senders
-        .lists
-        .send(EventType::added(ListEventData::List(List::try_from(list)?)));
+    send_list_event(
+        &senders,
+        EventType::added(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -631,37 +519,34 @@ pub(crate) async fn edit_list(
 ) -> Result<Json<()>, ApiError> {
     let list = db
         .update_list(list.id, user.id as i64, |ulist| {
-            ulist.datacenter_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::Datacenter(dc) => Some(dc),
-                _ => None,
-            });
-            ulist.region_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::Region(region) => Some(region),
-                _ => None,
-            });
-            ulist.world_id = ActiveValue::Set(match list.wdr_filter {
-                ultros_api_types::world_helper::AnySelector::World(world) => Some(world),
-                _ => None,
-            });
+            use ultros_api_types::world_helper::AnySelector;
+            let (datacenter_id, region_id, world_id) = match list.wdr_filter {
+                AnySelector::Datacenter(dc) => (Some(dc), None, None),
+                AnySelector::Region(region) => (None, Some(region), None),
+                AnySelector::World(world) => (None, None, Some(world)),
+            };
+            ulist.datacenter_id = ActiveValue::Set(datacenter_id);
+            ulist.region_id = ActiveValue::Set(region_id);
+            ulist.world_id = ActiveValue::Set(world_id);
             ulist.name = ActiveValue::Set(list.name);
         })
         .await?;
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        &senders,
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
 pub(crate) async fn post_item_to_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
-    Path(id): Path<i32>,
-    user: AuthDiscordUser,
+    perm: crate::web::list_permission::RequireListPermission<
+        { crate::web::list_permission::WRITE },
+    >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(id, user.id as i64).await?;
+    let list = db.get_list(perm.list_id, perm.user_id).await?;
     let ListItem {
         item_id,
         hq,
@@ -670,11 +555,12 @@ pub(crate) async fn post_item_to_list(
         ..
     } = item;
     let item = db
-        .add_item_to_list(&list, user.id as i64, item_id, hq, quantity, acquired)
+        .add_item_to_list(&list, perm.user_id, item_id, hq, quantity, acquired)
         .await?;
-    let _ = senders
-        .lists
-        .send(EventType::added(ListEventData::ListItem(item.into())));
+    send_list_event(
+        &senders,
+        EventType::added(ListEventData::ListItem(item.into())),
+    );
     Ok(Json(()))
 }
 
@@ -694,11 +580,10 @@ pub(crate) async fn post_items_to_list(
     // Given the current structure, maybe just sending a list update is enough if we want to be simple,
     // but the task says synchronize buying.
     // For now, let's just trigger a refetch by sending the List update.
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        &senders,
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(Json(()))
 }
 
@@ -710,9 +595,10 @@ pub(crate) async fn edit_list_item(
 ) -> Result<Json<()>, ApiError> {
     let item = item.into();
     let item = db.update_list_item(item, user.id as i64).await?;
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::ListItem(item.into())));
+    send_list_event(
+        &senders,
+        EventType::updated(ListEventData::ListItem(item.into())),
+    );
     Ok(Json(()))
 }
 
@@ -723,9 +609,10 @@ pub(crate) async fn delete_list_item(
     user: AuthDiscordUser,
 ) -> Result<Json<()>, ApiError> {
     let item = db.remove_item_from_list(user.id as i64, id).await?;
-    let _ = senders
-        .lists
-        .send(EventType::removed(ListEventData::ListItem(item.into())));
+    send_list_event(
+        &senders,
+        EventType::removed(ListEventData::ListItem(item.into())),
+    );
     Ok(Json(()))
 }
 
@@ -741,9 +628,10 @@ pub(crate) async fn delete_multiple_list_items(
     )
     .await?;
     for item in deleted_items {
-        let _ = senders
-            .lists
-            .send(EventType::removed(ListEventData::ListItem(item.into())));
+        send_list_event(
+            &senders,
+            EventType::removed(ListEventData::ListItem(item.into())),
+        );
     }
     Ok(Json(()))
 }
@@ -840,14 +728,8 @@ async fn character_search(
         .flat_map(|r| {
             // world comes back as World [Datacenter], so strip the datacenter and parse the world
             let (world, _) = r.world.split_once(' ')?;
-            let world = cache
-                .lookup_value_by_name(world)
-                .ok()
-                .unwrap_or_else(|| panic!("World {} not found", world));
-            let (first_name, last_name) = r
-                .name
-                .split_once(' ')
-                .expect("Should always have first last name");
+            let world = cache.lookup_value_by_name(world).ok()?;
+            let (first_name, last_name) = r.name.split_once(' ')?;
             Some(FfxivCharacter {
                 id: r.user_id as i32,
                 first_name: first_name.to_string(),
@@ -980,11 +862,10 @@ async fn broadcast_list_update(
     user: i64,
 ) -> Result<(), ApiError> {
     let list = db.get_list(list_id, user).await?;
-    let _ = senders
-        .lists
-        .send(EventType::updated(ListEventData::List(List::try_from(
-            list,
-        )?)));
+    send_list_event(
+        senders,
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
+    );
     Ok(())
 }
 
@@ -1179,10 +1060,31 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/best_deals/{world}", get(get_best_deals))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route("/api/v1/alerts/events", get(list_alert_events))
+        .route(
+            "/api/v1/alerts/events/{id}/resend",
+            post(resend_alert_event),
+        )
         .route("/api/v1/alerts", get(list_alerts).post(create_alert))
         .route(
             "/api/v1/alerts/{id}",
             axum::routing::patch(update_alert).delete(delete_alert),
+        )
+        .route(
+            "/api/v1/endpoints",
+            get(list_endpoints).post(create_endpoint),
+        )
+        .route(
+            "/api/v1/endpoints/{id}",
+            axum::routing::patch(update_endpoint).delete(delete_endpoint),
+        )
+        .route("/api/v1/endpoints/{id}/test", post(test_endpoint))
+        .route(
+            "/api/v1/push/vapid-public-key",
+            get(crate::web::api::push::get_vapid_public_key),
+        )
+        .route(
+            "/api/v1/push/subscribe",
+            post(crate::web::api::push::create_push_subscription),
         )
         .route(
             "/api/v1/listings/{world}/{itemid}",
@@ -1269,6 +1171,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
+        .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
         .route("/sitemap/world/{s}", get(world_sitemap))
         .route("/sitemap/items.xml", get(item_sitemap))
@@ -1284,11 +1187,23 @@ pub(crate) async fn start_web(state: WebState) {
             move || {
                 provide_context(LocalWorldData(Ok(worlds.clone())));
             },
-            shell,
+            // The file/404 fallback doesn't have per-request bootstrap data; an
+            // empty script tag is harmless and the client falls back to HTTP.
+            |options| shell(options, String::new()),
         ))
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
+        .layer(middleware::from_fn(redirect_legacy_book_host))
         .layer(TraceLayer::new_for_http())
+        // Sentry/Glitchtip: bind a fresh Hub per request and decorate captured
+        // events with HTTP context (method, URL, status). NewSentryLayer must
+        // come before SentryHttpLayer; ServiceBuilder applies in declared
+        // order so this is correct.
+        .layer(
+            ServiceBuilder::new()
+                .layer(sentry_tower::NewSentryLayer::new_from_top())
+                .layer(sentry_tower::SentryHttpLayer::new().enable_transaction()),
+        )
         .layer(
             CompressionLayer::new().compress_when(
                 SizeAbove::new(256)

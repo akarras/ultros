@@ -24,6 +24,7 @@ use crate::{
     global_state::{
         cheapest_prices::CheapestPrices, home_world::get_price_zone, xiv_data::tracked_data,
     },
+    i18n::*,
 };
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
@@ -110,6 +111,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     use crate::global_state::cookies::Cookies;
     use crate::global_state::craft_options::{self, CraftOptions};
 
+    let i18n = use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
     let cookies = use_context::<Cookies>().unwrap();
     let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
@@ -161,9 +163,9 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
                     Some(view! {
                         <span class="flex flex-row gap-2 items-center flex-wrap">
-                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">"HQ:"</span>
+                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)] text-xs">{t!(i18n, related_recipe_hq_label)}</span>
                             <Gil amount=hq.cost />
-                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">"LQ:"</span>
+                            <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] text-xs">{t!(i18n, related_recipe_lq_label)}</span>
                             <Gil amount=lq.cost />
                             {(lq.shard_cost > 0 && opts_value.exclude_shards).then(|| view! {
                                 <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] text-[10px] text-[color:var(--color-text-muted)]">
@@ -227,6 +229,7 @@ fn CraftOptionsToggleRow() -> impl IntoView {
 
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
+    let i18n = use_i18n();
     let job = job_code_from_craft_type(recipe.craft_type);
     let analyzer_href = move || {
         use crate::global_state::cookies::Cookies;
@@ -248,12 +251,12 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| {
             view! {
-                <div class="flex items-center justify-between gap-2 py-0.5">
-                    <div class="flex items-center gap-2">
-                        <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] text-[color:var(--color-text)] text-xs">{amount.to_string()}</span>
+                <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-1">
+                    <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs tabular-nums text-center min-w-7">{amount.to_string()}</span>
+                    <div class="min-w-0">
                         <SmallItemDisplay item=ingredient />
                     </div>
-                    <div class="text-xs"><CheapestPrice item_id=ingredient.key_id /></div>
+                    <div class="text-xs justify-self-end whitespace-nowrap"><CheapestPrice item_id=ingredient.key_id /></div>
                 </div>
             }
         })
@@ -264,25 +267,25 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let is_ingredient = IngredientsIter::new(recipe).any(|(i, _)| i == item_id);
 
     Some(view! {
-        <div class="card p-4 space-y-3 rounded-lg border border-brand-700/30 hover:shadow-lg hover:border-brand-500/50 transition-all">
-            <div class="flex items-center justify-between gap-2 border-b border-brand-700/30 pb-2">
-                <div class="flex items-center gap-3">
+        <div class="card p-4 sm:p-5 space-y-4 rounded-lg border border-brand-700/30 hover:shadow-lg hover:border-brand-500/50 transition-all min-w-0">
+            <div class="flex flex-col gap-3 border-b border-brand-700/30 pb-3 lg:flex-row lg:items-center lg:justify-between">
+                <div class="flex min-w-0 flex-wrap items-center gap-3">
                     <SmallItemDisplay item=target_item />
                     <CheapestPrice item_id=target_item.key_id />
                 </div>
-                <div class="flex items-center gap-1.5">
+                <div class="flex shrink-0 flex-wrap items-center gap-1.5">
                     {is_target.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
                                      bg-emerald-900/40 border border-emerald-700/40
                                      text-emerald-200">
-                            "Target"
+                            {t!(i18n, related_recipe_target_chip)}
                         </span>
                     })}
                     {is_ingredient.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
                                      bg-blue-900/40 border border-blue-700/40
                                      text-blue-200">
-                            "Ingredient"
+                            {t!(i18n, related_recipe_ingredient_chip)}
                         </span>
                     })}
                     <AddRecipeToList recipe />
@@ -297,16 +300,16 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                 </div>
             </div>
 
-            <div class="space-y-1">
-                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">"Ingredients"</div>
-                <div class="pl-1 border-l-2 border-brand-700/30 space-y-1">
+            <div class="space-y-2">
+                <div class="text-xs font-semibold text-brand-300 uppercase tracking-wide">{t!(i18n, related_recipe_ingredients_heading)}</div>
+                <div class="rounded-md border border-brand-700/25 bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] px-3 py-2">
                     {ingredients}
                 </div>
             </div>
 
-            <div class="pt-2 border-t border-brand-700/30">
-                <div class="flex items-center justify-between gap-2 text-sm">
-                    <span class="text-brand-300">"Est. Cost:"</span>
+            <div class="grid gap-3 pt-3 border-t border-brand-700/30 sm:grid-cols-2">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span class="text-brand-300">{t!(i18n, related_recipe_est_cost)}</span>
                     <RecipePriceEstimate recipe />
                 </div>
 
@@ -356,7 +359,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                     .map(|d| d.price)
                             } else { None };
 
-                            let profit_chip = |label: &str, profit_opt: Option<i32>| {
+                            let profit_chip = |label: String, profit_opt: Option<i32>| {
                                 profit_opt.map(|profit| {
                                     let cls = if profit >= 0 {
                                         "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
@@ -369,10 +372,10 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
                             Some(view! {
                                 <div class="flex flex-wrap items-center justify-between gap-2 text-sm mt-2">
-                                    <span class="text-brand-300">"Est. Profit:"</span>
-                                    <div class="flex gap-2">
-                                        {profit_chip("HQ", hq_sell.map(|p| p - hq.cost))}
-                                        {profit_chip("LQ", lq_sell.map(|p| p - lq.cost))}
+                                    <span class="text-brand-300">{t!(i18n, related_recipe_est_profit)}</span>
+                                    <div class="flex flex-wrap justify-end gap-2">
+                                        {profit_chip(t_string!(i18n, hq).to_string(), hq_sell.map(|p| p - hq.cost))}
+                                        {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq.cost))}
                                     </div>
                                 </div>
                             })
@@ -849,7 +852,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     <CraftOptionsToggleRow />
                 </div>
                 <ActiveListBanner />
-                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 max-w-6xl">
                     <For
                         each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())
                         key=|recipe| recipe.key_id

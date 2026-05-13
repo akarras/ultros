@@ -3,14 +3,18 @@ use any_spawner::Executor;
 use anyhow::{Result, anyhow};
 use futures::{Future, future::join};
 use gloo_net::http::Request;
+use leptos::leptos_dom::helpers::set_timeout;
 use leptos::{prelude::*, task::spawn_local};
 use log::{Level, error, info};
 use rexie::{ObjectStore, Rexie, Store, Transaction, TransactionMode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use ultros_api_types::{world::WorldData, world_helper::WorldHelper};
+use ultros_api_types::{
+    bootstrap::Bootstrap, user::UserData, world::WorldData, world_helper::WorldHelper,
+};
 use ultros_app::*;
 use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsCast, JsValue};
 
 #[derive(Serialize, Deserialize)]
 struct Data {
@@ -174,54 +178,210 @@ async fn populate_xiv_gen_data() -> anyhow::Result<()> {
     try_populate_xiv_gen_data().await
 }
 
-async fn get_world_data() -> Arc<WorldHelper> {
-    let json: WorldData = gloo_net::http::Request::get("/api/v1/world_data")
+async fn fetch_world_data_once() -> Result<Arc<WorldHelper>, anyhow::Error> {
+    let json: WorldData = Request::get("/api/v1/world_data")
         .send()
         .await
-        .map_err(|e| {
-            error!("{e}");
-            e
-        })
-        .unwrap()
+        .map_err(|e| anyhow!("failed to fetch world data: {e}"))?
         .json()
         .await
-        .unwrap();
-    Arc::new(WorldHelper::from(json))
+        .map_err(|e| anyhow!("failed to parse world data: {e}"))?;
+    Ok(Arc::new(WorldHelper::from(json)))
+}
+
+async fn get_world_data() -> Result<Arc<WorldHelper>, anyhow::Error> {
+    retry(fetch_world_data_once, 3).await
+}
+
+async fn fetch_region_once() -> Result<String, anyhow::Error> {
+    Request::get("/api/v1/detectregion")
+        .send()
+        .await
+        .map_err(|e| anyhow!("failed to fetch region: {e}"))?
+        .text()
+        .await
+        .map_err(|e| anyhow!("failed to read region response: {e}"))
 }
 
 async fn get_region() -> String {
-    gloo_net::http::Request::get("/api/v1/detectregion")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap()
+    match retry(fetch_region_once, 3).await {
+        Ok(text) => text,
+        Err(e) => {
+            error!("region detection failed after retries: {e}");
+            String::new()
+        }
+    }
+}
+
+/// Best-effort fetch of the current user when the SSR bootstrap is missing.
+///
+/// Returns `Some(user)` if logged in, `None` if the server says we're not
+/// authenticated (401 / etc.). Any other failure also collapses to `None` —
+/// the hydration view tree just renders as logged-out, which matches what
+/// the SSR side would have rendered for an unauthenticated request.
+async fn fetch_current_user_fallback() -> Option<UserData> {
+    let response = match Request::get("/api/v1/current_user").send().await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("current_user fetch failed: {e}");
+            return None;
+        }
+    };
+    if !response.ok() {
+        return None;
+    }
+    match response.json::<UserData>().await {
+        Ok(user) => Some(user),
+        Err(e) => {
+            error!("current_user parse failed: {e}");
+            None
+        }
+    }
+}
+
+fn set_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        console_error_panic_hook::hook(panic_info);
+        report_rust_panic(panic_info);
+    }));
+}
+
+fn report_rust_panic(panic_info: &std::panic::PanicHookInfo<'_>) {
+    let message = panic_info
+        .payload()
+        .downcast_ref::<&str>()
+        .copied()
+        .map(String::from)
+        .or_else(|| panic_info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "Rust WASM panic".to_string());
+    let location = panic_info
+        .location()
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Defer the JS call so it runs after the current task pops off the
+    // wasm-bindgen-futures executor. If a panic fires mid-poll and we call
+    // the reporter synchronously, any executor re-entry from the JS side
+    // (a promise callback, another spawned future being woken) hits the
+    // still-borrowed task-queue RefCell and triggers a secondary
+    // `RefCell already borrowed` panic — see GlitchTip issues 909/881/915.
+    set_timeout(
+        move || {
+            let global = js_sys::global();
+            let Ok(reporter) =
+                js_sys::Reflect::get(&global, &JsValue::from_str("__ultrosReportRustPanic"))
+            else {
+                return;
+            };
+            let Some(reporter) = reporter.dyn_ref::<js_sys::Function>() else {
+                return;
+            };
+            let _ = reporter.call2(
+                &JsValue::NULL,
+                &JsValue::from_str(&message),
+                &JsValue::from_str(&location),
+            );
+        },
+        std::time::Duration::from_millis(0),
+    );
+}
+
+/// Read the bootstrap blob the SSR handler injects as
+/// `window.__ULTROS_BOOTSTRAP__`. Returns `None` if the script wasn't there or
+/// failed to decode — callers should fall back to the legacy fetch path so
+/// the client stays robust to old / mismatched HTML.
+fn read_bootstrap() -> Option<Bootstrap> {
+    use wasm_bindgen::{JsCast, JsValue};
+    let window = leptos::prelude::window();
+    let window_value: &JsValue = window.unchecked_ref();
+    let value =
+        js_sys::Reflect::get(window_value, &JsValue::from_str("__ULTROS_BOOTSTRAP__")).ok()?;
+    if value.is_undefined() || value.is_null() {
+        return None;
+    }
+    match serde_wasm_bindgen::from_value::<Bootstrap>(value) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            error!("Failed to decode __ULTROS_BOOTSTRAP__: {e}");
+            None
+        }
+    }
+}
+
+fn dispatch_boot_event(name: &str) {
+    if let Some(window) = web_sys::window()
+        && let Ok(event) = web_sys::Event::new(name)
+    {
+        let _ = window.dispatch_event(&event);
+    }
 }
 
 #[wasm_bindgen]
 pub fn hydrate() {
-    console_error_panic_hook::set_once();
+    set_panic_hook();
     // tracing_wasm::set_as_global_default();
     console_log::init_with_level(Level::Info).unwrap();
     // check that we have the right client version data
     let _ = Executor::init_wasm_bindgen();
     log::info!("hydrate mode - hydrating");
+    dispatch_boot_event("ultros:wasm-loaded");
     spawn_local(async move {
         info!("fetching..");
-        let (_, (worlds, region)) = join(
-            populate_xiv_gen_data(),
-            join(get_world_data(), get_region()),
-        )
-        .await;
+        // Use the SSR-injected bootstrap when available; only fall back to
+        // network requests if it's missing (e.g. stale cached HTML).
+        let bootstrap = read_bootstrap();
+        let (worlds, region, current_user) = if let Some(b) = bootstrap {
+            let _ = populate_xiv_gen_data().await;
+            (
+                Ok(Arc::new(WorldHelper::from(b.world_data))),
+                b.region,
+                Some(b.current_user),
+            )
+        } else {
+            info!(
+                "bootstrap missing — falling back to HTTP for world_data + region + current_user"
+            );
+            // Fetch current_user alongside the other fallbacks so we can
+            // provide BootstrapUser context before hydration runs. Otherwise
+            // the SSR DOM (rendered with the server's view of auth state)
+            // and the client view tree (auth state still loading) diverge
+            // and tachys hydration panics at hydration.rs:163.
+            let (_, ((worlds, region), current_user)) = join(
+                populate_xiv_gen_data(),
+                join(
+                    join(get_world_data(), get_region()),
+                    fetch_current_user_fallback(),
+                ),
+            )
+            .await;
+            (worlds, region, Some(current_user))
+        };
         info!("hydrating body");
+        let world_data = match worlds {
+            Ok(worlds) => LocalWorldData(Ok(worlds)),
+            Err(e) => {
+                error!("failed to load world data: {e}");
+                LocalWorldData::failed(e.to_string())
+            }
+        };
         hydrate_body(move || {
-            let worlds = worlds.clone();
+            let world_data = world_data.clone();
             let region = region.clone();
-            let worlds = Ok(worlds);
+            let current_user = current_user.clone();
             provide_context(GuessedRegion(region));
-            provide_context(LocalWorldData(worlds));
+            provide_context(world_data);
+            if let Some(current_user) = current_user {
+                provide_context(BootstrapUser(current_user));
+            }
             view! { <App /> }
         });
+        dispatch_boot_event("ultros:hydrated");
     });
 }

@@ -13,8 +13,8 @@ use ultros_api_types::{
 };
 use ultros_db::{
     UltrosDb,
-    entity::{alert, alert_item_threshold},
-    world_data::world_cache::WorldCache,
+    entity::{alert, alert_item_threshold, alert_list_threshold},
+    world_data::world_cache::{AnySelector as DbAnySelector, WorldCache},
 };
 
 use crate::alerts::delivery::dispatch_alert;
@@ -64,6 +64,43 @@ pub(crate) fn format_threshold_alert_message(
     (title, body)
 }
 
+/// Build the Discord embed title + body for a list-threshold alert firing. Pure.
+/// Format mirrors the item-threshold one so the delivery shape stays familiar,
+/// but the title is prefixed with the list name to disambiguate when a user
+/// subscribes to multiple lists.
+pub(crate) fn format_list_threshold_alert_message(
+    list_name: &str,
+    list_id: i32,
+    item_name: &str,
+    item_id: i32,
+    matched_price: i32,
+    target_price: i64,
+) -> (String, String) {
+    let title = format!("📋 {list_name}: {item_name} at {matched_price} gil");
+    let body = format!(
+        "Target: {target_price} gil\nItem: https://ultros.app/item/{item_id}\nList: https://ultros.app/list/{list_id}"
+    );
+    (title, body)
+}
+
+/// Returns true if `listing` satisfies every condition of `rule` and the rule is
+/// off cooldown at `now`. Mirrors `rule_matches_listing` but for list-scoped
+/// rules. v1 ignores HQ (lists may carry hq=Some(true), but the trigger fires
+/// on any listing that meets the price target — documented behavior).
+pub(crate) fn list_rule_matches_listing(
+    rule: &ListActiveRule,
+    listing: &ActiveListing,
+    now: DateTime<Utc>,
+) -> bool {
+    if !rule.world_id_set.contains(&listing.world_id) {
+        return false;
+    }
+    if (listing.price_per_unit as i64) > rule.target_price {
+        return false;
+    }
+    is_off_cooldown_at(rule.last_fired_at, rule.cooldown_seconds, now)
+}
+
 /// Look up an item's name in the embedded xiv-gen data, falling back to `"Item {id}"` if missing.
 fn resolve_item_name(item_id: i32) -> String {
     xiv_gen_db::data()
@@ -85,9 +122,30 @@ pub(crate) struct ActiveRule {
     pub(crate) world_id_set: HashSet<i32>,
 }
 
+/// A pre-computed (alert, list_item) pair the price-alert tracker fires when a
+/// listing meets the per-row `target_price`. One per (list-threshold alert ×
+/// list_item-with-target). The list's name and the precomputed world id set
+/// are folded in so the dispatch path stays O(1).
+#[derive(Debug, Clone)]
+pub(crate) struct ListActiveRule {
+    pub(crate) alert_id: i32,
+    pub(crate) list_id: i32,
+    pub(crate) item_id: i32,
+    pub(crate) target_price: i64,
+    pub(crate) cooldown_seconds: i32,
+    pub(crate) last_fired_at: Option<DateTime<Utc>>,
+    pub(crate) world_id_set: HashSet<i32>,
+    pub(crate) list_name: String,
+}
+
 #[derive(Debug, Default)]
 struct TrackerState {
     by_item: HashMap<i32, Vec<ActiveRule>>,
+    /// Same shape as `by_item` but for list-scoped alerts. Each
+    /// (item_id) -> Vec<ListActiveRule> entry is one row per (alert × priced
+    /// list_item) so the incoming-listing path doesn't have to do any DB
+    /// queries.
+    by_item_list_rules: HashMap<i32, Vec<ListActiveRule>>,
 }
 
 impl TrackerState {
@@ -141,6 +199,89 @@ impl TrackerState {
             });
         }
     }
+
+    /// Pre-compute the list-threshold index. One DB roundtrip per enabled
+    /// (alert, list) pair to fetch the list row and its priced items. Cost:
+    /// O(active list-alerts) at refresh; O(1) at dispatch.
+    async fn refresh_list_rules_from(
+        &mut self,
+        alerts: &[(alert::Model, alert_list_threshold::Model)],
+        db: &UltrosDb,
+        world_cache: &WorldCache,
+    ) {
+        self.by_item_list_rules.clear();
+        for (a, t) in alerts {
+            if !a.enabled {
+                continue;
+            }
+            let list = match db.get_list_by_id(t.list_id).await {
+                Ok(Some(l)) => l,
+                Ok(None) => {
+                    warn!(alert_id = a.id, list_id = t.list_id, "list not found");
+                    continue;
+                }
+                Err(e) => {
+                    warn!(
+                        alert_id = a.id,
+                        list_id = t.list_id,
+                        "list lookup failed: {e}"
+                    );
+                    continue;
+                }
+            };
+            // Resolve the list's WDR filter into a flat world id set. If the
+            // list has no WDR selector at all we treat the rule as "any world"
+            // by leaving the set empty — and since `list_rule_matches_listing`
+            // requires membership, an empty set means the rule never fires.
+            // The legacy `From<&list::Model> for AnySelector` impl errors if
+            // none are set; this matches that contract.
+            let world_id_set: HashSet<i32> = match DbAnySelector::try_from(&list) {
+                Ok(selector) => match world_cache.lookup_selector(&selector) {
+                    Ok(result) => world_cache
+                        .get_all_worlds_in(&result)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
+                    Err(e) => {
+                        warn!(
+                            alert_id = a.id,
+                            "could not resolve list world selector: {e}"
+                        );
+                        HashSet::new()
+                    }
+                },
+                Err(e) => {
+                    warn!(alert_id = a.id, "list has no world filter: {e}");
+                    HashSet::new()
+                }
+            };
+            let items = match db.get_list_items_with_target(t.list_id).await {
+                Ok(items) => items,
+                Err(e) => {
+                    warn!(alert_id = a.id, "list items lookup failed: {e}");
+                    continue;
+                }
+            };
+            for item in items {
+                let Some(target_price) = item.target_price else {
+                    continue;
+                };
+                self.by_item_list_rules
+                    .entry(item.item_id)
+                    .or_default()
+                    .push(ListActiveRule {
+                        alert_id: a.id,
+                        list_id: t.list_id,
+                        item_id: item.item_id,
+                        target_price,
+                        cooldown_seconds: a.cooldown_seconds,
+                        last_fired_at: a.last_fired_at.map(|dt| dt.with_timezone(&Utc)),
+                        world_id_set: world_id_set.clone(),
+                        list_name: list.name.clone(),
+                    });
+            }
+        }
+    }
 }
 
 pub(crate) struct PriceAlertListener {
@@ -161,9 +302,20 @@ impl PriceAlertListener {
         world_cache: Arc<WorldCache>,
     ) -> Result<Self> {
         let initial = ultros_db.get_all_active_threshold_alerts().await?;
+        let initial_list = ultros_db.get_all_active_list_threshold_alerts().await?;
         let state = Arc::new(Mutex::new(TrackerState::default()));
-        state.lock().await.refresh_from(&initial, &world_cache);
-        info!("price-alert tracker started with {} rules", initial.len());
+        {
+            let mut guard = state.lock().await;
+            guard.refresh_from(&initial, &world_cache);
+            guard
+                .refresh_list_rules_from(&initial_list, &ultros_db, &world_cache)
+                .await;
+        }
+        info!(
+            "price-alert tracker started with {} item-rules and {} list-alerts",
+            initial.len(),
+            initial_list.len()
+        );
 
         let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(1);
 
@@ -202,19 +354,45 @@ async fn handle_added(
 ) {
     let now = Utc::now();
     let mut to_fire: Vec<(ActiveRule, i32)> = vec![];
+    let mut to_fire_list: Vec<(ListActiveRule, i32)> = vec![];
 
     {
         let mut guard = state.lock().await;
         for (listing, _retainer) in &added.listings {
-            let Some(rules) = guard.by_item.get_mut(&listing.item_id) else {
-                continue;
-            };
-            for rule in rules.iter_mut() {
-                if !rule_matches_listing(rule, listing, now) {
-                    continue;
+            if let Some(rules) = guard.by_item.get_mut(&listing.item_id) {
+                for rule in rules.iter_mut() {
+                    if !rule_matches_listing(rule, listing, now) {
+                        continue;
+                    }
+                    rule.last_fired_at = Some(now);
+                    to_fire.push((rule.clone(), listing.price_per_unit));
                 }
-                rule.last_fired_at = Some(now);
-                to_fire.push((rule.clone(), listing.price_per_unit));
+            }
+            if let Some(list_rules) = guard.by_item_list_rules.get_mut(&listing.item_id) {
+                // For one listing matching this item, multiple list-alerts may
+                // each have their own (alert × list_item) row here. We may
+                // also have multiple rows with the same alert_id (one per
+                // priced list_item) — bump all of their cooldowns at once
+                // so a downstream listing for a different item doesn't
+                // double-fire the same alert.
+                let mut fired_alert_ids: HashSet<i32> = HashSet::new();
+                for rule in list_rules.iter_mut() {
+                    if !list_rule_matches_listing(rule, listing, now) {
+                        continue;
+                    }
+                    if !fired_alert_ids.insert(rule.alert_id) {
+                        // Already firing this alert for this listing; skip.
+                        continue;
+                    }
+                    to_fire_list.push((rule.clone(), listing.price_per_unit));
+                }
+                // Apply the cooldown update to every row sharing an alert_id
+                // we just fired, regardless of which row triggered.
+                for rule in list_rules.iter_mut() {
+                    if fired_alert_ids.contains(&rule.alert_id) {
+                        rule.last_fired_at = Some(now);
+                    }
+                }
             }
         }
     }
@@ -251,6 +429,45 @@ async fn handle_added(
         if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
             error!(
                 "failed to update last_fired_at for alert {}: {e}",
+                rule.alert_id
+            );
+        }
+    }
+
+    for (rule, matched_price) in to_fire_list {
+        let item_name = resolve_item_name(rule.item_id);
+        let (title, body) = format_list_threshold_alert_message(
+            &rule.list_name,
+            rule.list_id,
+            &item_name,
+            rule.item_id,
+            matched_price,
+            rule.target_price,
+        );
+
+        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, db, ctx).await;
+        let delivered = delivery_result.is_ok();
+        let delivery_error = delivery_result.err().map(|e| e.to_string());
+
+        if let Err(e) = db
+            .record_alert_event(
+                rule.alert_id,
+                rule.item_id,
+                None,
+                Some(matched_price),
+                delivered,
+                delivery_error,
+            )
+            .await
+        {
+            error!(
+                "failed to record alert_event for list-alert {}: {e}",
+                rule.alert_id
+            );
+        }
+        if delivered && let Err(e) = db.update_alert_last_fired(rule.alert_id).await {
+            error!(
+                "failed to update last_fired_at for list-alert {}: {e}",
                 rule.alert_id
             );
         }

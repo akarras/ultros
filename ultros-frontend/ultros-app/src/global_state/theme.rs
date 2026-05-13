@@ -161,11 +161,6 @@ pub fn provide_theme_settings() -> ThemeSettings {
     settings
 }
 
-/// Retrieve ThemeSettings from context. Panics if not provided.
-pub fn use_theme_settings() -> ThemeSettings {
-    use_context::<ThemeSettings>().expect("ThemeSettings not provided")
-}
-
 fn persist_all(settings: ThemeSettings) {
     let mode_str = settings.mode.get_untracked().as_str().to_string();
     let palette_str = settings.palette.get_untracked().as_str().to_string();

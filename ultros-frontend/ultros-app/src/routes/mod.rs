@@ -1,12 +1,15 @@
 pub mod about;
 pub mod alerts;
 pub mod analyzer;
+pub mod bot;
 pub mod currency_exchange;
 pub mod edit_retainers;
 pub mod fc_crafting_analyzer;
+pub mod help;
 pub mod history;
 pub mod home_page;
 pub mod item_explorer;
+pub mod item_explorer_toolbar;
 pub mod item_view;
 pub mod leve_analyzer;
 pub mod list_view;

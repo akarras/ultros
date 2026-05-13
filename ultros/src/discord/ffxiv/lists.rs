@@ -1,6 +1,8 @@
 use super::{Context, Error};
 use anyhow::anyhow;
 use itertools::Itertools;
+use poise::serenity_prelude::User;
+use ultros_api_types::list::ListPermission;
 use ultros_db::world_data::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
@@ -13,7 +15,10 @@ use xiv_gen::ItemId;
         "add_item",
         "remove_item",
         "show_list",
-        "show_lists"
+        "show_lists",
+        "share_user",
+        "create_invite",
+        "redeem_invite"
     )
 )]
 pub(crate) async fn list(ctx: Context<'_>) -> Result<(), Error> {
@@ -21,11 +26,32 @@ pub(crate) async fn list(ctx: Context<'_>) -> Result<(), Error> {
         poise::CreateReply::default().embed(
             poise::serenity_prelude::CreateEmbed::new()
                 .title("List")
-                .description("Get started with list create"),
+                .description("Get started with `list create`, then share with `list share_user` or `list create_invite`."),
         ),
     )
     .await?;
     Ok(())
+}
+
+fn permission_name(permission: ListPermission) -> &'static str {
+    match permission {
+        ListPermission::None => "None",
+        ListPermission::Read => "Read",
+        ListPermission::Write => "Write",
+        ListPermission::Owner => "Owner",
+    }
+}
+
+fn parse_share_permission(permission: Option<String>) -> Result<ListPermission, Error> {
+    match permission
+        .unwrap_or_else(|| "read".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "read" | "r" => Ok(ListPermission::Read),
+        "write" | "w" => Ok(ListPermission::Write),
+        value => Err(anyhow!("Unsupported permission `{value}`. Use `read` or `write`.").into()),
+    }
 }
 
 /// Shows the lists that you have
@@ -37,13 +63,175 @@ pub(crate) async fn show_lists(ctx: Context<'_>) -> Result<(), Error> {
         .get_or_create_discord_user(ctx.author().id.get(), ctx.author().name.clone())
         .await?;
     let lists = ctx.data().db.get_lists_for_user(user.id).await?;
-    let names: Vec<_> = lists.into_iter().map(|l| l.name).collect();
+    let mut names = Vec::with_capacity(lists.len());
+    for list in lists {
+        let permission = ctx.data().db.get_permission(list.id, user.id).await?;
+        names.push(format!("{} ({})", list.name, permission_name(permission)));
+    }
     let names = names.join("\n");
     ctx.send(
         poise::CreateReply::default().embed(
             poise::serenity_prelude::CreateEmbed::new()
                 .title("Lists")
                 .description(names),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn autocomplete_list_name(
+    ctx: Context<'_>,
+    partial: &str,
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
+    let partial = partial.to_ascii_lowercase();
+    ctx.data()
+        .db
+        .get_lists_for_user(ctx.author().id.get() as i64)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(move |l| l.name.to_ascii_lowercase().contains(&partial))
+        .map(|l| poise::serenity_prelude::AutocompleteChoice::new(l.name.clone(), l.name))
+}
+
+async fn autocomplete_item_name_global(
+    _ctx: Context<'_>,
+    partial: &str,
+) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
+    let partial = partial.to_ascii_lowercase();
+    let items = &xiv_gen_db::data().items;
+    items
+        .iter()
+        .filter(move |(_, i)| !i.name.is_empty() && i.name.to_ascii_lowercase().contains(&partial))
+        .take(25)
+        .map(|(_, i)| {
+            poise::serenity_prelude::AutocompleteChoice::new(i.name.clone(), i.name.clone())
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
+/// Share a list directly with a Discord user
+#[poise::command(slash_command, prefix_command)]
+async fn share_user(
+    ctx: Context<'_>,
+    #[description = "Name of the list to share"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
+    #[description = "Discord user to share with"] user: User,
+    #[description = "read or write. Defaults to read"] permission: Option<String>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let owner = ctx
+        .data()
+        .db
+        .get_or_create_discord_user(ctx.author().id.get(), ctx.author().name.clone())
+        .await?;
+    let target = ctx
+        .data()
+        .db
+        .get_or_create_discord_user(user.id.get(), user.name.clone())
+        .await?;
+    let permission = parse_share_permission(permission)?;
+    let list = ctx
+        .data()
+        .db
+        .get_lists_for_user(owner.id)
+        .await?
+        .into_iter()
+        .find(|list| list.name == list_name)
+        .ok_or(anyhow!("Unable to find list `{list_name}`"))?;
+
+    ctx.data()
+        .db
+        .share_list_with_user(list.id, owner.id, target.id, permission)
+        .await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("List shared")
+                .description(format!(
+                    "`{}` shared with {} as {}",
+                    list.name,
+                    user.name,
+                    permission_name(permission)
+                )),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Create an invite token for a list
+#[poise::command(slash_command, prefix_command)]
+async fn create_invite(
+    ctx: Context<'_>,
+    #[description = "Name of the list to invite people to"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
+    #[description = "read or write. Defaults to read"] permission: Option<String>,
+    #[description = "Maximum invite uses. Leave blank for unlimited"] max_uses: Option<i32>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let owner = ctx
+        .data()
+        .db
+        .get_or_create_discord_user(ctx.author().id.get(), ctx.author().name.clone())
+        .await?;
+    let permission = parse_share_permission(permission)?;
+    let list = ctx
+        .data()
+        .db
+        .get_lists_for_user(owner.id)
+        .await?
+        .into_iter()
+        .find(|list| list.name == list_name)
+        .ok_or(anyhow!("Unable to find list `{list_name}`"))?;
+    let invite = ctx
+        .data()
+        .db
+        .create_invite(list.id, owner.id, permission, max_uses)
+        .await?;
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("List invite created")
+                .description(format!(
+                    "Invite token: `{}`\nList: `{}`\nPermission: {}",
+                    invite.id,
+                    list.name,
+                    permission_name(permission)
+                )),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Redeem a list invite token
+#[poise::command(slash_command, prefix_command)]
+async fn redeem_invite(
+    ctx: Context<'_>,
+    #[description = "Invite token"] invite: String,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user = ctx
+        .data()
+        .db
+        .get_or_create_discord_user(ctx.author().id.get(), ctx.author().name.clone())
+        .await?;
+    let share = ctx.data().db.use_invite(invite, user.id).await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("List invite redeemed")
+                .description(format!(
+                    "You now have {} access to list #{}.",
+                    permission_name(ListPermission::from(share.permission)),
+                    share.list_id
+                )),
         ),
     )
     .await?;
@@ -88,7 +276,9 @@ async fn create(
 #[poise::command(slash_command, prefix_command)]
 async fn remove(
     ctx: Context<'_>,
-    #[description = "Name of the list to remove"] list_name: String,
+    #[description = "Name of the list to remove"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_lists = ctx
@@ -119,8 +309,12 @@ async fn remove(
 #[poise::command(slash_command, prefix_command)]
 async fn add_item(
     ctx: Context<'_>,
-    #[description = "name of the list to add an item to"] list_name: String,
-    #[description = "item to add"] item_name: String,
+    #[description = "name of the list to add an item to"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
+    #[description = "item to add"]
+    #[autocomplete = "autocomplete_item_name_global"]
+    item_name: String,
     #[description = "quantity of the item to add. Leave blank for no quantity"] quantity: Option<
         i32,
     >,
@@ -159,7 +353,9 @@ async fn add_item(
 #[poise::command(slash_command, prefix_command)]
 async fn remove_item(
     ctx: Context<'_>,
-    #[description = "name of the list to remove an item from"] list_name: String,
+    #[description = "name of the list to remove an item from"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
     #[description = "item to remove"] item_name: String,
 ) -> Result<(), Error> {
     let items = &xiv_gen_db::data().items;
@@ -191,7 +387,9 @@ async fn remove_item(
 #[poise::command(slash_command, prefix_command)]
 async fn show_list(
     ctx: Context<'_>,
-    #[description = "list to show"] list_name: String,
+    #[description = "list to show"]
+    #[autocomplete = "autocomplete_list_name"]
+    list_name: String,
 ) -> Result<(), Error> {
     ctx.defer_or_broadcast().await?;
     let discord_user = ctx.author().id.get() as i64;

@@ -32,12 +32,6 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
         },
         UseMutationObserverOptions::default().attributes(true),
     );
-    // let location = use_location();
-    // let pathname = location.pathname;
-    // let search = location.search;
-
-    // let _ = pathname(); // reading from the path to reload this component on page load
-    // let _ = search();
     let ads_visible = Signal::derive(move || !hide_ads.get().unwrap_or_default());
     view! {
         <Show when=ads_visible>

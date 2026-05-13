@@ -74,6 +74,7 @@ impl Ord for ItemAmount {
 
 #[component]
 fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
+    let i18n = use_i18n();
     item_amount
         .map(|item_amount| {
             view! {
@@ -85,7 +86,7 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
                         <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small />
                         <span class="truncate" title=item_amount.item.name.as_str()>{item_amount.item.name.as_str()}</span>
                     </A>
-                    <div>"x" {item_amount.amount}</div>
+                    <div>{t!(i18n, currency_exchange_quantity_x)} {item_amount.amount}</div>
                     <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
                         <AddToList item_id=item_amount.item.key_id.0 />
                     </span>
@@ -173,8 +174,8 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label=format!("Max {}", filter_name.replace("_", " "))
-                                            placeholder="Max"
+                                            aria_label=t_string!(i18n, currency_exchange_max_field_aria, name = filter_name.replace("_", " ")).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -182,8 +183,8 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label=format!("Min {}", filter_name.replace("_", " "))
-                                            placeholder="Min"
+                                            aria_label=t_string!(i18n, currency_exchange_min_field_aria, name = filter_name.replace("_", " ")).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
                                         />
                                     </div>
                                 </div>
@@ -408,8 +409,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label="Min Price Per Item"
-                                            placeholder="Min"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_min_price).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -417,8 +418,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label="Max Price Per Item"
-                                            placeholder="Max"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_max_price).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
                                         />
                                     </div>
                                 </div>
@@ -440,8 +441,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label="Min Quantity Received"
-                                            placeholder="Min"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_min_qty).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -449,8 +450,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label="Max Quantity Received"
-                                            placeholder="Max"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_max_qty).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
                                         />
                                     </div>
                                 </div>
@@ -472,8 +473,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label="Min Profit"
-                                            placeholder="Min"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_min_profit).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -481,8 +482,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label="Max Profit"
-                                            placeholder="Max"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_max_profit).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
                                         />
                                     </div>
                                 </div>
@@ -504,8 +505,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(min)
                                             set_value=SignalSetter::map(set_min)
-                                            aria_label="Min Hours Between Sales"
-                                            placeholder="Min"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_min_hours).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
                                         />
                                     </div>
                                     <div class="flex items-center justify-between">
@@ -513,8 +514,8 @@ pub fn ExchangeItem() -> impl IntoView {
                                         <ParseableInputBox
                                             input=Signal::derive(max)
                                             set_value=SignalSetter::map(set_max)
-                                            aria_label="Max Hours Between Sales"
-                                            placeholder="Max"
+                                            aria_label=t_string!(i18n, currency_exchange_aria_max_hours).to_string()
+                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
                                         />
                                     </div>
                                 </div>

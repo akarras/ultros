@@ -11,29 +11,28 @@ pub(crate) mod ws;
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
 use i18n::*;
 
+use crate::components::icon::Icon;
 use crate::components::recently_viewed::RecentItems;
-pub use crate::global_state::{LocalWorldData, home_world::GuessedRegion};
+pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
-    cheapest_prices::CheapestPrices,
-    clipboard_text::GlobalLastCopiedText,
-    cookies::Cookies,
-    theme::{ThemeMode, provide_theme_settings, use_theme_settings},
-    toasts::provide_toast_context,
-    xiv_data::provide_xiv_data_revision,
+    cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
+    side_nav::provide_side_nav_settings, theme::provide_theme_settings,
+    toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
-        ad::DesktopAdRail, apps_menu::*, language_picker::*,
-        on_hand_input::provide_on_hand_context, patreon::*, search_box::*, theme_picker::*,
-        toast::*, tooltip::*,
+        app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
+        tooltip::*,
     },
     routes::{
         about::*,
         alerts::Alerts,
         analyzer::*,
+        bot::BotGuide,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        help::*,
         history::*,
         home_page::*,
         item_explorer::*,
@@ -57,19 +56,136 @@ use git_const::git_short_hash;
 use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
-use leptos_hotkeys::use_hotkeys;
 #[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
-// use leptos_animation::AnimationContext;
-// use leptos_hotkeys::{provide_hotkeys_context, scopes};
-use crate::components::icon::Icon;
 use leptos_meta::*;
 use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
 use leptos_router::path;
 use log::info;
 
-pub fn shell(options: LeptosOptions) -> impl IntoView {
+fn error_reporting_script() -> Option<String> {
+    let dsn = std::env::var("ULTROS_ERROR_REPORTING_DSN").ok()?;
+    if dsn.trim().is_empty() {
+        return None;
+    }
+
+    let environment = std::env::var("ULTROS_ERROR_REPORTING_ENVIRONMENT")
+        .or_else(|_| std::env::var("LEPTOS_ENVIRONMENT"))
+        .unwrap_or_else(|_| "production".to_string());
+    let sample_rate = std::env::var("ULTROS_ERROR_REPORTING_SAMPLE_RATE")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    let traces_sample_rate = std::env::var("ULTROS_ERROR_REPORTING_TRACES_SAMPLE_RATE")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let release = format!("ultros@{}", git_short_hash!());
+
+    let config = serde_json::json!({
+        "dsn": dsn,
+        "release": release,
+        "environment": environment,
+        "sampleRate": sample_rate.clamp(0.0, 1.0),
+        "tracesSampleRate": traces_sample_rate.clamp(0.0, 1.0),
+        "autoSessionTracking": false,
+        "sendDefaultPii": false,
+        "attachStacktrace": true,
+    });
+    let sdk_url = std::env::var("ULTROS_ERROR_REPORTING_SDK_URL")
+        .unwrap_or_else(|_| "https://browser.sentry-cdn.com/10.52.0/bundle.min.js".to_string());
+    let config = serde_json::to_string(&config).expect("Sentry config should serialize");
+    let sdk_url = serde_json::to_string(&sdk_url).expect("SDK URL should serialize");
+
+    Some(format!(
+        r#"(function(){{
+    var config = {config};
+    var sdkUrl = {sdk_url};
+
+    window.__ultrosReportRustPanic = function(message, location) {{
+        var Sentry = window.Sentry;
+        if (!Sentry || !Sentry.captureException) {{
+            return;
+        }}
+
+        var error = new Error(message || "Rust WASM panic");
+        error.name = "RustWasmPanic";
+        Sentry.withScope(function(scope) {{
+            scope.setTag("runtime", "wasm");
+            if (location) {{
+                scope.setContext("rust_panic", {{ location: location }});
+            }}
+            Sentry.captureException(error);
+        }});
+    }};
+
+    // Patterns for unactionable noise from the Sentry browser SDK's
+    // global unhandledrejection handler — almost always users navigating
+    // away during WASM streaming compile, ad blockers, or corporate
+    // proxies cutting off a /pkg/<hash>/ultros.wasm fetch. See
+    // GlitchTip issues #21 (~880 events), #2374, and #2404.
+    var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
+
+    function isUltrosWasmFetchAbort(event) {{
+        try {{
+            var ex = event && event.exception && event.exception.values && event.exception.values[0];
+            if (!ex) return false;
+
+            // "WebAssembly compilation aborted: ..." — always network/abort.
+            if (ex.type === "TypeError" && typeof ex.value === "string"
+                && ex.value.indexOf("WebAssembly compilation aborted") === 0) {{
+                return true;
+            }}
+
+            // "TypeError: Failed to fetch" originating from the wasm-bindgen
+            // glue loading /pkg/<hash>/ultros.{{js,wasm}}.
+            if (ex.type === "TypeError" && ex.value === "Failed to fetch") {{
+                var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+                for (var i = 0; i < frames.length; i++) {{
+                    var fname = frames[i] && frames[i].filename;
+                    if (typeof fname === "string" && ULTROS_PKG_BUNDLE_RE.test(fname)) {{
+                        return true;
+                    }}
+                }}
+            }}
+        }} catch (_) {{ /* be defensive — never let the filter throw */ }}
+        return false;
+    }}
+
+    var existingBeforeSend = config && config.beforeSend;
+    config = config || {{}};
+    config.beforeSend = function(event, hint) {{
+        if (isUltrosWasmFetchAbort(event)) {{
+            return null;
+        }}
+        if (typeof existingBeforeSend === "function") {{
+            return existingBeforeSend(event, hint);
+        }}
+        return event;
+    }};
+
+    var init = function() {{
+        if (!window.Sentry || !window.Sentry.init) {{
+            return;
+        }}
+        window.Sentry.init(config);
+    }};
+
+    var script = document.createElement("script");
+    script.src = sdkUrl;
+    script.crossOrigin = "anonymous";
+    script.onload = init;
+    script.onerror = function() {{
+        console.warn("Ultros error reporting SDK failed to load");
+    }};
+    document.head.appendChild(script);
+}})();"#
+    ))
+}
+
+pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView {
     let sheet_url = ["/", options.site_pkg_dir.as_ref(), "/ultros.css"].concat();
+    let error_reporting_script = error_reporting_script();
     view! {
         <!DOCTYPE html>
         <html lang="en" data-theme="dark" data-palette="violet">
@@ -79,8 +195,18 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
                 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
                 <link rel="manifest" href="/static/site.webmanifest" />
+                // Bootstrap data injected by the SSR handler. Reading this in
+                // hydrate() lets us skip the /world_data, /detectregion, and
+                // /current_user round-trips on every cold load.
+                <script inner_html=bootstrap_script />
                 <script>
     "(function(){try{var d=document.documentElement;var ls=localStorage;var g=function(k){try{return ls.getItem(k)}catch(_){return null}};var gc=function(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};var mode=g('theme.mode')||gc('theme_mode')||'system';if(mode==='system'){mode=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'};d.setAttribute('data-theme',mode==='light'?'light':'dark');var palette=g('theme.palette')||gc('theme_palette')||'violet';d.setAttribute('data-palette',palette)}catch(_){}})();"
+                </script>
+                <style>
+    "#boot-progress{position:fixed;top:0;left:0;right:0;height:2px;z-index:99999;pointer-events:none;transition:opacity .4s ease}#boot-progress-bar{height:100%;width:0%;background:linear-gradient(90deg,#a78bfa,#f0abfc);box-shadow:0 0 8px rgba(167,139,250,.55);animation:boot-progress-grow 12s cubic-bezier(.05,.7,.1,1) forwards}#boot-progress.mid #boot-progress-bar{animation:boot-progress-mid 3s cubic-bezier(.2,.6,.2,1) forwards}#boot-progress.done{opacity:0}#boot-progress.done #boot-progress-bar{width:100%!important;transition:width .25s ease;animation:none}#boot-progress.error #boot-progress-bar{background:#ef4444;width:100%;animation:none;box-shadow:0 0 8px rgba(239,68,68,.55)}#boot-progress-status{position:fixed;top:8px;right:12px;z-index:99999;font:12px/1.2 system-ui,-apple-system,sans-serif;color:rgba(255,255,255,.55);pointer-events:none;letter-spacing:.02em}#boot-progress.error~#boot-progress-status,#boot-progress.error+#boot-progress-status{color:#fca5a5;pointer-events:auto}@keyframes boot-progress-grow{0%{width:0%}30%{width:25%}60%{width:50%}100%{width:75%}}@keyframes boot-progress-mid{0%{width:75%}100%{width:92%}}@media (prefers-reduced-motion:reduce){#boot-progress-bar{animation-duration:1s!important}#boot-progress{transition:none}}"
+                </style>
+                <script>
+    "(function(){try{var root=document.documentElement;var bar=document.createElement('div');bar.id='boot-progress';var inner=document.createElement('div');inner.id='boot-progress-bar';bar.appendChild(inner);var status=document.createElement('span');status.id='boot-progress-status';status.textContent='Loading\\u2026';root.appendChild(bar);root.appendChild(status);var done=false;var finish=function(){if(done)return;done=true;clearTimeout(wd);bar.classList.add('done');setTimeout(function(){if(bar.parentNode)bar.parentNode.removeChild(bar);if(status.parentNode)status.parentNode.removeChild(status);},450)};var fail=function(msg){if(done)return;done=true;clearTimeout(wd);bar.classList.add('error');status.innerHTML=msg+' \\u2014 <a href=\"\" onclick=\"location.reload();return false\" style=\"color:inherit;text-decoration:underline\">reload</a>'};window.addEventListener('ultros:wasm-loaded',function(){bar.classList.add('mid')});window.addEventListener('ultros:hydrated',finish);window.addEventListener('error',function(e){var f=(e&&e.filename)||'';if(f.indexOf('.wasm')!==-1||f.indexOf('/pkg/')!==-1)fail('Failed to load app')});window.addEventListener('unhandledrejection',function(e){var r=e&&e.reason;var msg=(r&&(r.message||(''+r)))||'';if(msg.indexOf('wasm')!==-1||msg.indexOf('WebAssembly')!==-1)fail('App crashed during load')});var wd=setTimeout(function(){fail('Loading is taking longer than expected')},30000)}catch(_){}})();"
                 </script>
                 <link
                     id="xiv-icons"
@@ -94,9 +220,20 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta property="og:type" content="website" />
                 <meta property="og:locale" content="en-US" />
                 <meta property="og:site_name" content="Ultros" />
+                {error_reporting_script
+                    .map(|script| {
+                        view! { <script>{script}</script> }
+                    })}
                 <AutoReload options=options.clone() />
                 <HydrationScripts options />
                 <MetaTags />
+                <script
+                    async
+                    src="https://www.googletagmanager.com/gtag/js?id=G-WYVZLM39M3"
+                ></script>
+                <script>
+    "window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', 'G-WYVZLM39M3');"
+                </script>
             </head>
             <body>
                 <App />
@@ -131,12 +268,12 @@ pub fn Footer() -> impl IntoView {
                             <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
-                    <a
-                        href="https://book.ultros.app"
-                        class="btn-ghost opacity-80 hover:opacity-100"
+                    <A
+                        href="/help"
+                        attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, book)}</span>
-                    </a>
+                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Help"</span>
+                    </A>
                     <A
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
@@ -179,76 +316,6 @@ pub fn Footer() -> impl IntoView {
 }
 
 #[component]
-pub fn NavRow() -> impl IntoView {
-    // Global hotkeys
-    let i18n = use_i18n();
-    let settings = use_theme_settings();
-    let mode = settings.mode;
-
-    // Toggle theme with Alt+T
-    use_hotkeys!(("AltLeft+KeyT,AltRight+KeyT", "*") => move |_| {
-        let next = match mode.get_untracked() {
-            ThemeMode::Dark => ThemeMode::Light,
-            ThemeMode::Light => ThemeMode::System,
-            ThemeMode::System => ThemeMode::Dark,
-        };
-        mode.set(next);
-    });
-
-    // mobile: inline search (no modal)
-    view! {
-        // Navigation
-        <nav class="sticky top-0 z-50 app-nav">
-            <div class="mx-auto max-w-7xl px-3 sm:px-4 lg:px-6 py-3 flex flex-row flex-wrap items-center gap-2 text-gray-200">
-                // Left section
-                                <div class="hidden lg:flex items-center gap-2">
-                    <A
-                        href="/"
-                        exact=true
-                        attr:class="nav-link"
-                    >
-                        <Icon icon=i::AiHomeFilled />
-                        <span class="hidden sm:inline">{t!(i18n, home)}</span>
-                    </A>
-
-                    <AppsMenu />
-                </div>
-
-                // Center section
-                                <div class="hidden lg:block flex-1 w-full">
-                                    <SearchBox />
-                                </div>
-                                // Mobile: search row on top, actions row below
-                                <div class="block lg:hidden w-full">
-                                    <div class="w-full">
-                                        <SearchBox />
-                                    </div>
-                                    <div class="mt-2 flex items-center justify-between w-full">
-                                        <A href="/" exact=true attr:class="nav-link">
-                                            <Icon icon=i::AiHomeFilled />
-                                            <span class="hidden sm:inline">{t!(i18n, home)}</span>
-                                        </A>
-                                        <AppsMenu />
-                                        <UserMenu />
-                                    </div>
-                                </div>
-
-                // Right section
-                                <div class="hidden lg:flex items-center gap-3">
-                    <div class="hidden lg:block">
-                        <div class="flex items-center gap-2">
-                            <LanguagePicker />
-                            <QuickThemeToggle />
-                        </div>
-                    </div>
-                    <UserMenu />
-                </div>
-            </div>
-        </nav>
-    }
-}
-
-#[component]
 pub fn App() -> impl IntoView {
     info!("app run!");
     let cookies = Cookies::new();
@@ -285,9 +352,11 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_context(GlobalLastCopiedText(RwSignal::new(None)));
     provide_context(RecentItems::new());
     provide_theme_settings();
+    provide_side_nav_settings();
     provide_toast_context();
     provide_xiv_data_revision();
     provide_on_hand_context();
+    ws::realtime::provide_realtime_context();
     // AnimationContext::provide();
     let root_node_ref = NodeRef::<Div>::new();
     #[cfg(feature = "hydrate")]
@@ -304,79 +373,74 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
             <Router>
-                <NavRow />
-                // <AnimatedRoutes outro="route-out" intro="route-in" outro_back="route-out-back" intro_back="route-in-back">
-                // https://github.com/leptos-rs/leptos/issues/1754
-                <main class="flex-1">
-                    <div class="app-route-shell">
-                        <div class="app-route-content">
-                            <Routes fallback=NotFound>
-                                <Route path=path!("") view=HomePage />
-                                <ParentRoute path=path!("retainers") view=Retainers>
-                                    <Route path=path!("edit") view=EditRetainers />
-                                    <Route path=path!("undercuts") view=RetainerUndercuts />
-                                    <Route path=path!("listings") view=RetainerListings />
-                                    <Route path=path!("listings/:id") view=SingleRetainerListings />
-                                    <Route path=path!("") view=RetainersBasePath />
-                                </ParentRoute>
-                                <Route path=path!("alerts") view=Alerts />
-                                <ParentRoute path=path!("list") view=Lists>
-                                    <Route path=path!(":id") view=ListView />
-                                    <Route path=path!("") view=EditLists />
-                                </ParentRoute>
-                                <ParentRoute path=path!("items") view=ItemExplorer>
-                                    <Route path=path!("jobset/:jobset") view=JobItems />
-                                    <Route path=path!("category/:category") view=CategoryItems />
-                                    <Route
-                                        path=path!("")
-                                        view=move || view! { "Choose a category to search!" }
-                                    />
-                                </ParentRoute>
-                                <Route path=path!("item/:world/:id") view=ItemView />
-                                <Route path=path!("item/:id") view=ItemView />
-                                <Route path=path!("flip-finder") view=Analyzer />
-                                <Route path=path!("analyzer") view=move || {
-                                    let nav = leptos_router::hooks::use_navigate();
-                                    Effect::new(move |_| { nav("/flip-finder", Default::default()); });
-                                    view! { <div /> }
-                                } />
-                                <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
-                                <Route path=path!("vendor-resale") view=VendorResale />
-                                <Route path=path!("vendor-resale/:world") view=VendorWorldView />
-                                <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
-                                <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
-                                <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
-                                <Route path=path!("leve-analyzer") view=LeveAnalyzer />
-                                <Route path=path!("scrip-sources") view=ScripSources />
-                                <Route path=path!("venture-analyzer") view=VentureAnalyzer />
-                                <Route path=path!("analyzer/:world") view=move || {
-                                    let nav = leptos_router::hooks::use_navigate();
-                                    let params = leptos_router::hooks::use_params_map();
-                                    Effect::new(move |_| {
-                                        let w = params.with_untracked(|p| p.get("world").clone().unwrap_or_default());
-                                        let to = format!("/flip-finder/{}", w);
-                                        nav(&to, Default::default());
-                                    });
-                                    view! { <div /> }
-                                } />
-                                <Route path=path!("trends/:world") view=Trends />
-                                <Route path=path!("trends") view=Trends />
-                                <Route path=path!("settings") view=Settings />
-                                <Route path=path!("welcome") view=Welcome />
-                                <Route path=path!("profile") view=Profile />
-                                <Route path=path!("privacy") view=PrivacyPolicy />
-                                <Route path=path!("cookie-policy") view=CookiePolicy />
-                                <Route path=path!("about") view=About />
-                                <Route path=path!("history") view=History />
-                                <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
-                                    <Route path=path!(":id") view=ExchangeItem />
-                                    <Route path=path!("") view=CurrencySelection />
-                                </ParentRoute>
-                            </Routes>
-                        </div>
-                        <DesktopAdRail />
-                    </div>
-                </main>
+                <AppShell>
+                    <Routes fallback=NotFound>
+                        <Route path=path!("") view=HomePage />
+                        <ParentRoute path=path!("retainers") view=Retainers>
+                            <Route path=path!("edit") view=EditRetainers />
+                            <Route path=path!("undercuts") view=RetainerUndercuts />
+                            <Route path=path!("listings") view=RetainerListings />
+                            <Route path=path!("listings/:id") view=SingleRetainerListings />
+                            <Route path=path!("") view=RetainersBasePath />
+                        </ParentRoute>
+                        <Route path=path!("alerts") view=Alerts />
+                        <ParentRoute path=path!("list") view=Lists>
+                            <Route path=path!(":id") view=ListView />
+                            <Route path=path!("") view=EditLists />
+                        </ParentRoute>
+                        <ParentRoute path=path!("items") view=ItemExplorer>
+                            <Route path=path!("jobset/:jobset") view=JobItems />
+                            <Route path=path!("category/:category") view=CategoryItems />
+                            <Route
+                                path=path!("")
+                                view=move || view! { "Choose a category to search!" }
+                            />
+                        </ParentRoute>
+                        <Route path=path!("item/:world/:id") view=ItemView />
+                        <Route path=path!("item/:id") view=ItemView />
+                        <Route path=path!("flip-finder") view=Analyzer />
+                        <Route path=path!("analyzer") view=move || {
+                            let nav = leptos_router::hooks::use_navigate();
+                            Effect::new(move |_| { nav("/flip-finder", Default::default()); });
+                            view! { <div /> }
+                        } />
+                        <Route path=path!("flip-finder/:world") view=AnalyzerWorldView />
+                        <Route path=path!("vendor-resale") view=VendorResale />
+                        <Route path=path!("vendor-resale/:world") view=VendorWorldView />
+                        <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                        <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
+                        <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
+                        <Route path=path!("leve-analyzer") view=LeveAnalyzer />
+                        <Route path=path!("scrip-sources") view=ScripSources />
+                        <Route path=path!("venture-analyzer") view=VentureAnalyzer />
+                        <Route path=path!("analyzer/:world") view=move || {
+                            let nav = leptos_router::hooks::use_navigate();
+                            let params = leptos_router::hooks::use_params_map();
+                            Effect::new(move |_| {
+                                let w = params.with_untracked(|p| p.get("world").clone().unwrap_or_default());
+                                let to = format!("/flip-finder/{}", w);
+                                nav(&to, Default::default());
+                            });
+                            view! { <div /> }
+                        } />
+                        <Route path=path!("trends/:world") view=Trends />
+                        <Route path=path!("trends") view=Trends />
+                        <Route path=path!("settings") view=Settings />
+                        <Route path=path!("welcome") view=Welcome />
+                        <Route path=path!("help") view=HelpIndex />
+                        <Route path=path!("help/:topic") view=HelpArticle />
+                        <Route path=path!("profile") view=Profile />
+                        <Route path=path!("privacy") view=PrivacyPolicy />
+                        <Route path=path!("cookie-policy") view=CookiePolicy />
+                        <Route path=path!("about") view=About />
+                        <Route path=path!("bot") view=BotGuide />
+                        <Route path=path!("history") view=History />
+                        <ParentRoute path=path!("currency-exchange") view=CurrencyExchange>
+                            <Route path=path!(":id") view=ExchangeItem />
+                            <Route path=path!("") view=CurrencySelection />
+                        </ParentRoute>
+                    </Routes>
+                </AppShell>
             </Router>
         </div>
         <Footer />

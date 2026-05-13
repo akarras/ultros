@@ -177,6 +177,13 @@ impl WorldHelper {
         Self { world_data }
     }
 
+    /// Borrowed view of the underlying world data. Used by the server when
+    /// inlining the world data into the initial HTML response so the client
+    /// can skip the `/api/v1/world_data` fetch on hydration.
+    pub fn world_data(&self) -> &WorldData {
+        &self.world_data
+    }
+
     /// Ignores case and looks up the world name
     pub fn lookup_world_by_name(&self, name: &str) -> Option<AnyResult<'_>> {
         let mut worlds = self.world_data.regions.iter().flat_map(|region| {
@@ -257,15 +264,37 @@ impl<'a> WorldHelper {
     }
 
     pub fn iter(&'a self) -> impl Iterator<Item = AnyResult<'a>> {
-        self.world_data.regions.iter().flat_map(|r| {
-            [AnyResult::Region(r)]
-                .into_iter()
-                .chain(r.datacenters.iter().flat_map(|d| {
-                    [AnyResult::Datacenter(d)]
-                        .into_iter()
-                        .chain(d.worlds.iter().map(AnyResult::World))
-                }))
-        })
+        self.iter_with_region_priority(None)
+    }
+
+    /// Iterate the full hierarchy with regions reordered so that `preferred_region`
+    /// (matched by name) is yielded first. Sort is stable, so the remaining regions
+    /// keep their original relative order. Passing `None` matches `iter()`.
+    pub fn iter_with_region_priority(
+        &'a self,
+        preferred_region: Option<&str>,
+    ) -> impl Iterator<Item = AnyResult<'a>> {
+        self.regions_ordered(preferred_region)
+            .into_iter()
+            .flat_map(|r| {
+                [AnyResult::Region(r)]
+                    .into_iter()
+                    .chain(r.datacenters.iter().flat_map(|d| {
+                        [AnyResult::Datacenter(d)]
+                            .into_iter()
+                            .chain(d.worlds.iter().map(AnyResult::World))
+                    }))
+            })
+    }
+
+    /// Return all regions, optionally with `preferred_region` (by name) moved to
+    /// the front. Sort is stable.
+    pub fn regions_ordered(&'a self, preferred_region: Option<&str>) -> Vec<&'a Region> {
+        let mut regions: Vec<&Region> = self.world_data.regions.iter().collect();
+        if let Some(pref) = preferred_region {
+            regions.sort_by_key(|r| if r.name == pref { 0u8 } else { 1u8 });
+        }
+        regions
     }
 
     pub fn get_inner_data(&'a self) -> &'a WorldData {
@@ -558,6 +587,44 @@ mod tests {
         assert_eq!(AnySelector::from(&dc), AnySelector::Datacenter(11));
         let region = helper.lookup_selector(AnySelector::Region(2)).unwrap();
         assert_eq!(AnySelector::from(&region), AnySelector::Region(2));
+    }
+
+    #[test]
+    fn regions_ordered_moves_preferred_region_to_front() {
+        let helper: WorldHelper = sample_world_data().into();
+        // No preference → original order.
+        let names: Vec<_> = helper
+            .regions_ordered(None)
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["North-America", "Japan"]);
+        // Japan preferred → Japan first.
+        let names: Vec<_> = helper
+            .regions_ordered(Some("Japan"))
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Japan", "North-America"]);
+        // Unknown preference → original order (stable).
+        let names: Vec<_> = helper
+            .regions_ordered(Some("Atlantis"))
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["North-America", "Japan"]);
+    }
+
+    #[test]
+    fn iter_with_region_priority_groups_under_preferred_region_first() {
+        let helper: WorldHelper = sample_world_data().into();
+        let mut region_order = vec![];
+        for any in helper.iter_with_region_priority(Some("Japan")) {
+            if let AnyResult::Region(r) = any {
+                region_order.push(r.name.as_str());
+            }
+        }
+        assert_eq!(region_order, vec!["Japan", "North-America"]);
     }
 
     #[test]

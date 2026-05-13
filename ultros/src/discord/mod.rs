@@ -102,6 +102,9 @@ pub(crate) async fn start_discord(
                         event_receivers.retainer_undercut.resubscribe(),
                     ),
                 );
+                // Make the live serenity context available to web handlers
+                // (endpoint test + alert-event resend) via the process-wide handle.
+                crate::alerts::delivery::set_serenity_ctx(ctx.clone());
                 tokio::spawn(AlertManager::start_manager(
                     db.clone(),
                     item_events,

@@ -9,7 +9,19 @@ use super::{Context, Error};
 
 #[poise::command(slash_command, prefix_command, subcommands("profit"))]
 pub(crate) async fn analyze(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("Hello world").await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("Market analysis")
+                .description(
+                    "Find profitable items to flip.\n\n\
+                     `/ffxiv analyze profit world:<name>` — top 15 flips for a world.\n\
+                     Optional knobs: `minimum_profit` (default 10000), \
+                     `number_recently_sold` (default 5), `threshold_days` (default 7).",
+                ),
+        ),
+    )
+    .await?;
     Ok(())
 }
 
@@ -17,12 +29,16 @@ pub(crate) async fn analyze(ctx: Context<'_>) -> Result<(), Error> {
 pub(crate) async fn profit(
     ctx: Context<'_>,
     #[description = "World you want to try and sell items on"] world: String,
-    #[description = "Minimum profit"] minimum_profit: i32,
-    #[description = "Number of items required to be sold within the threshold"]
-    number_recently_sold: i32,
-    #[description = "Length of the threshold in days"] threshold_days: i32,
+    #[description = "Minimum profit in gil (default: 10000)"] minimum_profit: Option<i32>,
+    #[description = "Number of items sold within the threshold (default: 5)"]
+    number_recently_sold: Option<i32>,
+    #[description = "Length of the threshold in days (default: 7)"] threshold_days: Option<i32>,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+
+    let minimum_profit = minimum_profit.unwrap_or(10_000);
+    let number_recently_sold = number_recently_sold.unwrap_or(5);
+    let threshold_days = threshold_days.unwrap_or(7);
 
     let world = ctx.data().world_cache.lookup_value_by_name(&world)?;
     let world_id = world.as_world()?.id;

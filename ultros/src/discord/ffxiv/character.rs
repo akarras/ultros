@@ -3,7 +3,19 @@ use std::time::Duration;
 
 #[poise::command(slash_command, prefix_command, subcommands("register"))]
 pub(crate) async fn character(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("Hello world").await?;
+    ctx.send(
+        poise::CreateReply::default().embed(
+            poise::serenity_prelude::CreateEmbed::new()
+                .title("FFXIV Characters")
+                .description(
+                    "Look up your character on the Lodestone.\n\n\
+                     `/ffxiv character register name:<First Last>` — search and select.\n\n\
+                     **To verify a character (required for retainer claims),** \
+                     visit https://ultros.app and complete the Lodestone bio challenge.",
+                ),
+        ),
+    )
+    .await?;
     Ok(())
 }
 

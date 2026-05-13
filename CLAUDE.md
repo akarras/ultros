@@ -18,6 +18,22 @@ Two paths:
 
 Either way, *do not commit and push without running fmt-check* — every formatting mistake will fail CI and waste a round trip.
 
+## Windows: OpenSSL via vendored build
+
+`web-push` (Tier 3 of the notification work) pulls in `openssl` transitively via the `ece` crate. The `ultros` crate pins `openssl = { features = ["vendored"] }` so cargo compiles OpenSSL from source via `openssl-src` instead of needing a system library. This means **no `libssl-dev` / OpenSSL-dev-headers required** on Linux or Windows for `cargo build`.
+
+Vendored builds need **Perl + a C compiler** to configure and build OpenSSL from source:
+
+- **Linux**: `perl` is almost always present; if not, `apt install perl`. The CI image already has both.
+- **Windows**: install [Strawberry Perl](https://strawberryperl.com/) (`winget install StrawberryPerl.StrawberryPerl`). Make sure `C:\Strawberry\perl\bin` is on PATH **before** Git's bundled MSYS Perl (`C:\Program Files\Git\usr\bin`) — the MSYS Perl is too minimal to run OpenSSL's `Configure` script and you'll get a `Locale::Maketext::Simple` error. From a fresh PowerShell:
+  ```powershell
+  $env:PATH = "C:\Strawberry\perl\bin;C:\Strawberry\c\bin;" + $env:PATH
+  cargo build  # or ./check_ci.sh from Git Bash with the same PATH
+  ```
+  In Git Bash, prepend `/c/Strawberry/perl/bin:/c/Strawberry/c/bin:` to `$PATH`.
+
+The first build takes ~10 minutes (compiling OpenSSL from source); subsequent builds reuse the cached artifact.
+
 ## Optional: install git hooks
 
 `./scripts/install-hooks.sh` wires `core.hooksPath` to `scripts/hooks/`. Pre-commit runs fmt-check (fast); pre-push runs the full `check_ci.sh`. Bypass with `--no-verify` if you must.
@@ -25,6 +41,18 @@ Either way, *do not commit and push without running fmt-check* — every formatt
 ## E2E smoke
 
 `./scripts/run_e2e.sh` brings up the app (or reuses one on `$BASE_URL`) and runs the Puppeteer screenshot harness in `integration/`. See AGENTS.md for details.
+
+## No hardcoded user-facing strings
+
+Every user-facing string in `ultros-frontend/ultros-app/` must go through `leptos-i18n`. No string literals like `"Alerts"` or `"Library"` inside `view!` — use `t!(i18n, key)` (or `t_string!(i18n, key)` for attribute values).
+
+When you introduce a new string:
+
+1. Add the key to **every** locale file in `ultros-frontend/ultros-app/locales/` (`en`, `fr`, `de`, `ja`, `cn`, `ko`, `tc`). Adding only `en.json` is not acceptable — the build warns on missing keys per locale and `leptos-i18n` won't compile without the key in every file.
+2. Provide a real translation for each locale, not an English stub. If you genuinely can't translate, copy the English value and flag it in the PR so a native speaker can fix it — but the default is to translate.
+3. Use `snake_case` keys; group related strings by feature prefix (`venture_analyzer_*`, `welcome_*`) when there are several.
+
+This applies to labels, headings, button text, aria-labels, tooltips, placeholders, toast messages — anything a user reads. Console logs, error messages bubbled to the dev console, and developer-only tooltips are fine to leave in English.
 
 ## Repo conventions
 

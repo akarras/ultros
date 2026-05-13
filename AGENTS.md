@@ -66,6 +66,10 @@ LEPTOS_FEATURES=test-auth ./scripts/run_e2e.sh
 - Requires a populated `.env` (DATABASE_URL, DISCORD_*, KEY) — or those vars exported directly.
 - Windows: process-group cleanup is best-effort; if `cargo leptos serve` lingers, kill it manually.
 
+### Optional: Glitchtip / Sentry error reporting
+
+Set `GLITCHTIP_DSN` to a Glitchtip (or Sentry) DSN to ship panics + `error!` tracing events with backtraces. Unset → no-op, no network calls. The DSN itself contains the project key so no other env vars are needed. Set `RUST_BACKTRACE=1` in the container so spawned-task panics include a stack trace.
+
 E2E is currently run locally only — not wired into GitHub Actions. Run `./scripts/run_e2e.sh` before merging anything that touches routing, hydration, or the analyzer service.
 
 ## Cursor Cloud specific instructions

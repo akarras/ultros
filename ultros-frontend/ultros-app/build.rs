@@ -1,4 +1,4 @@
-use leptos_i18n_build::{Config, TranslationsInfos};
+use leptos_i18n_build::{Config, ParseOptions, TranslationsInfos};
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -14,7 +14,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_locale("ja")?
         .add_locale("cn")?
         .add_locale("tc")?
-        .add_locale("ko")?;
+        .add_locale("ko")?
+        .parse_options(ParseOptions::new().interpolate_display(true));
 
     let translations_infos = TranslationsInfos::parse(cfg)?;
 

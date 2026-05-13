@@ -4,7 +4,10 @@ use leptos::{
     reactive::wrappers::write::{IntoSignalSetter, SignalSetter},
 };
 
-use crate::{components::select::Select, global_state::LocalWorldData};
+use crate::{
+    components::select::Select,
+    global_state::{LocalWorldData, home_world::locale_preferred_region},
+};
 use ultros_api_types::{world::World, world_helper::AnySelector};
 
 #[component]
@@ -15,11 +18,13 @@ pub fn WorldOnlyPicker(
     let local_worlds = use_context::<LocalWorldData>()
         .expect("Local world data should always be present")
         .0;
+    let i18n = crate::i18n::use_i18n();
     match local_worlds {
         Ok(worlds) => {
             let data = Memo::new(move |_| {
+                let preferred = locale_preferred_region(i18n.get_locale());
                 worlds
-                    .iter()
+                    .iter_with_region_priority(preferred)
                     .filter_map(|w| w.as_world())
                     .cloned()
                     .collect::<Vec<_>>()
@@ -62,13 +67,15 @@ pub fn WorldPicker(
     let local_worlds = use_context::<LocalWorldData>()
         .expect("Local world data should always be present")
         .0;
+    let i18n = crate::i18n::use_i18n();
 
     match local_worlds {
         Ok(worlds) => {
             let worlds_1 = worlds.clone();
             let data = Memo::new(move |_| {
+                let preferred = locale_preferred_region(i18n.get_locale());
                 worlds
-                    .iter()
+                    .iter_with_region_priority(preferred)
                     .map(|l| (l.get_name().to_string(), AnySelector::from(&l)))
                     .collect::<Vec<_>>()
             });
