@@ -56,17 +56,12 @@ impl ToTokens for FromCsvReceiver {
 
             if let Some(count) = f.count {
                 // Array field
-                let indices = (0..count).map(|i| {
-                    let c = col_name.replace("{}", &i.to_string());
-                    quote! {
-                        header.iter().position(|h| h == #c).expect(&format!("Column {} not found", #c))
-                    }
-                });
                 quote! {
                     #field_ident: {
-                        let indices = [#( #indices ),*];
                         let mut vec = Vec::with_capacity(#count);
-                        for idx in indices {
+                        for column_index in 0..#count {
+                            let col_name = #col_name.replace("{}", &column_index.to_string());
+                            let idx = header.iter().position(|h| h == &col_name).expect(&format!("Column {} not found", col_name));
                             let val = row.get(idx).unwrap_or_default();
                             vec.push(val.parse().unwrap_or_else(|_| panic!("Failed to parse {} at index {} with value '{}' as {}", stringify!(#field_ident), idx, val, stringify!(#ty))));
                         }
