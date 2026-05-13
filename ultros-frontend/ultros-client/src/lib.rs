@@ -93,7 +93,7 @@ async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()>
     {
         let (transaction, game_data) = open_transaction(rexie).await?;
         #[allow(clippy::collapsible_if)]
-        if let Ok(value) = game_data.get(&version.clone().into()).await {
+        if let Ok(Some(value)) = game_data.get(version.clone().into()).await {
             if !value.is_null() && !value.is_undefined() {
                 match serde_wasm_bindgen::from_value::<Data>(value) {
                     Ok(value) => match xiv_gen_db::try_init(&value.data) {
@@ -105,7 +105,7 @@ async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()>
 
                 error!("failed to deserialize data. removing {version}");
                 game_data
-                    .delete(&version.clone().into())
+                    .delete(version.clone().into())
                     .await
                     .map_err(|_| anyhow!("error deleting?"))?;
                 transaction
@@ -124,16 +124,10 @@ async fn try_populate_xiv_gen_data_internal(rexie: &Rexie) -> anyhow::Result<()>
     let (transaction, game_data) = open_transaction(rexie).await?;
     // allow the app to run if we can init
     // soft fail if we can't store
-    for (key, _) in game_data
-        .get_all(None, None, None, None)
+    game_data
+        .clear()
         .await
-        .map_err(|e| anyhow!("error getting data {e}"))?
-    {
-        game_data
-            .delete(&key)
-            .await
-            .map_err(|e| anyhow!("error deleting {e}"))?;
-    }
+        .map_err(|e| anyhow!("error clearing store {e}"))?;
     if let Err(e) = game_data
         .add(&data, None)
         .await
