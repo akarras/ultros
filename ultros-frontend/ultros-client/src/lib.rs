@@ -78,7 +78,7 @@ fn get_i18n_lang() -> String {
 async fn init_data() -> anyhow::Result<Vec<u8>> {
     let version = xiv_gen::data_version();
     let lang = get_i18n_lang();
-    let response = Request::get(&format!("/static/data/{}/{}.bincode", version, lang))
+    let response = Request::get(&format!("/static/data/{}/{}.rkyv", version, lang))
         .send()
         .await?
         .binary()
