@@ -588,8 +588,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     let page = page();
                     if pages.page_count() > page.unwrap_or(1).try_into().unwrap_or(1) {
                         "w-full py-4 rounded-xl text-center font-bold
-                             bg-brand-900/40 border border-brand-400/20
-                             hover:bg-brand-800/60 hover:border-brand-400/50 hover:shadow-lg hover:translate-y-[-2px]
+                             border border-[color:var(--color-outline)]
+                             hover:border-brand-300/60 hover:shadow-lg hover:translate-y-[-2px]
                              text-brand-300 transition-all duration-300 group"
                     } else {
                         "hidden"
