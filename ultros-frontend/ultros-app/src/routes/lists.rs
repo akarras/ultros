@@ -373,12 +373,12 @@ fn PermissionPill(permission: ListPermission) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     match permission {
         ListPermission::Write => Some(Either::Left(view! {
-            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-900/40 text-blue-200">
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border border-blue-400/40 text-blue-200">
                 {t!(i18n, list_shared_editor_badge)}
             </span>
         })),
         ListPermission::Read => Some(Either::Right(view! {
-            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-700/40 text-gray-300">
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border border-[color:var(--color-outline)] text-gray-300">
                 {t!(i18n, list_shared_viewer_badge)}
             </span>
         })),

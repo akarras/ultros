@@ -195,14 +195,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                 <div class="flex shrink-0 flex-wrap items-center gap-1.5">
                     {is_target.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
-                                     bg-emerald-900/40 border border-emerald-700/40
+                                     border border-emerald-400/40
                                      text-emerald-200">
                             {t!(i18n, related_recipe_target_chip)}
                         </span>
                     })}
                     {is_ingredient.then(|| view! {
                         <span class="px-2 py-0.5 rounded-full text-xs font-bold
-                                     bg-blue-900/40 border border-blue-700/40
+                                     border border-blue-400/40
                                      text-blue-200">
                             {t!(i18n, related_recipe_ingredient_chip)}
                         </span>
@@ -275,9 +275,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                 let profit_chip = |label: String, profit_opt: Option<i32>| {
                                     profit_opt.map(|profit| {
                                         let cls = if profit >= 0 {
-                                            "px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-900/30 text-emerald-300 border border-emerald-700/30 flex items-center gap-1"
+                                            "px-2 py-0.5 rounded-full text-xs font-bold text-emerald-300 border border-emerald-400/40 flex items-center gap-1"
                                         } else {
-                                            "px-2 py-0.5 rounded-full text-xs font-bold bg-red-900/30 text-red-300 border border-red-700/30 flex items-center gap-1"
+                                            "px-2 py-0.5 rounded-full text-xs font-bold text-red-300 border border-red-400/40 flex items-center gap-1"
                                         };
                                         view! {
                                             <span class=cls>
@@ -488,7 +488,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                             costs.into_iter().map(|(item_id, count)| {
                                                 if let Some(item) = data.items.get(&item_id) {
                                                     view! {
-                                                        <div class="flex items-center gap-1 bg-brand-900/40 px-2 py-1 rounded border border-brand-700/40 hover:bg-brand-900/60 transition-colors">
+                                                        <div class="flex items-center gap-1 px-2 py-1 rounded border border-[color:var(--color-outline)] hover:border-brand-300/60 transition-colors">
                                                             <span class="font-bold text-brand-200">{count} "x"</span>
                                                             <SmallItemDisplay item />
                                                         </div>
@@ -612,10 +612,10 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:shadow-md border border-brand-700/30">
+                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:shadow-md border border-[color:var(--color-outline)] hover:border-brand-300/60">
                              <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2 mt-1">
-                                <span class="px-2 py-1 rounded bg-brand-900/40 border border-brand-700/40 text-xs text-brand-200 font-bold">
+                                <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">
                                     "Lvl " {leve.class_job_level}
                                 </span>
                                 <span class="text-xs text-[color:var(--color-text-muted)] truncate flex items-center gap-1">
@@ -669,7 +669,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             items.iter().take(12).map(|&item| {
                 view! {
                     <A
-                        attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
+                        attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
                         exact=true
                         href=move || {
                             format!(
@@ -686,7 +686,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         <div class="flex items-center gap-2 text-sm">
                             <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                             <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                            <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
+                            <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
                         </div>
                         <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                             <CheapestPrice item_id=item.key_id />
@@ -718,7 +718,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                 items.iter().skip(12).map(|&item| {
                                     view! {
                                         <A
-                                            attr:class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:scale-[1.02] hover:shadow-lg hover:bg-brand-800/50 border border-brand-700/30"
+                                            attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
                                             exact=true
                                             href=move || {
                                                 format!(
@@ -735,7 +735,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                             <div class="flex items-center gap-2 text-sm">
                                                 <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
                                                 <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
-                                                <span class="text-xs text-[color:var(--color-text-muted)] bg-brand-900/50 px-1.5 py-0.5 rounded border border-brand-700/50">"iLvl " {item.level_item}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
                                             </div>
                                             <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                                                 <CheapestPrice item_id=item.key_id />

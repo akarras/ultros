@@ -72,7 +72,7 @@ pub fn TopDeals() -> impl IntoView {
         <div class="panel p-6 relative overflow-hidden">
             <div class="flex items-center justify-between mb-6 relative z-10">
                 <div class="flex items-center gap-3">
-                    <div class="p-2 rounded-lg bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)]">
+                    <div class="p-2 rounded-lg border border-[color:var(--color-outline)] text-[color:var(--brand-fg)]">
                         <Icon icon=i::FaFireSolid width="1.25em" height="1.25em" />
                     </div>
                     <div>
@@ -105,7 +105,7 @@ pub fn TopDeals() -> impl IntoView {
                     deals.get().flatten().map(|data| {
                         if data.is_empty() {
                             view! {
-                                <div class="text-center py-8 text-[color:var(--color-text-muted)] bg-[color:var(--surface-color-alt)] rounded-xl border border-dashed border-[color:var(--separator-color)]">
+                                <div class="text-center py-8 text-[color:var(--color-text-muted)] rounded-xl border border-dashed border-[color:var(--color-outline)]">
                                     <div class="mb-2 opacity-50 mx-auto w-8 h-8 flex items-center justify-center">
                                         <Icon icon=i::FaBoxOpenSolid width="2em" height="2em" />
                                     </div>
