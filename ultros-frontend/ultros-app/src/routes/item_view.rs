@@ -385,16 +385,26 @@ fn MarketStatsPanel(
                                                                     let prices = prices.clone();
                                                                     let empty = crate::components::crafting_cost::EmptyOnHand;
                                                                     let recipes_by_output = std::collections::HashMap::new();
+                                                                    // Read the user's shard preference so the chip stays
+                                                                    // consistent with the cost line in the recipe panel.
+                                                                    let opts_value = use_context::<crate::global_state::cookies::Cookies>()
+                                                                        .map(|c| c.use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(crate::global_state::craft_options::COOKIE_NAME).0.get().unwrap_or_default())
+                                                                        .unwrap_or_default();
+                                                                    let shards_mode = if opts_value.exclude_shards {
+                                                                        crate::components::crafting_cost::ShardsMode::ExcludeShards
+                                                                    } else {
+                                                                        crate::components::crafting_cost::ShardsMode::IncludeMarket
+                                                                    };
                                                                     let lq_opts = crate::components::crafting_cost::CraftingCostOptions {
                                                                         require_hq: false,
                                                                         max_subcraft_depth: 0,
-                                                                        shards: crate::components::crafting_cost::ShardsMode::ExcludeShards,
+                                                                        shards: shards_mode,
                                                                         on_hand: &empty,
                                                                     };
                                                                     let hq_opts = crate::components::crafting_cost::CraftingCostOptions {
                                                                         require_hq: true,
                                                                         max_subcraft_depth: 0,
-                                                                        shards: crate::components::crafting_cost::ShardsMode::ExcludeShards,
+                                                                        shards: shards_mode,
                                                                         on_hand: &empty,
                                                                     };
                                                                     let is_shard = crate::components::related_items::is_shard_item;

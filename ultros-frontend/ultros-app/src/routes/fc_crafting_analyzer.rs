@@ -3,7 +3,7 @@ use crate::components::crafting_cost::{
     compute_ingredient_cost,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
-use crate::global_state::craft_options::CraftOptions;
+use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
@@ -258,7 +258,7 @@ fn FCCraftingAnalyzerTable(
         // per sequence inside the loop because compute_ingredient_cost consumes it.
         let opts_cookie = use_context::<Cookies>()
             .unwrap()
-            .use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS")
+            .use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME)
             .0;
         let opts_value = opts_cookie.get().unwrap_or_default();
         let shards = if exclude_shards_url().unwrap_or(opts_value.exclude_shards) {

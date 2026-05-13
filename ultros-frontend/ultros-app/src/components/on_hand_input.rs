@@ -237,9 +237,10 @@ pub fn OnHandPanel() -> impl IntoView {
 #[component]
 pub fn ActiveListBanner() -> impl IntoView {
     use crate::global_state::cookies::Cookies;
-    use crate::global_state::craft_options::CraftOptions;
+    use crate::global_state::craft_options::{self, CraftOptions};
     let cookies = use_context::<Cookies>().unwrap();
-    let (opts_signal, set_opts) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+    let (opts_signal, set_opts) =
+        cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
 
     let active_id = move || opts_signal.get().unwrap_or_default().active_craft_list;
 

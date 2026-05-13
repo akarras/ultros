@@ -108,11 +108,11 @@ pub(crate) fn recipe_tree_iter(item_id: ItemId) -> impl Iterator<Item = &'static
 #[component]
 fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     use crate::global_state::cookies::Cookies;
-    use crate::global_state::craft_options::CraftOptions;
+    use crate::global_state::craft_options::{self, CraftOptions};
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
     let cookies = use_context::<Cookies>().unwrap();
-    let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+    let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
     let on_hand_map = use_context::<OnHandMap>();
 
     view! {
@@ -186,9 +186,10 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 #[component]
 fn CraftOptionsToggleRow() -> impl IntoView {
     use crate::global_state::cookies::Cookies;
-    use crate::global_state::craft_options::CraftOptions;
+    use crate::global_state::craft_options::{self, CraftOptions};
     let cookies = use_context::<Cookies>().unwrap();
-    let (opts_signal, set_opts) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+    let (opts_signal, set_opts) =
+        cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
 
     let opts = move || opts_signal.get().unwrap_or_default();
     let toggle = move |mutator: Box<dyn Fn(&mut CraftOptions)>| {
@@ -229,9 +230,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let job = job_code_from_craft_type(recipe.craft_type);
     let analyzer_href = move || {
         use crate::global_state::cookies::Cookies;
-        use crate::global_state::craft_options::CraftOptions;
+        use crate::global_state::craft_options::{self, CraftOptions};
         let cookies = use_context::<Cookies>().unwrap();
-        let (opts, _) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+        let (opts, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
         let o = opts.get().unwrap_or_default();
         format!(
             "/recipe-analyzer?job={job}&require-hq={hq}&subcrafts={sub}&shards-exclude={shards}&on-hand={oh}",
@@ -313,9 +314,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                 <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
                     {move || {
                         use crate::global_state::cookies::Cookies;
-                        use crate::global_state::craft_options::CraftOptions;
+                        use crate::global_state::craft_options::{self, CraftOptions};
                         let cookies = use_context::<Cookies>().unwrap();
-                        let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+                        let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
                         let on_hand_map = use_context::<OnHandMap>();
 
                         use_context::<CheapestPrices>().unwrap().read_listings.with(|data| {

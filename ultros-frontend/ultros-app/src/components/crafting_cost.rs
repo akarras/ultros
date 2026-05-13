@@ -1,6 +1,8 @@
 //! Crafting cost types and computation — scaffolded in Task 1, implemented in Tasks 2-4.
-// TODO(Task 10+): remove this allow once `item_page_default` gains a non-test caller
-// (CRYSTAL_SEARCH_CATEGORY now has one via fc_crafting_analyzer).
+// Dead-code allow retained for `item_page_default` — a test-only convenience
+// factory kept around for future surfaces that want a one-call defaults builder
+// rather than the inline-literal pattern the analyzers/item page currently use.
+// Drop the allow (and the helper) if a real caller never materializes.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
