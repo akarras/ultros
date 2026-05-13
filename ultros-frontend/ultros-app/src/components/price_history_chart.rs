@@ -159,12 +159,81 @@ struct SaleRow {
     price: f64,
     /// The colour/category series this sale belongs to.
     group_index: usize,
-    /// Quantity sold in this sale event.
-    quantity: f64,
     /// Quantity-weighted average price overlay (constant across all rows, or NAN).
     market_average_y: f64,
     /// Least-squares trendline value at this row's timestamp (or NAN).
     trend_y: f64,
+}
+
+/// Aggregated quantity for a time bucket. The quantity sub-chart renders these
+/// as one bar per bucket so bars stay visible even when sales cluster in time.
+#[derive(Clone, Debug, PartialEq)]
+struct QuantityBucket {
+    ts: chrono::DateTime<chrono::Utc>,
+    quantity: f64,
+}
+
+/// Pick a bucket size (in seconds) for the quantity histogram based on the
+/// active days window. `days_range == 0` means "all" — fall back to the data span.
+fn quantity_bucket_seconds(days_range: i32, data_span_days: i64) -> i64 {
+    const HOUR: i64 = 3_600;
+    const DAY: i64 = 86_400;
+    const WEEK: i64 = DAY * 7;
+    let effective_days = if days_range > 0 {
+        days_range as i64
+    } else {
+        data_span_days.max(1)
+    };
+    match effective_days {
+        ..=2 => HOUR,
+        3..=10 => 6 * HOUR,
+        11..=45 => DAY,
+        46..=120 => DAY,
+        121..=400 => WEEK,
+        _ => DAY * 30,
+    }
+}
+
+/// Bucket sales by `bucket_secs`, summing quantities into each bucket. Buckets
+/// are aligned to absolute timestamps (UTC) so they line up with calendar boundaries
+/// for day/week/month sizes.
+fn bucket_quantities(sales: &[SaleHistory], bucket_secs: i64) -> Vec<QuantityBucket> {
+    if bucket_secs <= 0 || sales.is_empty() {
+        return Vec::new();
+    }
+    let mut sums: BTreeMap<i64, i64> = BTreeMap::new();
+    for s in sales {
+        let ts = s.sold_date.and_utc().timestamp();
+        let bucket = (ts.div_euclid(bucket_secs)) * bucket_secs;
+        *sums.entry(bucket).or_default() += s.quantity as i64;
+    }
+    sums.into_iter()
+        .filter_map(|(ts, q)| {
+            chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|dt| QuantityBucket {
+                ts: dt,
+                quantity: q as f64,
+            })
+        })
+        .collect()
+}
+
+/// Choose tick `Period`s for the X axis based on the selected window. Chartistry
+/// will pick the densest period that still fits the available width, so we pass
+/// a small set bracketing the expected scale rather than a single period.
+fn x_axis_periods(days_range: i32, data_span_days: i64) -> Vec<Period> {
+    let effective_days = if days_range > 0 {
+        days_range as i64
+    } else {
+        data_span_days.max(1)
+    };
+    match effective_days {
+        ..=2 => vec![Period::Hour, Period::Day],
+        3..=10 => vec![Period::Day, Period::Hour],
+        11..=45 => vec![Period::Day, Period::Month],
+        46..=120 => vec![Period::Day, Period::Month],
+        121..=400 => vec![Period::Month, Period::Day],
+        _ => vec![Period::Month, Period::Year],
+    }
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -223,6 +292,10 @@ pub fn PriceHistoryChart(
     #[prop(into)] sales: Signal<Vec<SaleHistory>>,
     #[prop(into)] filter_outliers: Signal<bool>,
     #[prop(into)] scope_name: Signal<String>,
+    /// Selected days window from the parent (7 / 30 / 90 / 0 for All).
+    /// Used to size quantity buckets and pick X-axis tick periods.
+    #[prop(into)]
+    days_range: Signal<i32>,
 ) -> impl IntoView {
     // Implementation uses leptos-chartistry 0.2 for axes/overlays. Sales stay in
     // one dense series because sparse category series produce misleading tooltip
@@ -370,12 +443,54 @@ pub fn PriceHistoryChart(
                 ts,
                 price,
                 group_index,
-                quantity: _qty as f64,
                 market_average_y: market_average_val,
                 trend_y,
             });
         }
         (series_names, rows)
+    });
+
+    // Bucketed quantity data. Per-sale bars produce zero-width slivers when sales
+    // cluster, so we aggregate into time buckets sized to the visible window.
+    let quantity_data = Memo::new(move |_| {
+        let data = filtered.get();
+        if data.is_empty() {
+            return (Vec::<QuantityBucket>::new(), 86_400i64);
+        }
+        let min_ts = data
+            .iter()
+            .map(|s| s.sold_date.and_utc().timestamp())
+            .min()
+            .unwrap_or(0);
+        let max_ts = data
+            .iter()
+            .map(|s| s.sold_date.and_utc().timestamp())
+            .max()
+            .unwrap_or(0);
+        let span_days = ((max_ts - min_ts) / 86_400).max(0);
+        let bucket_secs = quantity_bucket_seconds(days_range.get(), span_days);
+        (bucket_quantities(&data, bucket_secs), bucket_secs)
+    });
+
+    // X-axis tick periods sized to the visible window.
+    let x_periods = Memo::new(move |_| {
+        let data = filtered.get();
+        let span_days = if data.is_empty() {
+            0
+        } else {
+            let min_ts = data
+                .iter()
+                .map(|s| s.sold_date.and_utc().timestamp())
+                .min()
+                .unwrap_or(0);
+            let max_ts = data
+                .iter()
+                .map(|s| s.sold_date.and_utc().timestamp())
+                .max()
+                .unwrap_or(0);
+            (max_ts - min_ts) / 86_400
+        };
+        x_axis_periods(days_range.get(), span_days)
     });
 
     view! {
@@ -409,7 +524,7 @@ pub fn PriceHistoryChart(
                         .replace("{from}", "")
                         .replace("{to}", "")
                 }
-                class="price-history-chart w-full aspect-[16/9] max-h-[520px] overflow-visible"
+                class="price-history-chart w-full overflow-visible"
             >
                 {move || {
                     let (series_names, rows) = chart_data.get();
@@ -485,11 +600,20 @@ pub fn PriceHistoryChart(
                         }
 
                         let aspect_ratio = AspectRatio::from_inner_ratio(800.0, 450.0);
+                        // X-axis: scale tick periods to the visible window so 7d shows hours/days,
+                        // 30d shows days, etc. The tooltip uses long format for unambiguous dates.
+                        let periods = x_periods.get();
+                        let x_axis_labels = TickLabels::from_generator(
+                            Timestamps::<chrono::Utc>::from_periods(periods.as_slice()),
+                        );
+                        let x_tooltip_labels = TickLabels::from_generator(
+                            Timestamps::<chrono::Utc>::default().with_long_format(),
+                        );
                         let y_tooltip = TickLabels::aligned_floats()
                             .with_format(|v: &f64, _state| short_number(*v as i32));
                         let tooltip = Tooltip::new(
                             TooltipPlacement::LeftCursor,
-                            TickLabels::timestamps(),
+                            x_tooltip_labels,
                             y_tooltip,
                         )
                         .skip_missing(true)
@@ -502,7 +626,7 @@ pub fn PriceHistoryChart(
                             .parse()
                             .unwrap_or(Colour::from_rgb(63, 58, 74));
                         view! {
-                            <div class="flex h-full min-h-0 flex-col gap-2">
+                            <div class="flex flex-col gap-2">
                                 <style>{marker_css}</style>
                                 <Chart
                                     aspect_ratio=aspect_ratio
@@ -510,7 +634,7 @@ pub fn PriceHistoryChart(
                                     font_width=7.0
                                     series=reactive_series
                                     data=rows.clone()
-                                    bottom=vec![TickLabels::timestamps().into_edge()]
+                                    bottom=vec![x_axis_labels.into_edge()]
                                     left=vec![y_labels.into_edge()]
                                     inner=vec![
                                         XGridLine::default().with_colour(grid_colour).into_inner(),
@@ -519,33 +643,46 @@ pub fn PriceHistoryChart(
                                     tooltip=tooltip
                                 />
                                 {show_quantity.get().then(|| {
+                                    let (buckets, _bucket_secs) = quantity_data.get();
+                                    if buckets.is_empty() {
+                                        return ().into_any();
+                                    }
+                                    let q_periods = x_periods.get();
                                     let quantity_colour: Colour = "#22c55e"
                                         .parse()
                                         .unwrap_or(Colour::from_rgb(34, 197, 94));
-                                    let quantity_series = Series::new(|row: &SaleRow| row.ts)
+                                    let quantity_series = Series::new(|b: &QuantityBucket| b.ts)
                                         .bar(
-                                            Bar::new(|row: &SaleRow| row.quantity)
+                                            Bar::new(|b: &QuantityBucket| b.quantity)
                                                 .with_name(t_string!(i18n, chart_legend_quantity).to_string())
                                                 .with_colour(quantity_colour)
-                                                .with_placement(BarPlacement::Edge)
-                                                .with_gap(0.35),
+                                                .with_placement(BarPlacement::Zero)
+                                                .with_gap(0.1),
                                         );
                                     let quantity_labels = TickLabels::aligned_floats()
                                         .with_min_chars(3)
                                         .with_format(|v: &f64, _state| (*v as i32).to_string());
-                                    let quantity_tooltip = Tooltip::new(
-                                        TooltipPlacement::Hide,
-                                        TickLabels::timestamps(),
-                                        quantity_labels.clone(),
+                                    let quantity_x_axis = TickLabels::from_generator(
+                                        Timestamps::<chrono::Utc>::from_periods(q_periods.as_slice()),
                                     );
+                                    let quantity_x_tooltip = TickLabels::from_generator(
+                                        Timestamps::<chrono::Utc>::default().with_long_format(),
+                                    );
+                                    let quantity_tooltip = Tooltip::new(
+                                        TooltipPlacement::LeftCursor,
+                                        quantity_x_tooltip,
+                                        quantity_labels.clone(),
+                                    )
+                                    .with_cursor_distance(14.0);
                                     view! {
-                                        <div class="h-24 border-t border-[color:var(--color-outline)]/70 pt-2">
+                                        <div class="border-t border-[color:var(--color-outline)]/70 pt-2 mt-2">
                                             <Chart
-                                                aspect_ratio=AspectRatio::from_inner_ratio(800.0, 92.0)
+                                                aspect_ratio=AspectRatio::from_inner_ratio(800.0, 120.0)
                                                 font_height=10.0
                                                 font_width=6.0
                                                 series=quantity_series
-                                                data=rows.clone()
+                                                data=buckets
+                                                bottom=vec![quantity_x_axis.into_edge()]
                                                 left=vec![quantity_labels.into_edge()]
                                                 inner=vec![
                                                     XGridLine::default().with_colour(grid_colour).into_inner(),
@@ -554,7 +691,7 @@ pub fn PriceHistoryChart(
                                                 tooltip=quantity_tooltip
                                             />
                                         </div>
-                                    }
+                                    }.into_any()
                                 })}
                                 <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[color:var(--color-text-muted)]">
                                     {series_names.iter().enumerate().map(|(index, name)| {
@@ -843,5 +980,52 @@ mod tests {
     fn iqr_band_widens_with_25x_multiplier() {
         let prices: Vec<i32> = (0..20).collect();
         assert_eq!(iqr_band(&prices), Some((-20, 40)));
+    }
+
+    #[test]
+    fn bucket_seconds_scales_with_window() {
+        // 7d window → 6h buckets (~28 bars max)
+        assert_eq!(quantity_bucket_seconds(7, 7), 6 * 3_600);
+        // 30d window → daily
+        assert_eq!(quantity_bucket_seconds(30, 30), 86_400);
+        // 90d window → still daily
+        assert_eq!(quantity_bucket_seconds(90, 90), 86_400);
+        // "All" with multi-year span → weekly
+        assert_eq!(quantity_bucket_seconds(0, 365), 86_400 * 7);
+    }
+
+    #[test]
+    fn bucket_quantities_sums_within_same_day_bucket() {
+        // Three sales of qty 5 within an hour all land in one daily bucket.
+        let day_start_ts = 1_700_000_000i64 - (1_700_000_000 % 86_400);
+        let sales = vec![
+            sale(100, 1000, 5, day_start_ts + 60),
+            sale(100, 1100, 5, day_start_ts + 600),
+            sale(100, 1050, 5, day_start_ts + 3_500),
+        ];
+        let buckets = bucket_quantities(&sales, 86_400);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].quantity, 15.0);
+    }
+
+    #[test]
+    fn bucket_quantities_separates_across_buckets() {
+        let sales = vec![sale(100, 1000, 3, 0), sale(100, 1000, 7, 86_400 + 60)];
+        let buckets = bucket_quantities(&sales, 86_400);
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(buckets[0].quantity, 3.0);
+        assert_eq!(buckets[1].quantity, 7.0);
+    }
+
+    #[test]
+    fn x_axis_periods_for_short_window_includes_day_or_hour() {
+        let periods = x_axis_periods(7, 7);
+        assert!(periods.contains(&Period::Day) || periods.contains(&Period::Hour));
+    }
+
+    #[test]
+    fn x_axis_periods_for_all_falls_back_to_month_year() {
+        let periods = x_axis_periods(0, 500);
+        assert!(periods.contains(&Period::Month) || periods.contains(&Period::Year));
     }
 }

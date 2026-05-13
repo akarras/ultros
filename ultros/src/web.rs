@@ -44,7 +44,8 @@ use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, User
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification, Retainer,
+    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
+    FfxivCharacterVerification, Retainer,
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_db::ActiveValue;
@@ -173,6 +174,48 @@ async fn world_item_listings(
         sales: sales.into_iter().map(|s| s.into()).collect(),
     };
     Ok(axum::Json(currently_shown))
+}
+
+/// Compact extended sale history for charting. Returns up to `limit` rows (default
+/// 1000, capped at 5000) of price/quantity/timestamp/world/hq — no buyer metadata.
+/// Aimed at the "Load extended history" affordance on the price chart.
+#[tracing::instrument(skip(db, world_cache))]
+async fn extended_sale_history(
+    State(db): State<UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<ExtendedHistoryQuery>,
+) -> Result<axum::Json<ExtendedSaleHistory>, WebError> {
+    const DEFAULT_LIMIT: u64 = 1_000;
+    const MAX_LIMIT: u64 = 5_000;
+    let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+
+    let selected_value = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+    let sales = db
+        .get_compact_sale_history(worlds.iter().copied(), item_id, limit)
+        .await
+        .inspect_err(|e| tracing::error!(error = ?e, "Error getting extended sales"))?;
+    let response = ExtendedSaleHistory {
+        sales: sales
+            .into_iter()
+            .map(|s| CompactSale {
+                quantity: s.quantity,
+                price_per_item: s.price_per_item,
+                hq: s.hq,
+                sold_date: s.sold_date,
+                world_id: s.world_id,
+            })
+            .collect(),
+    };
+    Ok(axum::Json(response))
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ExtendedHistoryQuery {
+    limit: Option<u64>,
 }
 
 async fn refresh_world_item_listings(
@@ -1089,6 +1132,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route(
             "/api/v1/listings/{world}/{itemid}",
             get(world_item_listings),
+        )
+        .route(
+            "/api/v1/extended_history/{world}/{itemid}",
+            get(extended_sale_history),
         )
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",

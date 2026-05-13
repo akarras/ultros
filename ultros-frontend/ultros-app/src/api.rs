@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
+    ActiveListing, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
+    FfxivCharacterVerification,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
         CreatePushSubscriptionRequest, Endpoint, ResendResult, UpdateAlertRequest,
@@ -40,6 +41,22 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
         return Err(AppError::NoItem);
     }
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
+}
+
+/// Pull a larger window of sales than the default listings endpoint returns.
+/// Server caps `limit` at 5000.
+pub(crate) async fn get_extended_sale_history(
+    item_id: i32,
+    world: &str,
+    limit: u32,
+) -> AppResult<ExtendedSaleHistory> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    fetch_api(&format!(
+        "/api/v1/extended_history/{world}/{item_id}?limit={limit}"
+    ))
+    .await
 }
 
 /// This is okay because the client will send our login cookie.

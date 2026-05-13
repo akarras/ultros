@@ -19,7 +19,7 @@ pub mod world_helper;
 pub use ffxiv_character::*;
 pub use listings::ActiveListing;
 pub use retainer::Retainer;
-pub use sale_history::SaleHistory;
+pub use sale_history::{CompactSale, ExtendedSaleHistory, SaleHistory};
 
 use serde::{Deserialize, Serialize};
 
