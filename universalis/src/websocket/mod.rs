@@ -100,7 +100,7 @@ impl SubscriptionTracker {
                 event: SubscribeMode::Subscribe,
                 channel: channel.clone(),
             };
-            let bson = bson::to_vec(&subscription_update)?;
+            let bson = bson::serialize_to_vec(&subscription_update)?;
             info!("Resent subscription update {subscription_update:?}");
             sender.send(Message::Binary(bson)).await?;
         }
@@ -194,7 +194,7 @@ impl WebsocketClient {
                         Some(data) => match data {
                             SocketTx::Subscription(s) => {
                                 info!("Subscription update {s:?}");
-                                let bson = bson::to_vec(&s).unwrap();
+                                let bson = bson::serialize_to_vec(&s).unwrap();
                                 if let Err(e) = websocket.send(Message::Binary(bson)).await {
                                     error!("Error sending websocket message {e:?}");
                                 }
@@ -227,44 +227,42 @@ impl WebsocketClient {
                             break;
                         }
                     },
-                    Either::Right((Some(Ok(message)), _)) => {
-                        match message {
-                            Message::Text(t) => {
-                                info!(
-                                    "Received text {t}, unexpected only BSON messages were expected."
-                                );
-                            }
-                            Message::Binary(b) => {
-                                let sender = listing_sender.clone();
-                                tokio::spawn(async move {
-                                    let b = bson::from_slice::<WSMessage>(&b).map_err(|e| {
-                                    if let Ok(document) = bson::from_slice::<Document>(&b) {
+                    Either::Right((Some(Ok(message)), _)) => match message {
+                        Message::Text(t) => {
+                            info!(
+                                "Received text {t}, unexpected only BSON messages were expected."
+                            );
+                        }
+                        Message::Binary(b) => {
+                            let sender = listing_sender.clone();
+                            tokio::spawn(async move {
+                                let b = bson::deserialize_from_slice::<WSMessage>(&b).map_err(|e| {
+                                    if let Ok(document) = bson::deserialize_from_slice::<Document>(&b) {
                                         error!("valid bson document but not valid struct {document:?}");
                                     }
                                     e.into()
                                 });
-                                    if let Err(e) = sender.send(SocketRx::Event(b)).await {
-                                        error!("Error sending websocket data {e:?}");
-                                    }
-                                });
-                            }
-                            Message::Ping(p) => {
-                                info!("responding to ping with payload: {p:?}");
-                                if let Err(e) = websocket.send(Message::Pong(p.clone())).await {
-                                    error!("Error sending ping! {e:?}");
+                                if let Err(e) = sender.send(SocketRx::Event(b)).await {
+                                    error!("Error sending websocket data {e:?}");
                                 }
-                            }
-                            Message::Pong(pong) => {
-                                info!("got pong! {pong:?}");
-                            }
-                            Message::Close(closed) => {
-                                info!("Socket closed with reason {closed:?}");
-                            }
-                            Message::Frame(frame) => {
-                                info!("received frame: {frame:?}");
+                            });
+                        }
+                        Message::Ping(p) => {
+                            info!("responding to ping with payload: {p:?}");
+                            if let Err(e) = websocket.send(Message::Pong(p.clone())).await {
+                                error!("Error sending ping! {e:?}");
                             }
                         }
-                    }
+                        Message::Pong(pong) => {
+                            info!("got pong! {pong:?}");
+                        }
+                        Message::Close(closed) => {
+                            info!("Socket closed with reason {closed:?}");
+                        }
+                        Message::Frame(frame) => {
+                            info!("received frame: {frame:?}");
+                        }
+                    },
                     Either::Right((None, _)) => {
                         warn!("Web socket closed");
                     }
