@@ -4,17 +4,18 @@
 //! by-side totals for the user's current price zone and their home
 //! world.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
-use xiv_gen::ClassJobCategoryId;
+use xiv_gen::{ClassJobCategoryId, ItemId};
 
 use crate::CheapestPrices;
 use crate::api::get_cheapest_listings;
 use crate::components::cheapest_price::CheapestPrice;
+use crate::components::crafting_cost::IngredientsIter;
 use crate::components::gil::Gil;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
@@ -43,6 +44,293 @@ fn set_total(group: &JobSetGroup, prices: &CheapestListingsMap, hq_only: bool) -
         }
     }
     had_any.then_some(total)
+}
+
+/// English-name heuristic for the slot a piece of gear occupies. Used
+/// to label each tile on the detail page so a reader doesn't have to
+/// squint at the icon. Returns `None` when the name doesn't match a
+/// known pattern (non-English localisations, novelty items) — the
+/// caller hides the chip rather than printing a misleading label.
+///
+/// Patterns are checked most-specific-first so accessory keywords don't
+/// swallow matching armour names (e.g. "Temple Chain of Striking" is a
+/// helmet despite the "chain" keyword).
+pub(crate) fn slot_label_from_name(name: &str) -> Option<&'static str> {
+    let lower = name.to_lowercase();
+
+    // Two-handed weapons / off-hands first — "shield" is unambiguous.
+    if lower.contains("shield") {
+        return Some("OFF-HAND");
+    }
+
+    // Head pieces. Temple Chain is a circlet-style helm in modern
+    // FFXIV sets, so check it before any neck patterns.
+    const HEAD: &[&str] = &[
+        "temple chain",
+        "hairpin",
+        "helm",
+        "hat",
+        "cap",
+        "crown",
+        "coronet",
+        "visor",
+        "mask",
+        "turban",
+        "hood",
+        "circlet",
+        "headgear",
+        "spectacles",
+        "goggles",
+        "tiara",
+    ];
+    if HEAD.iter().any(|p| lower.contains(p)) {
+        return Some("HEAD");
+    }
+
+    // Chest pieces. "Cloak of Striking" is a chest piece in Dawntrail
+    // crafted sets (it's the body slot, not a back/shoulder item).
+    const CHEST: &[&str] = &[
+        "surcoat", "cuirass", "robe", "jerkin", "doublet", "tunic", "armor", "cloak", "smock",
+        "jacket", "vest", "kurta", "haori", "top",
+    ];
+    if CHEST.iter().any(|p| lower.contains(p)) || lower.contains(" coat") || lower.ends_with("coat")
+    {
+        return Some("CHEST");
+    }
+
+    const HANDS: &[&str] = &[
+        "gauntlet",
+        "glove",
+        "mitt",
+        "armguard",
+        "vambrace",
+        "halfgloves",
+    ];
+    if HANDS.iter().any(|p| lower.contains(p)) {
+        return Some("HANDS");
+    }
+
+    const LEGS: &[&str] = &[
+        "trousers",
+        "breeches",
+        "brais",
+        "tights",
+        "hose",
+        "slops",
+        "tassets",
+        "kecks",
+        "bottoms",
+        "pantaloons",
+        "skirt",
+    ];
+    if LEGS.iter().any(|p| lower.contains(p)) {
+        return Some("LEGS");
+    }
+
+    const FEET: &[&str] = &[
+        "boots",
+        "sabatons",
+        "sandals",
+        "greaves",
+        "shoes",
+        "crakows",
+        "highboots",
+    ];
+    if FEET.iter().any(|p| lower.contains(p)) {
+        return Some("FEET");
+    }
+
+    if lower.contains("earring") {
+        return Some("EAR");
+    }
+    if lower.contains("choker")
+        || lower.contains("necklace")
+        || lower.contains("gorget")
+        || lower.contains("neckband")
+    {
+        return Some("NECK");
+    }
+    if lower.contains("bracelet")
+        || lower.contains("wristlet")
+        || lower.contains("wristband")
+        || lower.contains("armillae")
+    {
+        return Some("WRIST");
+    }
+    if lower.contains("ring") && !lower.contains("earring") {
+        return Some("RING");
+    }
+
+    // Anything else with a weapon-shaped keyword. Kept last because the
+    // armour patterns above are higher-specificity.
+    const WEAPONS: &[&str] = &[
+        "sword",
+        "blade",
+        "labrys",
+        "axe",
+        "partisan",
+        "spear",
+        "longbow",
+        "bow",
+        "cane",
+        "scepter",
+        "staff",
+        "rod",
+        "index",
+        "codex",
+        "tome",
+        "grimoire",
+        "pistol",
+        "musketoon",
+        "knuckles",
+        "baghnakhs",
+        "claws",
+        "katana",
+        "wakizashi",
+        "tachi",
+        "saber",
+        "dagger",
+        "war scythe",
+        "scythe",
+        "rapier",
+        "gunblade",
+        "war quoits",
+        "twinfangs",
+        "filbert brush",
+        "brush",
+        "pendulums",
+        "astrometer",
+        "globe",
+        "orrery",
+    ];
+    if WEAPONS.iter().any(|p| lower.contains(p)) {
+        return Some("WEAPON");
+    }
+
+    None
+}
+
+/// Pick the gear set at `target_ilvl` for a job, using the same item
+/// filters the parent `JobItems` route applies by default (market-listable,
+/// non-zero iLvl). Without the market filter, non-market items at the
+/// same iLvl (raid drops, quest rewards) pollute the bucket and break
+/// the LCP-based grouping — that's the bug where `/jobset/SAM/set/770`
+/// rendered empty even though the parent page showed the card.
+pub(crate) fn find_set_for_job<'a, I, F>(
+    items: I,
+    is_job_match: F,
+    target_ilvl: i32,
+) -> Option<JobSetGroup>
+where
+    I: IntoIterator<Item = &'a xiv_gen::Item>,
+    F: Fn(&xiv_gen::Item) -> bool,
+{
+    let mut projections: Vec<GroupableItem> = items
+        .into_iter()
+        .filter(|item| is_job_match(item))
+        .filter(|item| item.level_item > 0)
+        .filter(|item| item.item_search_category > 0)
+        .map(|item| GroupableItem {
+            id: item.key_id,
+            name: item.name.clone(),
+            ilvl: item.level_item,
+        })
+        .collect();
+    projections.sort_by(|a, b| {
+        a.ilvl
+            .cmp(&b.ilvl)
+            .then(a.name.cmp(&b.name))
+            .then(a.id.0.cmp(&b.id.0))
+    });
+
+    let (groups, _) = group_into_sets(projections);
+    groups.into_iter().find(|g| g.ilvl == target_ilvl)
+}
+
+/// Aggregated crafting material entry across every craftable item in
+/// the set. `amount` is the sum of `recipe.amount_ingredient` across
+/// every recipe whose `item_result` lands in the set, so the user sees
+/// "the total stack I need to buy/farm to make every piece."
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MaterialEntry {
+    pub id: ItemId,
+    pub name: String,
+    pub amount: i32,
+    /// True for crystal/shard/cluster (item_search_category == 59) —
+    /// the UI groups these visually since they're cheap and not really
+    /// part of the "ingredient shopping list" most users care about.
+    pub is_shard: bool,
+}
+
+/// Sum ingredients across every recipe in `recipes` whose output
+/// item_result is one of the items in `set`. Returns entries sorted
+/// non-shards first, then by descending total amount so the busiest
+/// material rises to the top.
+pub(crate) fn aggregate_materials(
+    set: &JobSetGroup,
+    recipes: &std::collections::HashMap<xiv_gen::RecipeId, xiv_gen::Recipe>,
+    items: &std::collections::HashMap<ItemId, xiv_gen::Item>,
+) -> Vec<MaterialEntry> {
+    let set_ids: HashSet<i32> = set.items.iter().map(|i| i.id.0).collect();
+    let mut totals: BTreeMap<i32, i32> = BTreeMap::new();
+    for recipe in recipes.values() {
+        if !set_ids.contains(&recipe.item_result) {
+            continue;
+        }
+        for (id, amount) in IngredientsIter::new(recipe) {
+            *totals.entry(id.0).or_insert(0) += amount;
+        }
+    }
+    let mut entries: Vec<MaterialEntry> = totals
+        .into_iter()
+        .filter_map(|(id, amount)| {
+            let item = items.get(&ItemId(id))?;
+            Some(MaterialEntry {
+                id: ItemId(id),
+                name: item.name.clone(),
+                amount,
+                is_shard: item.item_search_category == 59,
+            })
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        a.is_shard
+            .cmp(&b.is_shard)
+            .then(b.amount.cmp(&a.amount))
+            .then(a.name.cmp(&b.name))
+    });
+    entries
+}
+
+/// Compact row used by both the main materials grid and the shards
+/// section. Inlines an icon, name, quantity, and cheapest NQ price so
+/// the user can eyeball "how much will this set cost in ingredients?"
+fn material_row(m: MaterialEntry) -> impl IntoView {
+    let id = m.id.0;
+    let name = m.name.clone();
+    let amount = m.amount;
+    view! {
+        <A
+            href=format!("/item/{}", id)
+            attr:class="group flex flex-row items-center gap-2 p-2 rounded-lg panel \
+                       border border-white/5 hover:border-brand-500/30 transition-colors"
+        >
+            <div class="shrink-0 flex items-center justify-center w-8 h-8">
+                <ItemIcon item_id=id icon_size=IconSize::Small />
+            </div>
+            <div class="flex flex-col min-w-0 flex-1">
+                <span class="font-medium text-xs leading-snug line-clamp-1 group-hover:text-brand-300 transition-colors">
+                    {name}
+                </span>
+                <div class="flex flex-row items-center gap-1.5 text-[10px] text-[color:var(--color-text-muted)]">
+                    <span>"× "{amount}</span>
+                    <span>"•"</span>
+                    <CheapestPrice item_id=xiv_gen::ItemId(id) show_hq=false />
+                </div>
+            </div>
+        </A>
+    }
+    .into_any()
 }
 
 #[component]
@@ -93,22 +381,16 @@ pub fn JobSetDetail() -> impl IntoView {
             .map(|(id, _)| *id)
             .collect();
 
-        let projections: Vec<GroupableItem> = data
-            .items
-            .iter()
-            .filter(|(_, item)| {
-                job_categories.contains(&ClassJobCategoryId(item.class_job_category))
-            })
-            .filter(|(_, item)| item.level_item > 0)
-            .map(|(id, item)| GroupableItem {
-                id: *id,
-                name: item.name.clone(),
-                ilvl: item.level_item,
-            })
-            .collect();
+        find_set_for_job(
+            data.items.values(),
+            |item| job_categories.contains(&ClassJobCategoryId(item.class_job_category)),
+            target_ilvl.get(),
+        )
+    });
 
-        let (groups, _ungrouped) = group_into_sets(projections);
-        groups.into_iter().find(|g| g.ilvl == target_ilvl.get())
+    let materials = Memo::new(move |_| {
+        let g = group.get()?;
+        Some(aggregate_materials(&g, &data.recipes, &data.items))
     });
 
     // Home-world-only listings: a separate Resource keyed off the
@@ -130,24 +412,6 @@ pub fn JobSetDetail() -> impl IntoView {
     // Default-zone listings already live in app context — reuse them.
     let cheapest_prices = use_context::<CheapestPrices>();
     let default_zone_listings = cheapest_prices.map(|p| p.read_listings);
-
-    let default_total = Memo::new(move |_| {
-        let g = group.get()?;
-        let listings = default_zone_listings?;
-        listings.with(|data| match data {
-            Some(Ok(map)) => set_total(&g, map, false),
-            _ => None,
-        })
-    });
-
-    let home_total = Memo::new(move |_| {
-        let g = group.get()?;
-        home_world_listings
-            .get()
-            .flatten()
-            .as_ref()
-            .and_then(|map| set_total(&g, map, false))
-    });
 
     let set_stem = Memo::new(move |_| group.get().map(|g| g.stem).unwrap_or_default());
     let job_name = Memo::new(move |_| {
@@ -199,22 +463,34 @@ pub fn JobSetDetail() -> impl IntoView {
                             {g.items.into_iter().map(|item| {
                                 let item_id = item.id.0;
                                 let item_name = item.name.clone();
+                                let slot = slot_label_from_name(&item_name);
                                 view! {
                                     <div class="flex flex-col p-3 rounded-lg panel border border-white/5">
                                         <div class="flex flex-row items-center gap-3 mb-2">
                                             <A
                                                 href=format!("/item/{}", item_id)
-                                                attr:class="shrink-0"
+                                                attr:class="shrink-0 flex items-center justify-center w-12 h-12"
                                             >
                                                 <ItemIcon item_id=item_id icon_size=IconSize::Medium />
                                             </A>
-                                            <A
-                                                href=format!("/item/{}", item_id)
-                                                attr:class="font-medium text-sm leading-snug \
-                                                           hover:text-brand-300 transition-colors line-clamp-2"
-                                            >
-                                                {item_name}
-                                            </A>
+                                            <div class="flex flex-col min-w-0">
+                                                {if let Some(label) = slot {
+                                                    view! {
+                                                        <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-300 self-start mb-1">
+                                                            {label}
+                                                        </span>
+                                                    }.into_any()
+                                                } else {
+                                                    ().into_any()
+                                                }}
+                                                <A
+                                                    href=format!("/item/{}", item_id)
+                                                    attr:class="font-medium text-sm leading-snug \
+                                                               hover:text-brand-300 transition-colors line-clamp-2"
+                                                >
+                                                    {item_name}
+                                                </A>
+                                            </div>
                                         </div>
                                         <div class="flex flex-col gap-1.5 mt-1 pt-2 border-t border-white/5 text-sm">
                                             <CheapestPrice item_id=xiv_gen::ItemId(item_id) show_hq=false label=t_string!(i18n, nq).to_string() />
@@ -229,6 +505,43 @@ pub fn JobSetDetail() -> impl IntoView {
                 }
             }}
 
+            // Aggregated crafting materials across every craftable
+            // piece in the set. Hidden entirely when no item in the
+            // set has a recipe (raid drops, vendor gear, etc.).
+            {move || {
+                let entries = materials.get().unwrap_or_default();
+                if entries.is_empty() {
+                    return ().into_any();
+                }
+                let main: Vec<_> = entries.iter().filter(|e| !e.is_shard).cloned().collect();
+                let shards: Vec<_> = entries.iter().filter(|e| e.is_shard).cloned().collect();
+                view! {
+                    <div class="mt-4">
+                        <h4 class="text-base font-bold mb-2">{t!(i18n, job_set_detail_materials_heading)}</h4>
+                        <p class="text-xs text-[color:var(--color-text-muted)] mb-3">
+                            {t!(i18n, job_set_detail_materials_desc)}
+                        </p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2">
+                            {main.into_iter().map(material_row).collect::<Vec<_>>()}
+                        </div>
+                        {if !shards.is_empty() {
+                            view! {
+                                <div class="mt-3 pt-3 border-t border-white/5">
+                                    <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)] mb-2">
+                                        {t!(i18n, job_set_detail_materials_shards)}
+                                    </div>
+                                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6 gap-2">
+                                        {shards.into_iter().map(material_row).collect::<Vec<_>>()}
+                                    </div>
+                                </div>
+                            }.into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                    </div>
+                }.into_any()
+            }}
+
             // Side-by-side totals. The default-zone column uses the
             // shared CheapestPrices resource; the home-world column
             // fetches its own listings keyed on `use_home_world()`.
@@ -238,10 +551,21 @@ pub fn JobSetDetail() -> impl IntoView {
                         {t!(i18n, job_set_detail_set_total)}
                     </div>
                     <div class="text-xl font-bold">
-                        {move || match default_total.get() {
-                            Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                            None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                        }}
+                        <Suspense fallback=move || view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }>
+                            {move || {
+                                let total = group.get().and_then(|g| {
+                                    let listings = default_zone_listings?;
+                                    listings.with(|data| match data {
+                                        Some(Ok(map)) => set_total(&g, map, false),
+                                        _ => None,
+                                    })
+                                });
+                                match total {
+                                    Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
+                                    None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                                }
+                            }}
+                        </Suspense>
                     </div>
                 </div>
                 <div class="panel p-4 rounded-xl border border-white/5">
@@ -250,9 +574,18 @@ pub fn JobSetDetail() -> impl IntoView {
                     </div>
                     <div class="text-xl font-bold">
                         <Suspense fallback=move || view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }>
-                            {move || match home_total.get() {
-                                Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                                None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                            {move || {
+                                let total = group.get().and_then(|g| {
+                                    home_world_listings
+                                        .get()
+                                        .flatten()
+                                        .as_ref()
+                                        .and_then(|map| set_total(&g, map, false))
+                                });
+                                match total {
+                                    Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
+                                    None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                                }
                             }}
                         </Suspense>
                     </div>
@@ -270,13 +603,43 @@ mod tests {
     use ultros_api_types::cheapest_listings::{
         CheapestListingData, CheapestListingMapKey, CheapestListingsMap,
     };
-    use xiv_gen::ItemId;
+    use xiv_gen::{Item, ItemId, Recipe, RecipeId};
 
     fn item(id: i32, name: &str) -> GroupableItem {
         GroupableItem {
             id: ItemId(id),
             name: name.to_string(),
             ilvl: 770,
+        }
+    }
+
+    fn make_item(
+        id: i32,
+        name: &str,
+        ilvl: i32,
+        class_job_category: i32,
+        item_search_category: i32,
+    ) -> Item {
+        Item {
+            key_id: ItemId(id),
+            name: name.to_string(),
+            description: String::new(),
+            icon: 0,
+            item_ui_category: 0,
+            item_search_category,
+            base_param: [0; 6],
+            base_param_value: [0; 6],
+            base_param_special: [0; 6],
+            base_param_value_special: [0; 6],
+            item_sort_category: 0,
+            level_item: ilvl,
+            level_equip: 0,
+            can_be_hq: true,
+            is_collectable: false,
+            price_mid: 0,
+            price_low: 0,
+            stack_size: 1,
+            class_job_category,
         }
     }
 
@@ -319,5 +682,289 @@ mod tests {
             items: vec![item(1, "a")],
         };
         assert_eq!(set_total(&group, &map_with(&[]), false), None);
+    }
+
+    #[test]
+    fn slot_label_recognises_courtly_lover_striking_set() {
+        // The exact piece names from the FFXIV CSV at iLvl 770 SAM
+        // gear. If any of these stop labelling we lose the per-tile
+        // chip on the detail page, which is the whole point of the
+        // feature.
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Temple Chain of Striking"),
+            Some("HEAD")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Cloak of Striking"),
+            Some("CHEST")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Armguards of Striking"),
+            Some("HANDS")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Brais of Striking"),
+            Some("LEGS")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Boots of Striking"),
+            Some("FEET")
+        );
+    }
+
+    #[test]
+    fn slot_label_for_tank_fending_set() {
+        // Surcoat + Hairpin + Gauntlets + Breeches + Boots is the
+        // tank flavour of the Dawntrail crafted set.
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Hairpin of Fending"),
+            Some("HEAD")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Surcoat of Fending"),
+            Some("CHEST")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Gauntlets of Fending"),
+            Some("HANDS")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Breeches of Fending"),
+            Some("LEGS")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Boots of Fending"),
+            Some("FEET")
+        );
+    }
+
+    #[test]
+    fn slot_label_accessories_and_weapons() {
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Shield"),
+            Some("OFF-HAND")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Sword"),
+            Some("WEAPON")
+        );
+        assert_eq!(
+            slot_label_from_name("Courtly Lover's Blade"),
+            Some("WEAPON")
+        );
+        assert_eq!(slot_label_from_name("Earring of Fending"), Some("EAR"));
+        assert_eq!(slot_label_from_name("Choker of Slaying"), Some("NECK"));
+        assert_eq!(slot_label_from_name("Bracelet of Striking"), Some("WRIST"));
+        assert_eq!(slot_label_from_name("Ring of Casting"), Some("RING"));
+    }
+
+    #[test]
+    fn slot_label_returns_none_for_unknown_pattern() {
+        // Random non-equipment items shouldn't get a label. This
+        // keeps the chip honest — better to omit than mislabel.
+        assert_eq!(slot_label_from_name("Garlean Fiber"), None);
+        assert_eq!(slot_label_from_name("Adamantite Ingot"), None);
+    }
+
+    #[test]
+    fn find_set_skips_non_market_items_to_avoid_polluting_bucket() {
+        // Regression for /items/jobset/SAM/set/770 rendering empty:
+        // when items at the same iLvl are NOT on the market (raid
+        // drops with item_search_category == 0), they used to leak
+        // into the LCP-based grouping and either change the stem or
+        // collapse it to whitespace, so the detail page's
+        // `.find(|g| g.ilvl == 770)` returned None. The helper now
+        // applies the same `item_search_category > 0` filter the
+        // parent JobItems route uses by default.
+        const SAM_CAT: i32 = 65; // Striking — anything SAM-equippable
+        let items = [
+            make_item(
+                1,
+                "Courtly Lover's Temple Chain of Striking",
+                770,
+                SAM_CAT,
+                9820,
+            ),
+            make_item(2, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(
+                3,
+                "Courtly Lover's Armguards of Striking",
+                770,
+                SAM_CAT,
+                9822,
+            ),
+            make_item(4, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+            make_item(5, "Courtly Lover's Boots of Striking", 770, SAM_CAT, 9824),
+            // Non-market raid drops at the same iLvl with a totally
+            // different name. Pre-fix, these were keeping the grouper
+            // from picking up "Courtly Lover's" as the common prefix.
+            make_item(101, "Sky Lemures' Mask of Striking", 770, SAM_CAT, 0),
+            make_item(102, "Sky Lemures' Top of Striking", 770, SAM_CAT, 0),
+            make_item(103, "Sky Lemures' Bottoms of Striking", 770, SAM_CAT, 0),
+        ];
+
+        let group = find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 770)
+            .expect("770 set must resolve");
+        assert_eq!(group.stem, "Courtly Lover's");
+        assert_eq!(group.items.len(), 5);
+        let mut got_ids: Vec<i32> = group.items.iter().map(|i| i.id.0).collect();
+        got_ids.sort();
+        assert_eq!(got_ids, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn find_set_returns_stable_item_order_for_hydration() {
+        // The real route feeds `find_set_for_job` from a HashMap. SSR
+        // and WASM can observe different HashMap iteration orders; if
+        // the detail grid order changes during hydration, Leptos can
+        // pair an item's icon/link href with a neighboring item's name.
+        const SAM_CAT: i32 = 65;
+        let items = [
+            make_item(5, "Courtly Lover's Boots of Striking", 770, SAM_CAT, 9824),
+            make_item(2, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(
+                1,
+                "Courtly Lover's Temple Chain of Striking",
+                770,
+                SAM_CAT,
+                9820,
+            ),
+            make_item(4, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+            make_item(
+                3,
+                "Courtly Lover's Armguards of Striking",
+                770,
+                SAM_CAT,
+                9822,
+            ),
+        ];
+
+        let group = find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 770)
+            .expect("770 set must resolve");
+        let got_names: Vec<_> = group.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            got_names,
+            vec![
+                "Courtly Lover's Armguards of Striking",
+                "Courtly Lover's Boots of Striking",
+                "Courtly Lover's Brais of Striking",
+                "Courtly Lover's Cloak of Striking",
+                "Courtly Lover's Temple Chain of Striking",
+            ]
+        );
+    }
+
+    #[test]
+    fn find_set_returns_none_for_unknown_ilvl() {
+        const SAM_CAT: i32 = 65;
+        let items = [
+            make_item(1, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(2, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+        ];
+        // No 600-iLvl set in the fixture.
+        assert!(
+            find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 600).is_none()
+        );
+    }
+
+    #[test]
+    fn find_set_ignores_items_outside_the_job() {
+        // Tank items at 770 must NOT bleed into a SAM detail page.
+        const SAM_CAT: i32 = 65;
+        const TANK_CAT: i32 = 66;
+        let items = [
+            make_item(1, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(2, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+            // Fending pieces — different class_job_category, so the
+            // job-filter rejects them before grouping runs.
+            make_item(
+                10,
+                "Courtly Lover's Surcoat of Fending",
+                770,
+                TANK_CAT,
+                9811,
+            ),
+            make_item(
+                11,
+                "Courtly Lover's Breeches of Fending",
+                770,
+                TANK_CAT,
+                9813,
+            ),
+            make_item(12, "Courtly Lover's Boots of Fending", 770, TANK_CAT, 9814),
+        ];
+
+        let group = find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 770)
+            .expect("SAM 770 set");
+        // The Fending pieces don't appear, even though they share the
+        // "Courtly Lover's" stem at the same iLvl.
+        assert_eq!(group.items.len(), 2);
+        for item in &group.items {
+            assert!(!item.name.contains("Fending"));
+        }
+    }
+
+    fn make_recipe(id: i32, result: i32, ingredients: &[(i32, i32)]) -> Recipe {
+        let mut ing = [0i32; 8];
+        let mut amt = [0i32; 8];
+        for (i, (iid, q)) in ingredients.iter().enumerate() {
+            ing[i] = *iid;
+            amt[i] = *q;
+        }
+        Recipe {
+            key_id: RecipeId(id),
+            item_result: result,
+            amount_result: 1,
+            ingredient: ing,
+            amount_ingredient: amt,
+            craft_type: 0,
+            recipe_level_table: 0,
+        }
+    }
+
+    #[test]
+    fn aggregate_materials_sums_across_recipes_and_demotes_shards() {
+        let set = JobSetGroup {
+            stem: "Courtly Lover's".to_string(),
+            ilvl: 770,
+            items: vec![item(1, "Cloak"), item(2, "Brais")],
+        };
+        // Item 1 needs 2 fiber + 3 shards; item 2 needs 1 fiber + 5 shards.
+        // Item 99 is a different set's recipe — must NOT contribute.
+        let recipes: HashMap<RecipeId, Recipe> = [
+            (RecipeId(10), make_recipe(10, 1, &[(100, 2), (59, 3)])),
+            (RecipeId(11), make_recipe(11, 2, &[(100, 1), (59, 5)])),
+            (RecipeId(12), make_recipe(12, 99, &[(100, 1000)])),
+        ]
+        .into_iter()
+        .collect();
+        let items: HashMap<ItemId, Item> = [
+            (ItemId(100), make_item(100, "Garlean Fiber", 0, 0, 51)),
+            (ItemId(59), make_item(59, "Wind Shard", 0, 0, 59)),
+        ]
+        .into_iter()
+        .collect();
+
+        let entries = aggregate_materials(&set, &recipes, &items);
+        assert_eq!(entries.len(), 2);
+        // Non-shards first, then by descending qty.
+        assert_eq!(entries[0].id, ItemId(100));
+        assert_eq!(entries[0].amount, 3);
+        assert!(!entries[0].is_shard);
+        assert_eq!(entries[1].id, ItemId(59));
+        assert_eq!(entries[1].amount, 8);
+        assert!(entries[1].is_shard);
+    }
+
+    #[test]
+    fn aggregate_materials_empty_when_no_recipe_matches_set() {
+        let set = JobSetGroup {
+            stem: "Vendor".to_string(),
+            ilvl: 100,
+            items: vec![item(500, "Vendor Sword")],
+        };
+        let recipes: HashMap<RecipeId, Recipe> = HashMap::new();
+        let items: HashMap<ItemId, Item> = HashMap::new();
+        assert!(aggregate_materials(&set, &recipes, &items).is_empty());
     }
 }
