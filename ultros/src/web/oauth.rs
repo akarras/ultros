@@ -139,9 +139,14 @@ pub async fn begin_login(
     let cookies = cookies.add(
         CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
             .same_site(SameSite::Strict)
-            .secure(true),
+            .secure(true)
+            .http_only(true),
     );
-    let cookies = cookies.add(Cookie::new("pkce_verifier", pkce_verifier.secret().clone()));
+    let cookies = cookies.add(
+        CookieBuilder::new("pkce_verifier", pkce_verifier.secret().clone())
+            .http_only(true)
+            .build(),
+    );
 
     let mut request = config
         .inner
@@ -193,6 +198,7 @@ pub async fn redirect(
     let mut cookie = Cookie::new("discord_auth", token);
     cookie.set_secure(true);
     cookie.set_same_site(SameSite::Lax);
+    cookie.set_http_only(true);
     cookie.make_permanent();
     cookies = cookies.add(cookie);
     Ok((cookies, Redirect::to("/")))
@@ -412,6 +418,7 @@ pub mod test_auth {
         // Mirror oauth::redirect, but allow non-https so local E2E works.
         cookie.set_secure(false);
         cookie.set_same_site(SameSite::Lax);
+        cookie.set_http_only(true);
         cookie.set_path("/");
         cookie.make_permanent();
 
