@@ -32,7 +32,7 @@ tokio-util = { version = "0.7.17" }
 tracing = { workspace = true }
 tracing-subscriber = "0.3"
 futures = { workspace = true }
-oauth2 = "4.1"
+oauth2 = "5.0"
 async-trait = '0.1'
 serde_json = { workspace = true }
 thiserror = { workspace = true }

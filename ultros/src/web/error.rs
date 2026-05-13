@@ -40,7 +40,7 @@ macro_rules! define_error_enum {
             RequestErrorToken(
                 #[from]
                 RequestTokenError<
-                    oauth2::reqwest::Error<reqwest::Error>,
+                    oauth2::HttpClientError<oauth2::reqwest::Error>,
                     StandardErrorResponse<RevocationErrorResponseType>,
                 >,
             ),
@@ -83,7 +83,7 @@ macro_rules! define_error_enum {
             TokenError(
                 #[from]
                 RequestTokenError<
-                    oauth2::reqwest::Error<reqwest::Error>,
+                    oauth2::HttpClientError<oauth2::reqwest::Error>,
                     StandardErrorResponse<BasicErrorResponseType>,
                 >,
             ),

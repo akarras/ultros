@@ -9,9 +9,9 @@ use axum_extra::extract::{
 };
 use cookie::CookieBuilder;
 use oauth2::{
-    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, RevocationUrl, Scope, StandardRevocableToken, TokenResponse,
-    TokenUrl, basic::BasicClient,
+    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet,
+    EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RevocationUrl, Scope,
+    StandardRevocableToken, TokenResponse, TokenUrl, basic::BasicClient,
 };
 use poise::serenity_prelude::Http;
 use serde::{Deserialize, Serialize};
@@ -184,7 +184,7 @@ pub async fn redirect(
         request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
     }
     let token = request
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(&config.inner.http_client)
         .await?
         .access_token()
         .secret()
@@ -211,7 +211,7 @@ pub async fn logout(
         .inner
         .client
         .revoke_token(StandardRevocableToken::AccessToken(token))?
-        .request_async(oauth2::reqwest::async_http_client)
+        .request_async(&config.inner.http_client)
         .await?;
     let cookie_jar = cookie_jar.remove(cookie);
     Ok((cookie_jar, Redirect::to("/")))
@@ -304,11 +304,29 @@ pub struct DiscordAuthConfig {
     inner: Arc<DiscordAuthConfigImpl>,
 }
 
+/// Concrete typestate for the Discord OAuth client: auth URI, token URI and
+/// revocation URL are all configured; the device-auth and introspection URLs
+/// are unused. The redirect URI is set on the client but isn't tracked by the
+/// typestate generics.
+type DiscordOAuthClient = BasicClient<
+    EndpointSet,    // HasAuthUrl
+    EndpointNotSet, // HasDeviceAuthUrl
+    EndpointNotSet, // HasIntrospectionUrl
+    EndpointSet,    // HasRevocationUrl
+    EndpointSet,    // HasTokenUrl
+>;
+
 /// Provides authentication params
-#[derive(Debug)]
 struct DiscordAuthConfigImpl {
     pub scopes: HashSet<OAuthScope>,
-    pub client: BasicClient,
+    pub client: DiscordOAuthClient,
+    /// Shared async HTTP client for OAuth token exchange / revocation. v5
+    /// requires us to bring our own `AsyncHttpClient` and configure it not to
+    /// follow redirects to avoid SSRF on the token endpoint. We use the
+    /// `reqwest` that oauth2 re-exports (0.12) rather than ultros's own
+    /// `reqwest = 0.11`, because the `AsyncHttpClient` trait is only
+    /// implemented for the 0.12 `reqwest::Client`.
+    pub http_client: oauth2::reqwest::Client,
 }
 
 impl DiscordAuthConfig {
@@ -318,26 +336,34 @@ impl DiscordAuthConfig {
         redirect_url: String,
         scopes: HashSet<OAuthScope>,
     ) -> Self {
-        let client = BasicClient::new(
-            ClientId::new(client_id),
-            Some(ClientSecret::new(client_secret)),
-            AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string())
-                .expect("Failed to parse url"),
-            Some(
+        let client = BasicClient::new(ClientId::new(client_id))
+            .set_client_secret(ClientSecret::new(client_secret))
+            .set_auth_uri(
+                AuthUrl::new("https://discord.com/api/oauth2/authorize".to_string())
+                    .expect("Failed to parse url"),
+            )
+            .set_token_uri(
                 TokenUrl::new("https://discord.com/api/oauth2/token".to_string())
                     .expect("Failed to parse token url"),
-            ),
-        )
-        .set_redirect_uri(
-            RedirectUrl::new(redirect_url.clone())
-                .unwrap_or_else(|_| panic!("Failed to parse redirect URL {}", redirect_url)),
-        )
-        .set_revocation_uri(
-            RevocationUrl::new("https://discord.com/api/oauth2/token/revoke".to_string())
-                .expect("Failed to parse revoke URL"),
-        );
+            )
+            .set_redirect_uri(
+                RedirectUrl::new(redirect_url.clone())
+                    .unwrap_or_else(|_| panic!("Failed to parse redirect URL {}", redirect_url)),
+            )
+            .set_revocation_url(
+                RevocationUrl::new("https://discord.com/api/oauth2/token/revoke".to_string())
+                    .expect("Failed to parse revoke URL"),
+            );
+        let http_client = oauth2::reqwest::ClientBuilder::new()
+            .redirect(oauth2::reqwest::redirect::Policy::none())
+            .build()
+            .expect("Failed to build oauth2 reqwest client");
         Self {
-            inner: Arc::new(DiscordAuthConfigImpl { scopes, client }),
+            inner: Arc::new(DiscordAuthConfigImpl {
+                scopes,
+                client,
+                http_client,
+            }),
         }
     }
 }
