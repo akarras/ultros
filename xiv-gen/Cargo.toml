@@ -18,10 +18,10 @@ xiv-gen-macros = {path = "../proc-macros/xiv-gen-macros"}
 
 [build-dependencies]
 codegen-rs = { git = "https://github.com/sayanarijit/codegen-rs" }
-csv = "1.1.6"
-heck = "0.4.0"
-regex = "1.6.0"
-lazy_static = "1.4.0"
+csv = "1.4.0"
+heck = "0.5.0"
+regex = "1.12"
+lazy_static = "1.5.0"
 
 [features]
 csv_to_bincode = []

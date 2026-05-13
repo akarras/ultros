@@ -15,10 +15,10 @@ axum = { workspace = true, optional = true }
 leptos-use = { workspace = true }
 xiv-gen-db = { path = "../../xiv-gen-db" }
 xiv-gen.workspace = true
-uuid = { version = "1.19.0", features = ["v4", "js"] }
+uuid = { version = "1.23.1", features = ["v4", "js"] }
 
 gloo-net = { workspace = true, optional = true }
-gloo = { version = "0.11.0", optional = true }
+gloo = { version = "0.12.0", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
     "AbortController",
     "Clipboard",
@@ -50,39 +50,39 @@ ultros-api-types = { path = "../../ultros-api-types" }
 ultros-db = { path = "../../ultros-db", optional = true }
 serde = { workspace = true, features = ["rc"] }
 thousands = "0.2.0"
-timeago = "0.4.0"
+timeago = "0.6.0"
 chrono.workspace = true
 itertools.workspace = true
-futures = "0.3"
-humantime = "2.1"
-colorsys = "0.6.6"
+futures = "0.3.32"
+humantime = "2.3"
+colorsys = "0.7.3"
 thiserror = { workspace = true }
 log = "0.4.29"
 anyhow = { workspace = true }
-cookie = { version = "0.18", features = ["percent-encode"] }
+cookie = { version = "0.18.1", features = ["percent-encode"] }
 wasm-bindgen = { version = "0.2", optional = true }
-time = "0.3.20"
-js-sys = { version = "0.3.61", optional = true }
+time = "0.3.47"
+js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 tracing = "0.1"
 serde_json = { workspace = true }
 ultros-charts = { path = "../ultros-charts" }
-leptos-chartistry = "0.2"
+leptos-chartistry = "0.2.3"
 icondata.workspace = true
 serde_qs = "0.12.0"
-gloo-timers = { version = "0.3.0", features = ["futures"] }
+gloo-timers = { version = "0.4.0", features = ["futures"] }
 cfg-if.workspace = true
 paginate = "1.1.11"
 git-const.workspace = true
-percent-encoding = "2.3.0"
-async-trait = "0.1.77"
-linregress = "0.5.3"
+percent-encoding = "2.3.2"
+async-trait = "0.1.89"
+linregress = "0.5.4"
 field-iterator = { path = "../../field-iterator" }
 # leptos_animation = "0.5.0"
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
-codee = {version = "0.3", features = ["json_serde"]}
+codee = {version = "0.3.5", features = ["json_serde"]}
 send_wrapper = "0.6"
-flume = { version = "0.11.1", features = ["async"] }
+flume = { version = "0.12.0", features = ["async"] }
 icondata_core.workspace = true
 leptos_i18n.workspace = true
 
