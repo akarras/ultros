@@ -5,6 +5,8 @@ use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
+use crate::components::job_set_card::JobSetCard;
+use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
@@ -24,7 +26,10 @@ use percent_encoding::percent_decode_str;
 use xiv_gen::{ClassJobCategory, ClassJobCategoryId, Item, ItemId};
 
 /// Return true if the given acronym is in the given class job category
-fn job_category_lookup(class_job_category: &ClassJobCategory, job_acronym: &str) -> bool {
+pub(crate) fn job_category_lookup(
+    class_job_category: &ClassJobCategory,
+    job_acronym: &str,
+) -> bool {
     let lower_case = job_acronym.to_lowercase();
     // this is kind of dumb, but this should give a compile time error whenever a job changes.
     let ClassJobCategory {
@@ -228,6 +233,52 @@ pub fn JobItems() -> impl IntoView {
             .map(|s| s.to_string())
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, job_set_default).to_string())
     });
+
+    // Split the job's items into named gear sets (rendered as
+    // condensed cards) and an ungrouped remainder (sortable list).
+    // The grouping operates on projections so the rest of `ItemList`
+    // can stay untouched.
+    let grouping = Memo::new(move |_| {
+        let job_items = items();
+        let projections: Vec<GroupableItem> = job_items
+            .iter()
+            .filter(|(_, item)| item.level_item > 0)
+            .map(|(id, item)| GroupableItem {
+                id: **id,
+                name: item.name.clone(),
+                ilvl: item.level_item,
+            })
+            .collect();
+
+        let (groups, _ungrouped) = group_into_sets(projections);
+        // Items placed into a set don't render as individual cards.
+        // Everything else — items the grouping rejected AND items we
+        // skipped up front (level_item == 0, non-equipment) — flows
+        // through to the regular sortable list below the set cards.
+        let in_a_group: std::collections::HashSet<i32> = groups
+            .iter()
+            .flat_map(|g| g.items.iter().map(|i| i.id.0))
+            .collect();
+        let ungrouped_items: Vec<_> = job_items
+            .iter()
+            .filter(|(id, _)| !in_a_group.contains(&id.0))
+            .copied()
+            .collect();
+
+        (groups, ungrouped_items)
+    });
+
+    let groups = Memo::new(move |_| grouping.with(|(g, _)| g.clone()));
+    let ungrouped_items = Memo::new(move |_| grouping.with(|(_, ungrouped)| ungrouped.clone()));
+
+    let jobset_param = Memo::new(move |_| {
+        params()
+            .get("jobset")
+            .as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    });
+
     view! {
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("%job%", &job_set()) />
@@ -240,7 +291,32 @@ pub fn JobItems() -> impl IntoView {
                 unchecked_label=t_string!(i18n, item_explorer_showing_all).to_string()
             />
         </div>
-        <ItemList items />
+
+        // Set cards: one per detected gear set, sized matching the
+        // ItemList grid so the rows align when both are present.
+        {move || {
+            let gs = groups.get();
+            if gs.is_empty() {
+                ().into_any()
+            } else {
+                let jobset = jobset_param.get();
+                view! {
+                    <div class="mt-4">
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mb-2">
+                            {t!(i18n, job_set_card_section_heading)}
+                        </h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                            {gs.into_iter().map(|group| {
+                                view! { <JobSetCard group=group jobset=jobset.clone() /> }
+                            }).collect::<Vec<_>>()}
+                        </div>
+                    </div>
+                }
+                .into_any()
+            }
+        }}
+
+        <ItemList items=ungrouped_items />
     }
     .into_any()
 }
