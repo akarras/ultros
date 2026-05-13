@@ -9,8 +9,8 @@ use ultros_api_types::{
     FfxivCharacterVerification,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
-        CreatePushSubscriptionRequest, Endpoint, ResendResult, UpdateAlertRequest,
-        UpdateEndpointRequest, VapidPublicKey,
+        CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
+        UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{
@@ -406,6 +406,10 @@ pub(crate) async fn get_alert_events() -> AppResult<Vec<AlertEvent>> {
 
 pub(crate) async fn list_endpoints() -> AppResult<Vec<Endpoint>> {
     fetch_api("/api/v1/endpoints").await
+}
+
+pub(crate) async fn list_discord_writable_guilds() -> AppResult<Vec<DiscordWritableGuild>> {
+    fetch_api("/api/v1/endpoints/discord-guilds").await
 }
 
 pub(crate) async fn create_endpoint(req: CreateEndpointRequest) -> AppResult<Endpoint> {

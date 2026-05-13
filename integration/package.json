@@ -11,6 +11,7 @@
     "test:mobile": "cross-env CONCURRENCY=16 DEVICE=mobile npm run run",
     "test:desktop": "cross-env CONCURRENCY=16 DEVICE=desktop npm run run",
     "test:login": "node ./login.cjs",
+    "test:push": "node ./push.cjs",
     "test:shared-list": "node ./shared-list.cjs"
   },
   "devDependencies": {

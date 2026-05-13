@@ -85,7 +85,7 @@ async function main() {
             `current_user: expected username "${TEST_USERNAME}", got "${parsed.username}"`,
           );
         }
-        if (parsed.id !== TEST_USER_ID) {
+        if (String(parsed.id) !== String(TEST_USER_ID)) {
           failures.push(
             `current_user: expected id ${TEST_USER_ID}, got ${parsed.id}`,
           );

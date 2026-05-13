@@ -17,6 +17,11 @@ pub enum AlertTrigger {
     /// per-row `target_price`. The list-scoped trigger lets a single alert
     /// follow every item in a shopping list (including items added later).
     ListItemThreshold { list_id: i32 },
+    /// Fire when one of the user's retainers is undercut by more than
+    /// `margin_percent`.
+    RetainerUndercut { margin_percent: i32 },
+    /// Fire when a list or one of its rows changes.
+    ListUpdate { list_id: i32 },
 }
 
 /// Where to send a fired alert.
@@ -154,6 +159,20 @@ pub struct ResendResult {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscordWritableChannel {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscordWritableGuild {
+    pub id: i64,
+    pub name: String,
+    pub icon_url: Option<String>,
+    pub channels: Vec<DiscordWritableChannel>,
+}
+
 #[cfg(test)]
 mod endpoint_tests {
     use super::*;
@@ -231,5 +250,17 @@ mod endpoint_tests {
         let s = serde_json::to_string(&req).unwrap();
         let back: UpdateEndpointRequest = serde_json::from_str(&s).unwrap();
         assert_eq!(req, back);
+    }
+
+    #[test]
+    fn alert_trigger_new_variants_round_trip() {
+        for trigger in [
+            AlertTrigger::RetainerUndercut { margin_percent: 5 },
+            AlertTrigger::ListUpdate { list_id: 42 },
+        ] {
+            let s = serde_json::to_string(&trigger).unwrap();
+            let back: AlertTrigger = serde_json::from_str(&s).unwrap();
+            assert_eq!(trigger, back);
+        }
     }
 }

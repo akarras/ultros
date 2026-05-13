@@ -11,7 +11,10 @@ use tracing::{debug, error, instrument};
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::UltrosDb;
 
-use crate::event::{EventBus, EventType};
+use crate::{
+    alerts::delivery::dispatch_alert,
+    event::{EventBus, EventType},
+};
 
 /// Returns true when `competitor_price` undercuts `our_lowest_price` by strictly more than
 /// `margin_percent`%. A `margin_percent` of 0 fires on any undercut; values ≥ 100 collapse the
@@ -344,17 +347,61 @@ impl RetainerAlertListener {
                                         let undercut_msg = format!(
                                             "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app/retainers/undercuts"
                                         );
-                                        if let Err(e) = send_discord_alerts(
+                                        let title = "Undercut Alert";
+                                        let mut delivered = false;
+                                        let mut delivery_error = None;
+                                        match dispatch_alert(
                                             alert_id,
-                                            discord_user,
+                                            title,
+                                            &undercut_msg,
                                             &ultros_db,
                                             &ctx,
-                                            &undercut_msg,
                                         )
                                         .await
                                         {
-                                            error!("Error sending discord alerts {e}");
-                                            break;
+                                            Ok(()) => delivered = true,
+                                            Err(endpoint_error) => {
+                                                match send_discord_alerts(
+                                                    alert_id,
+                                                    discord_user,
+                                                    &ultros_db,
+                                                    &ctx,
+                                                    &undercut_msg,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(()) => delivered = true,
+                                                    Err(legacy_error) => {
+                                                        delivery_error = Some(format!(
+                                                            "{endpoint_error}; legacy Discord destinations failed: {legacy_error}"
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Err(e) = ultros_db
+                                            .record_alert_event(
+                                                alert_id,
+                                                item_id,
+                                                None,
+                                                None,
+                                                delivered,
+                                                delivery_error.clone(),
+                                            )
+                                            .await
+                                        {
+                                            error!("failed to record undercut alert event: {e}");
+                                        }
+                                        if delivered {
+                                            if let Err(e) =
+                                                ultros_db.update_alert_last_fired(alert_id).await
+                                            {
+                                                error!(
+                                                    "failed to update undercut alert last_fired_at: {e}"
+                                                );
+                                            }
+                                        } else if let Some(error) = delivery_error {
+                                            error!("Error sending undercut alerts {error}");
                                         }
                                     }
                                 }

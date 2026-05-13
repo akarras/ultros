@@ -9,7 +9,10 @@
 //! guilds the bot has just joined or for users who haven't appeared in any
 //! gateway event yet.
 
-use poise::serenity_prelude::{self as serenity, ChannelId, GuildId, Permissions, UserId};
+use poise::serenity_prelude::{
+    self as serenity, ChannelId, ChannelType, GuildId, Permissions, UserId,
+};
+use ultros_api_types::alert::{DiscordWritableChannel, DiscordWritableGuild};
 
 use crate::web::error::ApiError;
 
@@ -126,4 +129,95 @@ pub(crate) async fn require_user_is_guild_admin(
              server to bind alerts to its channels"
         )))
     }
+}
+
+/// Return guilds that:
+///
+/// - the bot is in,
+/// - the authenticated web user is a member of,
+/// - the authenticated web user can administer or manage,
+/// - and the bot can post embeds into at least one text/news channel.
+///
+/// This powers the web "Discord channel" endpoint picker. It intentionally
+/// uses the bot token only: the user's OAuth session currently has `identify`,
+/// not `guilds`, and the bot can answer the shared-guild question by probing
+/// its own guilds for the user member.
+pub(crate) async fn writable_guilds_for_user(
+    ctx: &serenity::Context,
+    user_id: i64,
+) -> Result<Vec<DiscordWritableGuild>, ApiError> {
+    let user_id =
+        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
+    let user_id = UserId::new(user_id);
+    let bot_user_id = ctx.cache.current_user().id;
+    let mut guilds = Vec::new();
+
+    for guild_id in ctx.cache.guilds() {
+        let partial = match guild_id.to_partial_guild(&ctx.http).await {
+            Ok(guild) => guild,
+            Err(e) => {
+                tracing::warn!(
+                    guild_id = guild_id.get(),
+                    "failed to load Discord guild: {e}"
+                );
+                continue;
+            }
+        };
+
+        let user_member = match partial.member(&ctx.http, user_id).await {
+            Ok(member) => member,
+            Err(_) => continue,
+        };
+        let user_permissions = partial.member_permissions(&user_member);
+        if !user_permissions.contains(Permissions::ADMINISTRATOR)
+            && !user_permissions.contains(Permissions::MANAGE_GUILD)
+        {
+            continue;
+        }
+
+        let bot_member = match partial.member(&ctx.http, bot_user_id).await {
+            Ok(member) => member,
+            Err(e) => {
+                tracing::warn!(
+                    guild_id = guild_id.get(),
+                    "failed to load bot member for Discord guild: {e}"
+                );
+                continue;
+            }
+        };
+
+        let mut channels = partial
+            .channels(&ctx.http)
+            .await
+            .map_err(|e| {
+                ApiError::from(anyhow::anyhow!(
+                    "Discord could not load channels for guild {}: {e}",
+                    partial.name
+                ))
+            })?
+            .into_values()
+            .filter(|channel| matches!(channel.kind, ChannelType::Text | ChannelType::News))
+            .filter(|channel| {
+                let permissions = partial.user_permissions_in(channel, &bot_member);
+                permissions.contains(Permissions::VIEW_CHANNEL)
+                    && permissions.contains(Permissions::SEND_MESSAGES)
+                    && permissions.contains(Permissions::EMBED_LINKS)
+            })
+            .map(|channel| DiscordWritableChannel {
+                id: channel.id.get() as i64,
+                name: channel.name,
+            })
+            .collect::<Vec<_>>();
+        channels.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+        guilds.push(DiscordWritableGuild {
+            id: partial.id.get() as i64,
+            name: partial.name.clone(),
+            icon_url: partial.icon_url(),
+            channels,
+        });
+    }
+
+    guilds.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(guilds)
 }

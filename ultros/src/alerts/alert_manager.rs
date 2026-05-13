@@ -4,7 +4,10 @@ use futures::future::{self, Either};
 use poise::serenity_prelude;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
-use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
+use ultros_api_types::{
+    user::OwnedRetainer,
+    websocket::{ListEventData, ListingEventData},
+};
 use ultros_db::{
     UltrosDb,
     entity::{alert, alert_retainer_undercut},
@@ -13,6 +16,7 @@ use ultros_db::{
 
 use crate::event::{EventBus, EventType};
 
+use super::list_update_alert_tracker::ListUpdateAlertListener;
 use super::price_alert_tracker::PriceAlertListener;
 use super::undercut_alert::{RetainerAlertListener, RetainerAlertTx};
 
@@ -20,6 +24,7 @@ pub(crate) struct AlertManager {
     /// Hashmap of the current retainer alerts where the id of the alert is the key
     current_retainer_alerts: HashMap<i32, RetainerAlertListener>,
     price_alerts: Option<PriceAlertListener>,
+    list_update_alerts: Option<ListUpdateAlertListener>,
 }
 
 impl AlertManager {
@@ -30,6 +35,7 @@ impl AlertManager {
             EventBus<alert::Model>,
             EventBus<alert_retainer_undercut::Model>,
         ),
+        lists: EventBus<ListEventData>,
         ctx: serenity_prelude::Context,
         token: CancellationToken,
         world_cache: Arc<WorldCache>,
@@ -38,6 +44,7 @@ impl AlertManager {
         let mut manager = AlertManager {
             current_retainer_alerts: HashMap::new(),
             price_alerts: None,
+            list_update_alerts: None,
         };
         match ultros_db.get_all_alerts().await {
             Ok(all_alerts) => {
@@ -65,6 +72,8 @@ impl AlertManager {
         match PriceAlertListener::start(
             ultros_db.clone(),
             listings.resubscribe(),
+            alerts.resubscribe(),
+            lists.resubscribe(),
             ctx.clone(),
             world_cache,
         )
@@ -73,6 +82,17 @@ impl AlertManager {
             Ok(listener) => manager.price_alerts = Some(listener),
             Err(e) => error!("failed to start price alert listener: {e}"),
         }
+        match ListUpdateAlertListener::start(
+            ultros_db.clone(),
+            lists.resubscribe(),
+            alerts.resubscribe(),
+            ctx.clone(),
+        )
+        .await
+        {
+            Ok(listener) => manager.list_update_alerts = Some(listener),
+            Err(e) => error!("failed to start list update alert listener: {e}"),
+        }
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
@@ -80,10 +100,34 @@ impl AlertManager {
                 }
                 either = future::select(Box::pin(alerts.recv()), Box::pin(undercuts.recv())) => {
                     match either {
-                        Either::Left(_alert) => {
-                            /*if let Ok(alert) = alert {
-                                manager.remove_retainer_alert(alert);
-                            }*/
+                        Either::Left((alert_event, _)) => {
+                            if let Ok(EventType::Update(alert)) = alert_event {
+                                match ultros_db
+                                    .get_retainer_alerts_for_related_alert_id(alert.id)
+                                    .await
+                                {
+                                    Ok(retainer_alerts) => {
+                                        for retainer_alert in retainer_alerts {
+                                            if alert.enabled {
+                                                if !manager.current_retainer_alerts.contains_key(&retainer_alert.id) {
+                                                    manager
+                                                        .create_retainer_alert_listener(
+                                                            &retainer_alert,
+                                                            &ultros_db,
+                                                            &ctx,
+                                                            listings.resubscribe(),
+                                                            retainers.resubscribe(),
+                                                        )
+                                                        .await;
+                                                }
+                                            } else {
+                                                manager.remove_retainer_alert(&retainer_alert).await;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => error!("Error refreshing retainer alert state {e:?}"),
+                                }
+                            }
                         }
                         Either::Right((retainer_alert_create, _)) => {
                             if let Ok(retainer) = &retainer_alert_create {

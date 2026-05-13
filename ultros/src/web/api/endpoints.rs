@@ -4,7 +4,8 @@ use axum::{
 };
 use serde_json::Value as JsonValue;
 use ultros_api_types::alert::{
-    CreateEndpointRequest, Endpoint, EndpointMethod, ResendResult, UpdateEndpointRequest,
+    CreateEndpointRequest, DiscordWritableGuild, Endpoint, EndpointMethod, ResendResult,
+    UpdateEndpointRequest,
 };
 use ultros_db::UltrosDb;
 
@@ -133,6 +134,19 @@ pub(crate) async fn list_endpoints(
         });
     }
     Ok(Json(out))
+}
+
+pub(crate) async fn list_discord_writable_guilds(
+    user: AuthDiscordUser,
+) -> Result<Json<Vec<DiscordWritableGuild>>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot load shared servers right now"
+        ))
+    })?;
+    let guilds =
+        crate::web::api::discord_lookup::writable_guilds_for_user(&ctx, user.id as i64).await?;
+    Ok(Json(guilds))
 }
 
 pub(crate) async fn create_endpoint(

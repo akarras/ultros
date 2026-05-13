@@ -9,7 +9,9 @@ use poise::serenity_prelude;
 use tokio::sync::Mutex;
 use tracing::{error, info, instrument, warn};
 use ultros_api_types::{
-    ActiveListing, websocket::ListingEventData, world_helper::AnySelector as ApiAnySelector,
+    ActiveListing,
+    websocket::{ListEventData, ListingEventData},
+    world_helper::AnySelector as ApiAnySelector,
 };
 use ultros_db::{
     UltrosDb,
@@ -102,7 +104,7 @@ pub(crate) fn list_rule_matches_listing(
 }
 
 /// Look up an item's name in the embedded xiv-gen data, falling back to `"Item {id}"` if missing.
-fn resolve_item_name(item_id: i32) -> String {
+pub(crate) fn resolve_item_name(item_id: i32) -> String {
     xiv_gen_db::data()
         .items
         .get(&xiv_gen::ItemId(item_id))
@@ -294,23 +296,18 @@ pub(crate) struct PriceAlertListener {
 }
 
 impl PriceAlertListener {
-    #[instrument(skip(ultros_db, listings, ctx, world_cache))]
+    #[instrument(skip(ultros_db, listings, alert_events, list_events, ctx, world_cache))]
     pub(crate) async fn start(
         ultros_db: UltrosDb,
         mut listings: EventBus<ListingEventData>,
+        mut alert_events: EventBus<alert::Model>,
+        mut list_events: EventBus<ListEventData>,
         ctx: serenity_prelude::Context,
         world_cache: Arc<WorldCache>,
     ) -> Result<Self> {
-        let initial = ultros_db.get_all_active_threshold_alerts().await?;
-        let initial_list = ultros_db.get_all_active_list_threshold_alerts().await?;
         let state = Arc::new(Mutex::new(TrackerState::default()));
-        {
-            let mut guard = state.lock().await;
-            guard.refresh_from(&initial, &world_cache);
-            guard
-                .refresh_list_rules_from(&initial_list, &ultros_db, &world_cache)
-                .await;
-        }
+        let (initial, initial_list) =
+            refresh_state_from_db(&state, &ultros_db, &world_cache).await?;
         info!(
             "price-alert tracker started with {} item-rules and {} list-alerts",
             initial.len(),
@@ -321,10 +318,43 @@ impl PriceAlertListener {
 
         let state_for_loop = state.clone();
         let db_for_loop = ultros_db.clone();
+        let world_cache_for_loop = world_cache.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = stop_rx.recv() => break,
+                    msg = alert_events.recv() => {
+                        match msg {
+                            Ok(_) => {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                    error!("price-alert tracker refresh failed after alert change: {e}");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                error!("price-alert tracker lagged, dropped {n} alert events");
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                    error!("price-alert tracker refresh failed after alert lag: {e}");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                    msg = list_events.recv() => {
+                        match msg {
+                            Ok(_) => {
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                    error!("price-alert tracker refresh failed after list change: {e}");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                error!("price-alert tracker lagged, dropped {n} list events");
+                                if let Err(e) = refresh_state_from_db(&state_for_loop, &db_for_loop, &world_cache_for_loop).await {
+                                    error!("price-alert tracker refresh failed after list lag: {e}");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
                     msg = listings.recv() => {
                         match msg {
                             Ok(event) => {
@@ -344,6 +374,26 @@ impl PriceAlertListener {
 
         Ok(Self { stop_tx })
     }
+}
+
+async fn refresh_state_from_db(
+    state: &Arc<Mutex<TrackerState>>,
+    db: &UltrosDb,
+    world_cache: &WorldCache,
+) -> Result<(
+    Vec<(alert::Model, alert_item_threshold::Model)>,
+    Vec<(alert::Model, alert_list_threshold::Model)>,
+)> {
+    let threshold_alerts = db.get_all_active_threshold_alerts().await?;
+    let list_threshold_alerts = db.get_all_active_list_threshold_alerts().await?;
+    {
+        let mut guard = state.lock().await;
+        guard.refresh_from(&threshold_alerts, world_cache);
+        guard
+            .refresh_list_rules_from(&list_threshold_alerts, db, world_cache)
+            .await;
+    }
+    Ok((threshold_alerts, list_threshold_alerts))
 }
 
 async fn handle_added(

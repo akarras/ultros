@@ -58,6 +58,7 @@ pub mod tooltip;
 pub mod top_bar;
 pub mod top_deals;
 pub mod ui_text;
+pub mod undercut_alert_drawer;
 pub mod virtual_scroller;
 pub mod wasm_loading_indicator;
 pub mod world_name;

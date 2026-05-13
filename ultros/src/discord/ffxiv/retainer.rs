@@ -101,6 +101,10 @@ async fn add_undercut_alert(
     margin_percent: i32,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    if !(0..=200).contains(&margin_percent) {
+        ctx.say("Margin percent must be between 0 and 200.").await?;
+        return Ok(());
+    }
     let alert = ctx
         .data()
         .db
@@ -110,10 +114,17 @@ async fn add_undercut_alert(
             margin_percent,
         )
         .await?;
+    let related_alert_id = alert.alert_id;
     ctx.data()
         .event_senders
         .retainer_undercut
         .send(EventType::added(alert))?;
+    if let Some(related_alert) = ctx.data().db.get_alert(related_alert_id).await? {
+        ctx.data()
+            .event_senders
+            .alerts
+            .send(EventType::added(related_alert))?;
+    }
     ctx.say(&format!("Now sending alerts to this channel anytime someone undercuts your retainer by {margin_percent}%")).await?;
     Ok(())
 }
