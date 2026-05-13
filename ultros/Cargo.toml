@@ -74,7 +74,7 @@ tikv-jemallocator = { version = "0.6.1", features = [
     "unprefixed_malloc_on_supported_platforms",
 ], optional = true }
 jemalloc_pprof = { version = "0.8.2", optional = true }
-tantivy = "0.25.0"
+tantivy = "0.26.1"
 rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_64"], default-features = false }
 flate2 = "1.1.9"
 url = "2.5.8"
