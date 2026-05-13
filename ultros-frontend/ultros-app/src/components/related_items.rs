@@ -18,7 +18,7 @@ use crate::{
         },
         icon::Icon,
         item_icon::ItemIcon,
-        on_hand_input::{LocalOnHand, OnHandMap},
+        on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap},
         skeleton::SingleLineSkeleton,
     },
     global_state::{
@@ -809,6 +809,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     <h2 class="text-xl font-bold text-brand-200 px-1">"Crafting Recipes"</h2>
                     <CraftOptionsToggleRow />
                 </div>
+                <ActiveListBanner />
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     <For
                         each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())

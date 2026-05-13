@@ -2,7 +2,7 @@ use crate::components::crafting_cost::{
     CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost,
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
-use crate::components::on_hand_input::{LocalOnHand, OnHandMap};
+use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::is_shard_item;
 use crate::global_state::craft_options::CraftOptions;
 use crate::global_state::xiv_data::tracked_data;
@@ -253,11 +253,21 @@ fn RecipeAnalyzerTable(
                 .map(|m: OnHandMap| LocalOnHand::from_map(m.0.get_untracked()))
                 .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
             let empty = EmptyOnHand;
-            let active: Box<dyn crate::components::crafting_cost::OnHand> = if use_on_hand {
-                Box::new(local)
-            } else {
-                Box::new(empty)
-            };
+            // TODO(follow-up): when active_craft_list is Some, fetch the list resource
+            // and construct ListOnHand from its items instead of falling through to LocalOnHand.
+            // The type (ListOnHand) is in place; the async resource fetch is the missing piece.
+            let active: Box<dyn crate::components::crafting_cost::OnHand> =
+                match opts_value.active_craft_list {
+                    Some(_list_id) if use_on_hand => {
+                        // List fetch is async-resourced separately; for the first cut,
+                        // fall through to LocalOnHand if the resource isn't ready yet.
+                        // (Plumbing the resource in is left for a follow-up — flagged
+                        //  in the roadmap section of the spec.)
+                        Box::new(local)
+                    }
+                    _ if use_on_hand => Box::new(local),
+                    _ => Box::new(empty),
+                };
             let opts = CraftingCostOptions {
                 require_hq: require_hq_flag,
                 max_subcraft_depth: if use_sub { 2 } else { 0 },
@@ -333,6 +343,7 @@ fn RecipeAnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-6">
+            <ActiveListBanner />
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                  <FilterCard
                     title=t_string!(i18n, minimum_profit).to_string()

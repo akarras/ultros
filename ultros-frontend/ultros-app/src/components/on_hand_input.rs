@@ -1,13 +1,17 @@
 // ultros-frontend/ultros-app/src/components/on_hand_input.rs
 //! LocalStorage-backed on-hand tracking. Consumed by the analyzer routes in Tasks 7-9.
-// TODO(Tasks 8-9): remove this allow once STORAGE_KEY, from_storage, OnHandProvider,
-// and OnHandPanel gain callers in the analyzer routes.
+// Dead-code allow retained: STORAGE_KEY / from_storage are cfg-gated non-SSR so the
+// lib/ssr build never sees them; ListOnHand / from_items are pub API consumed by
+// hydrate-feature callers; Leptos component prop structs appear unused to clippy in
+// the lib target. The follow-up PR that plumbs the live-list resource fetch can
+// narrow or remove this allow once ListOnHand gains a concrete call site in SSR.
 #![allow(dead_code)]
 
 use crate::components::crafting_cost::OnHand;
 use leptos::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use ultros_api_types::list::ListItem;
 use xiv_gen::ItemId;
 
 const STORAGE_KEY: &str = "ultros.craft.on_hand.v1";
@@ -41,6 +45,41 @@ impl LocalOnHand {
 }
 
 impl OnHand for LocalOnHand {
+    fn available(&self, item: ItemId) -> i32 {
+        self.snapshot.borrow().get(&item.0).copied().unwrap_or(0)
+    }
+    fn consume(&self, item: ItemId, qty: i32) {
+        let mut s = self.snapshot.borrow_mut();
+        if let Some(v) = s.get_mut(&item.0) {
+            *v = (*v - qty).max(0);
+        }
+    }
+}
+
+/// Reads on-hand from the user's active list's `ListItem.acquired` field.
+/// Snapshotted at construction; `consume` mutates the snapshot only
+/// (the list page is the canonical write path for `acquired`).
+pub struct ListOnHand {
+    snapshot: RefCell<HashMap<i32, i32>>,
+    pub list_id: i32,
+    pub list_name: String,
+}
+
+impl ListOnHand {
+    pub fn from_items(list_id: i32, list_name: String, items: &[ListItem]) -> Self {
+        let snapshot = items
+            .iter()
+            .filter_map(|i| i.acquired.map(|q| (i.item_id, q)))
+            .collect();
+        Self {
+            snapshot: RefCell::new(snapshot),
+            list_id,
+            list_name,
+        }
+    }
+}
+
+impl OnHand for ListOnHand {
     fn available(&self, item: ItemId) -> i32 {
         self.snapshot.borrow().get(&item.0).copied().unwrap_or(0)
     }
@@ -188,6 +227,42 @@ pub fn OnHandPanel() -> impl IntoView {
                 }}
             </Show>
         </div>
+    }
+}
+
+/// Banner shown on cost-quoting surfaces when an active craft list is set.
+/// Renders a one-liner indicating on-hand data comes from the active list,
+/// plus a "Detach" button that clears `active_craft_list` in the cookie.
+/// Returns nothing when no active list is set.
+#[component]
+pub fn ActiveListBanner() -> impl IntoView {
+    use crate::global_state::cookies::Cookies;
+    use crate::global_state::craft_options::CraftOptions;
+    let cookies = use_context::<Cookies>().unwrap();
+    let (opts_signal, set_opts) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+
+    let active_id = move || opts_signal.get().unwrap_or_default().active_craft_list;
+
+    move || {
+        active_id().map(|id| {
+            view! {
+                <div class="panel p-2 rounded-md border border-emerald-700/30 bg-emerald-900/10 flex flex-row items-center justify-between text-sm">
+                    <span class="text-emerald-300">
+                        "On-hand pulled from list #" {id}
+                    </span>
+                    <button
+                        class="btn-ghost text-xs"
+                        on:click=move |_| {
+                            let mut o = opts_signal.get().unwrap_or_default();
+                            o.active_craft_list = None;
+                            set_opts(Some(o));
+                        }
+                    >
+                        "Detach"
+                    </button>
+                </div>
+            }
+        })
     }
 }
 
