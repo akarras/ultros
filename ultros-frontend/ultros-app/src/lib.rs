@@ -318,9 +318,11 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
     let error_reporting_script = error_reporting_script();
     view! {
         <!DOCTYPE html>
-        <html lang="en" data-theme="dark" data-palette="violet">
+        // `translate="no"` + `<meta name="google" content="notranslate">` block Chrome's Google Translate from rewriting text nodes into `<font>` wrappers before hydration, which trips `failed_to_cast_text_node` in tachys (panic at `tachys-0.2.11/src/hydration.rs:227`). App has its own locale switcher.
+        <html lang="en" translate="no" data-theme="dark" data-palette="violet">
             <head>
                 <meta charset="utf-8" />
+                <meta name="google" content="notranslate" />
                 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
                 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
                 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
