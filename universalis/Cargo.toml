@@ -17,7 +17,7 @@ bson = "2.4.0"
 async-tungstenite = {version = "0.24", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
 tokio = { workspace = true, optional = true }
 futures = { workspace = true }
-serde_with = {version = "3.3.0", features = ["chrono"]}
+serde_with = {version = "3.20.0", features = ["chrono"]}
 chrono = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
