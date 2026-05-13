@@ -2,9 +2,9 @@ use anyhow::anyhow;
 use itertools::Itertools;
 use poise::CreateReply;
 use poise::serenity_prelude::CreateEmbed;
-use xiv_gen::ItemId;
 
 use crate::discord::ffxiv::helpers;
+use crate::discord::ffxiv::helpers::{discord_locale_to_xiv_language, localized_item_name};
 
 use super::{Context, Error, ULTROS_COLOR};
 
@@ -103,14 +103,16 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
             .await?;
         return Ok(());
     }
-    let items = &xiv_gen_db::data().items;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let lines = rows
         .into_iter()
         .map(|(a, t)| {
-            let item_name = items
-                .get(&ItemId(t.item_id))
-                .map(|it| it.name.as_str())
-                .unwrap_or("?");
+            let item_name = localized_item_name(t.item_id, user_lang);
+            let item_name = if item_name.is_empty() {
+                "?".to_string()
+            } else {
+                item_name
+            };
             let status = if a.enabled { "✅" } else { "⏸" };
             format!(
                 "{status} `#{id}` {name} ≤ {price} gil{hq}",

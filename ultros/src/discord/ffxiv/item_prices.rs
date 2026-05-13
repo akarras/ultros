@@ -5,7 +5,10 @@ use ultros_db::world_data::world_cache::AnySelector;
 use xiv_gen::ItemId;
 
 use crate::discord::ffxiv::ULTROS_COLOR;
-use crate::discord::ffxiv::helpers::{name_matches_lowered, top_n_cheapest_listings};
+use crate::discord::ffxiv::helpers::{
+    discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
+    name_matches_lowered, top_n_cheapest_listings,
+};
 use crate::web::item_card::generate_image;
 
 use super::{Context, Error};
@@ -17,18 +20,13 @@ pub(crate) async fn prices(_ctx: Context<'_>) -> Result<(), Error> {
 }
 
 async fn autocomplete_item<'a>(
-    _ctx: Context<'_>,
+    ctx: Context<'_>,
     partial: &'a str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
-    let partial = partial.to_lowercase();
-    xiv_gen_db::data()
-        .items
-        .values()
-        .filter(move |item| name_matches_lowered(&item.name, &partial))
-        .map(|item| {
-            poise::serenity_prelude::AutocompleteChoice::new(item.name.to_string(), item.key_id.0)
-        })
-        .take(99)
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
+    localized_item_matches(partial, user_lang)
+        .into_iter()
+        .map(|m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id))
 }
 
 async fn autocomplete_world<'a>(
@@ -53,15 +51,19 @@ async fn current(
     hq_only: Option<bool>,
 ) -> Result<(), Error> {
     ctx.defer().await?;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let worlds = &ctx.data().world_cache;
     let world = worlds.lookup_value_by_name(&world)?;
     let world_ids = worlds
         .get_all_worlds_in(&world)
         .ok_or(anyhow!("bad world data"))?;
-    let item_data = xiv_gen_db::data()
+    // Verify the id is real before issuing the DB call; the title uses the
+    // user's locale, falling back to English.
+    xiv_gen_db::data_for(xiv_gen::Language::En)
         .items
         .get(&ItemId(item))
         .ok_or(anyhow!("bad item id"))?;
+    let item_display_name = localized_item_name(item, user_lang);
     let listings = ctx
         .data()
         .db
@@ -86,7 +88,7 @@ async fn current(
     ctx.send(
         poise::CreateReply::default().embed(
             poise::serenity_prelude::CreateEmbed::new()
-                .title(&item_data.name)
+                .title(&item_display_name)
                 .description(format!(
                     "```\n{:<10} {:3} {:<7} {}\n{}\n```",
                     "price", "hq", "quantity", "world", listings,
@@ -109,22 +111,26 @@ async fn history(
     world: String,
 ) -> Result<(), Error> {
     ctx.defer().await?;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let data = ctx.data();
-    let item = xiv_gen_db::data()
+    // The image generator needs the canonical English `Item` reference for its
+    // metadata lookups; the embed title uses the user's locale for display.
+    let item_en = xiv_gen_db::data_for(xiv_gen::Language::En)
         .items
         .get(&ItemId(item))
         .ok_or(anyhow!("Item not found"))?;
+    let item_display_name = localized_item_name(item, user_lang);
     let world = data
         .world_helper
         .lookup_world_by_name(&world)
         .ok_or(anyhow!("Unable to find world"))?;
-    let png = generate_image(&data.db, &data.world_helper, item, &world).await?;
+    let png = generate_image(&data.db, &data.world_helper, item_en, &world).await?;
     let attachment = CreateAttachment::bytes(png, "chart.png");
     ctx.send(
         poise::CreateReply::default()
             .embed(
                 poise::serenity_prelude::CreateEmbed::new()
-                    .title([&item.name, " - ", world.get_name()].concat())
+                    .title([&item_display_name, " - ", world.get_name()].concat())
                     .color(ULTROS_COLOR)
                     .image("attachment://chart.png"),
             )

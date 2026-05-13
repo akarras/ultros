@@ -1,4 +1,8 @@
 use super::{Context, Error};
+use crate::discord::ffxiv::helpers::{
+    discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
+    resolve_item_id_any_locale,
+};
 use anyhow::anyhow;
 use itertools::Itertools;
 use poise::serenity_prelude::User;
@@ -96,18 +100,23 @@ async fn autocomplete_list_name(
 }
 
 async fn autocomplete_item_name_global(
-    _ctx: Context<'_>,
+    ctx: Context<'_>,
     partial: &str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
-    let partial = partial.to_ascii_lowercase();
-    let items = &xiv_gen_db::data().items;
-    items
-        .iter()
-        .filter(move |(_, i)| !i.name.is_empty() && i.name.to_ascii_lowercase().contains(&partial))
-        .take(25)
-        .map(|(_, i)| {
-            poise::serenity_prelude::AutocompleteChoice::new(i.name.clone(), i.name.clone())
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
+    let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+    localized_item_matches(partial, user_lang)
+        .into_iter()
+        .filter_map(move |m| {
+            let en_name = en.items.get(&ItemId(m.item_id))?.name.to_string();
+            if en_name.is_empty() {
+                return None;
+            }
+            Some(poise::serenity_prelude::AutocompleteChoice::new(
+                m.label, en_name,
+            ))
         })
+        .take(25)
         .collect::<Vec<_>>()
         .into_iter()
 }
@@ -321,11 +330,9 @@ async fn add_item(
     #[description = "hq? Leave blank for no filter"] hq: Option<bool>,
 ) -> Result<(), Error> {
     let author_id = ctx.author().id.get() as i64;
-    let (i, item) = xiv_gen_db::data()
-        .items
-        .iter()
-        .find(|(_, i)| i.name == item_name)
-        .ok_or(anyhow!("Unable to find item"))?;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
+    let item_id = resolve_item_id_any_locale(&item_name).ok_or(anyhow!("Unable to find item"))?;
+    let display_name = localized_item_name(item_id, user_lang);
     let list = ctx
         .data()
         .db
@@ -336,13 +343,13 @@ async fn add_item(
         .ok_or(anyhow!("List not found"))?;
     ctx.data()
         .db
-        .add_item_to_list(&list, author_id, i.0, hq, quantity, None)
+        .add_item_to_list(&list, author_id, item_id, hq, quantity, None)
         .await?;
     ctx.send(
         poise::CreateReply::default().embed(
             poise::serenity_prelude::CreateEmbed::new()
                 .title("Item added")
-                .description(format!("{} added to list {}", item.name, list.name)),
+                .description(format!("{} added to list {}", display_name, list.name)),
         ),
     )
     .await?;
@@ -358,12 +365,8 @@ async fn remove_item(
     list_name: String,
     #[description = "item to remove"] item_name: String,
 ) -> Result<(), Error> {
-    let items = &xiv_gen_db::data().items;
     let author_id = ctx.author().id.get() as i64;
-    let (id, _) = items
-        .iter()
-        .find(|(_, item)| item.name == item_name)
-        .ok_or(anyhow!("Unable to find item"))?;
+    let id = resolve_item_id_any_locale(&item_name).ok_or(anyhow!("Unable to find item"))?;
     let lists = ctx.data().db.get_lists_for_user(author_id).await?;
     let list = lists
         .into_iter()
@@ -375,7 +378,7 @@ async fn remove_item(
         .get_list_items(list.id, author_id)
         .await?
         .into_iter()
-        .find(|i| i.item_id == id.0)
+        .find(|i| i.item_id == id)
         .ok_or(anyhow!("Unable to find item on list"))?;
     ctx.data()
         .db
@@ -406,16 +409,12 @@ async fn show_list(
     list_listings
         .iter_mut()
         .for_each(|(_, listings)| listings.sort_by_key(|(l, _)| l.price_per_unit));
-    let items = &xiv_gen_db::data().items;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let description = list_listings
         .iter()
         .map(|(list, listings)| {
-            // get the item name, and first listing
             (
-                items
-                    .get(&ItemId(list.item_id))
-                    .map(|i| i.name.as_str())
-                    .unwrap_or_default(),
+                localized_item_name(list.item_id, user_lang),
                 listings
                     .first()
                     .map(|(l, _)| format!("{}", l.price_per_unit))

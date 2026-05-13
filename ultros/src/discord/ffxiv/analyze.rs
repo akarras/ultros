@@ -1,9 +1,11 @@
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
-use xiv_gen::ItemId;
 
 use crate::analyzer_service::ResaleOptions;
-use crate::discord::ffxiv::helpers::{clamp_sold_amount, threshold_days_to_sold_within};
+use crate::discord::ffxiv::helpers::{
+    clamp_sold_amount, discord_locale_to_xiv_language, localized_item_name,
+    threshold_days_to_sold_within,
+};
 
 use super::{Context, Error};
 
@@ -52,8 +54,7 @@ pub(crate) async fn profit(
     let amount = clamp_sold_amount(number_recently_sold);
     let filter_sale = threshold_days_to_sold_within(threshold_days, amount);
 
-    let xiv_data = xiv_gen_db::data();
-    let items = &xiv_data.items;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let resale = ResaleOptions {
         minimum_profit: Some(minimum_profit),
         filter_sale: Some(filter_sale),
@@ -75,10 +76,7 @@ pub(crate) async fn profit(
             .description({
                 let mut content = format!("`{:<30} |  roi  | profit`\n", "item name");
                 for sale in sales {
-                    let item_name = items
-                        .get(&ItemId(sale.item_id))
-                        .map(|i| i.name.as_str())
-                        .unwrap_or_default();
+                    let item_name = localized_item_name(sale.item_id, user_lang);
                     let item_name: String = item_name.chars().take(30).collect();
                     writeln!(
                         &mut content,

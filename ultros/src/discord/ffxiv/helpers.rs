@@ -4,7 +4,7 @@
 use anyhow::anyhow;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_db::entity::active_listing;
-use xiv_gen::ItemId;
+use xiv_gen::{ItemId, Language};
 
 use super::{Context, Error};
 use crate::analyzer_service::{SoldAmount, SoldWithin};
@@ -66,36 +66,140 @@ pub(crate) fn top_n_cheapest_listings(
         .collect()
 }
 
-/// Discord autocomplete handler for item-name string args. Returns up to 99 game items
-/// whose lowercased name contains the partial input. The choice value is the item name
-/// (callers should resolve it to an id via [`resolve_item_id`]).
+/// Map Discord's locale string (e.g. "ja", "de", "zh-CN") to the closest
+/// `xiv_gen::Language`. Falls back to English for unrecognized or missing locales.
+///
+/// Discord's documented locale codes:
+/// <https://discord.com/developers/docs/reference#locales>
+pub(crate) fn discord_locale_to_xiv_language(locale: Option<&str>) -> Language {
+    match locale.unwrap_or("") {
+        "ja" => Language::Ja,
+        "de" => Language::De,
+        "fr" => Language::Fr,
+        "zh-CN" => Language::Cn,
+        "ko" => Language::Ko,
+        "zh-TW" => Language::Tc,
+        _ => Language::En,
+    }
+}
+
+/// Look up an item id by name across every supported locale. Matches the lowercased
+/// name exactly; returns the first locale that contains the name. Used so users can
+/// paste a localized item name from anywhere on the site and have the bot resolve it.
+pub(crate) fn resolve_item_id_any_locale(name: &str) -> Option<i32> {
+    let lowered = name.to_lowercase();
+    for (_, data) in xiv_gen_db::all_locales() {
+        if let Some((ItemId(id), _)) = data
+            .items
+            .iter()
+            .find(|(_, item)| item.name.to_lowercase() == lowered)
+        {
+            return Some(*id);
+        }
+    }
+    None
+}
+
+/// A single autocomplete suggestion: a display label (localized into the user's
+/// language when possible) and the item id it resolves to. Returned by
+/// [`localized_item_matches`] and used to build the two flavors of Discord
+/// autocomplete (string-valued and integer-valued).
+pub(crate) struct LocalizedItemMatch {
+    pub label: String,
+    pub item_id: i32,
+}
+
+/// Search every supported locale for items whose name contains `partial`. Each
+/// matched item appears at most once: when more than one locale matched, the
+/// user's locale wins for the display name; otherwise the first locale that
+/// matched wins. If the localized display differs from the English name, the
+/// English name is appended in parentheses so the user can confirm the item.
+pub(crate) fn localized_item_matches(
+    partial: &str,
+    user_lang: Language,
+) -> Vec<LocalizedItemMatch> {
+    let needle = partial.to_lowercase();
+    let en = xiv_gen_db::data_for(Language::En);
+
+    let mut seen: std::collections::HashMap<i32, (Language, String)> =
+        std::collections::HashMap::new();
+    for (lang, data) in xiv_gen_db::all_locales() {
+        for (ItemId(id), item) in &data.items {
+            if item.name.is_empty() || !name_matches_lowered(&item.name, &needle) {
+                continue;
+            }
+            seen.entry(*id)
+                .and_modify(|(existing_lang, existing_name)| {
+                    if *existing_lang != user_lang && lang == user_lang {
+                        *existing_lang = lang;
+                        *existing_name = item.name.to_string();
+                    }
+                })
+                .or_insert_with(|| (lang, item.name.to_string()));
+        }
+    }
+
+    let mut out: Vec<LocalizedItemMatch> = seen
+        .into_iter()
+        .filter_map(|(id, (_, display))| {
+            let en_name = en.items.get(&ItemId(id))?.name.to_string();
+            if en_name.is_empty() {
+                return None;
+            }
+            let label = if display == en_name {
+                en_name
+            } else {
+                format!("{display} ({en_name})")
+            };
+            Some(LocalizedItemMatch { label, item_id: id })
+        })
+        .collect();
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out.truncate(99);
+    out
+}
+
+/// Discord autocomplete handler for item-name string args. Searches every supported
+/// locale for substring matches; deduplicates by item id; prefers the user's locale
+/// for display when the same item matched in multiple locales. The choice value is
+/// the canonical English item name so existing callers of [`resolve_item_id`] keep
+/// working unchanged.
 pub(crate) async fn autocomplete_item<'a>(
-    _ctx: Context<'_>,
+    ctx: Context<'_>,
     partial: &'a str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
-    let partial = partial.to_lowercase();
-    xiv_gen_db::data()
-        .items
-        .values()
-        .filter(move |item| name_matches_lowered(&item.name, &partial))
-        .map(|item| {
-            poise::serenity_prelude::AutocompleteChoice::new(
-                item.name.to_string(),
-                item.name.to_string(),
-            )
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
+    let en = xiv_gen_db::data_for(Language::En);
+    localized_item_matches(partial, user_lang)
+        .into_iter()
+        .filter_map(move |m| {
+            let en_name = en.items.get(&ItemId(m.item_id))?.name.to_string();
+            Some(poise::serenity_prelude::AutocompleteChoice::new(
+                m.label, en_name,
+            ))
         })
-        .take(99)
 }
 
 /// Resolve a user-supplied item name (case-insensitive exact match) to an FFXIV item id.
-/// Returns `None` if no item with that exact name exists.
+/// Returns `None` if no item with that exact name exists in any supported locale.
 pub(crate) fn resolve_item_id(name: &str) -> Option<i32> {
-    let lowered = name.to_lowercase();
-    xiv_gen_db::data()
+    resolve_item_id_any_locale(name)
+}
+
+/// Return the localized display name for an item id, falling back to the English name,
+/// then to the empty string if the item is unknown.
+pub(crate) fn localized_item_name(item_id: i32, lang: Language) -> String {
+    let id = ItemId(item_id);
+    if let Some(item) = xiv_gen_db::data_for(lang).items.get(&id)
+        && !item.name.is_empty()
+    {
+        return item.name.to_string();
+    }
+    xiv_gen_db::data_for(Language::En)
         .items
-        .iter()
-        .find(|(_, item)| item.name.to_lowercase() == lowered)
-        .map(|(ItemId(id), _)| *id)
+        .get(&id)
+        .map(|i| i.name.to_string())
+        .unwrap_or_default()
 }
 
 /// Parse a world/datacenter/region name from a user-supplied string via the world cache.
