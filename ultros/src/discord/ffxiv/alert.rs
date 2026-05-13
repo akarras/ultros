@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use itertools::Itertools;
 use poise::CreateReply;
 use poise::serenity_prelude::CreateEmbed;
+use ultros_api_types::list::ListPermission;
 use xiv_gen::ItemId;
 
 use crate::discord::ffxiv::helpers;
@@ -12,11 +13,20 @@ use super::{Context, Error, ULTROS_COLOR};
 #[poise::command(
     slash_command,
     prefix_command,
-    subcommands("price", "list", "mute", "unmute", "remove", "endpoint")
+    subcommands(
+        "price",
+        "list",
+        "list_subscribe",
+        "mute",
+        "unmute",
+        "remove",
+        "endpoint",
+        "webhook"
+    )
 )]
 pub(crate) async fn alert(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say(
-        "Use one of: `price`, `list`, `mute`, `unmute`, `remove`, `endpoint`.\n\
+        "Use one of: `price`, `list`, `list-subscribe`, `mute`, `unmute`, `remove`, `endpoint`, `webhook`.\n\
          e.g. `/ffxiv alert price item:Tsai_tou_Vounou price:50000`",
     )
     .await?;
@@ -33,6 +43,7 @@ async fn price(
     #[description = "Alert when price ≤ this gil"] price: i32,
     #[description = "Only match HQ listings (default: any)"] hq: Option<bool>,
     #[description = "World/DC/region to watch (default: your home world)"] world: Option<String>,
+    #[description = "Min seconds between repeats (60-86400, default 3600)"] cooldown: Option<i32>,
 ) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
     if price <= 0 {
@@ -51,6 +62,7 @@ async fn price(
     };
 
     let world_json = serde_json::to_value(world_selector)?;
+    let cooldown = cooldown.unwrap_or(3600).clamp(60, 86400);
 
     // Auto-create the user's DM endpoint if missing.
     let dm_endpoint = ctx
@@ -69,7 +81,7 @@ async fn price(
             world_json,
             price,
             hq.unwrap_or(false),
-            3600,
+            cooldown,
         )
         .await?;
     ctx.data()
@@ -83,13 +95,128 @@ async fn price(
                 .color(ULTROS_COLOR)
                 .title("Price alert created")
                 .description(format!(
-                    "**{item}** ≤ {price} gil{hq_str}. Alert id: `{id}`.\nDelivery: Discord DM to you.",
+                    "**{item}** ≤ {price} gil{hq_str}. Alert id: `{id}`.\nDelivery: Discord DM to you.\nCooldown: {cooldown}s.",
                     hq_str = if hq.unwrap_or(false) { " (HQ only)" } else { "" },
                     id = alert.id,
                 )),
         ),
     )
     .await?;
+    Ok(())
+}
+
+// Mirrors the web "Notify me on this list" flow — fires per-item when a list
+// row drops to or below its target_price.
+/// Subscribe to a list; fires when any item drops to its target price.
+#[poise::command(slash_command, prefix_command, rename = "list-subscribe")]
+async fn list_subscribe(
+    ctx: Context<'_>,
+    #[description = "List id (find it on the list page URL)"] list_id: i32,
+    #[description = "Min seconds between repeats (60-86400, default 3600)"] cooldown: Option<i32>,
+) -> Result<(), Error> {
+    let owner = ctx.author().id.get() as i64;
+
+    // Same permission gate as the web `create_alert` handler — Read or higher
+    // is enough since shared lists are explicitly subscribable.
+    let permission = ctx.data().db.get_permission(list_id, owner).await?;
+    if permission < ListPermission::Read {
+        return Err(anyhow!(
+            "you don't have access to list {list_id}; ask the owner to share it with you"
+        )
+        .into());
+    }
+
+    let dm_endpoint = ctx
+        .data()
+        .db
+        .get_or_create_dm_endpoint(owner, &format!("DM to {}", ctx.author().name))
+        .await?;
+    let cooldown = cooldown.unwrap_or(3600).clamp(60, 86400);
+    let alert = ctx
+        .data()
+        .db
+        .create_list_threshold_alert(owner, list_id, cooldown, &[dm_endpoint])
+        .await?;
+
+    ctx.send(
+        CreateReply::default().embed(
+            CreateEmbed::new()
+                .color(ULTROS_COLOR)
+                .title("List subscription created")
+                .description(format!(
+                    "Watching list `#{list_id}` for items dropping to their target price. \
+                     Alert id: `{}`.\nDelivery: Discord DM to you.\nCooldown: {cooldown}s.",
+                    alert.id,
+                )),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+// Mirrors the web "Add endpoint → Webhook URL" flow.
+/// Register a Discord webhook URL as a delivery endpoint.
+#[poise::command(slash_command, prefix_command)]
+async fn webhook(
+    ctx: Context<'_>,
+    #[description = "Discord webhook URL (https://discord.com/api/webhooks/...)"] url: String,
+    #[description = "Friendly name for this endpoint"] name: Option<String>,
+    #[description = "Alert id to also bind this webhook to (optional)"] bind_to: Option<i32>,
+) -> Result<(), Error> {
+    let owner = ctx.author().id.get() as i64;
+
+    // Light validation — full host/path checking lives in the web handler so we don't
+    // duplicate the constants. We at least require the obvious Discord shape so users
+    // don't bind a generic HTTP endpoint by accident.
+    if !url.starts_with("https://discord.com/api/webhooks/")
+        && !url.starts_with("https://discordapp.com/api/webhooks/")
+        && !url.starts_with("https://ptb.discord.com/api/webhooks/")
+        && !url.starts_with("https://canary.discord.com/api/webhooks/")
+    {
+        return Err(anyhow!(
+            "webhook URL must be a Discord webhook (https://discord.com/api/webhooks/...)"
+        )
+        .into());
+    }
+
+    let display_name = name.unwrap_or_else(|| {
+        // Use the trailing path component as a label; falls back to "Webhook".
+        url.rsplit('/')
+            .find(|s| !s.is_empty())
+            .map(|tail| format!("Webhook {tail}"))
+            .unwrap_or_else(|| "Webhook".to_string())
+    });
+    let endpoint_id = ctx
+        .data()
+        .db
+        .create_endpoint(
+            owner,
+            &display_name,
+            "Webhook",
+            serde_json::json!({ "url": url }),
+        )
+        .await?;
+
+    if let Some(alert_id) = bind_to {
+        let mut current = ctx.data().db.list_endpoint_ids_for_alert(alert_id).await?;
+        if !current.contains(&endpoint_id) {
+            current.push(endpoint_id);
+        }
+        ctx.data()
+            .db
+            .set_alert_rules(owner, alert_id, &current)
+            .await?;
+        ctx.say(format!(
+            "Webhook endpoint `#{endpoint_id}` registered and bound to alert `#{alert_id}`."
+        ))
+        .await?;
+    } else {
+        ctx.say(format!(
+            "Webhook endpoint `#{endpoint_id}` registered. \
+             Use `/ffxiv alert webhook url:<...> bind_to:<alert_id>` to attach it to an alert."
+        ))
+        .await?;
+    }
     Ok(())
 }
 
@@ -238,12 +365,42 @@ async fn endpoint_here(
     #[description = "Alert id to also bind to this channel (optional)"] bind_to: Option<i32>,
 ) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
-    let channel_id = ctx.channel_id().get() as i64;
-    let name = format!("Channel {}", ctx.channel_id());
+    let channel_id_raw = ctx.channel_id();
+    let channel_id = channel_id_raw.get() as i64;
+
+    // Look up channel + guild metadata so the endpoint stores something more
+    // descriptive than "Channel <numeric id>". Falls back gracefully if either
+    // call returns nothing useful (DM channels have no guild, etc.).
+    let serenity_ctx = ctx.serenity_context();
+    let channel_meta = channel_id_raw
+        .to_channel(&serenity_ctx.http)
+        .await
+        .ok()
+        .and_then(|c| c.guild());
+    let (channel_name, guild_id, guild_name) = match channel_meta {
+        Some(gc) => {
+            let gid = i64::try_from(gc.guild_id.get()).ok();
+            let gname = gc.guild_id.name(&serenity_ctx.cache);
+            (Some(gc.name), gid, gname)
+        }
+        None => (None, None, None),
+    };
+    let display_name = match (&channel_name, &guild_name) {
+        (Some(cn), Some(gn)) => format!("#{cn} ({gn})"),
+        (Some(cn), None) => format!("#{cn}"),
+        _ => format!("Channel {channel_id_raw}"),
+    };
     let endpoint_id = ctx
         .data()
         .db
-        .get_or_create_channel_endpoint(owner, channel_id, &name)
+        .get_or_create_channel_endpoint(
+            owner,
+            channel_id,
+            &display_name,
+            channel_name.as_deref(),
+            guild_id,
+            guild_name.as_deref(),
+        )
         .await?;
     if let Some(alert_id) = bind_to {
         // Replace the rules so this channel is also included.

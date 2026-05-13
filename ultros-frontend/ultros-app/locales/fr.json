@@ -1002,5 +1002,11 @@
     "list_subscribe_title": "Notify me on this list: {{name}}",
     "list_subscribe_description": "You'll be notified when any item in this list drops to or below its target price. Set per-item targets from the list page.",
     "list_subscribe_submit": "Subscribe",
-    "list_item_row_target_price_label": "Target price (gil)"
+    "list_item_row_target_price_label": "Target price (gil)",
+    "create_alert_button": "Créer une alerte",
+    "create_alert_title": "Créer une alerte de prix",
+    "create_alert_item_label": "Objet",
+    "create_alert_search_placeholder": "Rechercher des objets...",
+    "create_alert_change_item": "Modifier",
+    "create_alert_err_pick_item": "Choisissez d'abord un objet"
 }

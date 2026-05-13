@@ -121,6 +121,30 @@ pub(crate) async fn deliver_to_endpoint(
     }
 }
 
+/// Deliver to a non-Discord endpoint without a live serenity context. Used by
+/// the web `test` handler when the bot hasn't connected yet — Webhook/WebPush
+/// don't need it, so failing those tests on an unrelated dependency was a bug.
+/// Errors when called against a Discord endpoint method.
+pub(crate) async fn deliver_non_discord_endpoint(
+    endpoint: &ultros_db::entity::notification_endpoint::Model,
+    title: &str,
+    body: &str,
+    db: &UltrosDb,
+) -> Result<()> {
+    let parsed = parse_endpoint_config(&endpoint.method, &endpoint.config)?;
+    match parsed {
+        EndpointConfig::DiscordChannel { .. } | EndpointConfig::DiscordDm { .. } => {
+            Err(anyhow!("Discord endpoints require the bot to be connected"))
+        }
+        EndpointConfig::Webhook { url } => send_webhook(&url, title, body).await,
+        EndpointConfig::WebPush { subscription_id } => {
+            let cfg = get_web_push_config()
+                .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
+            send_webpush(subscription_id, title, body, db, cfg).await
+        }
+    }
+}
+
 /// Look up all notification endpoints for an alert and dispatch the message via each.
 /// Returns Ok(()) if at least one delivered; Err describing the last failure otherwise.
 pub(crate) async fn dispatch_alert(

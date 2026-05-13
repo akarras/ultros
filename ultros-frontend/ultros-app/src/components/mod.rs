@@ -9,6 +9,7 @@ pub mod apps_menu;
 pub mod cheapest_price;
 pub mod clipboard;
 pub mod crafter_settings;
+pub mod create_alert_drawer;
 pub mod datacenter_name;
 pub mod endpoints_panel;
 pub mod filter_card;
