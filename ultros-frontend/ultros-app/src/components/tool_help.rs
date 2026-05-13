@@ -16,33 +16,32 @@ pub fn ToolHeader(
     let help_href_text = help_href.to_string();
 
     view! {
-        <section class="panel p-4 sm:p-6 rounded-2xl flex flex-col gap-4">
-            <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                <div class="flex flex-col gap-2 max-w-3xl">
-                    <h1 class="text-2xl sm:text-3xl font-bold text-[color:var(--brand-fg)]">
-                        {title.clone()}
-                    </h1>
-                    <p class="text-base sm:text-lg text-[color:var(--color-text)] leading-relaxed">
-                        {summary.clone()}
-                    </p>
-                    {move || {
-                        context_text.clone().map(|context| view! {
-                            <p class="text-sm text-[color:var(--color-text-muted)]">{context}</p>
-                        })
-                    }}
-                </div>
+        <section class="panel px-4 py-3 sm:px-6 sm:py-4 rounded-2xl flex flex-col gap-3">
+            <div class="flex flex-row items-center justify-between gap-3">
+                <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">
+                    {title.clone()}
+                </h1>
                 <button
                     type="button"
-                    class="btn-secondary self-start"
+                    class="btn-secondary self-center"
                     aria-expanded=move || if is_open() { "true" } else { "false" }
                     on:click=move |_| set_is_open.update(|open| *open = !*open)
                 >
                     <Icon icon=i::BsInfoCircle width="1em" height="1em" />
-                    <span>"About this tool"</span>
+                    <span>{move || if is_open() { "Hide info" } else { "About this tool" }}</span>
                 </button>
             </div>
             <Show when=move || is_open()>
-                <div class="rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-4 flex flex-col gap-3">
+                <div class="rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-4 flex flex-col gap-3 max-w-3xl">
+                    <p class="text-base text-[color:var(--color-text)] leading-relaxed">
+                        {summary.clone()}
+                    </p>
+                    {
+                        let context_text = context_text.clone();
+                        move || context_text.clone().map(|context| view! {
+                            <p class="text-sm text-[color:var(--color-text-muted)]">{context}</p>
+                        })
+                    }
                     <p class="text-sm leading-relaxed text-[color:var(--color-text)]">
                         {help_body.clone()}
                     </p>

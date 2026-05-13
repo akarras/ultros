@@ -352,19 +352,20 @@ fn VendorResaleTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Sales (Min)">
+                <ToolbarField label="Sales (Min, of 6)">
                     <input
                         class="input input-sm w-24"
                         min=0
-                        max=1000
+                        max=6
                         step=1
-                        placeholder="e.g. 5"
+                        placeholder="0–6"
+                        title="Each item only ships its 6 most recent sales. Set 1–6 to require that many of those sales were observed."
                         type="number"
                         prop:value=minimum_sales
                         on:input=move |input| {
                             let value = event_target_value(&input);
                             if let Ok(sales) = value.parse::<usize>() {
-                                set_minimum_sales(Some(sales));
+                                set_minimum_sales(Some(sales.min(6)));
                             } else if value.is_empty() {
                                 set_minimum_sales(None);
                             }
@@ -401,13 +402,13 @@ fn VendorResaleTable(
                 <ToolbarField label="Prices">
                     <ToolbarPills>
                         <button
-                            aria-pressed={if tax_enabled().unwrap_or(true) { "false" } else { "true" }}
+                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "false" } else { "true" }
                             on:click=move |_| set_tax_enabled(Some(false))
                         >
                             "Pre-tax"
                         </button>
                         <button
-                            aria-pressed={if tax_enabled().unwrap_or(true) { "true" } else { "false" }}
+                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "true" } else { "false" }
                             on:click=move |_| set_tax_enabled(Some(true))
                         >
                             "Post-tax"
