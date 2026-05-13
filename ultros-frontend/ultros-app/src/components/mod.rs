@@ -17,6 +17,8 @@ pub mod gil;
 pub mod history_panel;
 pub mod icon;
 pub mod item_icon;
+pub mod job_set_card;
+pub mod job_set_grouping;
 pub mod language_picker;
 pub mod list;
 pub mod list_subscribe_drawer;

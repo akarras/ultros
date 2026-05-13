@@ -34,6 +34,7 @@ use crate::{
         home_page::*,
         item_explorer::*,
         item_view::*,
+        job_set_detail::JobSetDetail,
         legal::{cookie_policy::CookiePolicy, privacy_policy::PrivacyPolicy},
         leve_analyzer::*,
         list_view::*,
@@ -385,6 +386,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             <Route path=path!("") view=EditLists />
                         </ParentRoute>
                         <ParentRoute path=path!("items") view=ItemExplorer>
+                            <Route path=path!("jobset/:jobset/set/:ilvl") view=JobSetDetail />
                             <Route path=path!("jobset/:jobset") view=JobItems />
                             <Route path=path!("category/:category") view=CategoryItems />
                             <Route
