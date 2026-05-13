@@ -225,7 +225,7 @@ where
     I: IntoIterator<Item = &'a xiv_gen::Item>,
     F: Fn(&xiv_gen::Item) -> bool,
 {
-    let projections: Vec<GroupableItem> = items
+    let mut projections: Vec<GroupableItem> = items
         .into_iter()
         .filter(|item| is_job_match(item))
         .filter(|item| item.level_item > 0)
@@ -236,6 +236,12 @@ where
             ilvl: item.level_item,
         })
         .collect();
+    projections.sort_by(|a, b| {
+        a.ilvl
+            .cmp(&b.ilvl)
+            .then(a.name.cmp(&b.name))
+            .then(a.id.0.cmp(&b.id.0))
+    });
 
     let (groups, _) = group_into_sets(projections);
     groups.into_iter().find(|g| g.ilvl == target_ilvl)
@@ -407,24 +413,6 @@ pub fn JobSetDetail() -> impl IntoView {
     let cheapest_prices = use_context::<CheapestPrices>();
     let default_zone_listings = cheapest_prices.map(|p| p.read_listings);
 
-    let default_total = Memo::new(move |_| {
-        let g = group.get()?;
-        let listings = default_zone_listings?;
-        listings.with(|data| match data {
-            Some(Ok(map)) => set_total(&g, map, false),
-            _ => None,
-        })
-    });
-
-    let home_total = Memo::new(move |_| {
-        let g = group.get()?;
-        home_world_listings
-            .get()
-            .flatten()
-            .as_ref()
-            .and_then(|map| set_total(&g, map, false))
-    });
-
     let set_stem = Memo::new(move |_| group.get().map(|g| g.stem).unwrap_or_default());
     let job_name = Memo::new(move |_| {
         canonical_abbr
@@ -563,10 +551,21 @@ pub fn JobSetDetail() -> impl IntoView {
                         {t!(i18n, job_set_detail_set_total)}
                     </div>
                     <div class="text-xl font-bold">
-                        {move || match default_total.get() {
-                            Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                            None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                        }}
+                        <Suspense fallback=move || view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }>
+                            {move || {
+                                let total = group.get().and_then(|g| {
+                                    let listings = default_zone_listings?;
+                                    listings.with(|data| match data {
+                                        Some(Ok(map)) => set_total(&g, map, false),
+                                        _ => None,
+                                    })
+                                });
+                                match total {
+                                    Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
+                                    None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                                }
+                            }}
+                        </Suspense>
                     </div>
                 </div>
                 <div class="panel p-4 rounded-xl border border-white/5">
@@ -575,9 +574,18 @@ pub fn JobSetDetail() -> impl IntoView {
                     </div>
                     <div class="text-xl font-bold">
                         <Suspense fallback=move || view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }>
-                            {move || match home_total.get() {
-                                Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                                None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                            {move || {
+                                let total = group.get().and_then(|g| {
+                                    home_world_listings
+                                        .get()
+                                        .flatten()
+                                        .as_ref()
+                                        .and_then(|map| set_total(&g, map, false))
+                                });
+                                match total {
+                                    Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
+                                    None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                                }
                             }}
                         </Suspense>
                     </div>
@@ -802,6 +810,48 @@ mod tests {
         let mut got_ids: Vec<i32> = group.items.iter().map(|i| i.id.0).collect();
         got_ids.sort();
         assert_eq!(got_ids, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn find_set_returns_stable_item_order_for_hydration() {
+        // The real route feeds `find_set_for_job` from a HashMap. SSR
+        // and WASM can observe different HashMap iteration orders; if
+        // the detail grid order changes during hydration, Leptos can
+        // pair an item's icon/link href with a neighboring item's name.
+        const SAM_CAT: i32 = 65;
+        let items = [
+            make_item(5, "Courtly Lover's Boots of Striking", 770, SAM_CAT, 9824),
+            make_item(2, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(
+                1,
+                "Courtly Lover's Temple Chain of Striking",
+                770,
+                SAM_CAT,
+                9820,
+            ),
+            make_item(4, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+            make_item(
+                3,
+                "Courtly Lover's Armguards of Striking",
+                770,
+                SAM_CAT,
+                9822,
+            ),
+        ];
+
+        let group = find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 770)
+            .expect("770 set must resolve");
+        let got_names: Vec<_> = group.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            got_names,
+            vec![
+                "Courtly Lover's Armguards of Striking",
+                "Courtly Lover's Boots of Striking",
+                "Courtly Lover's Brais of Striking",
+                "Courtly Lover's Cloak of Striking",
+                "Courtly Lover's Temple Chain of Striking",
+            ]
+        );
     }
 
     #[test]
