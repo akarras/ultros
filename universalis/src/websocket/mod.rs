@@ -10,7 +10,7 @@ use async_tungstenite::tungstenite::Message;
 use bson::Document;
 use futures::future::Either;
 
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use tracing::{error, info, warn};
 
 use async_tungstenite::WebSocketStream;
@@ -102,7 +102,7 @@ impl SubscriptionTracker {
             };
             let bson = bson::to_vec(&subscription_update)?;
             info!("Resent subscription update {subscription_update:?}");
-            sender.send(Message::Binary(bson)).await?;
+            sender.send(Message::Binary(bson.into())).await?;
         }
         Ok(())
     }
@@ -170,7 +170,8 @@ impl WebsocketClient {
                         .ok();
                     if let Some(mut ws) = websocket {
                         // send a ping first
-                        if let Err(ping_result) = ws.send(Message::Ping(vec![1, 2, 3, 4, 5])).await
+                        if let Err(ping_result) =
+                            ws.send(Message::Ping(vec![1, 2, 3, 4, 5].into())).await
                         {
                             error!("Error writing ping {ping_result}");
                         }
@@ -195,7 +196,7 @@ impl WebsocketClient {
                             SocketTx::Subscription(s) => {
                                 info!("Subscription update {s:?}");
                                 let bson = bson::to_vec(&s).unwrap();
-                                if let Err(e) = websocket.send(Message::Binary(bson)).await {
+                                if let Err(e) = websocket.send(Message::Binary(bson.into())).await {
                                     error!("Error sending websocket message {e:?}");
                                 }
                                 // keep track of the subscriptions so if the socket closes we can update accordingly
@@ -211,7 +212,7 @@ impl WebsocketClient {
                             }
                             SocketTx::Ping => {
                                 if let Err(e) =
-                                    websocket.send(Message::Ping(vec![1, 2, 3, 4])).await
+                                    websocket.send(Message::Ping(vec![1, 2, 3, 4].into())).await
                                 {
                                     error!("WS Ping Send Error {e:?}");
                                     if let Err(e) = websocket.close(None).await {
@@ -237,8 +238,8 @@ impl WebsocketClient {
                             Message::Binary(b) => {
                                 let sender = listing_sender.clone();
                                 tokio::spawn(async move {
-                                    let b = bson::from_slice::<WSMessage>(&b).map_err(|e| {
-                                    if let Ok(document) = bson::from_slice::<Document>(&b) {
+                                    let b = bson::from_slice::<WSMessage>(b.as_ref()).map_err(|e| {
+                                    if let Ok(document) = bson::from_slice::<Document>(b.as_ref()) {
                                         error!("valid bson document but not valid struct {document:?}");
                                     }
                                     e.into()
