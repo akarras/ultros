@@ -1,6 +1,3 @@
-## 2026-01-15 - Table Accessibility Pattern
-**Learning:** Multiple data tables (`ListingsTable`, `SaleHistoryTable`) were missing semantic `<thead>` wrappers and `scope` attributes, relying on browser auto-correction which is insufficient for accessibility.
-**Action:** Enforce `<thead>` and `scope="col"`/`scope="row"` in all table components during creation or refactor.
-## 2024-05-15 - Empty State for SearchBox
-**Learning:** Virtual Scroller components without built-in empty states will simply show a blank box when there are no items to render. This happens silently and can be confusing to users who type a search query and see nothing happen.
-**Action:** Always add an explicit `<Show>` or conditional render below the list or VirtualScroller to handle the `!loading && !query.is_empty() && results.is_empty()` state with a helpful message.
+## 2024-05-18 - Missing label associations and ARIA labels in Endpoint Forms
+**Learning:** Found that `EndpointCreateForm` inputs lacked standard `id` and `for` associations, and icon-only buttons like "Delete endpoint" lacked `aria-label`. Standard accessible form practices seem to be occasionally missed in Leptos `view!` macros.
+**Action:** Next time, remember to apply `id` and `for` attributes to `input` and `label` elements when creating or editing forms to ensure screen readers announce them properly. Always ensure `aria-label` is present on interactive elements that only contain icons.

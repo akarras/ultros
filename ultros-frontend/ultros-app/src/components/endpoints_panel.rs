@@ -140,6 +140,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                                                 </button>
                                                 <button
                                                     class="btn-ghost text-red-400"
+                                                    aria-label="Delete endpoint"
                                                     on:click=move |_| on_delete(id)
                                                 >
                                                     <Icon icon=i::BiTrashSolid />
@@ -221,13 +222,13 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
     view! {
         <div class="p-3 border rounded space-y-3">
             <div class="space-y-1">
-                <label class="text-sm font-semibold">"Name"</label>
-                <input class="input w-full" prop:value=name
+                <label class="text-sm font-semibold" for="endpoint-name">"Name"</label>
+                <input id="endpoint-name" class="input w-full" prop:value=name
                     on:input=move |e| set_name.set(event_target_value(&e)) />
             </div>
             <div class="space-y-1">
-                <label class="text-sm font-semibold">"Method"</label>
-                <select class="input w-full" prop:value=method_kind
+                <label class="text-sm font-semibold" for="endpoint-method">"Method"</label>
+                <select id="endpoint-method" class="input w-full" prop:value=method_kind
                     on:change=move |e| {
                         let v = event_target_value(&e);
                         set_method_kind.set(match v.as_str() {
@@ -243,8 +244,8 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
             </div>
             <Show when=move || method_kind.get() == "discord_channel">
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Channel ID"</label>
-                    <input class="input w-full" prop:value=channel_id
+                    <label class="text-sm font-semibold" for="endpoint-channel-id">"Channel ID"</label>
+                    <input id="endpoint-channel-id" class="input w-full" prop:value=channel_id
                         on:input=move |e| set_channel_id.set(event_target_value(&e)) />
                     <p class="text-xs opacity-70">
                         "Right-click any channel in Discord with developer mode on and pick \"Copy Channel ID\". \
@@ -254,8 +255,8 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
             </Show>
             <Show when=move || method_kind.get() == "webhook">
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">"Webhook URL"</label>
-                    <input class="input w-full" prop:value=webhook_url
+                    <label class="text-sm font-semibold" for="endpoint-webhook-url">"Webhook URL"</label>
+                    <input id="endpoint-webhook-url" class="input w-full" prop:value=webhook_url
                         on:input=move |e| set_webhook_url.set(event_target_value(&e)) />
                 </div>
             </Show>
