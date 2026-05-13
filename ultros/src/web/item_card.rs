@@ -11,7 +11,7 @@ use hyper::header;
 use plotters_svg::SVGBackend;
 use resvg::{
     tiny_skia,
-    usvg::{self, Options, TreeParsing, TreeTextToPath, fontdb},
+    usvg::{self, Options},
 };
 use ultros_api_types::{
     SaleHistory,
@@ -59,24 +59,20 @@ pub(crate) async fn generate_image(
         buffer
     };
 
-    let opt = Options {
+    let mut opt = Options {
         resources_dir: std::fs::canonicalize(&buffer)
             .ok()
             // Get file's absolute directory.
             .and_then(|p| p.parent().map(|p| p.to_path_buf())),
         ..Default::default()
     };
+    opt.fontdb_mut().load_system_fonts();
 
-    let mut fontdb = fontdb::Database::new();
-    fontdb.load_system_fonts();
-
-    let mut tree = usvg::Tree::from_str(&buffer, &opt).unwrap();
-    tree.convert_text(&fontdb);
-    let rtree = resvg::Tree::from_usvg(&tree);
-    let pixmap_size = resvg::IntSize::from_usvg(rtree.size);
+    let tree = usvg::Tree::from_str(&buffer, &opt)?;
+    let pixmap_size = tree.size().to_int_size();
     let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
         .ok_or(anyhow!("failed to make pixmap"))?;
-    rtree.render(tiny_skia::Transform::default(), &mut pixmap.as_mut());
+    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
     Ok(pixmap.encode_png()?)
 }
 
