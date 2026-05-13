@@ -47,36 +47,26 @@ fn WorldButton(
                 .unwrap_or_default()
         }
     });
-    let (bg_color, other_styles) = match world {
-        OwnedResult::Region(_) => (
-            "bg-brand-500/10",
-            "text-sm font-bold text-brand-200 px-3 py-1.5",
-        ),
-        OwnedResult::Datacenter(_) => (
-            "bg-brand-500/15",
-            "text-sm font-semibold text-brand-300 px-2.5 py-1",
-        ),
-        OwnedResult::World(_) => ("bg-transparent", "text-xs px-2 py-1"),
+    let other_styles = match world {
+        OwnedResult::Region(_) => "text-sm font-bold text-brand-200 px-3 py-1.5",
+        OwnedResult::Datacenter(_) => "text-sm font-semibold text-brand-300 px-2.5 py-1",
+        OwnedResult::World(_) => "text-xs text-[color:var(--color-text)] px-2 py-1",
     };
     let is_selected = move || current_world.with(|w| w == world_3.as_str());
-    let home_world_emphasis = move || {
-        is_home_world.with(|w| {
-            if *w {
-                "border-2 border-brand-400 shadow-lg"
-            } else {
-                ""
-            }
-        })
-    };
+    let home_world_emphasis =
+        move || is_home_world.with(|w| if *w { "border border-brand-300/70" } else { "" });
     view! {
         <A
             attr:class=move || {
                 [
-                    "rounded-md text-[color:var(--color-text)] flex items-center gap-1.5 transition-all duration-200 whitespace-nowrap",
-                    bg_color,
+                    "rounded-md flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap border border-transparent",
                     other_styles,
-                    "hover:bg-brand-500/15 hover:shadow-lg shadow-brand-900/20",
-                    if is_selected() { "bg-brand-500/25 font-bold" } else { "" },
+                    "hover:border-[color:var(--color-outline)] hover:text-brand-100",
+                    if is_selected() {
+                        "font-bold text-brand-100 border-brand-300/70"
+                    } else {
+                        ""
+                    },
                     home_world_emphasis(),
                 ]
                     .join(" ")
@@ -120,44 +110,48 @@ fn WorldGrouping(
     let datacenters = world_data.get_datacenters(&region.as_ref());
     let i18n = crate::i18n::use_i18n();
     view! {
-        <div class="flex flex-col gap-2 rounded-lg bg-brand-900/15 p-2">
-            <h2 class="text-xs font-bold text-brand-200 px-1 uppercase tracking-wide">
-                {t!(i18n, datacenter)}
-            </h2>
-            <div class="flex flex-wrap gap-1">
-                {datacenters
-                    .iter()
-                    .map(|dc| {
-                        view! {
-                            <WorldButton
-                                current_world=current_world
-                                world=AnyResult::Datacenter(dc)
-                                item_id=item_id
-                            />
-                        }
-                    })
-                    .collect_view()}
+        <div class="flex flex-col gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+                <h2 class="text-xs font-bold text-brand-200 uppercase tracking-wide">
+                    {t!(i18n, datacenter)}
+                </h2>
+                <div class="flex flex-wrap gap-1">
+                    {datacenters
+                        .iter()
+                        .map(|dc| {
+                            view! {
+                                <WorldButton
+                                    current_world=current_world
+                                    world=AnyResult::Datacenter(dc)
+                                    item_id=item_id
+                                />
+                            }
+                        })
+                        .collect_view()}
+                </div>
             </div>
             {active_datacenter
                 .map(|dc| {
                     view! {
-                        <h2 class="text-xs font-bold text-brand-200 px-1 uppercase tracking-wide">
-                            {t!(i18n, worlds)}
-                        </h2>
-                        <div class="flex flex-wrap gap-1">
-                            {dc
-                                .worlds
-                                .iter()
-                                .map(|w| {
-                                    view! {
-                                        <WorldButton
-                                            current_world=current_world
-                                            world=AnyResult::World(w)
-                                            item_id=item_id
-                                        />
-                                    }
-                                })
-                                .collect_view()}
+                        <div class="flex flex-wrap items-center gap-2">
+                            <h2 class="text-xs font-bold text-brand-200 uppercase tracking-wide">
+                                {t!(i18n, worlds)}
+                            </h2>
+                            <div class="flex flex-wrap gap-1">
+                                {dc
+                                    .worlds
+                                    .iter()
+                                    .map(|w| {
+                                        view! {
+                                            <WorldButton
+                                                current_world=current_world
+                                                world=AnyResult::World(w)
+                                                item_id=item_id
+                                            />
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
                         </div>
                     }
                 })}
@@ -173,10 +167,9 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
 
     view! {
-        <div class="sticky top-0 z-10">
-            <div class="container mx-auto px-4">
-                <div class="panel">
-                    <div class="flex flex-col gap-2 p-2">
+        <div class="sticky top-0 z-10 backdrop-blur bg-[color:color-mix(in_srgb,var(--color-background)_85%,transparent)] border-y border-[color:var(--color-outline)]">
+            <div class="w-full px-3 sm:px-4">
+                <div class="flex flex-col gap-2 py-2">
                         {move || {
                             let world = world_name();
                             let world_name = Url::unescape(&world);
@@ -235,7 +228,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                                             view! { <HomeWorldButton current_world item_id /> }
                                         })}
                                 </div>
-                                <div class="w-full h-px bg-brand-700/40"></div>
+                                <div class="w-full h-px bg-[color:var(--color-outline)]"></div>
                                 <WorldGrouping
                                     region=OwnedResult::Region(region.clone())
                                     active_datacenter
@@ -247,7 +240,6 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
                     </div>
                 </div>
             </div>
-        </div>
     }
     .into_any()
 }
@@ -370,7 +362,7 @@ fn MarketStatsPanel(
                                             view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
                                             icondata::FaShopSolid,
                                             "#vendor-sources",
-                                            "text-amber-300 border-amber-400/40 bg-amber-500/10",
+                                            "text-amber-300 border-amber-400/40",
                                         )
                                     } else if exchange_exists {
                                         (
@@ -378,7 +370,7 @@ fn MarketStatsPanel(
                                             view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
                                             icondata::BsArrowLeftRight,
                                             "#exchange-sources",
-                                            "text-purple-300 border-purple-400/40 bg-purple-500/10",
+                                            "text-purple-300 border-purple-400/40",
                                         )
                                     } else if recipe_exists {
                                         let summary_view = view! {
@@ -448,7 +440,7 @@ fn MarketStatsPanel(
                                             summary_view,
                                             icondata::FaHammerSolid,
                                             "#crafting-recipes",
-                                            "text-orange-300 border-orange-400/40 bg-orange-500/10",
+                                            "text-orange-300 border-orange-400/40",
                                         )
                                     } else {
                                         (
@@ -456,7 +448,7 @@ fn MarketStatsPanel(
                                             view! { t!(i18n, obtainable_via_levequest) }.into_any(),
                                             icondata::FaScrollSolid,
                                             "#leve-sources",
-                                            "text-pink-300 border-pink-400/40 bg-pink-500/10",
+                                            "text-pink-300 border-pink-400/40",
                                         )
                                     };
 
@@ -497,8 +489,8 @@ fn MarketStatsPanel(
                                         <Icon icon=icondata::FaCoinsSolid attr:class="text-xl sm:text-2xl text-brand-300/70" />
                                     </div>
 
-                                    <div class="grid grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-2 sm:gap-3">
-                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-2 sm:p-3 min-h-24">
+                                    <div class="grid grid-cols-2 gap-2 sm:gap-3">
+                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] hover:border-brand-300/60 transition-colors p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
                                             {if let Some((listing, _)) = cheapest_nq.clone() {
                                                 view! {
@@ -516,7 +508,7 @@ fn MarketStatsPanel(
                                             }}
                                         </a>
 
-                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] bg-[#95c521]/10 p-2 sm:p-3 min-h-24">
+                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] hover:border-[#95c521]/60 transition-colors p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
                                                 {t!(i18n, hq)}
@@ -537,7 +529,7 @@ fn MarketStatsPanel(
                                             }}
                                         </a>
 
-                                        <a href="#history" class="rounded-lg border border-[color:var(--color-outline)] p-2 sm:p-3 min-h-24">
+                                        <a href="#history" class="rounded-lg border border-[color:var(--color-outline)] hover:border-blue-300/60 transition-colors p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-blue-300 mb-1">{t!(i18n, recent_average)}</div>
                                             <div class="text-xl sm:text-2xl font-bold leading-none">
                                                 {avg_price
@@ -553,7 +545,7 @@ fn MarketStatsPanel(
                                             </div>
                                         </a>
 
-                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] p-2 sm:p-3 min-h-24">
+                                        <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] hover:border-emerald-300/60 transition-colors p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-emerald-300 mb-1">{t!(i18n, active_listings)}</div>
                                             <div class="text-xl sm:text-2xl font-bold leading-none">{listings_count}</div>
                                             <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
@@ -566,7 +558,7 @@ fn MarketStatsPanel(
                                         {source_callout}
                                         {if listings_count == 0 {
                                             view! {
-                                                <div role="status" class="rounded-lg border border-amber-700/40 bg-amber-900/30 px-3 py-2 text-sm text-amber-200">
+                                                <div role="status" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
                                                     {move || t_string!(i18n, no_active_listings_found).to_string()}
                                                 </div>
                                             }
@@ -629,7 +621,7 @@ pub fn ChartWrapper(
                     .with(|l| l.as_ref().and_then(|r| r.as_ref().err()).map(|e| e.to_string()));
                 if let Some(msg) = error {
                     view! {
-                        <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl p-4">
+                        <div role="alert" class="text-red-200 border border-red-500/40 rounded-xl p-4">
                             <strong class="font-semibold">{move || t_string!(i18n, error).to_string()} ":"</strong>
                             <span class="ml-2">{msg}</span>
                             <div class="text-sm text-red-300/80 mt-1">{move || t_string!(i18n, unable_to_load_recent_sales).to_string()}</div>
@@ -676,7 +668,7 @@ pub fn ChartWrapper(
                                             <button
                                                 class=move || [
                                                     "px-3 py-1.5 text-sm transition-colors",
-                                                    if days_range() == 7 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                    if days_range() == 7 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(7)
                                             >
@@ -685,7 +677,7 @@ pub fn ChartWrapper(
                                             <button
                                                 class=move || [
                                                     "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
-                                                    if days_range() == 30 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                    if days_range() == 30 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(30)
                                             >
@@ -694,7 +686,7 @@ pub fn ChartWrapper(
                                             <button
                                                 class=move || [
                                                     "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
-                                                    if days_range() == 90 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                    if days_range() == 90 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(90)
                                             >
@@ -703,7 +695,7 @@ pub fn ChartWrapper(
                                             <button
                                                 class=move || [
                                                     "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
-                                                    if days_range() == 0 { "bg-brand-600/25 text-brand-100" } else { "bg-brand-900/30 text-[color:var(--color-text)]" },
+                                                    if days_range() == 0 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
                                                 ].join(" ")
                                                 on:click=move |_| set_days_range(0)
                                             >
@@ -791,7 +783,7 @@ pub fn ChartWrapper(
                                 {move || {
                                     if filtered_sales.with(|sales| sales.is_empty()) {
                                         view! {
-                                            <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl p-4">
+                                            <div role="status" class="text-amber-200 border border-amber-500/40 rounded-xl p-4">
                                                 {move || t_string!(i18n, no_sales_found).to_string()}
                                             </div>
                                         }.into_any()
@@ -811,7 +803,7 @@ pub fn ChartWrapper(
                                             .unwrap_or(false)
                                     });
                                     no_listings.then(|| view! {
-                                        <div role="status" class="bg-amber-900/30 text-amber-200 border border-amber-700/40 rounded-xl px-3 py-2 text-sm">
+                                        <div role="status" class="text-amber-200 border border-amber-500/40 rounded-xl px-3 py-2 text-sm">
                                             {move || t_string!(i18n, no_active_listings_found).to_string()}
                                         </div>
                                     })
@@ -1296,7 +1288,7 @@ pub fn ItemView() -> impl IntoView {
                     <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.8fr)_minmax(320px,1.2fr)] gap-3 pt-3 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
                         <div class="flex flex-wrap items-center gap-2">
                             <span class="text-brand-300 font-medium tracking-wide text-xs uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
-                            <span class="bg-brand-900/40 text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-700/50">
+                            <span class="text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-400/50">
                                 {move || item().map(|item| item.level_item).unwrap_or_default()}
                             </span>
                         </div>

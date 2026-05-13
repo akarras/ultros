@@ -105,7 +105,7 @@ pub fn ListItemRow(
                                             .unwrap_or_default()
                                             .then(move || {
                                                 view! {
-                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-xs text-red-200">
+                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md border border-red-400/40 px-2 py-0.5 text-xs text-red-200">
                                                         <Tooltip tooltip_text=t_string!(i18n, list_item_row_not_marketable_tooltip).to_string()>
                                                             <Icon icon=i::AiExclamationOutlined />
                                                         </Tooltip>
@@ -242,7 +242,7 @@ pub fn ListItemRow(
                                             .unwrap_or_default()
                                             .then(move || {
                                                 view! {
-                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-xs text-red-200">
+                                                    <div class="mt-1 inline-flex items-center gap-1 rounded-md border border-red-400/40 px-2 py-0.5 text-xs text-red-200">
                                                         <Tooltip tooltip_text=t_string!(i18n, list_item_row_not_marketable_tooltip).to_string()>
                                                             <Icon icon=i::AiExclamationOutlined />
                                                         </Tooltip>
