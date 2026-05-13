@@ -60,6 +60,48 @@ use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
 use leptos_router::path;
 use log::info;
 
+#[cfg(feature = "hydrate")]
+mod sentry_tags {
+    use wasm_bindgen::{JsCast, JsValue};
+
+    /// Set a Sentry tag on every subsequent event. Backed by a queue in
+    /// `error_reporting_script` so tags survive even if WASM beats the
+    /// Sentry SDK <script> to the punch. Best-effort — no-op when
+    /// reporting isn't enabled (no DSN → no inline script → no setter
+    /// on window).
+    ///
+    /// Resolved via `js_sys::Reflect` for the same reason
+    /// `__ultrosReportRustPanic` is: a `#[wasm_bindgen]` extern would
+    /// throw on environments where the function isn't defined.
+    pub fn set_sentry_tag(key: &str, value: &str) {
+        let global = js_sys::global();
+        let Ok(setter) = js_sys::Reflect::get(&global, &JsValue::from_str("__ultrosSentrySetTag"))
+        else {
+            return;
+        };
+        let Some(setter) = setter.dyn_ref::<js_sys::Function>() else {
+            return;
+        };
+        let _ = setter.call2(
+            &JsValue::NULL,
+            &JsValue::from_str(key),
+            &JsValue::from_str(value),
+        );
+    }
+}
+
+#[cfg(not(feature = "hydrate"))]
+mod sentry_tags {
+    /// SSR no-op: no Sentry on the server side. Allowed-unused because
+    /// the call sites that would reference it are themselves gated to
+    /// `feature = "hydrate"`.
+    #[allow(dead_code)]
+    pub fn set_sentry_tag(_key: &str, _value: &str) {}
+}
+
+#[cfg(feature = "hydrate")]
+use sentry_tags::set_sentry_tag;
+
 fn error_reporting_script() -> Option<String> {
     let dsn = std::env::var("ULTROS_ERROR_REPORTING_DSN").ok()?;
     if dsn.trim().is_empty() {
@@ -116,12 +158,31 @@ fn error_reporting_script() -> Option<String> {
         }});
     }};
 
-    // Patterns for unactionable noise from the Sentry browser SDK's
-    // global unhandledrejection handler — almost always users navigating
-    // away during WASM streaming compile, ad blockers, or corporate
-    // proxies cutting off a /pkg/<hash>/ultros.wasm fetch. See
-    // GlitchTip issues #21 (~880 events), #2374, and #2404.
+    // Patterns for unactionable noise we drop in beforeSend. Three
+    // independent categories, each with its own narrow predicate:
+    //
+    // 1. WASM bundle fetch aborts from the Sentry SDK's global
+    //    unhandledrejection handler — users navigating away during the
+    //    streaming compile, ad blockers, corporate proxies. GlitchTip
+    //    issues #21 (~880 events), #2374, #2404.
+    // 2. A "Cannot read properties of undefined (reading 'document')"
+    //    TypeError thrown by an injected third-party script (Tencent QQ
+    //    Browser / UC / WeChat in-app WebViews on frozen Chrome 112).
+    //    Filename in the stack frame is the page URL so each affected
+    //    route becomes its own GlitchTip issue — hundreds of duplicates.
+    //    GlitchTip issues #1, #7, #313, #770, #1047, #2776–#2812.
+    // 3. tachys hydration `unreachable!()` panics at
+    //    /tachys-*/src/hydration.rs:* triggered by the same population
+    //    when the injected auto-translation overlay wraps text nodes in
+    //    <font> elements before Leptos hydrates. We match on the exact
+    //    crates.io path AND a fingerprint of the injecting browser
+    //    (Chinese console breadcrumb `检测页面稳定` or frozen
+    //    Chrome 112.0.0 UA) so legit hydration mismatches on current
+    //    browsers still reach GlitchTip. Issues #678, #707, #770, #1307,
+    //    #2277, #2775.
     var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
+    var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
+    var ULTROS_INJECTOR_BREADCRUMB = "检测页面稳定";
 
     function isUltrosWasmFetchAbort(event) {{
         try {{
@@ -149,10 +210,54 @@ fn error_reporting_script() -> Option<String> {
         return false;
     }}
 
+    function isInjectedDocumentTypeError(event) {{
+        try {{
+            var ex = event && event.exception && event.exception.values && event.exception.values[0];
+            if (!ex) return false;
+            if (ex.type !== "TypeError") return false;
+            if (ex.value !== "Cannot read properties of undefined (reading 'document')") return false;
+            var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+            if (frames.length !== 1) return false;
+            return frames[0] && frames[0].function === "HTMLDocument.c";
+        }} catch (_) {{ /* never let the filter throw */ }}
+        return false;
+    }}
+
+    function isInjectedTachysHydrationPanic(event) {{
+        try {{
+            var ctx = event && event.contexts && event.contexts.rust_panic;
+            var loc = ctx && ctx.location;
+            if (typeof loc !== "string") return false;
+            if (loc.indexOf("/usr/local/cargo/registry/src/index.crates.io-") !== 0) return false;
+            if (!ULTROS_TACHYS_HYDRATION_RE.test(loc)) return false;
+
+            // Second prong: only suppress when the third-party DOM
+            // mutation fingerprint is present. Either a breadcrumb from
+            // the page-stability detector, or the frozen Chrome 112 UA
+            // shared by the affected WebView population.
+            var crumbs = (event.breadcrumbs && event.breadcrumbs.values) || event.breadcrumbs || [];
+            if (Array.isArray(crumbs)) {{
+                for (var i = 0; i < crumbs.length; i++) {{
+                    var msg = crumbs[i] && crumbs[i].message;
+                    if (typeof msg === "string" && msg.indexOf(ULTROS_INJECTOR_BREADCRUMB) !== -1) {{
+                        return true;
+                    }}
+                }}
+            }}
+            var tags = event.tags || {{}};
+            if (tags.browser === "Chrome 112.0.0") {{
+                return true;
+            }}
+        }} catch (_) {{ /* never let the filter throw */ }}
+        return false;
+    }}
+
     var existingBeforeSend = config && config.beforeSend;
     config = config || {{}};
     config.beforeSend = function(event, hint) {{
-        if (isUltrosWasmFetchAbort(event)) {{
+        if (isUltrosWasmFetchAbort(event)
+            || isInjectedDocumentTypeError(event)
+            || isInjectedTachysHydrationPanic(event)) {{
             return null;
         }}
         if (typeof existingBeforeSend === "function") {{
@@ -161,11 +266,35 @@ fn error_reporting_script() -> Option<String> {
         return event;
     }};
 
+    // Tags queued from WASM before the Sentry SDK script finishes
+    // loading. The setter writes through to Sentry.setTag if it's
+    // ready, otherwise it enqueues; init() flushes the queue. This
+    // matters because hydrate() runs almost immediately and may try
+    // to tag the session before the async <script> has executed.
+    window.__ultrosSentryTagQueue = window.__ultrosSentryTagQueue || [];
+    window.__ultrosSentrySetTag = function(key, value) {{
+        try {{
+            var S = window.Sentry;
+            if (S && typeof S.setTag === "function") {{
+                S.setTag(key, value);
+            }} else {{
+                window.__ultrosSentryTagQueue.push([key, value]);
+            }}
+        }} catch (_) {{}}
+    }};
+
     var init = function() {{
         if (!window.Sentry || !window.Sentry.init) {{
             return;
         }}
         window.Sentry.init(config);
+        try {{
+            var q = window.__ultrosSentryTagQueue || [];
+            for (var i = 0; i < q.length; i++) {{
+                try {{ window.Sentry.setTag(q[i][0], q[i][1]); }} catch(_) {{}}
+            }}
+            window.__ultrosSentryTagQueue = [];
+        }} catch (_) {{}}
     }};
 
     var script = document.createElement("script");
@@ -322,6 +451,8 @@ pub fn App() -> impl IntoView {
 pub fn AppInner(cookies: Cookies) -> impl IntoView {
     let i18n = use_i18n();
     let region = use_context::<GuessedRegion>();
+    #[cfg(feature = "hydrate")]
+    let region_for_tags = region.clone();
     Effect::new(move |_| {
         if let Some(region) = region.as_ref() {
             let current_locale = i18n.get_locale();
@@ -353,6 +484,19 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     {
         provide_hotkeys_context(root_node_ref, false, scopes!());
     }
+    // Sentry context tags — locale + guessed region track the user's
+    // i18n state. The route tag lives in <SentryRouteTag/> below since
+    // use_location() requires Router context.
+    #[cfg(feature = "hydrate")]
+    {
+        Effect::new(move |_| {
+            let locale = i18n.get_locale();
+            set_sentry_tag("locale", locale.as_str());
+            if let Some(region) = region_for_tags.as_ref() {
+                set_sentry_tag("region.guessed", &region.0);
+            }
+        });
+    }
 
     view! {
         <Title text="Ultros" />
@@ -363,6 +507,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
             <Router>
+                <SentryRouteTag />
                 <AppShell>
                     <Routes fallback=NotFound>
                         <Route path=path!("") view=HomePage />
@@ -434,5 +579,20 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
             </Router>
         </div>
         <Footer />
+    }
+}
+
+/// Sets a Sentry `route` tag whenever the URL path changes. Lives inside
+/// `<Router>` because `use_location()` requires Router context. SSR
+/// renders nothing and never hits the effect.
+#[component]
+fn SentryRouteTag() -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        let location = leptos_router::hooks::use_location();
+        Effect::new(move |_| {
+            let path = location.pathname.get();
+            set_sentry_tag("route", &path);
+        });
     }
 }
