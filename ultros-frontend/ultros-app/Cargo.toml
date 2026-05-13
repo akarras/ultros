@@ -18,7 +18,6 @@ xiv-gen.workspace = true
 uuid = { version = "1.23.1", features = ["v4", "js"] }
 
 gloo-net = { workspace = true, optional = true }
-gloo = { version = "0.12.0", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
     "AbortController",
     "Clipboard",
@@ -69,13 +68,11 @@ serde_json = { workspace = true }
 ultros-charts = { path = "../ultros-charts" }
 leptos-chartistry = "0.2.3"
 icondata.workspace = true
-serde_qs = "0.12.0"
 gloo-timers = { version = "0.4.0", features = ["futures"] }
 cfg-if.workspace = true
 paginate = "1.1.11"
 git-const.workspace = true
 percent-encoding = "2.3.2"
-async-trait = "0.1.89"
 linregress = "0.5.4"
 field-iterator = { path = "../../field-iterator" }
 # leptos_animation = "0.5.0"
@@ -108,7 +105,6 @@ default = [
 ] # this is mostly so if I run cargo check, it has a flavor to work on
 hydrate = [
     "leptos/hydrate",
-    "gloo",
     "gloo-net",
     "web-sys",
     "wasm-bindgen",

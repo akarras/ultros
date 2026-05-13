@@ -19,4 +19,3 @@ chrono = {workspace = true}
 itertools.workspace = true
 anyhow.workspace = true
 image = {workspace = true, optional = true}
-log = "0.4"
