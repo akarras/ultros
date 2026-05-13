@@ -4,16 +4,39 @@ use ultros_api_types::alert::{Alert, AlertTrigger, Endpoint, UpdateAlertRequest}
 use xiv_gen::ItemId;
 
 use crate::api::{delete_alert, get_alerts, list_endpoints, patch_alert};
+use crate::components::create_alert_drawer::CreateAlertDrawer;
 use crate::components::icon::Icon;
+use crate::global_state::home_world::use_home_world;
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, use_i18n};
 
 #[component]
 pub fn AlertRulesPanel() -> impl IntoView {
+    let i18n = use_i18n();
     let version = RwSignal::new(0u64);
     let alerts = Resource::new(move || version.get(), move |_| get_alerts());
     let endpoints = Resource::new(move || version.get(), move |_| list_endpoints());
     let toasts = use_toast();
+    let (drawer_visible, set_drawer_visible) = signal(false);
+    // Default the world picker in the create drawer to the user's home world
+    // (when set), mirroring how AlertConfigDrawer is opened from item pages.
+    let (home_world, _) = use_home_world();
+    let default_world = Signal::derive(move || {
+        home_world
+            .get()
+            .map(|w| ultros_api_types::world_helper::AnySelector::World(w.id))
+    });
+
+    // Refresh the alerts list when the drawer closes (best-effort: we can't tell if
+    // the user actually saved without threading a callback, so we just bump the
+    // version on every close — cheap enough).
+    Effect::new(move |_| {
+        let visible = drawer_visible.get();
+        if !visible {
+            version.update(|v| *v += 1);
+        }
+    });
 
     let toggle = move |alert: Alert| {
         let new_enabled = !alert.enabled;
@@ -65,7 +88,20 @@ pub fn AlertRulesPanel() -> impl IntoView {
     };
 
     view! {
-        <Suspense fallback=move || view! { <div>"Loading..."</div> }>
+        <div class="space-y-3">
+            <div class="flex justify-end">
+                <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
+                    <Icon icon=i::BsBell />
+                    <span class="ml-1">{t!(i18n, create_alert_button)}</span>
+                </button>
+            </div>
+            <Show when=move || drawer_visible.get()>
+                <CreateAlertDrawer
+                    default_world=default_world
+                    set_visible=set_drawer_visible.into()
+                />
+            </Show>
+            <Suspense fallback=move || view! { <div>"Loading..."</div> }>
             {move || {
                 let endpoint_list: Vec<Endpoint> = endpoints
                     .get()
@@ -205,6 +241,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
                         }
                     })
             }}
-        </Suspense>
+            </Suspense>
+        </div>
     }
 }

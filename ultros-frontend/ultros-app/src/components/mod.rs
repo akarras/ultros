@@ -10,6 +10,7 @@ pub mod cheapest_price;
 pub mod clipboard;
 pub mod crafter_settings;
 pub mod crafting_cost;
+pub mod create_alert_drawer;
 pub mod datacenter_name;
 pub mod endpoints_panel;
 pub mod filter_card;

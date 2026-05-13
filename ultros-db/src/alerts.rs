@@ -633,27 +633,51 @@ impl UltrosDb {
     }
 
     /// Same as `get_or_create_dm_endpoint` but for a DiscordChannel pointed at `channel_id`.
+    /// Optional `channel_name`/`guild_id`/`guild_name` are persisted alongside the id so
+    /// the web UI can render a friendly label later instead of raw "Channel <id>".
+    ///
+    /// Dedupe is keyed strictly on `channel_id` (extracted from JSONB) so a second
+    /// invocation that supplies *more* metadata than the first still hits the existing
+    /// row instead of creating a duplicate.
     pub async fn get_or_create_channel_endpoint(
         &self,
         owner: i64,
         channel_id: i64,
         name: &str,
+        channel_name: Option<&str>,
+        guild_id: Option<i64>,
+        guild_name: Option<&str>,
     ) -> Result<i32> {
-        let cfg = serde_json::json!({ "channel_id": channel_id });
         if let Some(existing) = notification_endpoint::Entity::find()
             .filter(notification_endpoint::Column::UserId.eq(owner))
             .filter(notification_endpoint::Column::Method.eq("DiscordChannel"))
             .filter(Expr::cust_with_values(
-                "config::jsonb = ?::jsonb",
-                vec![cfg.clone()],
+                "(config->>'channel_id')::bigint = ?",
+                vec![channel_id],
             ))
             .one(&self.db)
             .await?
         {
             return Ok(existing.id);
         }
-        self.create_endpoint(owner, name, "DiscordChannel", cfg)
-            .await
+        let mut cfg = serde_json::Map::new();
+        cfg.insert("channel_id".into(), serde_json::json!(channel_id));
+        if let Some(cn) = channel_name {
+            cfg.insert("channel_name".into(), serde_json::json!(cn));
+        }
+        if let Some(gid) = guild_id {
+            cfg.insert("guild_id".into(), serde_json::json!(gid));
+        }
+        if let Some(gn) = guild_name {
+            cfg.insert("guild_name".into(), serde_json::json!(gn));
+        }
+        self.create_endpoint(
+            owner,
+            name,
+            "DiscordChannel",
+            serde_json::Value::Object(cfg),
+        )
+        .await
     }
 
     /// Same as `get_or_create_dm_endpoint` but for a WebPush endpoint pointing
