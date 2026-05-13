@@ -202,7 +202,10 @@ impl SearchService {
             }
         };
 
-        let top_docs = match searcher.search(&query, &TopDocs::with_limit(10)) {
+        // tantivy 0.26: `TopDocs` itself no longer implements `Collector`; chain
+        // `.order_by_score()` to get a score-ordered collector (the previous default).
+        let collector = TopDocs::with_limit(10).order_by_score();
+        let top_docs = match searcher.search(&query, &collector) {
             Ok(docs) => docs,
             Err(e) => {
                 error!("SearchService: Search execution failed: {}", e);
