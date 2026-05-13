@@ -203,6 +203,16 @@ fn FCCraftingAnalyzerTable(
     let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
     let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
     let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
+    let cookies = use_context::<Cookies>().unwrap();
+    let (craft_options, _) =
+        cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
+    let exclude_shards_enabled = move || {
+        exclude_shards_url()
+            .unwrap_or_else(|| craft_options.get().unwrap_or_default().exclude_shards)
+    };
+    let use_on_hand_enabled = move || {
+        use_on_hand_url().unwrap_or_else(|| craft_options.get().unwrap_or_default().use_on_hand)
+    };
 
     let computed_data = Memo::new(move |_| {
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
@@ -217,18 +227,14 @@ fn FCCraftingAnalyzerTable(
 
         // Hoist context lookups ONCE; the on-hand SNAPSHOT is rebuilt
         // per sequence inside the loop because compute_ingredient_cost consumes it.
-        let opts_cookie = use_context::<Cookies>()
-            .unwrap()
-            .use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME)
-            .0;
-        let opts_value = opts_cookie.get().unwrap_or_default();
-        let shards = if exclude_shards_url().unwrap_or(opts_value.exclude_shards) {
+        let opts_value = craft_options.get().unwrap_or_default();
+        let shards = if exclude_shards_enabled() {
             ShardsMode::ExcludeShards
         } else {
             ShardsMode::IncludeMarket
         };
         let on_hand_map = use_context::<OnHandMap>();
-        let use_on_hand = use_on_hand_url().unwrap_or(opts_value.use_on_hand);
+        let use_on_hand = use_on_hand_enabled();
 
         let mut results = Vec::new();
 
@@ -415,16 +421,16 @@ fn FCCraftingAnalyzerTable(
                 <ToolbarField label="Exclude Shards">
                     <ToolbarPills>
                         <button
-                            aria-pressed=move || if exclude_shards_url().unwrap_or(true) { "false" } else { "true" }
+                            aria-pressed=move || if exclude_shards_enabled() { "false" } else { "true" }
                             title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile."
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_url().unwrap_or(true)))
+                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
                         >
                             "Off"
                         </button>
                         <button
-                            aria-pressed=move || if exclude_shards_url().unwrap_or(true) { "true" } else { "false" }
+                            aria-pressed=move || if exclude_shards_enabled() { "true" } else { "false" }
                             title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile."
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_url().unwrap_or(true)))
+                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
                         >
                             "On"
                         </button>
@@ -433,16 +439,16 @@ fn FCCraftingAnalyzerTable(
                 <ToolbarField label="Use On-Hand">
                     <ToolbarPills>
                         <button
-                            aria-pressed=move || if use_on_hand_url().unwrap_or(false) { "false" } else { "true" }
+                            aria-pressed=move || if use_on_hand_enabled() { "false" } else { "true" }
                             title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page."
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_url().unwrap_or(false)))
+                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
                         >
                             "Off"
                         </button>
                         <button
-                            aria-pressed=move || if use_on_hand_url().unwrap_or(false) { "true" } else { "false" }
+                            aria-pressed=move || if use_on_hand_enabled() { "true" } else { "false" }
                             title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page."
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_url().unwrap_or(false)))
+                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
                         >
                             "On"
                         </button>
