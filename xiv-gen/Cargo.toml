@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 serde = { workspace = true }
 bincode = {version = "2.0.1"}
 csv = {version = "1.4.0"}
-derive_more = {version = "1.0.0", features = ["from_str"]}
+derive_more = {version = "2.1.1", features = ["from_str"]}
 dumb_csv = {path = "../dumb-csv"}
 xiv-gen-macros = {path = "../proc-macros/xiv-gen-macros"}
 
