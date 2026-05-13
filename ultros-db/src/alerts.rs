@@ -153,7 +153,7 @@ impl UltrosDb {
             .filter(notification_endpoint::Column::UserId.eq(owner_discord_user_id))
             .filter(notification_endpoint::Column::Method.eq(notification_method))
             .filter(Expr::cust_with_values(
-                "config::jsonb = ?::jsonb",
+                "config::jsonb = $1::jsonb",
                 vec![notification_config.clone()],
             ))
             .one(&txn)
@@ -621,7 +621,7 @@ impl UltrosDb {
             .filter(notification_endpoint::Column::UserId.eq(owner))
             .filter(notification_endpoint::Column::Method.eq("DiscordDm"))
             .filter(Expr::cust_with_values(
-                "config::jsonb = ?::jsonb",
+                "config::jsonb = $1::jsonb",
                 vec![cfg.clone()],
             ))
             .one(&self.db)
@@ -644,7 +644,7 @@ impl UltrosDb {
             .filter(notification_endpoint::Column::UserId.eq(owner))
             .filter(notification_endpoint::Column::Method.eq("DiscordChannel"))
             .filter(Expr::cust_with_values(
-                "config::jsonb = ?::jsonb",
+                "config::jsonb = $1::jsonb",
                 vec![cfg.clone()],
             ))
             .one(&self.db)
@@ -669,7 +669,7 @@ impl UltrosDb {
             .filter(notification_endpoint::Column::UserId.eq(owner))
             .filter(notification_endpoint::Column::Method.eq("WebPush"))
             .filter(Expr::cust_with_values(
-                "config::jsonb = ?::jsonb",
+                "config::jsonb = $1::jsonb",
                 vec![cfg.clone()],
             ))
             .one(&self.db)
