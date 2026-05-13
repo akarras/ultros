@@ -28,6 +28,20 @@ use crate::{
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
 
+fn job_code_from_craft_type(craft_type: i32) -> &'static str {
+    match craft_type {
+        0 => "CRP",
+        1 => "BSM",
+        2 => "ARM",
+        3 => "GSM",
+        4 => "LTW",
+        5 => "WVR",
+        6 => "ALC",
+        7 => "CUL",
+        _ => "",
+    }
+}
+
 pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
     tracked_data()
         .items
@@ -212,6 +226,22 @@ fn CraftOptionsToggleRow() -> impl IntoView {
 
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
+    let job = job_code_from_craft_type(recipe.craft_type);
+    let analyzer_href = move || {
+        use crate::global_state::cookies::Cookies;
+        use crate::global_state::craft_options::CraftOptions;
+        let cookies = use_context::<Cookies>().unwrap();
+        let (opts, _) = cookies.use_cookie_typed::<_, CraftOptions>("CRAFT_OPTIONS");
+        let o = opts.get().unwrap_or_default();
+        format!(
+            "/recipe-analyzer?job={job}&require-hq={hq}&subcrafts={sub}&shards-exclude={shards}&on-hand={oh}",
+            job = job,
+            hq = o.require_hq,
+            sub = o.include_subcrafts,
+            shards = o.exclude_shards,
+            oh = o.use_on_hand,
+        )
+    };
     let items = &tracked_data().items;
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
@@ -255,6 +285,14 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                         </span>
                     })}
                     <AddRecipeToList recipe />
+                    <a
+                        class="btn-secondary text-xs px-2 py-1 flex flex-row items-center gap-1"
+                        href=analyzer_href
+                        aria-label="Open this recipe in the analyzer"
+                    >
+                        <Icon icon=icondata::AiBarChartOutlined />
+                        "Analyzer"
+                    </a>
                 </div>
             </div>
 
