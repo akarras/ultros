@@ -83,6 +83,21 @@ pub enum EndpointMethod {
     },
     DiscordChannel {
         channel_id: i64,
+        /// Resolved channel name (e.g. "general"). Populated by the server when the
+        /// endpoint is created via the live serenity context. `None` for legacy rows
+        /// that were created before name resolution was added — clients should fall
+        /// back to displaying the channel id in that case.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel_name: Option<String>,
+        /// Discord guild that owns this channel. Populated alongside `channel_name`.
+        /// Used by the frontend to show the guild context and by the server to scope
+        /// the admin check on update operations.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guild_id: Option<i64>,
+        /// Resolved guild name (e.g. "My Free Company"). Populated alongside
+        /// `channel_name`. Display-only — never trusted for permission checks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guild_name: Option<String>,
     },
     Webhook {
         url: String,
@@ -171,7 +186,12 @@ mod endpoint_tests {
     fn create_endpoint_request_round_trips() {
         let req = CreateEndpointRequest {
             name: "My channel".into(),
-            method: EndpointMethod::DiscordChannel { channel_id: 9 },
+            method: EndpointMethod::DiscordChannel {
+                channel_id: 9,
+                channel_name: None,
+                guild_id: None,
+                guild_name: None,
+            },
         };
         let s = serde_json::to_string(&req).unwrap();
         let back: CreateEndpointRequest = serde_json::from_str(&s).unwrap();

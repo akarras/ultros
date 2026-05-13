@@ -1005,5 +1005,11 @@
     "list_subscribe_title": "Notify me on this list: {{name}}",
     "list_subscribe_description": "You'll be notified when any item in this list drops to or below its target price. Set per-item targets from the list page.",
     "list_subscribe_submit": "Subscribe",
-    "list_item_row_target_price_label": "Target price (gil)"
+    "list_item_row_target_price_label": "Target price (gil)",
+    "create_alert_button": "建立提醒",
+    "create_alert_title": "建立價格提醒",
+    "create_alert_item_label": "物品",
+    "create_alert_search_placeholder": "搜尋物品...",
+    "create_alert_change_item": "更改",
+    "create_alert_err_pick_item": "請先選擇物品"
 }

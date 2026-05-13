@@ -107,11 +107,24 @@ pub fn EndpointsPanel() -> impl IntoView {
                                 each=move || rows.clone()
                                 key=|e| e.id
                                 children=move |e: Endpoint| {
-                                    let label = match &e.method {
-                                        EndpointMethod::DiscordDm { .. } => "Discord DM",
-                                        EndpointMethod::DiscordChannel { .. } => "Discord Channel",
-                                        EndpointMethod::Webhook { .. } => "Webhook",
-                                        EndpointMethod::WebPush { .. } => "Browser push",
+                                    // Sub-label shows the method, plus enough context for
+                                    // Discord channels to identify which server/channel it is.
+                                    // Falls back to the raw id for legacy rows that pre-date
+                                    // channel-name resolution.
+                                    let label: String = match &e.method {
+                                        EndpointMethod::DiscordDm { .. } => "Discord DM".into(),
+                                        EndpointMethod::DiscordChannel {
+                                            channel_id,
+                                            channel_name,
+                                            guild_name,
+                                            ..
+                                        } => match (channel_name, guild_name) {
+                                            (Some(cn), Some(gn)) => format!("Discord · #{cn} in {gn}"),
+                                            (Some(cn), None) => format!("Discord · #{cn}"),
+                                            _ => format!("Discord channel {channel_id}"),
+                                        },
+                                        EndpointMethod::Webhook { .. } => "Webhook".into(),
+                                        EndpointMethod::WebPush { .. } => "Browser push".into(),
                                     };
                                     let id = e.id;
                                     view! {
@@ -157,17 +170,26 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
     let submit = move |_| {
         set_error.set(None);
         let n = name.get();
-        if n.trim().is_empty() {
+        let kind = method_kind.get();
+        // For DiscordChannel the server replaces an empty/stub name with the
+        // resolved "#channel (guild)" string after looking it up — so we don't
+        // require the user to have typed anything.
+        if n.trim().is_empty() && kind != "discord_channel" {
             set_error.set(Some("Name is required".into()));
             return;
         }
-        let method = match method_kind.get() {
+        let method = match kind {
             "discord_channel" => {
                 let Ok(cid) = channel_id.get().parse::<i64>() else {
                     set_error.set(Some("Channel ID must be a number".into()));
                     return;
                 };
-                EndpointMethod::DiscordChannel { channel_id: cid }
+                EndpointMethod::DiscordChannel {
+                    channel_id: cid,
+                    channel_name: None,
+                    guild_id: None,
+                    guild_name: None,
+                }
             }
             "webhook" => {
                 let url = webhook_url.get();
@@ -224,6 +246,10 @@ fn EndpointCreateForm(#[prop(into)] on_created: Callback<()>) -> impl IntoView {
                     <label class="text-sm font-semibold">"Channel ID"</label>
                     <input class="input w-full" prop:value=channel_id
                         on:input=move |e| set_channel_id.set(event_target_value(&e)) />
+                    <p class="text-xs opacity-70">
+                        "Right-click any channel in Discord with developer mode on and pick \"Copy Channel ID\". \
+                         You must have Administrator or Manage Server permission in that server, and the Ultros bot must be a member."
+                    </p>
                 </div>
             </Show>
             <Show when=move || method_kind.get() == "webhook">
