@@ -29,7 +29,7 @@ serde-wasm-bindgen = "0.6.3"
 serde_bytes = "0.11"
 serde_json = { workspace = true }
 anyhow.workspace = true
-rexie = "0.5"
+rexie = "0.6"
 any_spawner = "0.3"
 tracing-wasm = "0.2.1"
 console_log = { version = "1.0.0", features = ["color"] }
