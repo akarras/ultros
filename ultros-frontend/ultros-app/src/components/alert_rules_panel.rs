@@ -6,10 +6,11 @@ use xiv_gen::ItemId;
 use crate::api::{delete_alert, get_alerts, list_endpoints, patch_alert};
 use crate::components::create_alert_drawer::CreateAlertDrawer;
 use crate::components::icon::Icon;
+use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
-use crate::i18n::{t, use_i18n};
+use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
 pub fn AlertRulesPanel() -> impl IntoView {
@@ -19,6 +20,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
     let endpoints = Resource::new(move || version.get(), move |_| list_endpoints());
     let toasts = use_toast();
     let (drawer_visible, set_drawer_visible) = signal(false);
+    let (undercut_drawer_visible, set_undercut_drawer_visible) = signal(false);
     // Default the world picker in the create drawer to the user's home world
     // (when set), mirroring how AlertConfigDrawer is opened from item pages.
     let (home_world, _) = use_home_world();
@@ -89,7 +91,11 @@ pub fn AlertRulesPanel() -> impl IntoView {
 
     view! {
         <div class="space-y-3">
-            <div class="flex justify-end">
+            <div class="flex justify-end gap-2">
+                <button class="btn" on:click=move |_| set_undercut_drawer_visible.set(true)>
+                    <Icon icon=i::BsBell />
+                    <span class="ml-1">{t!(i18n, undercut_alert_open_button)}</span>
+                </button>
                 <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
                     <Icon icon=i::BsBell />
                     <span class="ml-1">{t!(i18n, create_alert_button)}</span>
@@ -100,6 +106,9 @@ pub fn AlertRulesPanel() -> impl IntoView {
                     default_world=default_world
                     set_visible=set_drawer_visible.into()
                 />
+            </Show>
+            <Show when=move || undercut_drawer_visible.get()>
+                <UndercutAlertDrawer set_visible=set_undercut_drawer_visible.into() />
             </Show>
             <Suspense fallback=move || view! { <div>"Loading..."</div> }>
             {move || {
@@ -152,7 +161,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                         String,
                                                         String,
                                                         String,
-                                                        &'static str,
+                                                        String,
                                                     ) = match a.trigger.clone() {
                                                         AlertTrigger::BelowThreshold {
                                                             item_id,
@@ -177,14 +186,30 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                                     format!("Region({id})")
                                                                 }
                                                             };
-                                                            let hq = if hq_only { "HQ" } else { "any" };
+                                                            let hq = if hq_only {
+                                                                t_string!(i18n, alerts_hq_any).to_string()
+                                                            } else {
+                                                                t_string!(i18n, alerts_any).to_string()
+                                                            };
                                                             (name, threshold, world, hq)
                                                         }
                                                         AlertTrigger::ListItemThreshold { list_id } => (
                                                             format!("List #{list_id}"),
-                                                            "per-item target".to_string(),
-                                                            "list-defined".to_string(),
-                                                            "—",
+                                                            t_string!(i18n, alerts_list_price_target).to_string(),
+                                                            t_string!(i18n, alerts_list_defined_world).to_string(),
+                                                            "—".to_string(),
+                                                        ),
+                                                        AlertTrigger::RetainerUndercut { margin_percent } => (
+                                                            t_string!(i18n, alerts_retainer_undercut_rule).to_string(),
+                                                            t_string!(i18n, alerts_margin_percent, margin = margin_percent).to_string(),
+                                                            "—".to_string(),
+                                                            "—".to_string(),
+                                                        ),
+                                                        AlertTrigger::ListUpdate { list_id } => (
+                                                            format!("List #{list_id}"),
+                                                            t_string!(i18n, alerts_list_update_rule).to_string(),
+                                                            "—".to_string(),
+                                                            "—".to_string(),
                                                         ),
                                                     };
                                                     let endpoints_str = a

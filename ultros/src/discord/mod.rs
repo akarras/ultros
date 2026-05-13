@@ -90,8 +90,16 @@ pub(crate) async fn start_discord(
         })
         .setup(move |ctx: &serenity::Context, _ready, framework| {
             Box::pin(async move {
-                // start the alert monitor
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                // Make the live serenity context available to web handlers
+                // (endpoint test + alert-event resend) before slash-command
+                // registration. Command registration can fail independently of
+                // the gateway connection, and alert delivery should still work.
+                crate::alerts::delivery::set_serenity_ctx(ctx.clone());
+                if let Err(e) =
+                    poise::builtins::register_globally(ctx, &framework.options().commands).await
+                {
+                    tracing::error!("failed to register Discord application commands: {e}");
+                }
                 let (item_events, alert_events) = (
                     (
                         event_receivers.retainers.resubscribe(),
@@ -102,13 +110,11 @@ pub(crate) async fn start_discord(
                         event_receivers.retainer_undercut.resubscribe(),
                     ),
                 );
-                // Make the live serenity context available to web handlers
-                // (endpoint test + alert-event resend) via the process-wide handle.
-                crate::alerts::delivery::set_serenity_ctx(ctx.clone());
                 tokio::spawn(AlertManager::start_manager(
                     db.clone(),
                     item_events,
                     alert_events,
+                    event_receivers.lists.resubscribe(),
                     ctx.clone(),
                     setup_token,
                     world_cache.clone(),

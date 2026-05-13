@@ -75,6 +75,18 @@ impl UltrosDb {
             })
             .exec_with_returning(&self.db)
             .await?;
+        let endpoint_id = self
+            .get_or_create_channel_endpoint(
+                discord_user,
+                channel_id,
+                &format!("Discord channel {channel_id}"),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        self.set_alert_rules(discord_user, alert.id, &[endpoint_id])
+            .await?;
         Ok(retainer_margin)
     }
 
@@ -571,6 +583,101 @@ impl UltrosDb {
         Ok(alert)
     }
 
+    /// Create an alert + alert_retainer_undercut in a single transaction and bind
+    /// the supplied notification endpoints. This is the web/API path; legacy
+    /// Discord commands still write `alert_discord_destination` as a fallback,
+    /// then bind an endpoint rule for the shared delivery pipeline.
+    pub async fn create_retainer_undercut_alert(
+        &self,
+        owner: i64,
+        margin_percent: i32,
+        cooldown_seconds: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<(alert::Model, alert_retainer_undercut::Model)> {
+        use sea_orm::TransactionTrait;
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        let undercut =
+            alert_retainer_undercut::Entity::insert(alert_retainer_undercut::ActiveModel {
+                id: ActiveValue::default(),
+                alert_id: Set(alert.id),
+                margin_percent: Set(margin_percent),
+            })
+            .exec_with_returning(&txn)
+            .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert.id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok((alert, undercut))
+    }
+
+    /// Create an alert that fires whenever the referenced list or one of its
+    /// rows changes. Caller MUST have already checked Read permission.
+    pub async fn create_list_update_alert(
+        &self,
+        owner: i64,
+        list_id: i32,
+        cooldown_seconds: i32,
+        endpoint_ids: &[i32],
+    ) -> Result<alert::Model> {
+        use sea_orm::TransactionTrait;
+        for &eid in endpoint_ids {
+            notification_endpoint::Entity::find_by_id(eid)
+                .filter(notification_endpoint::Column::UserId.eq(owner))
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
+        }
+        let txn = self.db.begin().await?;
+        let alert = alert::Entity::insert(alert::ActiveModel {
+            id: ActiveValue::default(),
+            owner: Set(owner),
+            enabled: Set(true),
+            last_fired_at: Set(None),
+            cooldown_seconds: Set(cooldown_seconds),
+        })
+        .exec_with_returning(&txn)
+        .await?;
+        alert_list_update::Entity::insert(alert_list_update::ActiveModel {
+            id: ActiveValue::default(),
+            alert_id: Set(alert.id),
+            list_id: Set(list_id),
+        })
+        .exec(&txn)
+        .await?;
+        for &eid in endpoint_ids {
+            alert_notification_rule::Entity::insert(alert_notification_rule::ActiveModel {
+                alert_id: Set(alert.id),
+                endpoint_id: Set(eid),
+            })
+            .exec(&txn)
+            .await?;
+        }
+        txn.commit().await?;
+        Ok(alert)
+    }
+
     /// Return the user's list-threshold alerts (alert row + junction row).
     pub async fn get_user_list_threshold_alerts(
         &self,
@@ -587,6 +694,36 @@ impl UltrosDb {
             .collect())
     }
 
+    pub async fn get_user_retainer_undercut_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_retainer_undercut::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_retainer_undercut::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_user_list_update_alerts(
+        &self,
+        owner: i64,
+    ) -> Result<Vec<(alert::Model, alert_list_update::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_list_update::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
     /// Return all enabled list-threshold alerts. Used by the price tracker on
     /// each `refresh_from` to rebuild its in-memory index.
     pub async fn get_all_active_list_threshold_alerts(
@@ -595,6 +732,20 @@ impl UltrosDb {
         let rows = alert::Entity::find()
             .filter(alert::Column::Enabled.eq(true))
             .find_with_related(alert_list_threshold::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .flat_map(|(a, ts)| ts.into_iter().map(move |t| (a.clone(), t)))
+            .collect())
+    }
+
+    pub async fn get_all_active_list_update_alerts(
+        &self,
+    ) -> Result<Vec<(alert::Model, alert_list_update::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Enabled.eq(true))
+            .find_with_related(alert_list_update::Entity)
             .all(&self.db)
             .await?;
         Ok(rows

@@ -64,7 +64,8 @@ use crate::web::api::alerts::{
     create_alert, delete_alert, list_alert_events, list_alerts, resend_alert_event, update_alert,
 };
 use crate::web::api::endpoints::{
-    create_endpoint, delete_endpoint, list_endpoints, test_endpoint, update_endpoint,
+    create_endpoint, delete_endpoint, list_discord_writable_guilds, list_endpoints, test_endpoint,
+    update_endpoint,
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{cheapest_per_world, get_best_deals, get_trends, recent_sales};
@@ -1115,6 +1116,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route(
             "/api/v1/endpoints",
             get(list_endpoints).post(create_endpoint),
+        )
+        .route(
+            "/api/v1/endpoints/discord-guilds",
+            get(list_discord_writable_guilds),
         )
         .route(
             "/api/v1/endpoints/{id}",

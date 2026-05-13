@@ -9,6 +9,7 @@ use ultros_api_types::alert::{
 use ultros_api_types::list::ListPermission;
 use ultros_db::UltrosDb;
 
+use crate::event::{EventSenders, EventType};
 use crate::web::api::endpoint_validation::validate_discord_webhook_url;
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
@@ -40,8 +41,20 @@ pub(crate) fn validate_price_threshold(price_threshold: i32) -> Result<(), ApiEr
     }
 }
 
+#[allow(clippy::result_large_err)]
+pub(crate) fn validate_margin_percent(margin_percent: i32) -> Result<(), ApiError> {
+    if !(0..=200).contains(&margin_percent) {
+        Err(ApiError::from(anyhow::anyhow!(
+            "margin_percent must be between 0 and 200"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) async fn create_alert(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Json(req): Json<CreateAlertRequest>,
 ) -> Result<Json<Alert>, ApiError> {
@@ -56,7 +69,25 @@ pub(crate) async fn create_alert(
             hq_only,
         } => (item_id, world_selector, price_threshold, hq_only),
         AlertTrigger::ListItemThreshold { list_id } => {
-            return create_list_threshold_alert_handler(&db, owner, list_id, cooldown, &req).await;
+            return create_list_threshold_alert_handler(
+                &db, &senders, owner, list_id, cooldown, &req,
+            )
+            .await;
+        }
+        AlertTrigger::RetainerUndercut { margin_percent } => {
+            return create_retainer_undercut_alert_handler(
+                &db,
+                &senders,
+                owner,
+                margin_percent,
+                cooldown,
+                &req,
+            )
+            .await;
+        }
+        AlertTrigger::ListUpdate { list_id } => {
+            return create_list_update_alert_handler(&db, &senders, owner, list_id, cooldown, &req)
+                .await;
         }
     };
 
@@ -92,6 +123,7 @@ pub(crate) async fn create_alert(
         db.set_alert_rules(owner, alert.id, &req.endpoint_ids)
             .await
             .map_err(ApiError::from)?;
+        let _ = senders.alerts.send(EventType::added(alert.clone()));
 
         return Ok(Json(Alert {
             id: alert.id,
@@ -148,6 +180,7 @@ pub(crate) async fn create_alert(
         )
         .await
         .map_err(ApiError::from)?;
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
 
     let endpoint_ids = db
         .list_endpoint_ids_for_alert(alert.id)
@@ -174,6 +207,7 @@ pub(crate) async fn create_alert(
 /// path, and a single big function gets unwieldy.
 async fn create_list_threshold_alert_handler(
     db: &UltrosDb,
+    senders: &EventSenders,
     owner: i64,
     list_id: i32,
     cooldown: i32,
@@ -212,12 +246,87 @@ async fn create_list_threshold_alert_handler(
         .create_list_threshold_alert(owner, list_id, cooldown, &req.endpoint_ids)
         .await
         .map_err(ApiError::from)?;
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
 
     Ok(Json(Alert {
         id: alert.id,
         trigger: AlertTrigger::ListItemThreshold { list_id },
         // Deprecated fallback. Real delivery is endpoint_ids; this field only
         // exists for the older clients that pre-date the endpoints framework.
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
+async fn create_retainer_undercut_alert_handler(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    margin_percent: i32,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    validate_margin_percent(margin_percent)?;
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "retainer undercut alerts require endpoint_ids"
+        )));
+    }
+
+    let (alert, undercut) = db
+        .create_retainer_undercut_alert(owner, margin_percent, cooldown, &req.endpoint_ids)
+        .await
+        .map_err(ApiError::from)?;
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
+    let _ = senders.retainer_undercut.send(EventType::added(undercut));
+
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: AlertTrigger::RetainerUndercut { margin_percent },
+        delivery: AlertDelivery::DiscordDm,
+        endpoint_ids: req.endpoint_ids.clone(),
+        enabled: alert.enabled,
+        cooldown_seconds: alert.cooldown_seconds,
+        last_fired_at: alert.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+    }))
+}
+
+async fn create_list_update_alert_handler(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    owner: i64,
+    list_id: i32,
+    cooldown: i32,
+    req: &CreateAlertRequest,
+) -> Result<Json<Alert>, ApiError> {
+    if req.endpoint_ids.is_empty() {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "list update alerts require endpoint_ids"
+        )));
+    }
+
+    let permission = db
+        .get_permission(list_id, owner)
+        .await
+        .map_err(ApiError::from)?;
+    if permission < ListPermission::Read {
+        return Err(ApiError::from(anyhow::anyhow!(
+            "insufficient permission on list"
+        )));
+    }
+
+    let alert = db
+        .create_list_update_alert(owner, list_id, cooldown, &req.endpoint_ids)
+        .await
+        .map_err(ApiError::from)?;
+    let _ = senders.alerts.send(EventType::added(alert.clone()));
+
+    Ok(Json(Alert {
+        id: alert.id,
+        trigger: AlertTrigger::ListUpdate { list_id },
         delivery: AlertDelivery::DiscordDm,
         endpoint_ids: req.endpoint_ids.clone(),
         enabled: alert.enabled,
@@ -296,11 +405,54 @@ pub(crate) async fn list_alerts(
             last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
         });
     }
+
+    let retainer_rows = db
+        .get_user_retainer_undercut_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in retainer_rows {
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::RetainerUndercut {
+                margin_percent: t.margin_percent,
+            },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
+
+    let update_rows = db
+        .get_user_list_update_alerts(user.id as i64)
+        .await
+        .map_err(ApiError::from)?;
+    for (a, t) in update_rows {
+        let endpoint_ids = db
+            .list_endpoint_ids_for_alert(a.id)
+            .await
+            .map_err(ApiError::from)?;
+        out.push(Alert {
+            id: a.id,
+            trigger: AlertTrigger::ListUpdate { list_id: t.list_id },
+            delivery: AlertDelivery::DiscordDm,
+            endpoint_ids,
+            enabled: a.enabled,
+            cooldown_seconds: a.cooldown_seconds,
+            last_fired_at: a.last_fired_at.map(|t| t.with_timezone(&chrono::Utc)),
+        });
+    }
     Ok(Json(out))
 }
 
 pub(crate) async fn update_alert(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path(alert_id): Path<i32>,
     Json(req): Json<UpdateAlertRequest>,
@@ -317,17 +469,36 @@ pub(crate) async fn update_alert(
             .await
             .map_err(ApiError::from)?;
     }
+    if let Some(alert) = db.get_alert(alert_id).await.map_err(ApiError::from)? {
+        let _ = senders.alerts.send(EventType::updated(alert));
+    }
     Ok(Json(()))
 }
 
 pub(crate) async fn delete_alert(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path(alert_id): Path<i32>,
 ) -> Result<Json<()>, ApiError> {
+    let existing = db
+        .get_alert(alert_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::from(anyhow::anyhow!("alert not found")))?;
+    let retainer_alerts = db
+        .get_retainer_alerts_for_related_alert_id(alert_id)
+        .await
+        .map_err(ApiError::from)?;
     db.delete_alert_owned_by(user.id as i64, alert_id)
         .await
         .map_err(ApiError::from)?;
+    let _ = senders.alerts.send(EventType::removed(existing));
+    for retainer_alert in retainer_alerts {
+        let _ = senders
+            .retainer_undercut
+            .send(EventType::removed(retainer_alert));
+    }
     Ok(Json(()))
 }
 
@@ -380,12 +551,7 @@ pub(crate) async fn resend_alert_event(
             error: Some("alert has no endpoints".into()),
         }));
     }
-    let Some(serenity_ctx) = crate::alerts::delivery::get_serenity_ctx() else {
-        return Ok(Json(ResendResult {
-            delivered: false,
-            error: Some("Discord client not ready".into()),
-        }));
-    };
+    let serenity_ctx = crate::alerts::delivery::get_serenity_ctx();
     let title = "Ultros alert (resend)";
     let body = format!(
         "Resending alert for item {} (matched price: {:?})",
@@ -406,15 +572,20 @@ pub(crate) async fn resend_alert_event(
             ));
             continue;
         }
-        match crate::alerts::delivery::deliver_to_endpoint(
-            &endpoint,
-            title,
-            &body,
-            &db,
-            &serenity_ctx,
-        )
-        .await
-        {
+        let needs_ctx = matches!(endpoint.method.as_str(), "DiscordDm" | "DiscordChannel");
+        let result = if needs_ctx {
+            match serenity_ctx.as_ref() {
+                Some(ctx) => {
+                    crate::alerts::delivery::deliver_to_endpoint(&endpoint, title, &body, &db, ctx)
+                        .await
+                }
+                None => Err(anyhow::anyhow!("Discord client not ready")),
+            }
+        } else {
+            crate::alerts::delivery::deliver_non_discord_endpoint(&endpoint, title, &body, &db)
+                .await
+        };
+        match result {
             Ok(()) => any_ok = true,
             Err(e) => last_err = Some(format!("{e}")),
         }

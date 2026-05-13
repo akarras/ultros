@@ -1,11 +1,7 @@
-//! Modal that creates an `AlertTrigger::ListItemThreshold` for a given list.
-//! Mirrors `AlertConfigDrawer` but scoped to a whole list — the only inputs
-//! are the endpoints to fan out to. Per-item `target_price` is set on the
-//! list page itself, so this drawer stays minimal.
+use std::collections::HashSet;
 
 use icondata as i;
 use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_local};
-use std::collections::HashSet;
 use ultros_api_types::alert::{AlertTrigger, CreateAlertRequest};
 
 use crate::api::{create_alert, list_endpoints};
@@ -14,15 +10,11 @@ use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
 
 #[component]
-pub fn ListSubscribeDrawer(
-    list_id: i32,
-    list_name: String,
-    set_visible: SignalSetter<bool>,
-) -> impl IntoView {
+pub fn UndercutAlertDrawer(set_visible: SignalSetter<bool>) -> impl IntoView {
     let i18n = use_i18n();
     let endpoints = Resource::new(|| (), |_| list_endpoints());
     let selected = RwSignal::new(HashSet::<i32>::new());
-    let (mode, set_mode) = signal::<&'static str>("price_targets");
+    let (margin, set_margin) = signal("0".to_string());
     let (error, set_error) = signal::<Option<String>>(None);
     let toasts = use_toast();
 
@@ -36,6 +28,18 @@ pub fn ListSubscribeDrawer(
 
     let submit = move |_| {
         set_error.set(None);
+        let Ok(margin_percent) = margin.get().trim().parse::<i32>() else {
+            set_error.set(Some(
+                t_string!(i18n, undercut_alert_err_margin_number).to_string(),
+            ));
+            return;
+        };
+        if !(0..=200).contains(&margin_percent) {
+            set_error.set(Some(
+                t_string!(i18n, undercut_alert_err_margin_range).to_string(),
+            ));
+            return;
+        }
         let endpoint_ids: Vec<i32> = selected.get().into_iter().collect();
         if endpoint_ids.is_empty() {
             set_error.set(Some(
@@ -43,13 +47,8 @@ pub fn ListSubscribeDrawer(
             ));
             return;
         }
-        let trigger = if mode.get() == "list_updates" {
-            AlertTrigger::ListUpdate { list_id }
-        } else {
-            AlertTrigger::ListItemThreshold { list_id }
-        };
         let req = CreateAlertRequest {
-            trigger,
+            trigger: AlertTrigger::RetainerUndercut { margin_percent },
             delivery: None,
             endpoint_ids,
             cooldown_seconds: None,
@@ -58,50 +57,36 @@ pub fn ListSubscribeDrawer(
             match create_alert(req).await {
                 Ok(_) => {
                     if let Some(t) = toasts {
-                        t.success(if mode.get() == "list_updates" {
-                            t_string!(i18n, list_update_subscribe_success_toast)
-                        } else {
-                            t_string!(i18n, list_subscribe_success_toast)
-                        });
+                        t.success(t_string!(i18n, undercut_alert_created_toast));
                     }
                     set_visible.set(false);
                 }
-                Err(e) => {
-                    set_error.set(Some(format!("{e}")));
-                }
+                Err(e) => set_error.set(Some(format!("{e}"))),
             }
         });
     };
 
     view! {
         <Modal set_visible>
-            <div class="p-4 space-y-4 w-[28rem]">
-                <h2 class="text-xl font-bold">{t!(i18n, list_subscribe_title, name = list_name.clone())}</h2>
-                <p class="text-sm opacity-80">
-                    {move || if mode.get() == "list_updates" {
-                        t_string!(i18n, list_update_subscribe_description).to_string()
-                    } else {
-                        t_string!(i18n, list_subscribe_description).to_string()
-                    }}
-                </p>
+            <div class="p-4 space-y-4 w-[28rem] max-w-[calc(100vw-2rem)]">
+                <div>
+                    <h2 class="text-xl font-bold">{t!(i18n, undercut_alert_title)}</h2>
+                    <p class="text-sm opacity-80">{t!(i18n, undercut_alert_description)}</p>
+                </div>
 
-                <div class="grid grid-cols-2 gap-2">
-                    <button
-                        type="button"
-                        class="btn-ghost"
-                        class:bg-brand-500=move || mode.get() == "price_targets"
-                        on:click=move |_| set_mode.set("price_targets")
-                    >
-                        {t!(i18n, list_subscribe_price_targets_mode)}
-                    </button>
-                    <button
-                        type="button"
-                        class="btn-ghost"
-                        class:bg-brand-500=move || mode.get() == "list_updates"
-                        on:click=move |_| set_mode.set("list_updates")
-                    >
-                        {t!(i18n, list_subscribe_updates_mode)}
-                    </button>
+                <div class="space-y-1">
+                    <label class="text-sm font-semibold" for="undercut-alert-margin">
+                        {t!(i18n, undercut_alert_margin_label)}
+                    </label>
+                    <input
+                        id="undercut-alert-margin"
+                        class="input w-full"
+                        type="number"
+                        min="0"
+                        max="200"
+                        prop:value=margin
+                        on:input=move |e| set_margin.set(event_target_value(&e))
+                    />
                 </div>
 
                 <div class="space-y-1">
@@ -154,13 +139,7 @@ pub fn ListSubscribeDrawer(
                     </button>
                     <button class="btn" on:click=submit>
                         <Icon icon=i::BsBell width="1em" height="1em" />
-                        <span class="ml-1">
-                            {move || if mode.get() == "list_updates" {
-                                t_string!(i18n, list_update_subscribe_submit).to_string()
-                            } else {
-                                t_string!(i18n, list_subscribe_submit).to_string()
-                            }}
-                        </span>
+                        <span class="ml-1">{t!(i18n, undercut_alert_submit)}</span>
                     </button>
                 </div>
             </div>

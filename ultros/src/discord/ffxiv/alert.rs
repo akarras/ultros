@@ -6,6 +6,7 @@ use ultros_api_types::list::ListPermission;
 
 use crate::discord::ffxiv::helpers;
 use crate::discord::ffxiv::helpers::{discord_locale_to_xiv_language, localized_item_name};
+use crate::event::EventType;
 
 use super::{Context, Error, ULTROS_COLOR};
 
@@ -17,6 +18,7 @@ use super::{Context, Error, ULTROS_COLOR};
         "price",
         "list",
         "list_subscribe",
+        "list_updates",
         "mute",
         "unmute",
         "remove",
@@ -26,7 +28,7 @@ use super::{Context, Error, ULTROS_COLOR};
 )]
 pub(crate) async fn alert(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say(
-        "Use one of: `price`, `list`, `list-subscribe`, `mute`, `unmute`, `remove`, `endpoint`, `webhook`.\n\
+        "Use one of: `price`, `list`, `list-subscribe`, `list-updates`, `mute`, `unmute`, `remove`, `endpoint`, `webhook`.\n\
          e.g. `/ffxiv alert price item:Tsai_tou_Vounou price:50000`",
     )
     .await?;
@@ -88,6 +90,10 @@ async fn price(
         .db
         .set_alert_rules(owner, alert.id, &[dm_endpoint])
         .await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::added(alert.clone()))?;
 
     ctx.send(
         CreateReply::default().embed(
@@ -137,6 +143,10 @@ async fn list_subscribe(
         .db
         .create_list_threshold_alert(owner, list_id, cooldown, &[dm_endpoint])
         .await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::added(alert.clone()))?;
 
     ctx.send(
         CreateReply::default().embed(
@@ -145,6 +155,54 @@ async fn list_subscribe(
                 .title("List subscription created")
                 .description(format!(
                     "Watching list `#{list_id}` for items dropping to their target price. \
+                     Alert id: `{}`.\nDelivery: Discord DM to you.\nCooldown: {cooldown}s.",
+                    alert.id,
+                )),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Subscribe to list edits; fires when a shared list or one of its rows changes.
+#[poise::command(slash_command, prefix_command, rename = "list-updates")]
+async fn list_updates(
+    ctx: Context<'_>,
+    #[description = "List id (find it on the list page URL)"] list_id: i32,
+    #[description = "Min seconds between repeats (60-86400, default 3600)"] cooldown: Option<i32>,
+) -> Result<(), Error> {
+    let owner = ctx.author().id.get() as i64;
+    let permission = ctx.data().db.get_permission(list_id, owner).await?;
+    if permission < ListPermission::Read {
+        return Err(anyhow!(
+            "you don't have access to list {list_id}; ask the owner to share it with you"
+        )
+        .into());
+    }
+
+    let dm_endpoint = ctx
+        .data()
+        .db
+        .get_or_create_dm_endpoint(owner, &format!("DM to {}", ctx.author().name))
+        .await?;
+    let cooldown = cooldown.unwrap_or(3600).clamp(60, 86400);
+    let alert = ctx
+        .data()
+        .db
+        .create_list_update_alert(owner, list_id, cooldown, &[dm_endpoint])
+        .await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::added(alert.clone()))?;
+
+    ctx.send(
+        CreateReply::default().embed(
+            CreateEmbed::new()
+                .color(ULTROS_COLOR)
+                .title("List update subscription created")
+                .description(format!(
+                    "Watching list `#{list_id}` for list edits and item changes. \
                      Alert id: `{}`.\nDelivery: Discord DM to you.\nCooldown: {cooldown}s.",
                     alert.id,
                 )),
@@ -225,13 +283,24 @@ async fn webhook(
 async fn list(ctx: Context<'_>) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
     let rows = ctx.data().db.get_user_threshold_alerts(owner).await?;
-    if rows.is_empty() {
+    let list_threshold_rows = ctx.data().db.get_user_list_threshold_alerts(owner).await?;
+    let list_update_rows = ctx.data().db.get_user_list_update_alerts(owner).await?;
+    let retainer_rows = ctx
+        .data()
+        .db
+        .get_user_retainer_undercut_alerts(owner)
+        .await?;
+    if rows.is_empty()
+        && list_threshold_rows.is_empty()
+        && list_update_rows.is_empty()
+        && retainer_rows.is_empty()
+    {
         ctx.say("You have no alerts. Create one with `/ffxiv alert price`.")
             .await?;
         return Ok(());
     }
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    let lines = rows
+    let mut lines = rows
         .into_iter()
         .map(|(a, t)| {
             let item_name = localized_item_name(t.item_id, user_lang);
@@ -249,13 +318,34 @@ async fn list(ctx: Context<'_>) -> Result<(), Error> {
                 hq = if t.hq_only { " (HQ)" } else { "" },
             )
         })
-        .join("\n");
+        .collect::<Vec<_>>();
+    lines.extend(list_threshold_rows.into_iter().map(|(a, t)| {
+        let status = if a.enabled { "✅" } else { "⏸" };
+        format!(
+            "{status} `#{}` list #{} target-price subscription",
+            a.id, t.list_id
+        )
+    }));
+    lines.extend(list_update_rows.into_iter().map(|(a, t)| {
+        let status = if a.enabled { "✅" } else { "⏸" };
+        format!(
+            "{status} `#{}` list #{} update subscription",
+            a.id, t.list_id
+        )
+    }));
+    lines.extend(retainer_rows.into_iter().map(|(a, t)| {
+        let status = if a.enabled { "✅" } else { "⏸" };
+        format!(
+            "{status} `#{}` retainer undercut alerts over {}%",
+            a.id, t.margin_percent
+        )
+    }));
     ctx.send(
         CreateReply::default().embed(
             CreateEmbed::new()
                 .color(ULTROS_COLOR)
                 .title("Your alerts")
-                .description(lines),
+                .description(lines.into_iter().join("\n")),
         ),
     )
     .await?;
@@ -270,6 +360,12 @@ async fn mute(
 ) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
     ctx.data().db.set_alert_enabled(owner, id, false).await?;
+    if let Some(alert) = ctx.data().db.get_alert(id).await? {
+        ctx.data()
+            .event_senders
+            .alerts
+            .send(EventType::updated(alert))?;
+    }
     ctx.say(format!("Alert `#{id}` muted.")).await?;
     Ok(())
 }
@@ -282,6 +378,12 @@ async fn unmute(
 ) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
     ctx.data().db.set_alert_enabled(owner, id, true).await?;
+    if let Some(alert) = ctx.data().db.get_alert(id).await? {
+        ctx.data()
+            .event_senders
+            .alerts
+            .send(EventType::updated(alert))?;
+    }
     ctx.say(format!("Alert `#{id}` unmuted.")).await?;
     Ok(())
 }
@@ -293,7 +395,28 @@ async fn remove(
     #[description = "Alert id (see `/ffxiv alert list`)"] id: i32,
 ) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
+    let alert = ctx
+        .data()
+        .db
+        .get_alert(id)
+        .await?
+        .ok_or_else(|| anyhow!("alert not found"))?;
+    let undercuts = ctx
+        .data()
+        .db
+        .get_retainer_alerts_for_related_alert_id(id)
+        .await?;
     ctx.data().db.delete_alert_owned_by(owner, id).await?;
+    ctx.data()
+        .event_senders
+        .alerts
+        .send(EventType::removed(alert))?;
+    for undercut in undercuts {
+        ctx.data()
+            .event_senders
+            .retainer_undercut
+            .send(EventType::removed(undercut))?;
+    }
     ctx.say(format!("Alert `#{id}` deleted.")).await?;
     Ok(())
 }

@@ -37,7 +37,9 @@ pub struct WebPushConfig {
     /// Base64url-encoded uncompressed P-256 public key (no padding). Served verbatim
     /// to the frontend, which decodes it to a `Uint8Array` for `applicationServerKey`.
     pub public_key_b64url: String,
-    /// PEM-encoded EC private key. Fed straight to `VapidSignatureBuilder::from_pem`.
+    /// EC private key used for VAPID signing. Accepts either PEM (including env
+    /// values with escaped `\n`) or the base64url private key produced by common
+    /// `web-push generate-vapid-keys` tooling.
     pub private_key_pem: String,
     /// `mailto:` URI placed in the JWT's `sub` claim. Some push services reject
     /// non-`mailto:` values.
@@ -241,18 +243,17 @@ async fn send_webpush(
     config: &WebPushConfig,
 ) -> Result<()> {
     use web_push::{
-        ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder,
-        WebPushClient, WebPushError, WebPushMessageBuilder,
+        ContentEncoding, IsahcWebPushClient, SubscriptionInfo, WebPushClient, WebPushError,
+        WebPushMessageBuilder,
     };
 
     let sub = db.get_push_subscription_by_id(subscription_id).await?;
 
     let info = SubscriptionInfo::new(&sub.endpoint, &sub.p256dh, &sub.auth);
 
-    // VAPID signature: parse the operator's PEM private key, attach the
-    // `sub` claim with their contact email, then sign.
-    let mut sig_builder = VapidSignatureBuilder::from_pem(config.private_key_pem.as_bytes(), &info)
-        .map_err(|e| anyhow!("VAPID PEM parse failed: {e:?}"))?;
+    // VAPID signature: parse the operator's private key, attach the `sub`
+    // claim with their contact email, then sign.
+    let mut sig_builder = vapid_signature_builder(config, &info)?;
     sig_builder.add_claim("sub", config.contact_email.as_str());
     let signature = sig_builder
         .build()
@@ -289,6 +290,23 @@ async fn send_webpush(
             Err(anyhow!("push subscription expired"))
         }
         Err(e) => Err(anyhow!("push send failed: {e:?}")),
+    }
+}
+
+fn vapid_signature_builder<'a>(
+    config: &WebPushConfig,
+    info: &'a web_push::SubscriptionInfo,
+) -> Result<web_push::VapidSignatureBuilder<'a>> {
+    use web_push::VapidSignatureBuilder;
+
+    let raw_key = config.private_key_pem.trim();
+    let normalized_pem = raw_key.replace("\\n", "\n");
+    if normalized_pem.contains("-----BEGIN") {
+        VapidSignatureBuilder::from_pem(normalized_pem.as_bytes(), info)
+            .map_err(|e| anyhow!("VAPID PEM parse failed: {e:?}"))
+    } else {
+        VapidSignatureBuilder::from_base64(raw_key, info)
+            .map_err(|e| anyhow!("VAPID base64url parse failed: {e:?}"))
     }
 }
 

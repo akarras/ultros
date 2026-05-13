@@ -5,6 +5,7 @@ use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
+use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
 use crate::global_state::xiv_data::tracked_data;
@@ -251,9 +252,19 @@ pub(crate) fn CharacterRetainerUndercutList(
 pub fn RetainerUndercuts() -> impl IntoView {
     let i18n = use_i18n();
     let retainers = Resource::new(|| "undercuts", move |_| get_retainer_undercuts());
+    let (drawer_visible, set_drawer_visible) = signal(false);
     view! {
         <MetaTitle title=t_string!(i18n, retainers_undercuts_title).to_string() />
-        <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
+            <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
+                <Icon icon=i::BsBell />
+                <span class="ml-1">{t!(i18n, undercut_alert_open_button)}</span>
+            </button>
+        </div>
+        <Show when=move || drawer_visible.get()>
+            <UndercutAlertDrawer set_visible=set_drawer_visible.into() />
+        </Show>
         <br />
         <span>
             {t!(i18n, retainers_data_notice)}
