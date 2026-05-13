@@ -230,7 +230,7 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                     view! {
                         <A
                             href=format!("/item/{}", id)
-                            attr:class="block aspect-square rounded bg-white/5 hover:bg-white/10 \
+                            attr:class="flex items-center justify-center aspect-square rounded bg-white/5 hover:bg-white/10 \
                                        border border-white/5 hover:border-brand-500/30 \
                                        transition-colors p-0.5"
                             attr:title=title
