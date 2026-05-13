@@ -1117,20 +1117,31 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
 #[component]
 fn DiscordCommandChip(
     #[prop(into)] item_name: Signal<String>,
+    #[prop(into)] item_id: Signal<i32>,
     #[prop(into)] world_name: Signal<String>,
 ) -> impl IntoView {
-    let command = Signal::derive(move || {
+    // The `item` slash-command parameter is typed as an INTEGER on the Discord side,
+    // so a pasted command needs the item id, not a name. We show the name in the chip
+    // for human readability and put the id in the clipboard payload.
+    let display_command = Signal::derive(move || {
         format!(
             "/ffxiv prices current item:{} world:{}",
             item_name.get(),
             world_name.get(),
         )
     });
+    let clipboard_command = Signal::derive(move || {
+        format!(
+            "/ffxiv prices current item:{} world:{}",
+            item_id.get(),
+            world_name.get(),
+        )
+    });
     view! {
         <div class="inline-flex items-center gap-2 rounded-md border border-brand-500/30 bg-black/30 px-2.5 py-1 text-xs">
             <span class="text-[color:var(--color-text-muted)]">"Discord:"</span>
-            <code class="font-mono">{move || command.get()}</code>
-            <Clipboard clipboard_text=command />
+            <code class="font-mono">{move || display_command.get()}</code>
+            <Clipboard clipboard_text=clipboard_command />
         </div>
     }
 }
@@ -1256,6 +1267,7 @@ pub fn ItemView() -> impl IntoView {
                                 <div class="mt-1.5">
                                     <DiscordCommandChip
                                         item_name=Signal::derive(move || item_name().to_string())
+                                        item_id=Signal::derive(move || item_id.get())
                                         world_name=Signal::derive(move || world.get())
                                     />
                                 </div>

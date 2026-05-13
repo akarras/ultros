@@ -1,10 +1,11 @@
 use crate::EventType;
-use crate::discord::ffxiv::helpers::name_matches_lowered_ascii;
+use crate::discord::ffxiv::helpers::{
+    discord_locale_to_xiv_language, localized_item_name, name_matches_lowered_ascii,
+};
 use itertools::Itertools;
 use poise::serenity_prelude::Color;
 use std::fmt::Write;
 use ultros_db::{entity::active_listing, world_data::world_cache::AnySelector};
-use xiv_gen::ItemId;
 
 use super::{Context, Error};
 
@@ -147,8 +148,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();
     let under_cut_items = ctx.data().db.get_retainer_undercut_items(user_id).await?;
-    let data = xiv_gen_db::data();
-    let item_db = &data.items;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let mut embeds = Vec::new();
     for (_, retainer, items) in &under_cut_items {
         if !items.is_empty() {
@@ -158,11 +158,7 @@ async fn check_undercuts(ctx: Context<'_>) -> Result<(), Error> {
                     "name", "price", "target price", "behind"
                 ),
                 |mut s, (listing, undercut)| {
-                    let item_id = ItemId(listing.item_id);
-                    let item_name = item_db
-                        .get(&item_id)
-                        .map(|i| i.name.as_str())
-                        .unwrap_or_default();
+                    let item_name = localized_item_name(listing.item_id, user_lang);
                     let _ = writeln!(
                         s,
                         "{:>30} {:>10}->{:>10} {:>5}",
@@ -212,8 +208,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
     if retainers.is_empty() {
         ctx.say("No retainers found :(").await?;
     }
-    let data = xiv_gen_db::data();
-    let items = &data.items;
+    let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let embeds = retainers
         .into_iter()
         .map(|(_, retainer, listings)| {
@@ -226,10 +221,7 @@ async fn check_listings(ctx: Context<'_>) -> Result<(), Error> {
             )
             .unwrap();
             for listing in listings {
-                let item_name = items
-                    .get(&ItemId(listing.item_id))
-                    .map(|i| i.name.as_str())
-                    .unwrap_or_default();
+                let item_name = localized_item_name(listing.item_id, user_lang);
                 let active_listing::Model {
                     price_per_unit,
                     quantity,
