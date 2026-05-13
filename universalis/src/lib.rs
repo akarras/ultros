@@ -25,10 +25,8 @@ pub enum Error {
     HttpError(#[from] reqwest::Error),
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("Error deserializing BSON {0}")]
-    BsonDeserializeError(#[from] bson::de::Error),
-    #[error("Error serializing bson {0}")]
-    BsonSerializeError(#[from] bson::ser::Error),
+    #[error("BSON error {0}")]
+    BsonError(#[from] bson::error::Error),
     #[error("Websocket error {0}")]
     TungsteniteError(#[from] Box<async_tungstenite::tungstenite::Error>),
     #[error("Bad ID, listing returned id {0}")]
