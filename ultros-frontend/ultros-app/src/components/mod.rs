@@ -1,6 +1,7 @@
 pub mod ad;
 pub mod add_recipe_to_current_list;
 pub mod add_recipe_to_list;
+pub mod add_set_to_list;
 pub mod add_to_list;
 pub mod alert_config_drawer;
 pub mod alert_rules_panel;
