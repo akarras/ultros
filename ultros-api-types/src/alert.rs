@@ -52,6 +52,8 @@ pub struct CreateAlertRequest {
 pub struct UpdateAlertRequest {
     pub enabled: Option<bool>,
     pub price_threshold: Option<i32>,
+    pub endpoint_ids: Option<Vec<i32>>,
+    pub cooldown_seconds: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,5 +264,18 @@ mod endpoint_tests {
             let back: AlertTrigger = serde_json::from_str(&s).unwrap();
             assert_eq!(trigger, back);
         }
+    }
+
+    #[test]
+    fn update_alert_request_accepts_endpoint_and_cooldown_patch() {
+        let req = UpdateAlertRequest {
+            enabled: Some(true),
+            price_threshold: None,
+            endpoint_ids: Some(vec![1, 2]),
+            cooldown_seconds: Some(120),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        let back: UpdateAlertRequest = serde_json::from_str(&s).unwrap();
+        assert_eq!(req, back);
     }
 }

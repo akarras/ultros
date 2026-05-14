@@ -14,8 +14,8 @@ use ultros_api_types::{
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     list::{
-        CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
-        ListWithPermission, ShareListGroup, ShareListUser,
+        CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
+        ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
     },
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
@@ -282,6 +282,13 @@ pub(crate) async fn get_list_items_with_listings(
         return Err(AppError::BadList);
     }
     fetch_api(&format!("/api/v1/list/{list_id}/listings")).await
+}
+
+pub(crate) async fn get_list_activity(list_id: i32) -> AppResult<Vec<ListActivity>> {
+    if list_id == 0 {
+        return Err(AppError::BadList);
+    }
+    fetch_api(&format!("/api/v1/list/{list_id}/activity?limit=50")).await
 }
 
 pub(crate) async fn delete_list(list_id: i32) -> AppResult<()> {

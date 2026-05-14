@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use crate::components::icon::Icon;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
+use icondata as i;
 use leptos::prelude::*;
 use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
@@ -250,7 +252,13 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
                                         {move || has_multiple_datacenters.then(|| {
                                             view! {
                                                 <span class="text-[color:var(--color-text-muted)]">
-                                                    {if is_expanded() { "▼" } else { "▶" }}
+                                                    <Icon icon=Signal::derive(move || {
+                                                        if is_expanded() {
+                                                            i::BiChevronDownRegular
+                                                        } else {
+                                                            i::BiChevronRightRegular
+                                                        }
+                                                    }) />
                                                 </span>
                                             }
                                         })}

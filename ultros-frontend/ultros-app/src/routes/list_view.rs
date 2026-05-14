@@ -8,10 +8,10 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::{ListItem, ListPermission};
+use ultros_api_types::list::{ListActivity, ListItem, ListPermission};
 
 use crate::api::{
-    add_item_to_list, delete_list_item, delete_list_items, edit_list_item,
+    add_item_to_list, delete_list_item, delete_list_items, edit_list_item, get_list_activity,
     get_list_items_with_listings,
 };
 use crate::components::{
@@ -63,6 +63,8 @@ pub fn ListView() -> impl IntoView {
     // We need to trigger refetch when items are added via modal.
     // We can use a signal for versioning external updates.
     let (external_update_version, set_external_update_version) = signal(0);
+    let (activity_update_version, set_activity_update_version) = signal(0);
+    let (realtime_status, set_realtime_status) = signal("Connecting".to_string());
 
     let list_view = Resource::new(
         move || {
@@ -80,6 +82,19 @@ pub fn ListView() -> impl IntoView {
         },
         move |(id, _)| get_list_items_with_listings(id),
     );
+    let activity_view = Resource::new(
+        move || {
+            (
+                list_id(),
+                activity_update_version.get(),
+                add_item.version().get(),
+                edit_item.version().get(),
+                delete_item.version().get(),
+                delete_items.version().get(),
+            )
+        },
+        move |(id, _, _, _, _, _)| get_list_activity(id),
+    );
 
     let realtime = use_realtime();
     let list_subscription = StoredValue::new(None::<RealtimeSubscription>);
@@ -89,12 +104,23 @@ pub fn ListView() -> impl IntoView {
         list_subscription.update_value(|sub| *sub = None);
         let id = list_id.get();
         let Some(realtime) = realtime_for_list.clone() else {
+            set_realtime_status.set("Offline".to_string());
             return;
         };
         if id != 0 {
             let sub = realtime.subscribe_list(id, move |message| match message {
-                ServerClient::ListUpdate(_) | ServerClient::Stale { .. } => {
+                ServerClient::Subscribed { .. } => {
+                    set_realtime_status.set("Live".to_string());
+                }
+                ServerClient::ListUpdate(_) => {
+                    set_realtime_status.set("Live".to_string());
                     list_view.refetch();
+                    activity_view.refetch();
+                }
+                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                    set_realtime_status.set("Reconnecting".to_string());
+                    list_view.refetch();
+                    activity_view.refetch();
                 }
                 _ => {}
             });
@@ -226,6 +252,7 @@ pub fn ListView() -> impl IntoView {
                     set_visible=set_recipe_modal_open
                     on_success=move || {
                         set_external_update_version.update(|v| *v += 1);
+                        set_activity_update_version.update(|v| *v += 1);
                         set_recipe_modal_open(false);
                     }
                 />
@@ -427,6 +454,9 @@ pub fn ListView() -> impl IntoView {
                                                             </div>
                                                             <div class="flex flex-wrap gap-2 text-sm">
                                                                 <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
+                                                                    {realtime_status}
+                                                                </span>
+                                                                <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
                                                                     {format!("{remaining_items} remaining")}
                                                                 </span>
                                                             </div>
@@ -447,6 +477,9 @@ pub fn ListView() -> impl IntoView {
                                                             <div>
                                                                 <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"List"</p>
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
+                                                                <div class="mt-2 inline-flex rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-xs text-[color:var(--color-text-muted)]">
+                                                                    {realtime_status}
+                                                                </div>
                                                             </div>
                                                             <div class="grid grid-cols-3 gap-2 text-center text-sm">
                                                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
@@ -499,7 +532,10 @@ pub fn ListView() -> impl IntoView {
                                                                 </button>
                                                             </div>
                                                         </div>
-                                                        <div class="flex flex-wrap items-center gap-2">
+                                                        <div
+                                                            class="flex flex-wrap items-center gap-2"
+                                                            class:hidden=move || !edit_list_mode()
+                                                        >
                                                             <button
                                                                 class="btn-secondary"
                                                                 on:click=move |_| {
@@ -572,6 +608,9 @@ pub fn ListView() -> impl IntoView {
                                                     <div class="p-4 sm:p-5">
                                                         <ListSummary items=items.get_value() />
                                                     </div>
+                                                    <div class="border-t border-[color:var(--color-outline)] p-4 sm:p-5">
+                                                        <ActivityFeed activity=activity_view />
+                                                    </div>
                                                 </section>
                                             },
                                         )
@@ -597,4 +636,60 @@ pub fn ListView() -> impl IntoView {
             </Transition>
         </div>
     }.into_any()
+}
+
+#[component]
+fn ActivityFeed(
+    activity: Resource<Result<Vec<ListActivity>, crate::error::AppError>>,
+) -> impl IntoView {
+    view! {
+        <section class="flex flex-col gap-3">
+            <h2 class="text-lg font-bold text-[color:var(--brand-fg)]">"Activity"</h2>
+            <Suspense fallback=move || {
+                view! { <div class="text-sm text-[color:var(--color-text-muted)]">"Loading activity..."</div> }
+            }>
+                {move || {
+                    activity
+                        .get()
+                        .map(|result| match result {
+                            Ok(rows) if rows.is_empty() => {
+                                view! {
+                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4 text-sm text-[color:var(--color-text-muted)]">
+                                        "No list activity yet."
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                            Ok(rows) => {
+                                view! {
+                                    <ol class="flex flex-col gap-2">
+                                        <For
+                                            each=move || rows.clone()
+                                            key=|activity| activity.id
+                                            children=move |activity| {
+                                                view! {
+                                                    <li class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
+                                                        <div class="text-sm font-semibold text-[color:var(--color-text)]">{activity.message}</div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)]">
+                                                            {activity.created_at.format("%Y-%m-%d %H:%M UTC").to_string()}
+                                                        </div>
+                                                    </li>
+                                                }
+                                            }
+                                        />
+                                    </ol>
+                                }
+                                    .into_any()
+                            }
+                            Err(e) => {
+                                view! {
+                                    <div class="rounded-lg border border-red-400/40 p-4 text-sm text-red-200">{format!("{e}")}</div>
+                                }
+                                    .into_any()
+                            }
+                        })
+                }}
+            </Suspense>
+        </section>
+    }
 }

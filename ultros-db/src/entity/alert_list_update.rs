@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub alert_id: i32,
+    pub owner: i64,
     pub list_id: i32,
 }
 

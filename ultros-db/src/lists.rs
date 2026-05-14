@@ -3,8 +3,8 @@ use crate::{
     common::try_update_value::ActiveValueCmpSet,
     common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
     entity::{
-        active_listing, discord_user, list, list_invite, list_item, list_shared_group,
-        list_shared_user, retainer, user_group, user_group_member,
+        active_listing, discord_user, list, list_activity, list_invite, list_item,
+        list_shared_group, list_shared_user, retainer, user_group, user_group_member,
     },
     world_data::world_cache::{AnySelector, WorldCache},
 };
@@ -13,12 +13,13 @@ use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, IntoActiveModel, JoinType,
-    ModelTrait, QueryFilter, QuerySelect, RelationTrait, TransactionTrait, sea_query::Expr,
+    ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
+    sea_query::Expr,
 };
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tracing::instrument;
-use ultros_api_types::list::ListPermission;
+use ultros_api_types::list::{ListActivityKind, ListPermission};
 use universalis::ItemId;
 
 #[derive(Debug, Error)]
@@ -285,6 +286,73 @@ impl UltrosDb {
             .await?)
     }
 
+    pub async fn get_list_item(
+        &self,
+        list_item_id: i32,
+        discord_user: i64,
+    ) -> Result<list_item::Model> {
+        let item = list_item::Entity::find_by_id(list_item_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Item not found"))?;
+        let permission = self.get_permission(item.list_id, discord_user).await?;
+        if permission < ListPermission::Read {
+            return Err(ListError::Forbidden("Insufficient permissions to read list item").into());
+        }
+        Ok(item)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_list_activity(
+        &self,
+        list_id: i32,
+        actor_user_id: i64,
+        actor_username: String,
+        kind: ListActivityKind,
+        list_item_id: Option<i32>,
+        item_id: Option<i32>,
+        payload: serde_json::Value,
+        message: String,
+    ) -> Result<list_activity::Model> {
+        Ok(list_activity::ActiveModel {
+            id: Default::default(),
+            list_id: ActiveValue::Set(list_id),
+            actor_user_id: ActiveValue::Set(actor_user_id),
+            actor_username: ActiveValue::Set(actor_username),
+            kind: ActiveValue::Set(kind.as_str().to_string()),
+            list_item_id: ActiveValue::Set(list_item_id),
+            item_id: ActiveValue::Set(item_id),
+            payload: ActiveValue::Set(payload),
+            message: ActiveValue::Set(message),
+            created_at: ActiveValue::Set(chrono::Utc::now().into()),
+        }
+        .insert(&self.db)
+        .await?)
+    }
+
+    pub async fn get_list_activity(
+        &self,
+        list_id: i32,
+        discord_user: i64,
+        limit: u64,
+        before: Option<i64>,
+    ) -> Result<Vec<list_activity::Model>> {
+        let permission = self.get_permission(list_id, discord_user).await?;
+        if permission < ListPermission::Read {
+            return Err(
+                ListError::Forbidden("Insufficient permissions to read list activity").into(),
+            );
+        }
+        let mut query = list_activity::Entity::find()
+            .filter(list_activity::Column::ListId.eq(list_id))
+            .order_by_desc(list_activity::Column::Id)
+            .limit(limit.clamp(1, 100));
+        if let Some(before) = before {
+            query = query.filter(list_activity::Column::Id.lt(before));
+        }
+        Ok(query.all(&self.db).await?)
+    }
+
     /// Adds an item to the list.
     #[instrument(skip(self))]
     pub async fn add_item_to_list(
@@ -351,6 +419,7 @@ impl UltrosDb {
             .into_active_model();
         item.hq.cmp_set_value(updated_item.hq);
         item.quantity.cmp_set_value(updated_item.quantity);
+        item.acquired.cmp_set_value(updated_item.acquired);
         item.target_price.cmp_set_value(updated_item.target_price);
         if item.is_changed() {
             Ok(item.update(&self.db).await?)

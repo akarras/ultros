@@ -1,7 +1,7 @@
 use crate::{
     entity::{
-        self, datacenter, discord_user, final_fantasy_character, list, list_invite, list_item,
-        list_shared_group, list_shared_user, owned_retainers, region,
+        self, datacenter, discord_user, final_fantasy_character, list, list_activity, list_invite,
+        list_item, list_shared_group, list_shared_user, owned_retainers, region,
         unknown_final_fantasy_character, user_group, user_group_member,
     },
     world_data::world_cache::WorldCache,
@@ -9,7 +9,9 @@ use crate::{
 use thiserror::Error;
 use ultros_api_types::{
     ActiveListing, FfxivCharacter, SaleHistory, UnknownCharacter,
-    list::{List, ListInvite, ListItem, ListSharedGroup, ListSharedUser},
+    list::{
+        List, ListActivity, ListActivityKind, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
+    },
     retainer::Retainer,
     user::OwnedRetainer,
     user::group::{UserGroup, UserGroupMember},
@@ -305,6 +307,35 @@ impl From<list_item::Model> for ListItem {
             quantity,
             acquired,
             target_price,
+        }
+    }
+}
+
+impl From<list_activity::Model> for ListActivity {
+    fn from(value: list_activity::Model) -> Self {
+        let list_activity::Model {
+            id,
+            list_id,
+            actor_user_id,
+            actor_username,
+            kind,
+            list_item_id,
+            item_id,
+            payload,
+            message,
+            created_at,
+        } = value;
+        Self {
+            id,
+            list_id,
+            actor_user_id,
+            actor_username,
+            kind: ListActivityKind::from(kind.as_str()),
+            list_item_id,
+            item_id,
+            payload,
+            message,
+            created_at: created_at.with_timezone(&chrono::Utc),
         }
     }
 }

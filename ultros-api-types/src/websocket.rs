@@ -141,6 +141,7 @@ pub struct SaleEventData {
 pub enum ListEventData {
     List(crate::list::List),
     ListItem(crate::list::ListItem),
+    Activity(crate::list::ListActivity),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

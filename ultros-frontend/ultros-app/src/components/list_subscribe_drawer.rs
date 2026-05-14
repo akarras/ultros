@@ -6,9 +6,9 @@
 use icondata as i;
 use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_local};
 use std::collections::HashSet;
-use ultros_api_types::alert::{AlertTrigger, CreateAlertRequest};
+use ultros_api_types::alert::{Alert, AlertTrigger, CreateAlertRequest, UpdateAlertRequest};
 
-use crate::api::{create_alert, list_endpoints};
+use crate::api::{create_alert, get_alerts, list_endpoints, patch_alert};
 use crate::components::{icon::Icon, modal::Modal};
 use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
@@ -21,8 +21,9 @@ pub fn ListSubscribeDrawer(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let endpoints = Resource::new(|| (), |_| list_endpoints());
+    let alerts = Resource::new(|| (), |_| get_alerts());
     let selected = RwSignal::new(HashSet::<i32>::new());
-    let (mode, set_mode) = signal::<&'static str>("price_targets");
+    let (mode, set_mode) = signal::<&'static str>("list_updates");
     let (error, set_error) = signal::<Option<String>>(None);
     let toasts = use_toast();
 
@@ -33,6 +34,30 @@ pub fn ListSubscribeDrawer(
             }
         });
     };
+
+    let existing_alert = Memo::new(move |_| {
+        alerts.get().and_then(|result| {
+            result.ok().and_then(|rows| {
+                rows.into_iter().find(|alert| match &alert.trigger {
+                    AlertTrigger::ListUpdate { list_id: id } => {
+                        mode.get() == "list_updates" && *id == list_id
+                    }
+                    AlertTrigger::ListItemThreshold { list_id: id } => {
+                        mode.get() == "price_targets" && *id == list_id
+                    }
+                    _ => false,
+                })
+            })
+        })
+    });
+
+    Effect::new(move |_| {
+        if let Some(alert) = existing_alert.get() {
+            selected.set(alert.endpoint_ids.into_iter().collect());
+        } else {
+            selected.set(HashSet::new());
+        }
+    });
 
     let submit = move |_| {
         set_error.set(None);
@@ -54,8 +79,24 @@ pub fn ListSubscribeDrawer(
             endpoint_ids,
             cooldown_seconds: None,
         };
+        let existing: Option<Alert> = existing_alert.get();
         spawn_local(async move {
-            match create_alert(req).await {
+            let result = if let Some(alert) = existing {
+                patch_alert(
+                    alert.id,
+                    UpdateAlertRequest {
+                        enabled: Some(true),
+                        price_threshold: None,
+                        endpoint_ids: Some(req.endpoint_ids.clone()),
+                        cooldown_seconds: None,
+                    },
+                )
+                .await
+                .map(|_| alert)
+            } else {
+                create_alert(req).await
+            };
+            match result {
                 Ok(_) => {
                     if let Some(t) = toasts {
                         t.success(if mode.get() == "list_updates" {
@@ -77,6 +118,11 @@ pub fn ListSubscribeDrawer(
         <Modal set_visible>
             <div class="p-4 space-y-4 w-[28rem]">
                 <h2 class="text-xl font-bold">{t!(i18n, list_subscribe_title, name = list_name.clone())}</h2>
+                <Show when=move || existing_alert.get().is_some()>
+                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2 text-sm text-[color:var(--color-text-muted)]">
+                        "Editing existing settings for this list."
+                    </div>
+                </Show>
                 <p class="text-sm opacity-80">
                     {move || if mode.get() == "list_updates" {
                         t_string!(i18n, list_update_subscribe_description).to_string()

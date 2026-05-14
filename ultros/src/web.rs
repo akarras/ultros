@@ -35,8 +35,8 @@ use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, warn};
 use ultros_api_types::list::{
-    CreateInvite, CreateList, List, ListInvite, ListItem, ListSharedGroup, ListSharedUser,
-    ListWithPermission, ShareListGroup, ShareListUser,
+    CreateInvite, CreateList, List, ListActivity, ListActivityKind, ListInvite, ListItem,
+    ListSharedGroup, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
@@ -57,6 +57,7 @@ use self::character_verifier_service::CharacterVerifierService;
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
+use crate::alerts::price_alert_tracker::resolve_item_name;
 use crate::event::{EventSenders, EventType};
 use crate::leptos::create_leptos_app;
 use crate::search_service::SearchService;
@@ -106,6 +107,69 @@ fn send_list_event(
     if let Err(e) = senders.lists.send(event) {
         warn!(error = %e, "failed to broadcast list event");
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_list_activity(
+    db: &UltrosDb,
+    senders: &EventSenders,
+    list_id: i32,
+    user: &AuthDiscordUser,
+    kind: ListActivityKind,
+    list_item_id: Option<i32>,
+    item_id: Option<i32>,
+    payload: serde_json::Value,
+    message: String,
+) -> Result<ListActivity, ApiError> {
+    db.get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
+    let activity = db
+        .record_list_activity(
+            list_id,
+            user.id as i64,
+            user.name.clone(),
+            kind,
+            list_item_id,
+            item_id,
+            payload,
+            message,
+        )
+        .await?;
+    let activity = ListActivity::from(activity);
+    send_list_event(
+        senders,
+        EventType::added(ListEventData::Activity(activity.clone())),
+    );
+    Ok(activity)
+}
+
+fn item_change_payload(
+    before: &ultros_db::entity::list_item::Model,
+    after: &ultros_db::entity::list_item::Model,
+) -> serde_json::Value {
+    let mut changes = serde_json::Map::new();
+    if before.hq != after.hq {
+        changes.insert("hq".to_string(), serde_json::json!([before.hq, after.hq]));
+    }
+    if before.quantity != after.quantity {
+        changes.insert(
+            "quantity".to_string(),
+            serde_json::json!([before.quantity, after.quantity]),
+        );
+    }
+    if before.acquired != after.acquired {
+        changes.insert(
+            "acquired".to_string(),
+            serde_json::json!([before.acquired, after.acquired]),
+        );
+    }
+    if before.target_price != after.target_price {
+        changes.insert(
+            "target_price".to_string(),
+            serde_json::json!([before.target_price, after.target_price]),
+        );
+    }
+    serde_json::Value::Object(changes)
 }
 
 async fn redirect_legacy_book_host(
@@ -522,6 +586,24 @@ pub(crate) async fn get_list_with_listings(
     )))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct ListActivityQuery {
+    limit: Option<u64>,
+    before: Option<i64>,
+}
+
+pub(crate) async fn get_list_activity(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Query(query): Query<ListActivityQuery>,
+) -> Result<Json<Vec<ListActivity>>, ApiError> {
+    let activity = db
+        .get_list_activity(id, user.id as i64, query.limit.unwrap_or(50), query.before)
+        .await?;
+    Ok(Json(activity.into_iter().map(ListActivity::from).collect()))
+}
+
 pub(crate) async fn delete_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
@@ -544,14 +626,28 @@ pub(crate) async fn create_list(
     user: AuthDiscordUser,
     Json(list): Json<CreateList>,
 ) -> Result<Json<()>, ApiError> {
-    let discord_user = db.get_or_create_discord_user(user.id, user.name).await?;
+    let discord_user = db
+        .get_or_create_discord_user(user.id, user.name.clone())
+        .await?;
     let list = db
         .create_list(discord_user, list.name, Some(list.wdr_filter.into()))
         .await?;
     send_list_event(
         &senders,
-        EventType::added(ListEventData::List(List::try_from(list)?)),
+        EventType::added(ListEventData::List(List::try_from(list.clone())?)),
     );
+    record_list_activity(
+        &db,
+        &senders,
+        list.id,
+        &user,
+        ListActivityKind::ListCreated,
+        None,
+        None,
+        serde_json::json!({ "name": list.name.clone() }),
+        format!("{} created list {}", user.name, list.name),
+    )
+    .await?;
     Ok(Json(()))
 }
 
@@ -577,14 +673,27 @@ pub(crate) async fn edit_list(
         .await?;
     send_list_event(
         &senders,
-        EventType::updated(ListEventData::List(List::try_from(list)?)),
+        EventType::updated(ListEventData::List(List::try_from(list.clone())?)),
     );
+    record_list_activity(
+        &db,
+        &senders,
+        list.id,
+        &user,
+        ListActivityKind::ListUpdated,
+        None,
+        None,
+        serde_json::json!({ "name": list.name.clone() }),
+        format!("{} updated list {}", user.name, list.name),
+    )
+    .await?;
     Ok(Json(()))
 }
 
 pub(crate) async fn post_item_to_list(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
     perm: crate::web::list_permission::RequireListPermission<
         { crate::web::list_permission::WRITE },
     >,
@@ -603,8 +712,26 @@ pub(crate) async fn post_item_to_list(
         .await?;
     send_list_event(
         &senders,
-        EventType::added(ListEventData::ListItem(item.into())),
+        EventType::added(ListEventData::ListItem(item.clone().into())),
     );
+    let item_name = resolve_item_name(item.item_id);
+    record_list_activity(
+        &db,
+        &senders,
+        item.list_id,
+        &user,
+        ListActivityKind::ItemAdded,
+        Some(item.id),
+        Some(item.item_id),
+        serde_json::json!({
+            "quantity": item.quantity,
+            "acquired": item.acquired,
+            "hq": item.hq,
+            "target_price": item.target_price,
+        }),
+        format!("{} added {}", user.name.clone(), item_name),
+    )
+    .await?;
     Ok(Json(()))
 }
 
@@ -626,8 +753,20 @@ pub(crate) async fn post_items_to_list(
     // For now, let's just trigger a refetch by sending the List update.
     send_list_event(
         &senders,
-        EventType::updated(ListEventData::List(List::try_from(list)?)),
+        EventType::updated(ListEventData::List(List::try_from(list.clone())?)),
     );
+    record_list_activity(
+        &db,
+        &senders,
+        list.id,
+        &user,
+        ListActivityKind::ItemAdded,
+        None,
+        None,
+        serde_json::json!({ "bulk": true }),
+        format!("{} imported items into {}", user.name, list.name),
+    )
+    .await?;
     Ok(Json(()))
 }
 
@@ -637,12 +776,39 @@ pub(crate) async fn edit_list_item(
     user: AuthDiscordUser,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
+    let before = db.get_list_item(item.id, user.id as i64).await?;
     let item = item.into();
     let item = db.update_list_item(item, user.id as i64).await?;
     send_list_event(
         &senders,
-        EventType::updated(ListEventData::ListItem(item.into())),
+        EventType::updated(ListEventData::ListItem(item.clone().into())),
     );
+    let item_name = resolve_item_name(item.item_id);
+    let before_acquired = before.acquired.unwrap_or(0);
+    let after_acquired = item.acquired.unwrap_or(0);
+    let quantity = item.quantity.unwrap_or(1);
+    let kind = if after_acquired >= quantity && before_acquired < quantity {
+        ListActivityKind::ItemAcquired
+    } else {
+        ListActivityKind::ItemUpdated
+    };
+    let message = if kind == ListActivityKind::ItemAcquired {
+        format!("{} got {}", user.name, item_name)
+    } else {
+        format!("{} updated {}", user.name, item_name)
+    };
+    record_list_activity(
+        &db,
+        &senders,
+        item.list_id,
+        &user,
+        kind,
+        Some(item.id),
+        Some(item.item_id),
+        item_change_payload(&before, &item),
+        message,
+    )
+    .await?;
     Ok(Json(()))
 }
 
@@ -655,8 +821,26 @@ pub(crate) async fn delete_list_item(
     let item = db.remove_item_from_list(user.id as i64, id).await?;
     send_list_event(
         &senders,
-        EventType::removed(ListEventData::ListItem(item.into())),
+        EventType::removed(ListEventData::ListItem(item.clone().into())),
     );
+    let item_name = resolve_item_name(item.item_id);
+    record_list_activity(
+        &db,
+        &senders,
+        item.list_id,
+        &user,
+        ListActivityKind::ItemRemoved,
+        Some(item.id),
+        Some(item.item_id),
+        serde_json::json!({
+            "quantity": item.quantity,
+            "acquired": item.acquired,
+            "hq": item.hq,
+            "target_price": item.target_price,
+        }),
+        format!("{} removed {}", user.name, item_name),
+    )
+    .await?;
     Ok(Json(()))
 }
 
@@ -671,11 +855,27 @@ pub(crate) async fn delete_multiple_list_items(
             .map(|id| db.remove_item_from_list(user.id as i64, id)),
     )
     .await?;
+    let deleted_count = deleted_items.len();
+    let list_id = deleted_items.first().map(|item| item.list_id);
     for item in deleted_items {
         send_list_event(
             &senders,
             EventType::removed(ListEventData::ListItem(item.into())),
         );
+    }
+    if let Some(list_id) = list_id {
+        record_list_activity(
+            &db,
+            &senders,
+            list_id,
+            &user,
+            ListActivityKind::ItemsRemoved,
+            None,
+            None,
+            serde_json::json!({ "count": deleted_count }),
+            format!("{} removed {deleted_count} items", user.name),
+        )
+        .await?;
     }
     Ok(Json(()))
 }
@@ -922,6 +1122,21 @@ pub(crate) async fn share_list_with_user(
 ) -> Result<Json<()>, ApiError> {
     db.share_list_with_user(id, user.id as i64, share.user_id, share.permission)
         .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::SharedUser,
+        None,
+        None,
+        serde_json::json!({
+            "user_id": share.user_id,
+            "permission": share.permission as i16,
+        }),
+        format!("{} shared this list with user {}", user.name, share.user_id),
+    )
+    .await?;
     broadcast_list_update(&db, &senders, id, user.id as i64).await?;
     Ok(Json(()))
 }
@@ -935,6 +1150,24 @@ pub(crate) async fn share_list_with_group(
 ) -> Result<Json<()>, ApiError> {
     db.share_list_with_group(id, user.id as i64, share.group_id, share.permission)
         .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::SharedGroup,
+        None,
+        None,
+        serde_json::json!({
+            "group_id": share.group_id,
+            "permission": share.permission as i16,
+        }),
+        format!(
+            "{} shared this list with group {}",
+            user.name, share.group_id
+        ),
+    )
+    .await?;
     broadcast_list_update(&db, &senders, id, user.id as i64).await?;
     Ok(Json(()))
 }
@@ -947,6 +1180,18 @@ pub(crate) async fn unshare_list_from_user(
 ) -> Result<Json<()>, ApiError> {
     db.unshare_list_from_user(id, user.id as i64, user_id)
         .await?;
+    let _ = record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::UnsharedUser,
+        None,
+        None,
+        serde_json::json!({ "user_id": user_id }),
+        format!("{} removed user {} from this list", user.name, user_id),
+    )
+    .await;
     // Best-effort: only broadcast if the caller still has read permission
     // (e.g. the owner unsharing someone else). If a member removed themselves
     // they can no longer fetch the list, so skip the broadcast in that case.
@@ -962,6 +1207,18 @@ pub(crate) async fn unshare_list_from_group(
 ) -> Result<Json<()>, ApiError> {
     db.unshare_list_from_group(id, user.id as i64, group_id)
         .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::UnsharedGroup,
+        None,
+        None,
+        serde_json::json!({ "group_id": group_id }),
+        format!("{} removed group {} from this list", user.name, group_id),
+    )
+    .await?;
     broadcast_list_update(&db, &senders, id, user.id as i64).await?;
     Ok(Json(()))
 }
@@ -979,6 +1236,7 @@ pub(crate) async fn get_list_invites(
 
 pub(crate) async fn create_invite(
     State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
     Json(invite): Json<CreateInvite>,
@@ -986,6 +1244,22 @@ pub(crate) async fn create_invite(
     let invite = db
         .create_invite(id, user.id as i64, invite.permission, invite.max_uses)
         .await?;
+    record_list_activity(
+        &db,
+        &senders,
+        id,
+        &user,
+        ListActivityKind::InviteCreated,
+        None,
+        None,
+        serde_json::json!({
+            "invite_id": invite.id.clone(),
+            "permission": invite.permission,
+            "max_uses": invite.max_uses,
+        }),
+        format!("{} created an invite", user.name),
+    )
+    .await?;
     Ok(Json(ListInvite::from(invite)))
 }
 
@@ -996,6 +1270,20 @@ pub(crate) async fn use_invite(
     Path(id): Path<String>,
 ) -> Result<Json<i32>, ApiError> {
     let shared = db.use_invite(id, user.id as i64).await?;
+    record_list_activity(
+        &db,
+        &senders,
+        shared.list_id,
+        &user,
+        ListActivityKind::InviteUsed,
+        None,
+        None,
+        serde_json::json!({
+            "permission": shared.permission,
+        }),
+        format!("{} joined this list with an invite", user.name),
+    )
+    .await?;
     // The user just gained access — surface the list to their UI.
     broadcast_list_update(&db, &senders, shared.list_id, user.id as i64).await?;
     Ok(Json(shared.list_id))
@@ -1151,6 +1439,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/edit", post(edit_list))
         .route("/api/v1/list/item/edit", post(edit_list_item))
         .route("/api/v1/list/{id}", get(get_list))
+        .route("/api/v1/list/{id}/activity", get(get_list_activity))
         .route("/api/v1/list/{id}/listings", get(get_list_with_listings))
         .route("/api/v1/list/{id}/add/item", post(post_item_to_list))
         .route("/api/v1/list/{id}/add/items", post(post_items_to_list))
