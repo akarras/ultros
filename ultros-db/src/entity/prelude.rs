@@ -15,6 +15,7 @@ pub use super::discord_user::Entity as DiscordUser;
 pub use super::ffxiv_character_verification::Entity as FfxivCharacterVerification;
 pub use super::final_fantasy_character::Entity as FinalFantasyCharacter;
 pub use super::list::Entity as List;
+pub use super::list_activity::Entity as ListActivity;
 pub use super::list_invite::Entity as ListInvite;
 pub use super::list_item::Entity as ListItem;
 pub use super::list_shared_group::Entity as ListSharedGroup;

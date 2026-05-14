@@ -336,6 +336,9 @@ async fn handle_socket(
                                                                 ListEventData::ListItem(l) => {
                                                                     l.list_id
                                                                 }
+                                                                ListEventData::Activity(a) => {
+                                                                    a.list_id
+                                                                }
                                                             },
                                                         };
                                                         if id == list_id {

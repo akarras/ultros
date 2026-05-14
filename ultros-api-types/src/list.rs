@@ -1,6 +1,7 @@
 use crate::world_helper::AnySelector;
 /// Lists serve as a way to gather a large amount of items
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(i16)]
@@ -104,6 +105,96 @@ pub struct CreateInvite {
     pub max_uses: Option<i32>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ListActivityKind {
+    ListCreated,
+    ListUpdated,
+    ListDeleted,
+    ItemAdded,
+    ItemUpdated,
+    ItemRemoved,
+    ItemAcquired,
+    ItemsRemoved,
+    SharedUser,
+    SharedGroup,
+    UnsharedUser,
+    UnsharedGroup,
+    InviteCreated,
+    InviteUsed,
+    InviteDeleted,
+}
+
+impl ListActivityKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ListCreated => "list_created",
+            Self::ListUpdated => "list_updated",
+            Self::ListDeleted => "list_deleted",
+            Self::ItemAdded => "item_added",
+            Self::ItemUpdated => "item_updated",
+            Self::ItemRemoved => "item_removed",
+            Self::ItemAcquired => "item_acquired",
+            Self::ItemsRemoved => "items_removed",
+            Self::SharedUser => "shared_user",
+            Self::SharedGroup => "shared_group",
+            Self::UnsharedUser => "unshared_user",
+            Self::UnsharedGroup => "unshared_group",
+            Self::InviteCreated => "invite_created",
+            Self::InviteUsed => "invite_used",
+            Self::InviteDeleted => "invite_deleted",
+        }
+    }
+
+    pub fn is_alert_activity(self) -> bool {
+        matches!(
+            self,
+            Self::ItemAdded
+                | Self::ItemUpdated
+                | Self::ItemRemoved
+                | Self::ItemAcquired
+                | Self::ItemsRemoved
+        )
+    }
+}
+
+impl From<&str> for ListActivityKind {
+    fn from(value: &str) -> Self {
+        match value {
+            "list_created" => Self::ListCreated,
+            "list_updated" => Self::ListUpdated,
+            "list_deleted" => Self::ListDeleted,
+            "item_added" => Self::ItemAdded,
+            "item_updated" => Self::ItemUpdated,
+            "item_removed" => Self::ItemRemoved,
+            "item_acquired" => Self::ItemAcquired,
+            "items_removed" => Self::ItemsRemoved,
+            "shared_user" => Self::SharedUser,
+            "shared_group" => Self::SharedGroup,
+            "unshared_user" => Self::UnsharedUser,
+            "unshared_group" => Self::UnsharedGroup,
+            "invite_created" => Self::InviteCreated,
+            "invite_used" => Self::InviteUsed,
+            "invite_deleted" => Self::InviteDeleted,
+            _ => Self::ListUpdated,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ListActivity {
+    pub id: i64,
+    pub list_id: i32,
+    pub actor_user_id: i64,
+    pub actor_username: String,
+    pub kind: ListActivityKind,
+    pub list_item_id: Option<i32>,
+    pub item_id: Option<i32>,
+    pub payload: Value,
+    pub message: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +265,18 @@ mod tests {
         let s = serde_json::to_string(&item).unwrap();
         let back: ListItem = serde_json::from_str(&s).unwrap();
         assert_eq!(item, back);
+    }
+
+    #[test]
+    fn list_activity_kind_maps_alertable_item_events() {
+        assert!(ListActivityKind::ItemAdded.is_alert_activity());
+        assert!(ListActivityKind::ItemUpdated.is_alert_activity());
+        assert!(ListActivityKind::ItemRemoved.is_alert_activity());
+        assert!(ListActivityKind::ItemAcquired.is_alert_activity());
+        assert!(!ListActivityKind::SharedUser.is_alert_activity());
+        assert_eq!(
+            ListActivityKind::from("item_acquired"),
+            ListActivityKind::ItemAcquired
+        );
     }
 }

@@ -9,10 +9,7 @@ use ultros_api_types::websocket::ListEventData;
 use ultros_db::{UltrosDb, entity::alert};
 
 use crate::{
-    alerts::{
-        delivery::dispatch_alert,
-        price_alert_tracker::{is_off_cooldown_at, resolve_item_name},
-    },
+    alerts::{delivery::dispatch_alert, price_alert_tracker::is_off_cooldown_at},
     event::{EventBus, EventType},
 };
 
@@ -204,48 +201,14 @@ async fn handle_list_event(
 fn describe_list_event(
     event: &EventType<Arc<ListEventData>>,
 ) -> Option<(i32, Option<i32>, String, String)> {
-    match event {
-        EventType::Add(data) => match data.as_ref() {
-            ListEventData::List(list) => Some((
-                list.id,
-                None,
-                "A list was created: ".to_string(),
-                list.name.clone(),
-            )),
-            ListEventData::ListItem(item) => Some((
-                item.list_id,
-                Some(item.item_id),
-                resolve_item_name(item.item_id),
-                " was added.".to_string(),
-            )),
-        },
-        EventType::Update(data) => match data.as_ref() {
-            ListEventData::List(list) => Some((
-                list.id,
-                None,
-                "List details changed: ".to_string(),
-                list.name.clone(),
-            )),
-            ListEventData::ListItem(item) => Some((
-                item.list_id,
-                Some(item.item_id),
-                resolve_item_name(item.item_id),
-                " was updated.".to_string(),
-            )),
-        },
-        EventType::Remove(data) => match data.as_ref() {
-            ListEventData::List(list) => Some((
-                list.id,
-                None,
-                "List was removed: ".to_string(),
-                list.name.clone(),
-            )),
-            ListEventData::ListItem(item) => Some((
-                item.list_id,
-                Some(item.item_id),
-                resolve_item_name(item.item_id),
-                " was removed.".to_string(),
-            )),
-        },
+    let (EventType::Add(data) | EventType::Update(data) | EventType::Remove(data)) = event;
+    match data.as_ref() {
+        ListEventData::Activity(activity) if activity.kind.is_alert_activity() => Some((
+            activity.list_id,
+            activity.item_id,
+            activity.actor_username.clone(),
+            format!(": {}\n", activity.message),
+        )),
+        _ => None,
     }
 }

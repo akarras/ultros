@@ -255,60 +255,69 @@ pub fn ListItemRow(
                                 </div>
                             </td>
                             <td class="px-3 py-3 align-middle">
-                                <div class="flex flex-col gap-1">
-                                    <label class="text-xs">{t_string!(i18n, list_item_row_qty_label)}</label>
-                                    <input
-                                        class="input w-20"
-                                        prop:value=move || temp_item.with(|i| i.quantity)
-                                        on:input=move |e| {
-                                            if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                <div class="grid min-w-[26rem] grid-cols-3 gap-2">
+                                    <label class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
+                                        <span>{t_string!(i18n, list_item_row_qty_label)}</span>
+                                        <input
+                                            class="input w-full"
+                                            type="number"
+                                            min="1"
+                                            prop:value=move || temp_item.with(|i| i.quantity)
+                                            on:input=move |e| {
+                                                if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                                    temp_item
+                                                        .update(|i| {
+                                                            i.quantity = Some(value);
+                                                        })
+                                                }
+                                            }
+                                        />
+                                    </label>
+
+                                    <label class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
+                                        <span>{t_string!(i18n, list_item_row_acquired_label)}</span>
+                                        <input
+                                            class="input w-full"
+                                            type="number"
+                                            min="0"
+                                            prop:value=move || temp_item.with(|i| i.acquired.unwrap_or(0))
+                                            on:input=move |e| {
+                                                if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                                    temp_item
+                                                        .update(|i| {
+                                                            i.acquired = Some(value);
+                                                        })
+                                                }
+                                            }
+                                        />
+                                    </label>
+
+                                    <label class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
+                                        <span>{t!(i18n, list_item_row_target_price_label)}</span>
+                                        <input
+                                            class="input w-full"
+                                            type="number"
+                                            min="0"
+                                            placeholder=move || t_string!(i18n, none).to_string()
+                                            prop:value=move || {
                                                 temp_item
-                                                    .update(|i| {
-                                                        i.quantity = Some(value);
+                                                    .with(|i| {
+                                                        i.target_price.map(|v| v.to_string()).unwrap_or_default()
                                                     })
                                             }
-                                        }
-                                    />
-
-                                    <label class="text-xs">{t_string!(i18n, list_item_row_acquired_label)}</label>
-                                    <input
-                                        class="input w-20"
-                                        prop:value=move || temp_item.with(|i| i.acquired.unwrap_or(0))
-                                        on:input=move |e| {
-                                            if let Ok(value) = event_target_value(&e).parse::<i32>() {
+                                            on:input=move |e| {
+                                                let v = event_target_value(&e);
                                                 temp_item
                                                     .update(|i| {
-                                                        i.acquired = Some(value);
+                                                        i.target_price = if v.trim().is_empty() {
+                                                            None
+                                                        } else {
+                                                            v.parse::<i64>().ok().filter(|n| *n >= 0)
+                                                        };
                                                     })
                                             }
-                                        }
-                                    />
-
-                                    <label class="text-xs">{t!(i18n, list_item_row_target_price_label)}</label>
-                                    <input
-                                        class="input w-24"
-                                        type="number"
-                                        min="0"
-                                        placeholder=move || t_string!(i18n, none).to_string()
-                                        prop:value=move || {
-                                            temp_item
-                                                .with(|i| {
-                                                    i.target_price.map(|v| v.to_string()).unwrap_or_default()
-                                                })
-                                        }
-                                        on:input=move |e| {
-                                            let v = event_target_value(&e);
-                                            temp_item
-                                                .update(|i| {
-                                                    i.target_price = if v.trim().is_empty() {
-                                                        None
-                                                    } else {
-                                                        v.parse::<i64>().ok().filter(|n| *n >= 0)
-                                                    };
-                                                })
-                                        }
-                                    />
-
+                                        />
+                                    </label>
                                 </div>
                             </td>
                             <td class="px-3 py-3 align-middle">

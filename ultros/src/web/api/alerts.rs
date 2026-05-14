@@ -469,6 +469,21 @@ pub(crate) async fn update_alert(
             .await
             .map_err(ApiError::from)?;
     }
+    if let Some(cooldown) = req.cooldown_seconds {
+        db.set_alert_cooldown(owner, alert_id, resolve_cooldown_seconds(Some(cooldown)))
+            .await
+            .map_err(ApiError::from)?;
+    }
+    if let Some(endpoint_ids) = req.endpoint_ids {
+        if endpoint_ids.is_empty() {
+            return Err(ApiError::from(anyhow::anyhow!(
+                "alerts require at least one endpoint"
+            )));
+        }
+        db.set_alert_rules(owner, alert_id, &endpoint_ids)
+            .await
+            .map_err(ApiError::from)?;
+    }
     if let Some(alert) = db.get_alert(alert_id).await.map_err(ApiError::from)? {
         let _ = senders.alerts.send(EventType::updated(alert));
     }

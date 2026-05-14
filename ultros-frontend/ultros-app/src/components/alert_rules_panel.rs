@@ -48,6 +48,8 @@ pub fn AlertRulesPanel() -> impl IntoView {
                 UpdateAlertRequest {
                     enabled: Some(new_enabled),
                     price_threshold: None,
+                    endpoint_ids: None,
+                    cooldown_seconds: None,
                 },
             )
             .await

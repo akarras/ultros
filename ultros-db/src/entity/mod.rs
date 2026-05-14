@@ -17,6 +17,7 @@ pub mod discord_user;
 pub mod ffxiv_character_verification;
 pub mod final_fantasy_character;
 pub mod list;
+pub mod list_activity;
 pub mod list_invite;
 pub mod list_item;
 pub mod list_shared_group;

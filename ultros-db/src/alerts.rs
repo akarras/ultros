@@ -241,6 +241,23 @@ impl UltrosDb {
         Ok(())
     }
 
+    pub async fn set_alert_cooldown(
+        &self,
+        owner: i64,
+        alert_id: i32,
+        cooldown_seconds: i32,
+    ) -> Result<()> {
+        let alert = alert::Entity::find_by_id(alert_id)
+            .filter(alert::Column::Owner.eq(owner))
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| anyhow::Error::msg("alert not found"))?;
+        let mut a: alert::ActiveModel = alert.into();
+        a.cooldown_seconds = Set(cooldown_seconds);
+        a.update(&self.db).await?;
+        Ok(())
+    }
+
     pub async fn update_threshold_alert_price(
         &self,
         owner: i64,
@@ -649,6 +666,16 @@ impl UltrosDb {
                 .await?
                 .ok_or_else(|| anyhow::Error::msg(format!("endpoint {eid} not owned by user")))?;
         }
+
+        if let Some((existing_alert, _)) = self.get_list_update_alert(owner, list_id).await? {
+            let mut active: alert::ActiveModel = existing_alert.into();
+            active.enabled = Set(true);
+            active.cooldown_seconds = Set(cooldown_seconds);
+            let alert = active.update(&self.db).await?;
+            self.set_alert_rules(owner, alert.id, endpoint_ids).await?;
+            return Ok(alert);
+        }
+
         let txn = self.db.begin().await?;
         let alert = alert::Entity::insert(alert::ActiveModel {
             id: ActiveValue::default(),
@@ -662,6 +689,7 @@ impl UltrosDb {
         alert_list_update::Entity::insert(alert_list_update::ActiveModel {
             id: ActiveValue::default(),
             alert_id: Set(alert.id),
+            owner: Set(owner),
             list_id: Set(list_id),
         })
         .exec(&txn)
@@ -676,6 +704,24 @@ impl UltrosDb {
         }
         txn.commit().await?;
         Ok(alert)
+    }
+
+    pub async fn get_list_update_alert(
+        &self,
+        owner: i64,
+        list_id: i32,
+    ) -> Result<Option<(alert::Model, alert_list_update::Model)>> {
+        let rows = alert::Entity::find()
+            .filter(alert::Column::Owner.eq(owner))
+            .find_with_related(alert_list_update::Entity)
+            .all(&self.db)
+            .await?;
+        Ok(rows.into_iter().find_map(|(a, triggers)| {
+            triggers
+                .into_iter()
+                .find(|t| t.list_id == list_id)
+                .map(|t| (a, t))
+        }))
     }
 
     /// Return the user's list-threshold alerts (alert row + junction row).
