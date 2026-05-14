@@ -6,3 +6,7 @@
 ## 2024-05-18 - [Optimizing Leptos Reactivity & Arc Clones]
 **Learning:** In Leptos, using a `move ||` closure for view arguments creates a dynamic node tracking reactivity. For static/immutable strings, computing it once (outside closure or immediately resolving inside `{ }` block without closure) avoids reactive tracking overhead. Also, when passing structs like `SearchResult` around, passing `Arc<SearchResult>` and cloning the `Arc` is O(1) and far cheaper than extracting and cloning its inner `String` components multiple times for callbacks.
 **Action:** Always prefer cloning `Arc` instead of `String` within closures, and omit `move ||` for static derivations when rendering Leptos components.
+
+## 2025-03-02 - Optimize Nested Iterator Chains to Reduce Allocations
+**Learning:** In `get_retainer_undercut_items`, the previous implementation chained `.filter().collect::<Vec<_>>()` and then iterated again with `.iter().map().min()` to calculate `number_behind` and `price_to_beat`. This forced the allocation of a throwaway Vector for every single listing being checked just to compute its length and find a minimum value.
+**Action:** Always compute aggregates directly within a single zero-allocation `for` loop pass over the original iterator/slice instead of relying on intermediate `Vec` allocations from `.collect()` during multi-step iterator chains.
