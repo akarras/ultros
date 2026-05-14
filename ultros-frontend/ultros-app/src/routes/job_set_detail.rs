@@ -14,6 +14,7 @@ use xiv_gen::{ClassJobCategoryId, ItemId};
 
 use crate::CheapestPrices;
 use crate::api::get_cheapest_listings;
+use crate::components::add_set_to_list::AddSetToList;
 use crate::components::cheapest_price::CheapestPrice;
 use crate::components::crafting_cost::IngredientsIter;
 use crate::components::gil::Gil;
@@ -40,6 +41,32 @@ fn set_total(group: &JobSetGroup, prices: &CheapestListingsMap, hq_only: bool) -
         };
         if let Some(p) = price {
             total += p as i64;
+            had_any = true;
+        }
+    }
+    had_any.then_some(total)
+}
+
+/// Sum the cheapest NQ unit price across `materials`, multiplied by the
+/// per-entry amount. `include_shards` controls whether crystal/shard
+/// rows contribute (the UI exposes a toggle so the user can see the
+/// "ingredient cost minus crystals" total they actually buy from
+/// market). Returns `None` when no material has a listing, so the UI
+/// can render a `—` placeholder instead of a misleading 0.
+pub(crate) fn materials_total(
+    materials: &[MaterialEntry],
+    prices: &CheapestListingsMap,
+    include_shards: bool,
+) -> Option<i64> {
+    let mut total: i64 = 0;
+    let mut had_any = false;
+    for m in materials {
+        if !include_shards && m.is_shard {
+            continue;
+        }
+        let summary = prices.find_matching_listings(m.id.0);
+        if let Some(unit) = summary.lowest_gil() {
+            total += unit as i64 * m.amount as i64;
             had_any = true;
         }
     }
@@ -430,12 +457,29 @@ pub fn JobSetDetail() -> impl IntoView {
         )
     });
 
+    // Add-to-list payloads. Set pieces: every item in the group at qty
+    // 1. Materials: every aggregated (non-zero) ingredient at its summed
+    // amount. Each is a Signal so the modal can snapshot it on open.
+    let set_entries: Signal<Vec<(ItemId, i32)>> = Signal::derive(move || {
+        group
+            .get()
+            .map(|g| g.items.into_iter().map(|i| (i.id, 1)).collect())
+            .unwrap_or_default()
+    });
+    let material_entries: Signal<Vec<(ItemId, i32)>> = Signal::derive(move || {
+        materials
+            .get()
+            .map(|ms| ms.into_iter().map(|m| (m.id, m.amount)).collect())
+            .unwrap_or_default()
+    });
+    let has_materials = Memo::new(move |_| materials.get().is_some_and(|m| !m.is_empty()));
+
     view! {
         <MetaTitle title=move || t_string!(i18n, job_set_detail_title).to_string().replace("%set%", &set_stem()) />
         <MetaDescription text=move || t_string!(i18n, job_set_detail_desc).to_string().replace("%set%", &set_stem()) />
 
         <div class="flex flex-col gap-4">
-            <div class="flex flex-row items-center gap-3">
+            <div class="flex flex-row items-center gap-3 flex-wrap">
                 <A
                     href=back_href
                     attr:class="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg \
@@ -444,6 +488,24 @@ pub fn JobSetDetail() -> impl IntoView {
                 >
                     {move || t_string!(i18n, job_set_detail_back).to_string().replace("%job%", &job_name())}
                 </A>
+                <Show when=move || !set_entries.get().is_empty()>
+                    <AddSetToList
+                        button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
+                        tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_tooltip).to_string())
+                        modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_modal_title).to_string())
+                        subject=Signal::derive(move || set_stem.get())
+                        entries=set_entries
+                    />
+                </Show>
+                <Show when=move || has_materials.get()>
+                    <AddSetToList
+                        button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_button).to_string())
+                        tooltip=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_tooltip).to_string())
+                        modal_title=Signal::derive(move || t_string!(i18n, job_set_detail_add_materials_modal_title).to_string())
+                        subject=Signal::derive(move || set_stem.get())
+                        entries=material_entries
+                    />
+                </Show>
             </div>
 
             <div class="flex flex-row items-baseline gap-3 flex-wrap">
@@ -515,12 +577,100 @@ pub fn JobSetDetail() -> impl IntoView {
                 }
                 let main: Vec<_> = entries.iter().filter(|e| !e.is_shard).cloned().collect();
                 let shards: Vec<_> = entries.iter().filter(|e| e.is_shard).cloned().collect();
+                let entries_for_default = entries.clone();
+                let entries_for_home = entries.clone();
                 view! {
                     <div class="mt-4">
                         <h4 class="text-base font-bold mb-2">{t!(i18n, job_set_detail_materials_heading)}</h4>
                         <p class="text-xs text-[color:var(--color-text-muted)] mb-3">
                             {t!(i18n, job_set_detail_materials_desc)}
                         </p>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                            <div class="panel p-3 rounded-lg border border-white/5">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mb-1">
+                                    {t!(i18n, job_set_detail_materials_total_default_zone)}
+                                </div>
+                                <Suspense fallback=move || view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }>
+                                    {
+                                        let entries_for_total = entries_for_default;
+                                        move || {
+                                            let entries = entries_for_total.clone();
+                                            let total = default_zone_listings.and_then(|listings| {
+                                                listings.with(|data| match data {
+                                                    Some(Ok(map)) => materials_total(&entries, map, false),
+                                                    _ => None,
+                                                })
+                                            });
+                                            let shard_total = default_zone_listings.and_then(|listings| {
+                                                listings.with(|data| match data {
+                                                    Some(Ok(map)) => materials_total(&entries, map, true),
+                                                    _ => None,
+                                                })
+                                            });
+                                            view! {
+                                                <div class="text-lg font-bold">
+                                                    {match total {
+                                                        Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
+                                                        None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                                                    }}
+                                                </div>
+                                                {match (shard_total, total) {
+                                                    (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
+                                                        <div class="text-[11px] text-[color:var(--color-text-muted)]">
+                                                            {t!(i18n, job_set_detail_materials_total_with_shards)} " "
+                                                            <Gil amount=with_shards as i32 />
+                                                        </div>
+                                                    }.into_any(),
+                                                    _ => ().into_any(),
+                                                }}
+                                            }.into_any()
+                                        }
+                                    }
+                                </Suspense>
+                            </div>
+                            <div class="panel p-3 rounded-lg border border-white/5">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mb-1">
+                                    {t!(i18n, job_set_detail_materials_total_home_world)}
+                                </div>
+                                <Suspense fallback=move || view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }>
+                                    {
+                                        let entries_for_total = entries_for_home;
+                                        move || {
+                                            let entries = entries_for_total.clone();
+                                            let total = home_world_listings
+                                                .get()
+                                                .flatten()
+                                                .as_ref()
+                                                .and_then(|map| materials_total(&entries, map, false));
+                                            let shard_total = home_world_listings
+                                                .get()
+                                                .flatten()
+                                                .as_ref()
+                                                .and_then(|map| materials_total(&entries, map, true));
+                                            view! {
+                                                <div class="text-lg font-bold">
+                                                    {match total {
+                                                        Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
+                                                        None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
+                                                    }}
+                                                </div>
+                                                {match (shard_total, total) {
+                                                    (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
+                                                        <div class="text-[11px] text-[color:var(--color-text-muted)]">
+                                                            {t!(i18n, job_set_detail_materials_total_with_shards)} " "
+                                                            <Gil amount=with_shards as i32 />
+                                                        </div>
+                                                    }.into_any(),
+                                                    _ => ().into_any(),
+                                                }}
+                                            }.into_any()
+                                        }
+                                    }
+                                </Suspense>
+                            </div>
+                        </div>
+
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2">
                             {main.into_iter().map(material_row).collect::<Vec<_>>()}
                         </div>
@@ -966,5 +1116,38 @@ mod tests {
         let recipes: HashMap<RecipeId, Recipe> = HashMap::new();
         let items: HashMap<ItemId, Item> = HashMap::new();
         assert!(aggregate_materials(&set, &recipes, &items).is_empty());
+    }
+
+    fn material(id: i32, amount: i32, is_shard: bool) -> MaterialEntry {
+        MaterialEntry {
+            id: ItemId(id),
+            name: format!("m{id}"),
+            amount,
+            is_shard,
+        }
+    }
+
+    #[test]
+    fn materials_total_sums_amount_times_unit_price_and_excludes_shards_by_default() {
+        // 2 fiber @ 100g + 5 fiber @ 0g (missing) + 10 shards @ 5g.
+        // Default (include_shards=false): 2*100 = 200. Missing items
+        // contribute 0 but don't flip had_any to false on their own.
+        let materials = vec![
+            material(100, 2, false),
+            material(101, 5, false),
+            material(59, 10, true),
+        ];
+        let prices = map_with(&[(100, false, 100), (59, false, 5)]);
+        assert_eq!(materials_total(&materials, &prices, false), Some(200));
+        // With shards: 200 + 10*5 = 250.
+        assert_eq!(materials_total(&materials, &prices, true), Some(250));
+    }
+
+    #[test]
+    fn materials_total_none_when_no_listings() {
+        // Every material is missing a listing — nothing to total.
+        let materials = vec![material(100, 2, false), material(101, 5, false)];
+        let prices = map_with(&[]);
+        assert_eq!(materials_total(&materials, &prices, false), None);
     }
 }
