@@ -131,6 +131,39 @@ pub(crate) fn job_category_lookup(
     }
 }
 
+/// Filter `data.items` to entries matching the given canonical job acronym.
+/// When `market_only` is true, drops items without an `item_search_category`
+/// (FFXIV's "not listable on the market board" flag).
+///
+/// Returned in **ascending `ItemId` order**. `data.items` is a HashMap whose
+/// iteration order differs between the server's SSR process and the client's
+/// WASM process (different `RandomState` seed). Downstream `For` rendering
+/// and the `JobSetCard` grid both lay out children in iteration order, so a
+/// divergence drives the view tree out of sync with the SSR DOM and tachys
+/// panics at `hydration.rs:163` (`failed_to_cast_element`) on
+/// `/items/jobset/<JOB>`. Sorting by `ItemId` pins one order across both
+/// processes.
+pub(crate) fn collect_job_items_sorted<'a>(
+    data: &'a xiv_gen::Data,
+    canonical_abbr: &str,
+    market_only: bool,
+) -> Vec<(&'a ItemId, &'a Item)> {
+    let job_categories: HashSet<_> = data
+        .class_job_categorys
+        .iter()
+        .filter(|(_id, c)| job_category_lookup(c, canonical_abbr))
+        .map(|(id, _)| *id)
+        .collect();
+    let mut items: Vec<_> = data
+        .items
+        .iter()
+        .filter(|(_id, item)| job_categories.contains(&ClassJobCategoryId(item.class_job_category)))
+        .filter(|(_id, item)| !market_only || item.item_search_category > 0)
+        .collect();
+    items.sort_by_key(|(id, _)| id.0);
+    items
+}
+
 #[component]
 pub fn CategoryItems() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
@@ -146,10 +179,16 @@ pub fn CategoryItems() -> impl IntoView {
                     .find(|(_id, category)| category.name == cat)
             })
             .map(|(id, _)| {
-                data.items
+                let mut items: Vec<_> = data
+                    .items
                     .iter()
                     .filter(|(_, item)| item.item_search_category == id.0)
-                    .collect::<Vec<_>>()
+                    .collect();
+                // See note in `JobItems::items` — pin a stable order across
+                // the SSR and CSR HashMap iterations to keep hydration in
+                // sync.
+                items.sort_by_key(|(id, _)| id.0);
+                items
             });
         cat.unwrap_or_default()
     });
@@ -206,24 +245,7 @@ pub fn JobItems() -> impl IntoView {
             })
             .unwrap_or(decoded.clone());
 
-        // lookup jobs that match the resolved acronym for the given job set
-        let job_categories: HashSet<_> = data
-            .class_job_categorys
-            .iter()
-            .filter(|(_id, job_category)| job_category_lookup(job_category, &canonical_abbr))
-            .map(|(id, _)| *id)
-            .collect();
-
-        let market_only = market_only();
-        let job_items: Vec<_> = data
-            .items
-            .iter()
-            .filter(|(_id, item)| {
-                job_categories.contains(&ClassJobCategoryId(item.class_job_category))
-            })
-            .filter(|(_id, item)| !market_only || item.item_search_category > 0)
-            .collect();
-        job_items
+        collect_job_items_sorted(data, &canonical_abbr, market_only())
     });
     let job_set = Memo::new(move |_| {
         params()
@@ -699,6 +721,34 @@ pub fn ItemExplorer() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
+    use super::collect_job_items_sorted;
+
+    #[test]
+    fn collect_job_items_returns_ascending_ids() {
+        // Hydration regression for tachys `hydration.rs:163`
+        // (`failed_to_cast_element`) panics on `/items/jobset/<JOB>`:
+        // `data.items` is a HashMap whose iteration order differs between
+        // the server's SSR process and the client's WASM process, and the
+        // downstream `For` / card-grid rendering is order-sensitive during
+        // hydration. The helper must return a deterministic order so the
+        // SSR DOM and client view tree match.
+        let data = xiv_gen_db::data();
+        let items = collect_job_items_sorted(data, "DNC", true);
+        assert!(
+            !items.is_empty(),
+            "DNC should match a non-trivial number of items",
+        );
+        for w in items.windows(2) {
+            assert!(
+                w[0].0.0 < w[1].0.0,
+                "items must be in strictly ascending ItemId order \
+                 (hydration safety): {} >= {}",
+                w[0].0.0,
+                w[1].0.0,
+            );
+        }
+    }
+
     #[test]
     fn test_job_filtering() {
         let data = xiv_gen_db::data();
