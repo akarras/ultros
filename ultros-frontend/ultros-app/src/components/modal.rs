@@ -2,6 +2,7 @@ use icondata as i;
 use leptos::{portal::Portal, prelude::*, reactive::wrappers::write::SignalSetter};
 // use leptos_animation::*;
 use crate::components::icon::Icon;
+use crate::i18n::{t_string, use_i18n};
 use leptos_hotkeys::use_hotkeys;
 #[cfg(feature = "hydrate")]
 use leptos_use::use_window_scroll;
@@ -15,6 +16,7 @@ pub fn Modal<T>(
 where
     T: Render + RenderHtml + Send + 'static,
 {
+    let i18n = use_i18n();
     #[cfg(feature = "hydrate")]
     let (_x, _y) = use_window_scroll();
     // let y = create_animated_signal(move || y.get().into(), tween_default);
@@ -51,7 +53,7 @@ where
                             transition-colors duration-200
                             focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)]"
                             on:click=move |_| set_visible(false)
-                            aria-label="Close modal"
+                            aria-label=t_string!(i18n, modal_aria_close)
                         >
                             <Icon icon=i::CgClose width="1.5em" height="1.5em" />
                         </button>

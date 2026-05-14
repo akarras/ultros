@@ -1,4 +1,5 @@
 use crate::components::icon::Icon;
+use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -11,6 +12,7 @@ pub fn ToolHeader(
     #[prop(into)] help_href: Oco<'static, str>,
     #[prop(into)] help_body: Oco<'static, str>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let (is_open, set_is_open) = signal(false);
     let context_text = context.clone();
     let help_href_text = help_href.to_string();
@@ -28,7 +30,11 @@ pub fn ToolHeader(
                     on:click=move |_| set_is_open.update(|open| *open = !*open)
                 >
                     <Icon icon=i::BsInfoCircle width="1em" height="1em" />
-                    <span>{move || if is_open() { "Hide info" } else { "About this tool" }}</span>
+                    <span>{move || if is_open() {
+                        t_string!(i18n, tool_help_hide_info).to_string()
+                    } else {
+                        t_string!(i18n, tool_help_about_tool).to_string()
+                    }}</span>
                 </button>
             </div>
             <Show when=move || is_open()>
@@ -46,7 +52,7 @@ pub fn ToolHeader(
                         {help_body.clone()}
                     </p>
                     <A href=help_href_text.clone() attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] font-semibold inline-flex items-center gap-2">
-                        "Open full help"
+                        {t!(i18n, tool_help_open_full_help)}
                         <Icon icon=i::FaArrowRightSolid width="0.85em" height="0.85em" />
                     </A>
                 </div>
@@ -100,12 +106,22 @@ pub fn MetricExplainer(
 
 #[component]
 pub fn ConfidenceBadge(total_sales: usize, daily_sales: f32) -> impl IntoView {
+    let i18n = use_i18n();
     let (label, class) = if total_sales >= 20 && daily_sales >= 1.0 {
-        ("High confidence", "text-emerald-300")
+        (
+            t_string!(i18n, confidence_high).to_string(),
+            "text-emerald-300",
+        )
     } else if total_sales >= 5 {
-        ("Medium confidence", "text-amber-300")
+        (
+            t_string!(i18n, confidence_medium).to_string(),
+            "text-amber-300",
+        )
     } else {
-        ("Low data", "text-red-300")
+        (
+            t_string!(i18n, confidence_low_data).to_string(),
+            "text-red-300",
+        )
     };
 
     view! {

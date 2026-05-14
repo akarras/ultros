@@ -51,7 +51,7 @@ pub fn WorldOnlyPicker(
         Err(e) => Either::Right(view! {
             <div class="relative">
                 <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
-                    <span>"No worlds: "</span>
+                    <span>{crate::i18n::t!(i18n, world_picker_no_worlds_prefix)}</span>
                     <span>{e.to_string()}</span>
                 </div>
             </div>
@@ -121,7 +121,7 @@ pub fn WorldPicker(
         Err(e) => Either::Right(view! {
             <div class="relative z-[150]">
                 <div class="text-red-400 p-2 rounded-lg bg-red-950/50 border border-red-800/30">
-                    <span>"No worlds: "</span>
+                    <span>{crate::i18n::t!(i18n, world_picker_no_worlds_prefix)}</span>
                     <span>{e.to_string()}</span>
                 </div>
             </div>

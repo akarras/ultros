@@ -404,7 +404,7 @@ pub fn Footer() -> impl IntoView {
                         href="/help"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
-                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>"Help"</span>
+                        <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, help_label)}</span>
                     </A>
                     <A
                         href="/about"

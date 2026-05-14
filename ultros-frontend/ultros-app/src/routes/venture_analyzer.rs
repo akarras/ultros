@@ -261,7 +261,7 @@ fn VentureAnalyzerTable(
         <div class="flex flex-col gap-6">
             // Simple scalar filters in a Toolbar row
             <Toolbar>
-                <ToolbarField label="Profit (Min)">
+                <ToolbarField label=t_string!(i18n, venture_analyzer_filter_profit_min_label).to_string()>
                     <input
                         class="input input-sm w-36"
                         min=0
@@ -279,7 +279,7 @@ fn VentureAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Filter Outliers">
+                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
                     <div class="flex flex-row gap-2 items-center">
                         <input
                             type="checkbox"
@@ -502,11 +502,11 @@ pub fn VentureAnalyzer() -> impl IntoView {
 
             <div class="flex flex-col gap-4">
                 <ToolHeader
-                    title="Venture Analyzer"
-                    summary="Rank normal retainer ventures by gross market value and recent sales activity."
-                    context="Profit is gross revenue in this first pass; venture token cost and opportunity cost are not modeled."
+                    title=t_string!(i18n, venture_analyzer).to_string()
+                    summary=t_string!(i18n, venture_analyzer_tool_summary).to_string()
+                    context=t_string!(i18n, venture_analyzer_tool_context).to_string()
                     help_href="/help/venture-analyzer"
-                    help_body="Venture Analyzer multiplies venture output quantity by current market price, then uses recent sales to help separate practical choices from slow-moving rare drops."
+                    help_body=t_string!(i18n, venture_analyzer_tool_help).to_string()
                 />
                 <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
@@ -522,7 +522,7 @@ pub fn VentureAnalyzer() -> impl IntoView {
                 </div>
 
                 <Toolbar>
-                    <ToolbarField label="World">
+                    <ToolbarField label=t_string!(i18n, world).to_string()>
                         <WorldOnlyPicker
                             current_world=selected_world.into()
                             set_current_world=set_selected_world.into()
@@ -530,12 +530,12 @@ pub fn VentureAnalyzer() -> impl IntoView {
                     </ToolbarField>
                 </Toolbar>
                 <CalculationSummary
-                    title="Gross revenue model"
-                    formula="profit = output quantity * current market price"
-                    details="This does not subtract venture token value or the opportunity cost of sending a retainer on another task."
+                    title=t_string!(i18n, venture_analyzer_calc_title).to_string()
+                    formula=t_string!(i18n, venture_analyzer_calc_formula).to_string()
+                    details=t_string!(i18n, venture_analyzer_calc_details).to_string()
                 />
                 <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text="Gross revenue only" />
+                    <AssumptionBadge text=t_string!(i18n, venture_analyzer_assumption_gross_revenue).to_string() />
                     <AssumptionBadge text="Normal ventures only" />
                     <AssumptionBadge text="Recent sales affect confidence" />
                 </div>

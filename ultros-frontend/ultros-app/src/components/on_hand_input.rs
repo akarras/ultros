@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 use crate::components::crafting_cost::OnHand;
+use crate::i18n::{t, t_string, use_i18n};
 use leptos::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -159,6 +160,7 @@ pub fn OnHandQuantity(
     #[prop(into)] item_id: Signal<i32>,
     #[prop(into, optional)] item_name: Option<Signal<String>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let on_hand = use_context::<OnHandMap>().expect("OnHandMap not provided");
     let value = Memo::new(move |_| on_hand.0.with(|m| m.get(&item_id()).copied().unwrap_or(0)));
     let aria = move || match &item_name {
@@ -171,7 +173,7 @@ pub fn OnHandQuantity(
             type="number"
             min="0"
             class="input input-xs w-20 text-right"
-            placeholder="0"
+            placeholder=t_string!(i18n, on_hand_placeholder_zero)
             aria-label=aria
             prop:value=move || value().to_string()
             on:input=move |ev| {
@@ -194,13 +196,14 @@ pub fn OnHandQuantity(
 /// Mounted on the analyzer routes.
 #[component]
 pub fn OnHandPanel() -> impl IntoView {
+    let i18n = use_i18n();
     let on_hand = use_context::<OnHandMap>().expect("OnHandMap not provided");
     let is_empty = Memo::new(move |_| on_hand.0.with(|m| m.is_empty()));
 
     view! {
         <div class="panel p-4 rounded-lg border border-brand-700/30">
             <div class="flex flex-row items-center justify-between mb-2">
-                <h3 class="font-bold text-brand-200">"On-hand items"</h3>
+                <h3 class="font-bold text-brand-200">{t!(i18n, on_hand_heading)}</h3>
                 <button
                     class="btn-ghost text-xs"
                     on:click=move |_| on_hand.0.update(|m| m.clear())

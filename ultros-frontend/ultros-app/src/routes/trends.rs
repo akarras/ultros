@@ -1,4 +1,5 @@
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
@@ -25,6 +26,7 @@ use crate::{
 
 #[component]
 fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
+    let i18n = use_i18n();
     let items = Memo::new(move |_| {
         items
             .iter()
@@ -79,7 +81,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         <div class=classes role="row-group">
                             <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
                                 {if item.hq {
-                                    Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">"HQ"</span> })
+                                    Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, hq)}</span> })
                                 } else {
                                     None
                                 }}
@@ -165,6 +167,7 @@ enum TrendTab {
 
 #[component]
 pub fn Trends() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let world = move || params.with(|params| params.get("world").unwrap_or_default());
     let (selected_tab, set_selected_tab) = signal(TrendTab::Velocity);
@@ -177,43 +180,43 @@ pub fn Trends() -> impl IntoView {
     });
 
     view! {
-        <MetaTitle title="Market Trends - Ultros" />
-        <MetaDescription text="View market trends for Final Fantasy 14 items, including high velocity, rising prices, and falling prices." />
+        <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
+        <MetaDescription text=t_string!(i18n, trends_meta_desc).to_string() />
 
         <div class="main-content p-6">
             <div class="flex flex-col gap-8">
                 <ToolHeader
-                    title="Market Trends"
-                    summary="Review high-velocity, rising-price, and falling-price items for the selected world."
-                    context="Trends are directional signals. Open an item page before treating a movement as a buying decision."
+                    title=t_string!(i18n, market_trends).to_string()
+                    summary=t_string!(i18n, trends_tool_summary).to_string()
+                    context=t_string!(i18n, trends_tool_context).to_string()
                     help_href="/help/market-trends"
-                    help_body="Market Trends groups items by recent sales and price movement. High velocity is best for demand checks; rising and falling prices are prompts to investigate item history."
+                    help_body=t_string!(i18n, trends_tool_help).to_string()
                 />
 
                 // Filter toolbar
                 <Toolbar>
-                    <ToolbarField label="World">
+                    <ToolbarField label=t_string!(i18n, world).to_string()>
                         <TrendsWorldNavigator />
                     </ToolbarField>
-                    <ToolbarField label="Category">
+                    <ToolbarField label=t_string!(i18n, filter_category_label).to_string()>
                         <ToolbarPills>
                             <button
                                 aria-pressed=move || (selected_tab.get() == TrendTab::Velocity).to_string()
                                 on:click=move |_| set_selected_tab.set(TrendTab::Velocity)
                             >
-                                "High Velocity"
+                                {t!(i18n, trends_tab_high_velocity)}
                             </button>
                             <button
                                 aria-pressed=move || (selected_tab.get() == TrendTab::Rising).to_string()
                                 on:click=move |_| set_selected_tab.set(TrendTab::Rising)
                             >
-                                "Rising Prices"
+                                {t!(i18n, trends_tab_rising)}
                             </button>
                             <button
                                 aria-pressed=move || (selected_tab.get() == TrendTab::Falling).to_string()
                                 on:click=move |_| set_selected_tab.set(TrendTab::Falling)
                             >
-                                "Falling Prices"
+                                {t!(i18n, trends_tab_falling)}
                             </button>
                         </ToolbarPills>
                     </ToolbarField>
@@ -221,9 +224,9 @@ pub fn Trends() -> impl IntoView {
 
                 // Metric explainers
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <MetricExplainer label="High Velocity" explanation="Items selling frequently enough to be useful for demand and restock decisions." />
-                    <MetricExplainer label="Rising Prices" explanation="Items whose recent price movement points upward. Treat this as a prompt to inspect supply, not a guarantee." />
-                    <MetricExplainer label="Falling Prices" explanation="Items whose recent price movement points downward, often from oversupply or cooling demand." />
+                    <MetricExplainer label=t_string!(i18n, trends_tab_high_velocity).to_string() explanation=t_string!(i18n, trends_explanation_high_velocity).to_string() />
+                    <MetricExplainer label=t_string!(i18n, trends_tab_rising).to_string() explanation=t_string!(i18n, trends_explanation_rising).to_string() />
+                    <MetricExplainer label=t_string!(i18n, trends_tab_falling).to_string() explanation=t_string!(i18n, trends_explanation_falling).to_string() />
                 </div>
 
                 // Content
