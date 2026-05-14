@@ -201,23 +201,29 @@ impl UltrosDb {
                                             return None;
                                         }
                                         // now check if the given listing is UNDERCUTTING than our given listing
-                                        let listings_in_range: Vec<_> = listings
-                                            .iter()
-                                            .filter(|all_l| {
-                                                all_l.price_per_unit < l.price_per_unit
-                                                    && (!l.hq || l.hq == all_l.hq)
-                                                    // filter our own retainer listings
-                                                    && !retainer_ids
-                                                        .contains(&all_l.retainer_id)
-                                            })
-                                            .collect();
+                                        let mut number_behind = 0;
+                                        let mut price_to_beat = None;
+
+                                        for all_l in listings.iter() {
+                                            if all_l.price_per_unit < l.price_per_unit
+                                                && (!l.hq || l.hq == all_l.hq)
+                                                // filter our own retainer listings
+                                                && !retainer_ids.contains(&all_l.retainer_id)
+                                            {
+                                                number_behind += 1;
+                                                price_to_beat = Some(
+                                                    price_to_beat
+                                                        .map(|p| {
+                                                            std::cmp::min(p, all_l.price_per_unit)
+                                                        })
+                                                        .unwrap_or(all_l.price_per_unit),
+                                                );
+                                            }
+                                        }
+
                                         return Some(ListingUndercutData {
-                                            number_behind: listings_in_range.len(),
-                                            price_to_beat: listings_in_range
-                                                .iter()
-                                                .map(|x| x.price_per_unit)
-                                                .min()
-                                                .unwrap_or_default(),
+                                            number_behind,
+                                            price_to_beat: price_to_beat.unwrap_or_default(),
                                         });
                                     }
                                     None
