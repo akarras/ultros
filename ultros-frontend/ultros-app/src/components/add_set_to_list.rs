@@ -48,26 +48,28 @@ pub fn AddSetToList(
 ) -> impl IntoView {
     let (modal_visible, set_modal_visible) = signal(false);
     view! {
-        <Tooltip tooltip_text=tooltip>
-            <button
-                class="btn-primary"
-                attr:aria-label=move || tooltip.get()
-                on:click=move |_| {
-                    set_modal_visible(!modal_visible());
-                }
-            >
-                <Icon icon=RiPlayListAddMediaLine />
-                <span>{move || button_label.get()}</span>
-                <Show when=modal_visible>
-                    <AddSetToListModal
-                        modal_title=modal_title
-                        subject=subject
-                        entries=entries
-                        set_visible=set_modal_visible
-                    />
-                </Show>
-            </button>
-        </Tooltip>
+        <div class="inline-block">
+            <Tooltip tooltip_text=tooltip>
+                <button
+                    class="btn-primary"
+                    attr:aria-label=move || tooltip.get()
+                    on:click=move |_| {
+                        set_modal_visible(!modal_visible());
+                    }
+                >
+                    <Icon icon=RiPlayListAddMediaLine />
+                    <span>{move || button_label.get()}</span>
+                </button>
+            </Tooltip>
+            <Show when=modal_visible>
+                <AddSetToListModal
+                    modal_title=modal_title
+                    subject=subject
+                    entries=entries
+                    set_visible=set_modal_visible
+                />
+            </Show>
+        </div>
     }
 }
 
