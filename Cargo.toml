@@ -101,7 +101,11 @@ cfg-if = "1.0.4"
 git-const = "1.1.0"
 gloo-net = { version = "0.7.0", features = ["http", "websocket"] }
 dotenvy = "0.15.7"
-web-push = "0.11.0"
+# Default features pull in `isahc` (libcurl) for sending — we route push delivery
+# through the existing `reqwest` client instead so we get embedded webpki-roots
+# for TLS and real error messages on failure (web-push collapses isahc errors to
+# `WebPushError::Unspecified` and discards the cause).
+web-push = { version = "0.11.0", default-features = false }
 
 [patch.crates-io]
 #leptos = { path = "../leptos/leptos" }
