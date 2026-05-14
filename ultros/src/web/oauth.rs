@@ -7,7 +7,7 @@ use axum_extra::extract::{
     PrivateCookieJar,
     cookie::{Cookie, Key, SameSite},
 };
-use cookie::CookieBuilder;
+use cookie::{CookieBuilder, time::Duration};
 use oauth2::{
     AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet,
     EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RevocationUrl, Scope,
@@ -130,11 +130,50 @@ impl Display for OAuthScope {
     }
 }
 
+const LOGIN_NEXT_COOKIE: &str = "login_next";
+
+#[derive(Deserialize, Default)]
+pub struct LoginParameters {
+    next: Option<String>,
+}
+
+fn safe_login_next(next: Option<&str>) -> Option<String> {
+    let next = next?.trim();
+    if next.is_empty()
+        || !next.starts_with('/')
+        || next.starts_with("//")
+        || next.contains('\\')
+        || next.contains('\n')
+        || next.contains('\r')
+        || next.contains("://")
+    {
+        return None;
+    }
+    Some(next.to_string())
+}
+
 pub async fn begin_login(
-    cookies: PrivateCookieJar,
+    mut cookies: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
+    Query(params): Query<LoginParameters>,
 ) -> (PrivateCookieJar, Redirect) {
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+
+    if let Some(raw_next) = params.next.as_deref() {
+        if let Some(next) = safe_login_next(Some(raw_next)) {
+            cookies = cookies.add(
+                CookieBuilder::new(LOGIN_NEXT_COOKIE, next)
+                    .same_site(SameSite::Lax)
+                    .secure(true)
+                    .http_only(true)
+                    .path("/")
+                    .max_age(Duration::minutes(10))
+                    .build(),
+            );
+        } else if let Some(cookie) = cookies.get(LOGIN_NEXT_COOKIE) {
+            cookies = cookies.remove(cookie);
+        }
+    }
 
     let cookies = cookies.add(
         CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
@@ -184,6 +223,13 @@ pub async fn redirect(
     } else {
         None
     };
+    let redirect_to = if let Some(login_next) = cookies.get(LOGIN_NEXT_COOKIE) {
+        let redirect_to = safe_login_next(Some(login_next.value())).unwrap_or_else(|| "/".into());
+        cookies = cookies.remove(login_next);
+        redirect_to
+    } else {
+        "/".to_string()
+    };
     let mut request = config.inner.client.exchange_code(code);
     if let Some(pkce_verifier) = pkce_verifier {
         request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
@@ -201,7 +247,7 @@ pub async fn redirect(
     cookie.set_http_only(true);
     cookie.make_permanent();
     cookies = cookies.add(cookie);
-    Ok((cookies, Redirect::to("/")))
+    Ok((cookies, Redirect::to(&redirect_to)))
 }
 
 pub async fn logout(
@@ -371,6 +417,36 @@ impl DiscordAuthConfig {
                 http_client,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_login_next;
+
+    #[test]
+    fn safe_login_next_accepts_same_origin_relative_paths() {
+        assert_eq!(
+            safe_login_next(Some("/list/invite/abc123")),
+            Some("/list/invite/abc123".to_string())
+        );
+        assert_eq!(
+            safe_login_next(Some("  /settings?tab=account  ")),
+            Some("/settings?tab=account".to_string())
+        );
+    }
+
+    #[test]
+    fn safe_login_next_rejects_external_or_malformed_targets() {
+        assert_eq!(safe_login_next(None), None);
+        assert_eq!(safe_login_next(Some("")), None);
+        assert_eq!(safe_login_next(Some("https://evil.example")), None);
+        assert_eq!(safe_login_next(Some("//evil.example/path")), None);
+        assert_eq!(safe_login_next(Some("/\\evil")), None);
+        assert_eq!(
+            safe_login_next(Some("/path\r\nLocation: //evil.example")),
+            None
+        );
     }
 }
 

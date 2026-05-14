@@ -533,6 +533,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         </ParentRoute>
                         <Route path=path!("alerts") view=Alerts />
                         <ParentRoute path=path!("list") view=Lists>
+                            <Route path=path!("invite/:invite_id") view=ListInviteAccept />
                             <Route path=path!(":id") view=ListView />
                             <Route path=path!("") view=EditLists />
                         </ParentRoute>
