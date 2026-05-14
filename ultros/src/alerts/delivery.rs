@@ -235,6 +235,14 @@ async fn send_dm(
 /// subscription has been revoked), soft-delete the row so we don't keep trying
 /// to send to a dead endpoint. Other errors propagate to the caller as-is,
 /// which lets `alert_event.delivery_error` capture the failure.
+///
+/// The HTTP request is constructed by `web-push`'s `request_builder` (which
+/// owns TTL/Urgency/crypto-header logic) and sent via `reqwest`. We avoid the
+/// built-in `IsahcWebPushClient` because (a) it links libcurl, which needs the
+/// system CA bundle present on disk — a footgun on slim container images — and
+/// (b) the crate's `From<isahc::Error>` impl discards the underlying cause and
+/// surfaces every transport failure as `WebPushError::Unspecified`, leaving
+/// operators with no signal about what actually broke.
 async fn send_webpush(
     subscription_id: i32,
     title: &str,
@@ -243,8 +251,7 @@ async fn send_webpush(
     config: &WebPushConfig,
 ) -> Result<()> {
     use web_push::{
-        ContentEncoding, IsahcWebPushClient, SubscriptionInfo, WebPushClient, WebPushError,
-        WebPushMessageBuilder,
+        ContentEncoding, SubscriptionInfo, WebPushError, WebPushMessageBuilder, request_builder,
     };
 
     let sub = db.get_push_subscription_by_id(subscription_id).await?;
@@ -273,10 +280,22 @@ async fn send_webpush(
         .build()
         .map_err(|e| anyhow!("web push build failed: {e:?}"))?;
 
-    let client =
-        IsahcWebPushClient::new().map_err(|e| anyhow!("isahc client init failed: {e:?}"))?;
+    let http_req = request_builder::build_request::<reqwest::Body>(message);
+    let req = reqwest::Request::try_from(http_req)
+        .map_err(|e| anyhow!("push request convert failed: {e}"))?;
 
-    match client.send(message).await {
+    let resp = reqwest::Client::new()
+        .execute(req)
+        .await
+        .map_err(|e| anyhow!("push send failed: {e}"))?;
+
+    let status = resp.status();
+    let body_bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| anyhow!("push response read failed: {e}"))?;
+
+    match request_builder::parse_response(status, body_bytes.to_vec()) {
         Ok(()) => {
             // Best-effort touch — if the update fails we still report success
             // since the push itself went through.
@@ -289,7 +308,7 @@ async fn send_webpush(
                 .await;
             Err(anyhow!("push subscription expired"))
         }
-        Err(e) => Err(anyhow!("push send failed: {e:?}")),
+        Err(e) => Err(anyhow!("push send failed: {e}")),
     }
 }
 
