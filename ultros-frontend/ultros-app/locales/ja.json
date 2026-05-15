@@ -1091,5 +1091,10 @@
     "confidence_band_low_help": "市場が薄いか、履歴にノイズが多い — 大まかな目安としてのみ利用してください。",
     "confidence_band_unusable": "疑わしい",
     "confidence_band_unusable_help": "最近の販売の半分以上がギル送金ロンダリングのように見えるため、推奨を非表示にしました。",
-    "confidence_band_sample_size": "過去30日間の%n%件の販売に基づく"
+    "confidence_band_sample_size": "過去30日間の%n%件の販売に基づく",
+    "market_pulse_active_listings": "出品中",
+    "market_pulse_sales_24h": "販売数（24時間）",
+    "market_pulse_gil_volume": "取引高",
+    "market_pulse_unit_volume": "取引数量（24時間）",
+    "market_pulse_vs_yesterday": "前日比"
 }

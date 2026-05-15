@@ -1091,5 +1091,10 @@
     "confidence_band_low_help": "시장이 얕거나 기록에 노이즈가 많습니다 — 대략적인 참고로만 사용하세요.",
     "confidence_band_unusable": "의심",
     "confidence_band_unusable_help": "최근 거래의 절반 이상이 길 송금 세탁처럼 보여 추천에서 숨겼습니다.",
-    "confidence_band_sample_size": "최근 30일간 %n%건의 거래 기준"
+    "confidence_band_sample_size": "최근 30일간 %n%건의 거래 기준",
+    "market_pulse_active_listings": "판매 중",
+    "market_pulse_sales_24h": "거래 (24h)",
+    "market_pulse_gil_volume": "거래 금액",
+    "market_pulse_unit_volume": "거래 수량 (24h)",
+    "market_pulse_vs_yesterday": "어제 대비"
 }

@@ -1091,5 +1091,10 @@
     "confidence_band_low_help": "市場稀薄或歷史資料噪音多 — 僅作粗略參考。",
     "confidence_band_unusable": "可疑",
     "confidence_band_unusable_help": "近期超過一半的銷售看起來像金幣轉帳洗錢 — 已隱藏推薦。",
-    "confidence_band_sample_size": "依過去 30 天的 %n% 筆銷售計算"
+    "confidence_band_sample_size": "依過去 30 天的 %n% 筆銷售計算",
+    "market_pulse_active_listings": "在售商品",
+    "market_pulse_sales_24h": "24 小時銷量",
+    "market_pulse_gil_volume": "市場交易額",
+    "market_pulse_unit_volume": "24 小時成交數量",
+    "market_pulse_vs_yesterday": "對比昨日"
 }

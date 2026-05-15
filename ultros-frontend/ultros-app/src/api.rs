@@ -17,6 +17,7 @@ use ultros_api_types::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
         ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
     },
+    market_pulse::MarketPulseDto,
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
@@ -120,6 +121,10 @@ pub(crate) async fn get_recent_sales_for_world(region_name: &str) -> AppResult<R
 
 pub(crate) async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
     fetch_api(&format!("/api/v1/trends/{}", world_name)).await
+}
+
+pub(crate) async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseDto> {
+    fetch_api(&format!("/api/v1/market_pulse/{}", world_name)).await
 }
 
 /// Returns a list of the logged in user's retainers

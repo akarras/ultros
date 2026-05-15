@@ -1091,5 +1091,10 @@
     "confidence_band_low_help": "Dünner Markt oder verrauschte Historie — nur als grober Hinweis verwenden.",
     "confidence_band_unusable": "Verdächtig",
     "confidence_band_unusable_help": "Über die Hälfte der letzten Verkäufe wirken wie Gil-Transferwäsche — Empfehlung wird ausgeblendet.",
-    "confidence_band_sample_size": "basiert auf %n% Verkäufen in 30 Tagen"
+    "confidence_band_sample_size": "basiert auf %n% Verkäufen in 30 Tagen",
+    "market_pulse_active_listings": "Aktive Angebote",
+    "market_pulse_sales_24h": "Verkäufe (24 h)",
+    "market_pulse_gil_volume": "Marktvolumen",
+    "market_pulse_unit_volume": "Stück gehandelt (24 h)",
+    "market_pulse_vs_yesterday": "ggü. gestern"
 }

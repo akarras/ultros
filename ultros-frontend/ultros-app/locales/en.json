@@ -1091,5 +1091,10 @@
     "confidence_band_low_help": "Thin market or noisy history — use as a rough hint only.",
     "confidence_band_unusable": "Suspicious",
     "confidence_band_unusable_help": "Half or more of recent sales look like currency-transfer launder — recommendation suppressed.",
-    "confidence_band_sample_size": "based on %n% sales over 30 days"
+    "confidence_band_sample_size": "based on %n% sales over 30 days",
+    "market_pulse_active_listings": "Active Listings",
+    "market_pulse_sales_24h": "Sales (24h)",
+    "market_pulse_gil_volume": "Market Volume",
+    "market_pulse_unit_volume": "Units Traded (24h)",
+    "market_pulse_vs_yesterday": "vs yesterday"
 }

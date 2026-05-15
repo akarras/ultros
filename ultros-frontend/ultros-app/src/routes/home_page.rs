@@ -8,6 +8,7 @@ use leptos_router::components::A;
 use crate::components::{
     ad::Ad,
     live_sale_ticker::LiveSaleTicker,
+    market_pulse::MarketPulse,
     meta::{MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
     top_deals::TopDeals,
@@ -34,6 +35,10 @@ pub fn HomePage() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let (homeworld, _) = use_home_world();
     let needs_onboarding = Memo::new(move |_| homeworld.with(|w| w.is_none()));
+    // Market Pulse needs a world name string; track home world reactively so
+    // the strip refreshes when the user changes home world.
+    let pulse_world: Signal<Option<String>> =
+        Signal::derive(move || homeworld.with(|w| w.as_ref().map(|w| w.name.clone())));
     view! {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
@@ -109,6 +114,12 @@ pub fn HomePage() -> impl IntoView {
                             </div>
                         </div>
                     </div>
+
+                    // Market Pulse — only render when we have a home world; otherwise
+                    // the onboarding banner above is the right call to action.
+                    {move || pulse_world.with(|w| w.is_some()).then(|| view! {
+                        <MarketPulse world=pulse_world />
+                    })}
 
                     <TopDeals />
 

@@ -30,6 +30,7 @@ pub mod listings_table;
 pub mod live_sale_ticker;
 pub mod loading;
 pub mod make_place_importer;
+pub mod market_pulse;
 pub mod meta;
 pub mod modal;
 pub mod number_input;
