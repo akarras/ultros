@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use flate2::FlushDecompress;
 #[cfg(feature = "embed")]
 use std::sync::OnceLock;
 use std::sync::RwLock;
@@ -29,7 +28,7 @@ pub fn data() -> &'static xiv_gen::Data {
     if let Some(d) = *XIV_DATA.read().unwrap() {
         return d;
     }
-    let _ = try_init(embedded_bytes(Language::En));
+    try_init(embedded_bytes(Language::En)).expect("failed to initialize embedded xiv data");
     XIV_DATA.read().unwrap().expect("just initialized")
 }
 
@@ -112,14 +111,28 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     if bytes.is_empty() {
         return Ok(xiv_gen::Data::default());
     }
-    let mut decompressor = flate2::Decompress::new(true);
-    let mut data: Vec<u8> = Vec::with_capacity(bytes.len() * 5);
-    decompressor
-        .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
-        .unwrap();
+    // Decompress via `ZlibDecoder::read_to_end` rather than the lower-level
+    // `Decompress::decompress_vec`, because the latter does not grow the output
+    // Vec and silently returns `BufError` once capacity is exhausted — leaving
+    // a truncated buffer that rkyv then misinterprets as a misaligned/corrupt
+    // archive. The English archive decompresses to ~50 MB which exceeds any
+    // reasonable hand-picked `bytes.len() * N` heuristic.
+    use std::io::Read;
+    let mut decoded: Vec<u8> = Vec::new();
+    flate2::read::ZlibDecoder::new(bytes)
+        .read_to_end(&mut decoded)
+        .map_err(|e| anyhow!("failed to decompress xiv-gen data: {e}"))?;
+    // rkyv requires the byte buffer to be aligned to `FixedIsize` (4 bytes
+    // under `size_32`). `Vec<u8>` only guarantees byte alignment, so copy into
+    // an `AlignedVec` before deserializing. Without this, `from_bytes` fails
+    // with an "unaligned pointer" context error on allocators that don't
+    // happen to hand back sufficiently aligned `Vec<u8>` storage (notably
+    // Windows).
+    let mut aligned = rkyv::AlignedVec::with_capacity(decoded.len());
+    aligned.extend_from_slice(&decoded);
     // rkyv's deserialization errors don't implement `std::error::Error` in 0.7,
     // so funnel them through anyhow's string-based fallback.
-    let data = rkyv::from_bytes::<xiv_gen::Data>(&data)
+    let data = rkyv::from_bytes::<xiv_gen::Data>(&aligned)
         .map_err(|e| anyhow!("failed to deserialize xiv-gen data: {e}"))?;
     Ok(data)
 }

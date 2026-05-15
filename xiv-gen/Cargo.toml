@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 serde = { workspace = true }
-rkyv = { version = "0.7.42", features = ["validation", "size_64", "std", "hashbrown"], default-features = false }
+rkyv = { version = "0.7.42", features = ["validation", "size_32", "std", "hashbrown"], default-features = false }
 csv = {version = "1.4.0"}
 derive_more = {version = "2.1.1", features = ["from_str"]}
 dumb_csv = {path = "../dumb-csv"}
