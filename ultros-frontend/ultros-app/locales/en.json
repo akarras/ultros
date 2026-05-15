@@ -1082,5 +1082,14 @@
     "create_alert_item_label": "Item",
     "create_alert_search_placeholder": "Search items...",
     "create_alert_change_item": "Change",
-    "create_alert_err_pick_item": "Pick an item first"
+    "create_alert_err_pick_item": "Pick an item first",
+    "confidence_band_high": "High",
+    "confidence_band_high_help": "Strong sample size, diverse buyers, very little launder noise — recommendations are trustworthy.",
+    "confidence_band_medium": "Medium",
+    "confidence_band_medium_help": "Usable but treat as approximate — flagged in UI.",
+    "confidence_band_low": "Low",
+    "confidence_band_low_help": "Thin market or noisy history — use as a rough hint only.",
+    "confidence_band_unusable": "Suspicious",
+    "confidence_band_unusable_help": "Half or more of recent sales look like currency-transfer launder — recommendation suppressed.",
+    "confidence_band_sample_size": "based on %n% sales over 30 days"
 }

@@ -11,6 +11,7 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::Clipboard,
+        confidence_badge::ConfidenceBadge,
         gil::Gil,
         item_icon::ItemIcon,
         meta::{MetaDescription, MetaTitle},
@@ -57,6 +58,9 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         </div>
                         <div role="columnheader" class="w-32 px-4 py-3 text-right">
                             "Sales/Week"
+                        </div>
+                        <div role="columnheader" class="w-28 px-4 py-3 text-center">
+                            "Quality"
                         </div>
                     </div>
                 }.into_any()
@@ -105,6 +109,9 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                             </div>
                             <div role="cell" class="px-4 py-2 w-32 text-right flex items-center justify-end text-[color:var(--color-text)]">
                                 {format!("{:.1}", item.sales_per_week)}
+                            </div>
+                            <div role="cell" class="px-4 py-2 w-28 flex items-center justify-center">
+                                <ConfidenceBadge band=item.confidence_band sample_size=item.sample_size_30d />
                             </div>
                         </div>
                     }.into_any()

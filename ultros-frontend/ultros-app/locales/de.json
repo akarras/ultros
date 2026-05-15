@@ -1082,5 +1082,14 @@
     "create_alert_item_label": "Item",
     "create_alert_search_placeholder": "Items suchen...",
     "create_alert_change_item": "Ändern",
-    "create_alert_err_pick_item": "Bitte zuerst ein Item auswählen"
+    "create_alert_err_pick_item": "Bitte zuerst ein Item auswählen",
+    "confidence_band_high": "Hoch",
+    "confidence_band_high_help": "Große Stichprobe, vielfältige Käufer, kaum Wäsche-Rauschen — Empfehlung ist verlässlich.",
+    "confidence_band_medium": "Mittel",
+    "confidence_band_medium_help": "Brauchbar, aber als ungefähr behandeln — in der UI markiert.",
+    "confidence_band_low": "Niedrig",
+    "confidence_band_low_help": "Dünner Markt oder verrauschte Historie — nur als grober Hinweis verwenden.",
+    "confidence_band_unusable": "Verdächtig",
+    "confidence_band_unusable_help": "Über die Hälfte der letzten Verkäufe wirken wie Gil-Transferwäsche — Empfehlung wird ausgeblendet.",
+    "confidence_band_sample_size": "basiert auf %n% Verkäufen in 30 Tagen"
 }

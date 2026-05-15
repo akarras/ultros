@@ -1082,5 +1082,14 @@
     "create_alert_item_label": "Objet",
     "create_alert_search_placeholder": "Rechercher des objets...",
     "create_alert_change_item": "Modifier",
-    "create_alert_err_pick_item": "Choisissez d'abord un objet"
+    "create_alert_err_pick_item": "Choisissez d'abord un objet",
+    "confidence_band_high": "Élevée",
+    "confidence_band_high_help": "Échantillon solide, acheteurs variés, très peu de bruit de blanchiment — recommandation fiable.",
+    "confidence_band_medium": "Moyenne",
+    "confidence_band_medium_help": "Utilisable mais à considérer comme approximatif — signalé dans l'interface.",
+    "confidence_band_low": "Faible",
+    "confidence_band_low_help": "Marché mince ou historique bruité — à utiliser uniquement comme indication approximative.",
+    "confidence_band_unusable": "Suspect",
+    "confidence_band_unusable_help": "Plus de la moitié des ventes récentes ressemblent à du blanchiment de gils — recommandation masquée.",
+    "confidence_band_sample_size": "basé sur %n% ventes sur 30 jours"
 }

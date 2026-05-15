@@ -1082,5 +1082,14 @@
     "create_alert_item_label": "物品",
     "create_alert_search_placeholder": "搜索物品...",
     "create_alert_change_item": "更改",
-    "create_alert_err_pick_item": "请先选择物品"
+    "create_alert_err_pick_item": "请先选择物品",
+    "confidence_band_high": "高",
+    "confidence_band_high_help": "样本充足，买家多样化，几乎没有洗钱噪声 — 推荐可信。",
+    "confidence_band_medium": "中",
+    "confidence_band_medium_help": "可用，但请视为大致估算 — 已在界面中标记。",
+    "confidence_band_low": "低",
+    "confidence_band_low_help": "市场稀薄或历史数据有噪声 — 仅作粗略参考。",
+    "confidence_band_unusable": "可疑",
+    "confidence_band_unusable_help": "近期超过一半的销售看起来像是金币转账洗钱 — 已隐藏推荐。",
+    "confidence_band_sample_size": "基于过去 30 天的 %n% 笔销售"
 }

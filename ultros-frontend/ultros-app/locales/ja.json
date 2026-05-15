@@ -1082,5 +1082,14 @@
     "create_alert_item_label": "アイテム",
     "create_alert_search_placeholder": "アイテムを検索...",
     "create_alert_change_item": "変更",
-    "create_alert_err_pick_item": "先にアイテムを選択してください"
+    "create_alert_err_pick_item": "先にアイテムを選択してください",
+    "confidence_band_high": "高",
+    "confidence_band_high_help": "サンプル数が十分で、購入者も多様、ロンダリング由来のノイズもほぼなし — 信頼できる推奨です。",
+    "confidence_band_medium": "中",
+    "confidence_band_medium_help": "利用可能ですが概算として扱ってください — UIに表示されます。",
+    "confidence_band_low": "低",
+    "confidence_band_low_help": "市場が薄いか、履歴にノイズが多い — 大まかな目安としてのみ利用してください。",
+    "confidence_band_unusable": "疑わしい",
+    "confidence_band_unusable_help": "最近の販売の半分以上がギル送金ロンダリングのように見えるため、推奨を非表示にしました。",
+    "confidence_band_sample_size": "過去30日間の%n%件の販売に基づく"
 }
