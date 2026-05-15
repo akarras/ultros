@@ -32,7 +32,7 @@ pub fn SideNav() -> impl IntoView {
     let git_hash = git_short_hash!();
 
     view! {
-        <aside class="side-nav" aria-label="Primary">
+        <aside class="side-nav" aria-label=t_string!(i18n, side_nav_aria_primary)>
             <div class="side-nav-brand">
                 <A href="/" attr:class="side-nav-brand-link">
                     <Icon icon=i::MdiJellyfish width="1.6em" height="1.6em" />

@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use crate::Cookies;
+use crate::i18n::{t, t_string, use_i18n};
 use leptos::{html::Ins, prelude::*};
 use leptos_router::components::A;
 use leptos_use::{UseMutationObserverOptions, use_mutation_observer_with_options};
@@ -8,6 +9,7 @@ use log::info;
 
 #[component]
 pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
+    let i18n = use_i18n();
     let ad_class = class.unwrap_or("h-64");
     let node = NodeRef::<Ins>::new();
     let cookies = use_context::<Cookies>().unwrap();
@@ -58,7 +60,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
                     <span class="text-neutral-500 italic text-sm">
                         "ads are optional. you may disable or enable them under "
-                        <A href="/settings">"Settings"</A>
+                        <A href="/settings">{t!(i18n, ad_settings_link)}</A>
                     </span>
                 </div>
             </div>
@@ -68,13 +70,14 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
 
 #[component]
 pub fn DesktopAdRail() -> impl IntoView {
+    let i18n = use_i18n();
     let cookies = use_context::<Cookies>().unwrap();
     let (hide_ads, _) = cookies.use_cookie_typed::<_, bool>("HIDE_ADS");
     let ads_visible = Signal::derive(move || !hide_ads.get().unwrap_or_default());
 
     view! {
         <Show when=ads_visible>
-            <aside class="app-ad-rail" aria-label="Advertisements">
+            <aside class="app-ad-rail" aria-label=t_string!(i18n, ad_aria_label)>
                 <div class="ad-rail-slot sticky top-24">
                     <Ad class="h-[600px] w-full" />
                 </div>

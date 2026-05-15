@@ -1,11 +1,13 @@
 use crate::components::icon::Icon;
 use crate::global_state::toasts::{Toast, ToastLevel, use_toast};
+use crate::i18n::{t_string, use_i18n};
 use icondata as i;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
 
 #[component]
 pub fn ToastItem(toast: Toast) -> impl IntoView {
+    let i18n = use_i18n();
     let toasts = use_toast().expect("Toast context not found");
     let (is_exiting, set_is_exiting) = signal(false);
 
@@ -46,7 +48,7 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
             <div class="flex-1">{message}</div>
             <button
                 class="opacity-70 hover:opacity-100 transition-opacity"
-                aria-label="Close"
+                aria-label=t_string!(i18n, close)
                 on:click=move |_| {
                     set_is_exiting(true);
                     set_timeout(move || {

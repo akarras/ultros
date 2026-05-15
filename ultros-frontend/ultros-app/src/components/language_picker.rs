@@ -1,5 +1,5 @@
 use crate::components::icon::Icon;
-use crate::i18n::{Locale, t_string, use_i18n};
+use crate::i18n::{Locale, t, t_string, use_i18n};
 use cfg_if::cfg_if;
 use icondata as i;
 use leptos::html;
@@ -113,7 +113,7 @@ pub fn LanguagePicker() -> impl IntoView {
                             <Show when=move || selected_for_show.selected(&option.locale)>
                                 <div class="mt-3 flex items-center gap-2 text-sm font-medium text-[color:var(--brand-fg)]">
                                     <Icon icon=i::BsCheckCircleFill width="1em" height="1em" />
-                                    <span class="sr-only">"Selected"</span>
+                                    <span class="sr-only">{t!(i18n, language_picker_selected_sr)}</span>
                                 </div>
                             </Show>
                         </button>

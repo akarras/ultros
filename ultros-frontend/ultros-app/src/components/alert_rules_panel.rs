@@ -112,7 +112,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
             <Show when=move || undercut_drawer_visible.get()>
                 <UndercutAlertDrawer set_visible=set_undercut_drawer_visible.into() />
             </Show>
-            <Suspense fallback=move || view! { <div>"Loading..."</div> }>
+            <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
             {move || {
                 let endpoint_list: Vec<Endpoint> = endpoints
                     .get()
@@ -142,13 +142,13 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                     <table class="w-full text-sm">
                                         <thead>
                                             <tr>
-                                                <th class="text-left p-1">"Item"</th>
-                                                <th class="text-left p-1">"Threshold"</th>
-                                                <th class="text-left p-1">"World"</th>
-                                                <th class="text-left p-1">"HQ"</th>
-                                                <th class="text-left p-1">"Endpoints"</th>
-                                                <th class="text-left p-1">"Status"</th>
-                                                <th class="text-left p-1">"Actions"</th>
+                                                <th class="text-left p-1">{t!(i18n, item)}</th>
+                                                <th class="text-left p-1">{t!(i18n, alert_rules_col_threshold)}</th>
+                                                <th class="text-left p-1">{t!(i18n, world)}</th>
+                                                <th class="text-left p-1">{t!(i18n, hq)}</th>
+                                                <th class="text-left p-1">{t!(i18n, endpoints_heading)}</th>
+                                                <th class="text-left p-1">{t!(i18n, status_label)}</th>
+                                                <th class="text-left p-1">{t!(i18n, actions)}</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -236,7 +236,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                             <td class="p-1 flex gap-1">
                                                                 <button
                                                                     class="btn-ghost"
-                                                                    aria-label="Toggle enabled"
+                                                                    aria-label=t_string!(i18n, alert_rules_aria_toggle_enabled)
                                                                     on:click=move |_| toggle(a_clone.clone())
                                                                 >
                                                                     <Icon icon=if enabled {
@@ -247,7 +247,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                                 </button>
                                                                 <button
                                                                     class="btn-ghost text-red-400"
-                                                                    aria-label="Delete alert"
+                                                                    aria-label=t_string!(i18n, alert_rules_aria_delete_alert)
                                                                     on:click=move |_| remove(id)
                                                                 >
                                                                     <Icon icon=i::BiTrashSolid />

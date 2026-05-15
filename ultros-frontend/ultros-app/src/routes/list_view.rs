@@ -449,7 +449,7 @@ pub fn ListView() -> impl IntoView {
                                                     <div class="border-b border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                                                             <div>
-                                                                <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"Shopping route"</p>
+                                                                <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_shopping_route)}</p>
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
                                                             </div>
                                                             <div class="flex flex-wrap gap-2 text-sm">
@@ -475,7 +475,7 @@ pub fn ListView() -> impl IntoView {
                                                     <div class="border-b border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                                                             <div>
-                                                                <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">"List"</p>
+                                                                <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_list_label)}</p>
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
                                                                 <div class="mt-2 inline-flex rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-xs text-[color:var(--color-text-muted)]">
                                                                     {realtime_status}
@@ -484,15 +484,15 @@ pub fn ListView() -> impl IntoView {
                                                             <div class="grid grid-cols-3 gap-2 text-center text-sm">
                                                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
                                                                     <div class="text-lg font-bold">{total_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">"Items"</div>
+                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, item_explorer_items)}</div>
                                                                 </div>
                                                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
                                                                     <div class="text-lg font-bold">{remaining_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">"Remaining"</div>
+                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_remaining)}</div>
                                                                 </div>
                                                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
                                                                     <div class="text-lg font-bold">{acquired_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">"Done"</div>
+                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_done)}</div>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -642,11 +642,12 @@ pub fn ListView() -> impl IntoView {
 fn ActivityFeed(
     activity: Resource<Result<Vec<ListActivity>, crate::error::AppError>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     view! {
         <section class="flex flex-col gap-3">
-            <h2 class="text-lg font-bold text-[color:var(--brand-fg)]">"Activity"</h2>
+            <h2 class="text-lg font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_activity_heading)}</h2>
             <Suspense fallback=move || {
-                view! { <div class="text-sm text-[color:var(--color-text-muted)]">"Loading activity..."</div> }
+                view! { <div class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_loading_activity)}</div> }
             }>
                 {move || {
                     activity

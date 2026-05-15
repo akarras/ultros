@@ -326,12 +326,12 @@ fn LeveAnalyzerTable(
     view! {
         <div class="flex flex-col gap-6">
             <Toolbar>
-                <ToolbarField label="Profit (Min)">
+                <ToolbarField label=t_string!(i18n, leve_analyzer_filter_profit_min_label).to_string()>
                     <input
                         class="input input-sm w-32"
                         min=0
                         step=1000
-                        placeholder="e.g. 10000"
+                        placeholder=t_string!(i18n, placeholder_eg_10000)
                         type="number"
                         prop:value=minimum_profit
                         on:input=move |input| {
@@ -344,7 +344,7 @@ fn LeveAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Job">
+                <ToolbarField label=t_string!(i18n, leve_analyzer_filter_job_label).to_string()>
                     <select
                         class="input input-sm"
                         on:change=move |ev| {
@@ -367,7 +367,7 @@ fn LeveAnalyzerTable(
                         <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
                     </select>
                 </ToolbarField>
-                <ToolbarField label="Filter Outliers">
+                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
                     <div class="flex flex-row gap-2 items-center">
                         <input
                             type="checkbox"
@@ -563,11 +563,11 @@ pub fn LeveAnalyzer() -> impl IntoView {
 
             <div class="flex flex-col gap-4">
                 <ToolHeader
-                    title="Leve Analyzer"
-                    summary="Estimate levequest value by comparing turn-in item cost against gil and expected item rewards."
-                    context="Reward item value is an estimate. Use it as a leveling shortlist, then confirm item supply before buying in bulk."
+                    title=t_string!(i18n, leve_analyzer).to_string()
+                    summary=t_string!(i18n, leve_analyzer_tool_summary).to_string()
+                    context=t_string!(i18n, leve_analyzer_tool_context).to_string()
                     help_href="/help/leve-analyzer"
-                    help_body="Leve Analyzer mixes guaranteed gil rewards with expected market value from reward items. The first pass assumes baseline NQ turn-ins."
+                    help_body=t_string!(i18n, leve_analyzer_tool_help).to_string()
                 />
                 <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
@@ -592,14 +592,14 @@ pub fn LeveAnalyzer() -> impl IntoView {
                     </div>
                 </div>
                 <CalculationSummary
-                    title="What revenue includes"
-                    formula="profit = gil reward + expected reward item value - turn-in cost"
-                    details="Expected reward value depends on market prices and reward probabilities, so it is not the same as guaranteed gil."
+                    title=t_string!(i18n, leve_analyzer_calc_title).to_string()
+                    formula=t_string!(i18n, leve_analyzer_calc_formula).to_string()
+                    details=t_string!(i18n, leve_analyzer_calc_details).to_string()
                 />
                 <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text="Baseline NQ turn-in" />
-                    <AssumptionBadge text="Reward items use expected value" />
-                    <AssumptionBadge text="Recent sales shape confidence" />
+                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_baseline_nq).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_expected_value).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_recent_sales).to_string() />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

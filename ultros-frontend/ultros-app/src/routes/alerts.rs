@@ -26,7 +26,7 @@ pub fn Alerts() -> impl IntoView {
             <h1 class="text-2xl font-bold">{t!(i18n, alerts_page_heading)}</h1>
 
             <div class="rounded-lg border border-brand-500/30 bg-brand-500/5 p-4 flex flex-col gap-2">
-                <p class="font-semibold text-brand-200">"Prefer Discord-native alerts?"</p>
+                <p class="font-semibold text-brand-200">{t!(i18n, alerts_prefer_discord_alerts)}</p>
                 <p class="text-sm text-[color:var(--color-text-muted)]">
                     "Run "
                     <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add_undercut_alert"</code>
