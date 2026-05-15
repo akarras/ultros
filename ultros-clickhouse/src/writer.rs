@@ -124,6 +124,15 @@ impl Writer {
             debug!("ClickHouse writer channel closed; dropping row");
         }
     }
+
+    /// A Writer that swallows every row. Used by tests that construct an
+    /// `AnalyzerService` directly without standing up ClickHouse — the channel
+    /// is created and the receiver immediately dropped so every `send()`
+    /// returns `Err` and silently no-ops.
+    pub fn noop_for_tests() -> Self {
+        let (tx, _rx) = mpsc::unbounded_channel::<SaleRow>();
+        Self { tx }
+    }
 }
 
 async fn flush(client: &ClickHouseClient, buf: &mut Vec<SaleRow>) -> Result<(), ClickHouseError> {

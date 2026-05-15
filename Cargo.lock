@@ -10051,6 +10051,7 @@ dependencies = [
  "ultros-api-types",
  "ultros-app",
  "ultros-charts",
+ "ultros-clickhouse",
  "ultros-db",
  "ultros-xiv-icons",
  "universalis",

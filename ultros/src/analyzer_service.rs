@@ -335,13 +335,28 @@ fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) ->
 
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct AnalyzerService {
     /// world_id -> TopSellers
     recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>>,
     /// Cheapest items get stored as any anyselector. Currently exists for WorldID/RegionID, but not datacenter.
     cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>>,
     initiated: Arc<AtomicBool>,
+    /// Dual-writes every observed sale into the ClickHouse `sales` table.
+    /// Non-blocking, fire-and-forget — Postgres remains the source of truth so
+    /// dropped rows are recoverable via the backfill binary.
+    ch_writer: ultros_clickhouse::writer::Writer,
+}
+
+impl std::fmt::Debug for AnalyzerService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalyzerService")
+            .field("recent_sale_history", &self.recent_sale_history)
+            .field("cheapest_items", &self.cheapest_items)
+            .field("initiated", &self.initiated)
+            .field("ch_writer", &"<Writer>")
+            .finish()
+    }
 }
 
 impl AnalyzerService {
@@ -350,6 +365,7 @@ impl AnalyzerService {
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
+        ch_writer: ultros_clickhouse::writer::Writer,
         token: CancellationToken,
     ) -> Self {
         tokio::fs::create_dir_all("analyzer-data")
@@ -382,6 +398,7 @@ impl AnalyzerService {
             recent_sale_history,
             cheapest_items,
             initiated: Arc::default(),
+            ch_writer,
         };
 
         let task_self = temp.clone();
@@ -597,6 +614,13 @@ impl AnalyzerService {
                                 crate::event::EventType::Add(sales) => {
                                     for (sale, _) in sales.sales.iter() {
                                         second_worker_instance.add_sale(sale).await;
+                                        // Mirror into ClickHouse. Non-blocking;
+                                        // see ultros_clickhouse::writer for the
+                                        // crash-safety contract (PG is source
+                                        // of truth, backfill recovers gaps).
+                                        second_worker_instance.ch_writer.send(
+                                            ultros_clickhouse::rows::SaleRow::from_api_sale(sale),
+                                        );
                                     }
                                 }
                                 crate::event::EventType::Update(_) => {}
@@ -1727,6 +1751,7 @@ mod tests {
             recent_sale_history: Arc::new(recent_sale_history),
             cheapest_items: Arc::new(cheapest_items),
             initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
         };
 
         // Serialize the state
@@ -1771,6 +1796,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: new_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
         };
         assert!(new_analyzer_service.try_restore_from_snapshot().await);
 
@@ -1795,6 +1821,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(true)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
         };
         // Serialize
         dc_analyzer_service.serialize_state(false).await.unwrap();
@@ -1809,6 +1836,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: restore_dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
         };
         assert!(
             restore_dc_analyzer_service
