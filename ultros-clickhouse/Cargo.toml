@@ -1,0 +1,17 @@
+[package]
+name = "ultros-clickhouse"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clickhouse = { workspace = true }
+tokio = { workspace = true }
+tokio-util = "0.7.18"
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+ultros-db = { path = "../ultros-db" }
+ultros-api-types = { path = "../ultros-api-types" }
