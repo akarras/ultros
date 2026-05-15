@@ -1,0 +1,33 @@
+# Development-only services. Run with:
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Brings up ClickHouse only; Postgres is expected to run locally per the existing
+# dev setup. See CLAUDE.md for the broader dev environment notes.
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: ultros-clickhouse
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # native protocol
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      CLICKHOUSE_DB: ultros
+      CLICKHOUSE_USER: ultros
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_PASSWORD: ultros_dev
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  clickhouse_data:
+  clickhouse_logs:
