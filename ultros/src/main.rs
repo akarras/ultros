@@ -276,6 +276,11 @@ async fn main() -> Result<()> {
     }
     let ch_writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
 
+    // Background scheduler that keeps item_stats_window + item_quality_score
+    // fresh. Runs an immediate seed pass on startup, then on independent
+    // cadences (1d every 15min, 7d hourly, 30d/90d every 6h, quality hourly).
+    ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
+
     let analyzer_service = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),

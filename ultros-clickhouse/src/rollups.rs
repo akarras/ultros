@@ -285,3 +285,84 @@ pub async fn refresh_window_with(client: &Client, window_days: u16) -> Result<()
     client.query(&sql).execute().await?;
     Ok(())
 }
+
+/// Spawn the background scheduler that keeps `item_stats_window` and
+/// `item_quality_score` fresh on independent cadences:
+///
+/// - 1-day window:  every 15 minutes (cheap, drives the hottest dashboards)
+/// - 7-day window:  every 60 minutes
+/// - 30-day window: every 6 hours
+/// - 90-day window: every 6 hours
+/// - Quality score: every 60 minutes (depends on the 30d window)
+///
+/// All four window refreshers share a single tokio task with a `select!`
+/// over named intervals, so there's no resource contention between cadences
+/// and one stuck refresh can't block the others.
+///
+/// Does an immediate seed-refresh of all windows on startup before entering
+/// the schedule loop, so newly-deployed servers don't wait 15 minutes for
+/// the first dashboard query to return data.
+pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::CancellationToken) {
+    tokio::spawn(async move {
+        // Seed: do one pass of everything before entering the schedule. If
+        // this fails (e.g. CH unreachable), log and continue — the scheduled
+        // ticks will retry shortly.
+        if let Err(e) = refresh_all(&ch).await {
+            tracing::warn!(error = ?e, "initial rollup seed failed");
+        } else {
+            tracing::info!("initial rollup seed complete");
+        }
+
+        let mut tick_1d = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+        let mut tick_7d = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+        let mut tick_30d_90d = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+        let mut tick_quality = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+
+        // All intervals fire immediately on first .tick() — burn those since
+        // we already seeded above.
+        tick_1d.tick().await;
+        tick_7d.tick().await;
+        tick_30d_90d.tick().await;
+        tick_quality.tick().await;
+
+        // If we miss a deadline (e.g. CH was slow), delay the next tick
+        // rather than firing back-to-back catch-up ticks.
+        tick_1d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick_7d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick_30d_90d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick_quality.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    tracing::info!("rollup scheduler exiting");
+                    break;
+                }
+                _ = tick_1d.tick() => {
+                    if let Err(e) = refresh_window(&ch, 1).await {
+                        tracing::warn!(error = ?e, "1d rollup refresh failed");
+                    }
+                }
+                _ = tick_7d.tick() => {
+                    if let Err(e) = refresh_window(&ch, 7).await {
+                        tracing::warn!(error = ?e, "7d rollup refresh failed");
+                    }
+                }
+                _ = tick_30d_90d.tick() => {
+                    if let Err(e) = refresh_window(&ch, 30).await {
+                        tracing::warn!(error = ?e, "30d rollup refresh failed");
+                    }
+                    if let Err(e) = refresh_window(&ch, 90).await {
+                        tracing::warn!(error = ?e, "90d rollup refresh failed");
+                    }
+                }
+                _ = tick_quality.tick() => {
+                    if let Err(e) = refresh_quality_scores(&ch).await {
+                        tracing::warn!(error = ?e, "quality score refresh failed");
+                    }
+                }
+            }
+        }
+    });
+}
