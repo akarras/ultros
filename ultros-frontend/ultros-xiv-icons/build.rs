@@ -1,4 +1,3 @@
-use flate2::{Compression, write::GzEncoder};
 use futures::{StreamExt, stream};
 use image::{ImageFormat, ImageReader, imageops::FilterType};
 use std::{
@@ -112,14 +111,18 @@ async fn compress(path: &PathBuf) {
     }
     tar.finish().unwrap();
     let cursor = tar.into_inner().unwrap();
-    // Write tar to a compressed file
-    let mut compressed = GzEncoder::new(Vec::new(), Compression::best());
+    // Write tar to a zstd-compressed file. Level 19 is the highest "normal"
+    // level (20-22 are --ultra and need much more memory for diminishing
+    // returns on already-entropy-coded webp content). This build script runs
+    // once and its output is cached, so we can afford the slowest reasonable
+    // level for the best ratio.
+    let mut compressed = zstd::Encoder::new(Vec::new(), 19).unwrap();
     compressed
         .write_all(cursor.into_inner().as_slice())
         .unwrap();
     let compress = compressed.finish().unwrap();
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    std::fs::write(format!("{out_dir}/images.tar.gz"), compress).unwrap();
+    std::fs::write(format!("{out_dir}/images.tar.zst"), compress).unwrap();
 }
 
 #[tokio::main]

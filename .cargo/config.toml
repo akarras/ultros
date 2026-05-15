@@ -1,6 +1,12 @@
 [build]
-rustflags=["--cfg=web_sys_unstable_apis"]
+rustflags = ["--cfg=web_sys_unstable_apis"]
 
-#[target.aarch64-unknown-linux-gnu]
-#rustflags=["-C", "target-cpu=native"]
-
+# Target-scoped rustflags REPLACE [build].rustflags rather than merging, so the
+# web_sys cfg is repeated here. Only applied to native x86_64 Linux builds —
+# the WASM target (wasm32-unknown-unknown) keeps the [build] rustflags above,
+# which is important because target-cpu=znver2 is meaningless / breaking for WASM.
+#
+# znver2 = Zen 2 (Threadripper 3970x, Ryzen 3000-series). Enables AVX2, FMA3,
+# BMI1/2, but not AVX-512. Binaries built with this WILL SIGILL on pre-Zen2 CPUs.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["--cfg=web_sys_unstable_apis", "-C", "target-cpu=znver2"]

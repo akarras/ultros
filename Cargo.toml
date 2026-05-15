@@ -98,7 +98,6 @@ leptos_icons = "0.7.1"
 leptos_i18n = { version = "0.6.2", features = ["cookie"] }
 leptos_i18n_build = "0.6.2"
 cfg-if = "1.0.4"
-git-const = "1.1.0"
 gloo-net = { version = "0.7.0", features = ["http", "websocket"] }
 dotenvy = "0.15.7"
 # Default features pull in `isahc` (libcurl) for sending — we route push delivery
@@ -116,10 +115,36 @@ web-push = { version = "0.11.0", default-features = false }
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
 
 [profile.release]
-# lto = true
+# Optimized for size — used by the WASM client bundle (where bytes-on-the-wire matter).
+# The server binary uses [profile.server-release] below; see workspace.metadata.leptos.
 opt-level = "z"
 strip = "debuginfo"
-# codegen-units = 1
+
+# Server binary profile. cargo-leptos builds the bin with this when set as
+# bin-profile-release in workspace.metadata.leptos.
+#
+# Inherits everything from [profile.release] (opt-level=z, cgu=16, no LTO) which
+# happens to be well-tuned for this workspace's generic-heavy code (leptos /
+# server_fn / sea-orm / tower). LTO consistently *grew* the binary in tests by
+# defeating the linker's parallel-cgu dedup, so we don't override it here.
+#
+# Delta from release:
+#  - debug = "line-tables-only": minimal DWARF — just address→file:line mapping.
+#    Sentry/GlitchTip symbolication still gives `file.rs:123 in fn_name` because
+#    function names come from the symbol table (preserved through strip-debug)
+#    and `:line` comes from the line tables. Skips function args/locals/types
+#    that "limited" would also emit, which roughly halves the debug payload.
+#    The Dockerfile builder splits debug info into a separate artifact via
+#    objcopy and ships only the stripped binary in the runtime image. The
+#    unstripped binary is exported via the `debug-files` target stage and
+#    uploaded to GlitchTip from CI by glitchtip-cli.
+#  - No Cargo-side `strip` override: we want debug info in the build artifact
+#    so we can split + upload it; stripping happens in the Dockerfile.
+#
+# panic = "unwind" preserved so sentry's panic hook can capture and flush.
+[profile.server-release]
+inherits = "release"
+debug = "line-tables-only"
 
 [profile.dev]
 # opt-level = 1
@@ -140,6 +165,12 @@ name = "ultros"
 bin-package = "ultros"
 lib-package = "ultros-client"
 output-name = "ultros"
+# Server binary built with the speed-optimized server-release profile;
+# WASM client keeps the size-optimized default release profile.
+bin-profile-release = "server-release"
+# Enable the jemalloc global allocator in release builds — better throughput
+# and lower RSS fragmentation under sustained tokio/axum load.
+bin-features = ["jemalloc"]
 # The site root folder is where cargo-leptos generate all output.
 # NOTE: It is relative to the workspace root when running in a workspace.
 # WARNING: all content of this folder will be erased on a rebuild.
