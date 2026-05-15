@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use flate2::FlushDecompress;
 #[cfg(feature = "embed")]
 use std::sync::OnceLock;
@@ -11,15 +12,15 @@ use xiv_gen::Language;
 static XIV_DATA: RwLock<Option<&'static xiv_gen::Data>> = RwLock::new(None);
 
 #[cfg(feature = "embed")]
-pub fn bincode(lang: Language) -> &'static [u8] {
+pub fn embedded_bytes(lang: Language) -> &'static [u8] {
     match lang {
-        Language::En => include_bytes!(concat!(env!("OUT_DIR"), "/database_en.bincode")),
-        Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.bincode")),
-        Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.bincode")),
-        Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.bincode")),
-        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.bincode")),
-        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.bincode")),
-        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.bincode")),
+        Language::En => include_bytes!(concat!(env!("OUT_DIR"), "/database_en.rkyv")),
+        Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.rkyv")),
+        Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.rkyv")),
+        Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.rkyv")),
+        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.rkyv")),
+        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.rkyv")),
+        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.rkyv")),
     }
 }
 
@@ -28,7 +29,7 @@ pub fn data() -> &'static xiv_gen::Data {
     if let Some(d) = *XIV_DATA.read().unwrap() {
         return d;
     }
-    let _ = try_init(bincode(Language::En));
+    let _ = try_init(embedded_bytes(Language::En));
     XIV_DATA.read().unwrap().expect("just initialized")
 }
 
@@ -86,7 +87,8 @@ static PER_LOCALE: [OnceLock<&'static xiv_gen::Data>; LOCALE_COUNT] = [
 #[cfg(feature = "embed")]
 pub fn data_for(lang: Language) -> &'static xiv_gen::Data {
     PER_LOCALE[language_index(lang)].get_or_init(|| {
-        let decoded = decompress_data(bincode(lang)).expect("embedded bincode must decode");
+        let decoded =
+            decompress_data(embedded_bytes(lang)).expect("embedded xiv-gen data must decode");
         Box::leak(Box::new(decoded))
     })
 }
@@ -115,7 +117,10 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     decompressor
         .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
         .unwrap();
-    let (data, _) = bincode::decode_from_slice(&data, xiv_gen::bincode_config())?;
+    // rkyv's deserialization errors don't implement `std::error::Error` in 0.7,
+    // so funnel them through anyhow's string-based fallback.
+    let data = rkyv::from_bytes::<xiv_gen::Data>(&data)
+        .map_err(|e| anyhow!("failed to deserialize xiv-gen data: {e}"))?;
     Ok(data)
 }
 

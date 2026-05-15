@@ -13,12 +13,12 @@ embed = []
 
 [dependencies]
 flate2 = "1.1.9"
-bincode = {version = "2.0.1"}
+rkyv = { version = "0.7.42", features = ["validation", "size_64", "std", "hashbrown"], default-features = false }
 xiv-gen.workspace = true
 anyhow.workspace = true
 
 [build-dependencies]
-xiv-gen = {workspace = true, features = ["csv_to_bincode"]}
+xiv-gen = {workspace = true, features = ["csv_to_rkyv"]}
 serde = { workspace = true }
-bincode = {version = "2.0.1"}
+rkyv = { version = "0.7.42", features = ["validation", "size_64", "std", "hashbrown"], default-features = false }
 flate2 = "1.1.9"

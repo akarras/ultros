@@ -1,4 +1,5 @@
-/// Contains all the code needed to read a csv file and save it to a .bincode database
+/// Contains all the code needed to read a csv file and produce a `Data` struct
+/// ready to be serialized (e.g. with rkyv).
 /// Recommended to just let xiv-gen-db handle this unless you need a different backing store.
 use crate::*;
 use std::collections::HashMap;

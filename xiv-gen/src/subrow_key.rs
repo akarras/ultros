@@ -1,11 +1,25 @@
-use bincode::{Decode, Encode};
 use core::str::FromStr;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::Error;
 use std::fmt::Debug;
 
-#[derive(Serialize, Hash, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Decode, Encode)]
+#[derive(
+    Serialize,
+    Hash,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
+#[archive(check_bytes)]
 pub struct SubrowKey<T>(pub T, pub i32);
 
 impl<T> Default for SubrowKey<T>
@@ -45,7 +59,7 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        let str = <&str>::deserialize(deserializer)?;
+        let str = <&str as serde::Deserialize>::deserialize(deserializer)?;
         Self::from_str(str).map_err(D::Error::custom)
     }
 }

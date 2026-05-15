@@ -21,13 +21,13 @@ pub fn tracked_data() -> &'static xiv_gen::Data {
     xiv_gen_db::data()
 }
 
-/// Fetches the bincode for `locale` from the server and swaps it into
+/// Fetches the rkyv-encoded data for `locale` from the server and swaps it into
 /// `xiv_gen_db`. Caller is responsible for bumping `DataRevision` after this
 /// resolves so subscribers re-render with the new data.
 #[cfg(not(feature = "ssr"))]
 pub async fn reload_xiv_data(locale: &str) -> anyhow::Result<()> {
     let version = xiv_gen::data_version();
-    let url = format!("/static/data/{}/{}.bincode", version, locale);
+    let url = format!("/static/data/{}/{}.rkyv", version, locale);
     let bytes = gloo_net::http::Request::get(&url)
         .send()
         .await
