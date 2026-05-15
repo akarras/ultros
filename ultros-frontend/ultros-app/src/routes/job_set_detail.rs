@@ -17,7 +17,7 @@ use crate::api::get_cheapest_listings;
 use crate::components::add_set_to_list::AddSetToList;
 use crate::components::cheapest_price::CheapestPrice;
 use crate::components::crafting_cost::IngredientsIter;
-use crate::components::gil::Gil;
+use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
 use crate::components::meta::{MetaDescription, MetaTitle};
@@ -610,10 +610,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                             });
                                             view! {
                                                 <div class="text-lg font-bold">
-                                                    {match total {
-                                                        Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                                                        None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                                                    }}
+                                                    <GilOrDash amount=total.map(|t| t as i32) />
                                                 </div>
                                                 {match (shard_total, total) {
                                                     (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
@@ -650,10 +647,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 .and_then(|map| materials_total(&entries, map, true));
                                             view! {
                                                 <div class="text-lg font-bold">
-                                                    {match total {
-                                                        Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                                                        None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                                                    }}
+                                                    <GilOrDash amount=total.map(|t| t as i32) />
                                                 </div>
                                                 {match (shard_total, total) {
                                                     (Some(with_shards), Some(no_shards)) if with_shards > no_shards => view! {
@@ -710,10 +704,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                         _ => None,
                                     })
                                 });
-                                match total {
-                                    Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                                    None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                                }
+                                view! { <GilOrDash amount=total.map(|t| t as i32) /> }
                             }}
                         </Suspense>
                     </div>
@@ -732,10 +723,7 @@ pub fn JobSetDetail() -> impl IntoView {
                                         .as_ref()
                                         .and_then(|map| set_total(&g, map, false))
                                 });
-                                match total {
-                                    Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                                    None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                                }
+                                view! { <GilOrDash amount=total.map(|t| t as i32) /> }
                             }}
                         </Suspense>
                     </div>
