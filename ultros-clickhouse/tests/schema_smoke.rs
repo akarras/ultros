@@ -41,6 +41,7 @@ async fn migrate_then_insert_then_read_round_trip() {
         Utc,
     );
     let row = SaleRow {
+        pg_id: -42,
         sold_date,
         item_id,
         hq: 1,

@@ -20,6 +20,7 @@ fn fixture_row(item_id: i32, offset_minutes: i64) -> SaleRow {
         .unwrap()
         + chrono::Duration::minutes(offset_minutes);
     SaleRow {
+        pg_id: -(1000 + offset_minutes as i32),
         sold_date: chrono::DateTime::from_naive_utc_and_offset(base, Utc),
         item_id,
         hq: 1,

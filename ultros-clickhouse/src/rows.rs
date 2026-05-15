@@ -20,6 +20,12 @@ use serde::{Deserialize, Serialize};
 /// quantities and prices are domain-constrained to be non-negative.
 #[derive(Row, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct SaleRow {
+    /// Carries the Postgres `sale_history.id` so each PG row maps to a
+    /// distinct CH row. Without this, two sales sharing
+    /// `(item_id, hq, world_id, sold_date, buying_character_id)` collapse
+    /// under the `ReplacingMergeTree` dedup — and Universalis-side replays
+    /// produce a non-trivial number of those.
+    pub pg_id: i32,
     #[serde(with = "clickhouse::serde::chrono::datetime")]
     pub sold_date: chrono::DateTime<chrono::Utc>,
     pub item_id: i32,
@@ -36,6 +42,7 @@ impl SaleRow {
     /// backfill path, which streams directly from Postgres).
     pub fn from_db_model(m: &ultros_db::entity::sale_history::Model, buyer_name: String) -> Self {
         Self {
+            pg_id: m.id,
             sold_date: chrono::DateTime::from_naive_utc_and_offset(m.sold_date, chrono::Utc),
             item_id: m.sold_item_id,
             hq: m.hq as u8,
@@ -51,6 +58,7 @@ impl SaleRow {
     /// reads from the existing event bus and already has a richer payload).
     pub fn from_api_sale(s: &ultros_api_types::SaleHistory) -> Self {
         Self {
+            pg_id: s.id,
             sold_date: chrono::DateTime::from_naive_utc_and_offset(s.sold_date, chrono::Utc),
             item_id: s.sold_item_id,
             hq: s.hq as u8,
@@ -97,6 +105,7 @@ mod tests {
     fn from_api_sale_maps_fields_directly() {
         let sale = fixture_sale(1500, 5);
         let row = SaleRow::from_api_sale(&sale);
+        assert_eq!(row.pg_id, 1);
         assert_eq!(row.item_id, 7);
         assert_eq!(row.world_id, 40);
         assert_eq!(row.price_per_item, 1500);

@@ -33,6 +33,7 @@ async fn apply_sales_table(client: &Client) -> Result<(), ClickHouseError> {
         .query(
             r#"
             CREATE TABLE IF NOT EXISTS sales (
+                pg_id                Int32,
                 sold_date            DateTime,
                 inserted_at          DateTime DEFAULT now(),
                 item_id              Int32,
@@ -46,7 +47,7 @@ async fn apply_sales_table(client: &Client) -> Result<(), ClickHouseError> {
             )
             ENGINE = ReplacingMergeTree(inserted_at)
             PARTITION BY toYYYYMM(sold_date)
-            ORDER BY (item_id, hq, world_id, sold_date, buying_character_id)
+            ORDER BY (item_id, hq, world_id, sold_date, pg_id)
             SETTINGS index_granularity = 8192
             "#,
         )
