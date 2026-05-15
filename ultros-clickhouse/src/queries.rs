@@ -1,14 +1,90 @@
-//! Read-side query helpers used by the analyzer.
+//! Read-side query helpers used by the analyzer and dashboard endpoints.
 //!
 //! The analyzer is the primary consumer of ClickHouse. It calls the helpers
 //! here from its deep-scan path to refine Pass-1 (in-RAM) results with
 //! statistically sound numbers from `item_stats_window` + `item_quality_score`.
+//!
+//! The Market Pulse home-page tile uses [`market_pulse`].
 
 use clickhouse::Row;
 use serde::Deserialize;
 use ultros_api_types::trends::ConfidenceBand;
 
 use crate::{ClickHouseClient, ClickHouseError};
+
+/// Rolled-up KPIs for one world: "today" (last 24h) + "yesterday"
+/// (24-48h ago). The frontend renders delta-vs-yesterday on each tile.
+#[derive(Debug, Clone, Row, Deserialize, serde::Serialize)]
+pub struct MarketPulse {
+    pub world_id: i32,
+    pub sales_today: u64,
+    pub sales_yesterday: u64,
+    pub gil_volume_today: u64,
+    pub gil_volume_yesterday: u64,
+    pub unit_volume_today: u64,
+    pub unit_volume_yesterday: u64,
+}
+
+impl MarketPulse {
+    /// % change today vs yesterday for sale_count. Returns `None` when
+    /// yesterday was zero (avoids division-by-zero; UI treats as "—").
+    pub fn sales_delta_pct(&self) -> Option<f32> {
+        pct_delta(self.sales_today, self.sales_yesterday)
+    }
+    pub fn gil_volume_delta_pct(&self) -> Option<f32> {
+        pct_delta(self.gil_volume_today, self.gil_volume_yesterday)
+    }
+    pub fn unit_volume_delta_pct(&self) -> Option<f32> {
+        pct_delta(self.unit_volume_today, self.unit_volume_yesterday)
+    }
+}
+
+fn pct_delta(today: u64, yesterday: u64) -> Option<f32> {
+    if yesterday == 0 {
+        None
+    } else {
+        Some(((today as f64 - yesterday as f64) / yesterday as f64 * 100.0) as f32)
+    }
+}
+
+/// Fetch today's + yesterday's rolled-up KPIs for a world.
+///
+/// One query for both windows via conditional `sumIf` — the alternative
+/// (two queries) would double the round-trip on every home-page load.
+pub async fn market_pulse(
+    ch: &ClickHouseClient,
+    world_id: i32,
+) -> Result<MarketPulse, ClickHouseError> {
+    let row: MarketPulse = ch
+        .client()
+        .query(
+            "SELECT
+                toInt32(?) AS world_id,
+                sumIf(sale_count,  bucket >  now() - INTERVAL 24 HOUR)
+                    AS sales_today,
+                sumIf(sale_count,  bucket <= now() - INTERVAL 24 HOUR
+                                AND bucket >  now() - INTERVAL 48 HOUR)
+                    AS sales_yesterday,
+                sumIf(gil_volume,  bucket >  now() - INTERVAL 24 HOUR)
+                    AS gil_volume_today,
+                sumIf(gil_volume,  bucket <= now() - INTERVAL 24 HOUR
+                                AND bucket >  now() - INTERVAL 48 HOUR)
+                    AS gil_volume_yesterday,
+                sumIf(unit_volume, bucket >  now() - INTERVAL 24 HOUR)
+                    AS unit_volume_today,
+                sumIf(unit_volume, bucket <= now() - INTERVAL 24 HOUR
+                                AND bucket >  now() - INTERVAL 48 HOUR)
+                    AS unit_volume_yesterday
+            FROM world_kpi_5min FINAL
+            WHERE world_id = ?
+              AND bucket > now() - INTERVAL 48 HOUR",
+        )
+        .bind(world_id)
+        .bind(world_id)
+        .fetch_one()
+        .await?;
+    Ok(row)
+}
 
 /// One row of deep-scan data for a single (item_id, hq, world_id) tuple at
 /// a given window. Maps the analyzer's enrichment fields directly to the

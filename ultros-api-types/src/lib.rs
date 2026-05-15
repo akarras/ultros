@@ -5,6 +5,7 @@ mod ffxiv_character;
 pub mod icon_size;
 pub mod list;
 mod listings;
+pub mod market_pulse;
 pub mod recent_sales;
 pub mod result;
 pub mod retainer;

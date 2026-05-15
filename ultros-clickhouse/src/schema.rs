@@ -15,6 +15,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_item_stats_window(client).await?;
     apply_item_quality_score(client).await?;
     apply_item_vendor_price(client).await?;
+    apply_world_kpi_5min(client).await?;
     Ok(())
 }
 
@@ -102,6 +103,43 @@ async fn apply_item_stats_window(client: &Client) -> Result<(), ClickHouseError>
             )
             ENGINE = ReplacingMergeTree(computed_at)
             ORDER BY (item_id, hq, world_id, window_days)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Per-world rollup at 5-minute granularity, populated by
+/// [`crate::rollups::refresh_world_kpi_5min`]. Powers the Market Pulse KPI
+/// strip on the home page — "Sales (24h): 9,842   +8.7% vs yesterday".
+///
+/// Bucket size chosen so the home page sees fresh data within minutes of a
+/// real-time sale stream landing, without thrashing the table with one row
+/// per individual sale event.
+///
+/// Engine: `ReplacingMergeTree(computed_at)` — when the same bucket is
+/// recomputed (typical for the most-recent bucket, since the 5-min refresh
+/// runs every 5 minutes and the latest bucket is always still filling),
+/// the merge keeps the newest version.
+async fn apply_world_kpi_5min(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS world_kpi_5min (
+                world_id      Int32,
+                bucket        DateTime,
+                computed_at   DateTime DEFAULT now(),
+                sale_count    UInt32,
+                unit_volume   UInt64,
+                gil_volume    UInt64,
+                unique_items  UInt32,
+                unique_buyers UInt32
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            PARTITION BY toYYYYMM(bucket)
+            ORDER BY (world_id, bucket)
             SETTINGS index_granularity = 8192
             "#,
         )
