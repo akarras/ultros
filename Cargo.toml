@@ -148,6 +148,11 @@ opt-level = 1
 [[workspace.metadata.leptos]]
 name = "ultros"
 bin-package = "ultros"
+# Disambiguate when the bin-package contains multiple [[bin]] targets — the
+# ultros crate now ships `clickhouse_backfill`, `clickhouse_parity_check`,
+# and `clickhouse_inspect` as one-shot maintenance binaries alongside the
+# main server. Leptos only builds the server.
+bin-target = "ultros"
 lib-package = "ultros-client"
 output-name = "ultros"
 # The site root folder is where cargo-leptos generate all output.
