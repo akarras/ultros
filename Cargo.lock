@@ -10148,6 +10148,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clickhouse",
+ "dotenvy",
  "futures",
  "serde",
  "thiserror 2.0.18",

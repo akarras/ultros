@@ -50,8 +50,8 @@ impl ClickHouseClient {
     /// - `CLICKHOUSE_USER` (default `ultros`)
     /// - `CLICKHOUSE_PASSWORD` (default empty)
     pub fn from_env() -> Self {
-        let url = std::env::var("CLICKHOUSE_URL")
-            .unwrap_or_else(|_| "http://localhost:8123".to_string());
+        let url =
+            std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_string());
         let database =
             std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "ultros".to_string());
         let user = std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "ultros".to_string());

@@ -15,3 +15,6 @@ chrono = { workspace = true }
 futures = { workspace = true }
 ultros-db = { path = "../ultros-db" }
 ultros-api-types = { path = "../ultros-api-types" }
+
+[dev-dependencies]
+dotenvy = { workspace = true }
