@@ -1,0 +1,130 @@
+name: GlitchTip upload test
+
+# Manual-only test harness for the debug-symbol upload pipeline.
+# Runs against whatever branch you select in the Actions UI. Does NOT push
+# the runtime image, does NOT sign anything, does NOT trigger automatically.
+# Useful for verifying glitchtip-cli works against your instance before
+# merging the symbol-upload changes to main.
+#
+# Recommended workflow:
+#   1. Push your feature branch.
+#   2. Actions tab → "GlitchTip upload test" → Run workflow → pick the branch.
+#   3. Start with "dry run" enabled to confirm the build + CLI install work.
+#   4. Re-run with dry run disabled to actually upload.
+#   5. Verify the debug file appears in GlitchTip's Debug Information Files UI.
+#   6. Optional: delete this workflow file once you trust the production
+#      docker-publish.yml pipeline. Or keep it around as an ad-hoc re-test.
+on:
+    workflow_dispatch:
+        inputs:
+            dry-run:
+                description: "Build + verify CLI install but skip the actual upload"
+                required: false
+                type: boolean
+                default: true
+            glitchtip-project:
+                description: "Override SENTRY_PROJECT for this run (e.g. a 'symbols-test' project). Leave blank to use the GLITCHTIP_PROJECT secret."
+                required: false
+                type: string
+                default: ""
+
+jobs:
+    test-upload:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  submodules: recursive
+
+            - name: Verify GlitchTip secrets are present
+              env:
+                  AUTH_TOKEN: ${{ secrets.GLITCHTIP_AUTH_TOKEN }}
+                  URL: ${{ secrets.GLITCHTIP_URL }}
+                  ORG: ${{ secrets.GLITCHTIP_ORG }}
+                  PROJECT: ${{ secrets.GLITCHTIP_PROJECT }}
+              run: |
+                  missing=()
+                  [ -z "$AUTH_TOKEN" ] && missing+=("GLITCHTIP_AUTH_TOKEN")
+                  [ -z "$URL" ]        && missing+=("GLITCHTIP_URL")
+                  [ -z "$ORG" ]        && missing+=("GLITCHTIP_ORG")
+                  [ -z "$PROJECT" ]    && missing+=("GLITCHTIP_PROJECT")
+                  if [ ${#missing[@]} -ne 0 ]; then
+                      echo "::error::Missing repo secrets: ${missing[*]}"
+                      exit 1
+                  fi
+                  echo "All four GLITCHTIP_* secrets are set."
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Extract debug-files artifact
+              # Reads from the same GHA layer cache the main docker-publish
+              # workflow writes to, so this is fast on second/third runs.
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/amd64
+                  target: debug-files
+                  outputs: type=local,dest=./debug
+                  cache-from: type=gha
+
+            - name: Inspect debug artifact
+              run: |
+                  echo "==== file listing ===="
+                  ls -lh ./debug/
+                  echo
+                  echo "==== file type ===="
+                  file ./debug/ultros.unstripped
+                  echo
+                  echo "==== build ID (must match what's in the runtime binary) ===="
+                  readelf -n ./debug/ultros.unstripped | grep -A1 "Build ID"
+                  echo
+                  echo "==== compressed debug sections ===="
+                  # SHF_COMPRESSED flag shows as 'C' in the section flags column
+                  readelf -SW ./debug/ultros.unstripped | grep '\.debug' | head -20
+
+            - name: Install glitchtip-cli (pinned v1.0.0)
+              run: |
+                  CLI="$RUNNER_TEMP/glitchtip-cli"
+                  curl -fsSL --retry 3 -o "$CLI" \
+                      "https://gitlab.com/glitchtip/glitchtip-cli/-/jobs/artifacts/v1.0.0/raw/artifacts/glitchtip-cli-linux-x86_64?job=build-linux-x86_64"
+                  chmod +x "$CLI"
+                  "$CLI" --version
+                  echo "CLI=$CLI" >> "$GITHUB_ENV"
+                  # Show the upload subcommand help so we can sanity-check the
+                  # flag/arg shape against the doc.
+                  echo "==== glitchtip-cli debug-files upload --help ===="
+                  "$CLI" debug-files upload --help || true
+
+            - name: Dry-run summary
+              if: inputs.dry-run
+              env:
+                  SENTRY_URL: ${{ secrets.GLITCHTIP_URL }}
+                  SENTRY_ORG: ${{ secrets.GLITCHTIP_ORG }}
+                  SECRET_PROJECT: ${{ secrets.GLITCHTIP_PROJECT }}
+                  INPUT_PROJECT: ${{ inputs.glitchtip-project }}
+              run: |
+                  PROJECT="${INPUT_PROJECT:-$SECRET_PROJECT}"
+                  echo "DRY RUN — would upload ./debug/ultros.unstripped to:"
+                  echo "  URL:     $SENTRY_URL"
+                  echo "  Org:     $SENTRY_ORG"
+                  echo "  Project: $PROJECT"
+                  echo
+                  echo "Re-run with 'dry-run' unchecked to perform the actual upload."
+
+            - name: Upload debug symbols to GlitchTip
+              if: ${{ !inputs.dry-run }}
+              env:
+                  SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_AUTH_TOKEN }}
+                  SENTRY_URL: ${{ secrets.GLITCHTIP_URL }}
+                  SENTRY_ORG: ${{ secrets.GLITCHTIP_ORG }}
+                  # Use the workflow input if provided, otherwise fall back to
+                  # the secret. Lets you target a throwaway 'symbols-test'
+                  # project for the first run without touching prod.
+                  SENTRY_PROJECT: ${{ inputs.glitchtip-project != '' && inputs.glitchtip-project || secrets.GLITCHTIP_PROJECT }}
+              run: |
+                  echo "Uploading to project: $SENTRY_PROJECT"
+                  "$CLI" debug-files upload ./debug
