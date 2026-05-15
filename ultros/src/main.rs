@@ -286,6 +286,7 @@ async fn main() -> Result<()> {
         receivers.clone(),
         world_cache.clone(),
         ch_writer,
+        ch_client.clone(),
         token.clone(),
     )
     .await;

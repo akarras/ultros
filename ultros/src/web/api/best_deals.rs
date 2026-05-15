@@ -20,9 +20,17 @@ pub(crate) struct BestDealsQuery {
 pub(crate) struct ResaleStatsDto {
     pub(crate) profit: i32,
     pub(crate) item_id: i32,
+    pub(crate) hq: bool,
     pub(crate) sold_within: String,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    // Phase 2 deep-scan enrichment. All default to "unknown/zero" when the
+    // ClickHouse rollup is missing — older API consumers ignore these
+    // fields gracefully (Serde tolerates unknown fields by default).
+    pub(crate) confidence_band: ultros_api_types::trends::ConfidenceBand,
+    pub(crate) vwap_30d: i32,
+    pub(crate) sample_size_30d: u32,
+    pub(crate) launder_suspicion: f32,
 }
 
 impl From<ResaleStats> for ResaleStatsDto {
@@ -30,9 +38,14 @@ impl From<ResaleStats> for ResaleStatsDto {
         Self {
             profit: stats.profit,
             item_id: stats.item_id,
+            hq: stats.hq,
             sold_within: stats.sold_within.to_string(),
             return_on_investment: stats.return_on_investment,
             world_id: stats.world_id,
+            confidence_band: stats.confidence_band,
+            vwap_30d: stats.vwap_30d,
+            sample_size_30d: stats.sample_size_30d,
+            launder_suspicion: stats.launder_suspicion,
         }
     }
 }
