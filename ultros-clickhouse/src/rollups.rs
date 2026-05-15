@@ -103,15 +103,34 @@ fn build_refresh_sql(window_days: u16) -> String {
                 GROUP BY item_id, hq, world_id
             ),
             flagged AS (
-                SELECT s.item_id, s.hq, s.world_id,
+                -- After the USING joins below, `item_id`, `hq`, `world_id`
+                -- live in a merged scope (no `s.` prefix). We project them
+                -- explicitly so downstream CTEs (mads, clean_aggs) can
+                -- reference them by unqualified name.
+                SELECT item_id, hq, world_id,
                        s.price_per_item, s.quantity, s.total_gil,
                        s.buying_character_id, m.p50_raw,
-                       -- Layer 2 (heuristic): single-unit off-market prices
+                       -- Layer 2 (heuristic): single-unit launder catch.
+                       -- Three independent tripwires, OR'd together:
+                       --   (a) >10x the item's own p50 (relative)
+                       --   (b) <0.1x the item's own p50 (relative, inverse)
+                       --   (c) >100x the in-game NPC vendor price (absolute).
+                       -- (c) is the strongest signal — anchored to game
+                       -- ground truth, so it works even when (a)/(b) get
+                       -- defeated by a sale history that's >50% laundered.
+                       -- 100x leaves room for legitimate convenience
+                       -- premiums on housing items where the NPC vendor
+                       -- is obscure. v.vendor_price = 0 (missing or LEFT-
+                       -- JOIN miss) makes (c) a no-op for that row.
                        (s.quantity = 1 AND s.price_per_item > 10 * m.p50_raw)
                        OR (s.quantity = 1 AND s.price_per_item * 10 < m.p50_raw)
+                       OR (s.quantity = 1
+                           AND v.vendor_price > 0
+                           AND s.price_per_item > 100 * v.vendor_price)
                        AS l2_excluded
                 FROM window_sales s
                 INNER JOIN medians m USING (item_id, hq, world_id)
+                LEFT JOIN item_vendor_price v FINAL USING (item_id)
             ),
             mads AS (
                 SELECT item_id, hq, world_id,
@@ -278,9 +297,52 @@ pub async fn refresh_quality_scores(ch: &ClickHouseClient) -> Result<u64, ClickH
     Ok(count.n)
 }
 
+/// Refresh `item_vendor_price` from xiv-gen.
+///
+/// xiv-gen ships with the game's Item table baked in; `Item.PriceMid` is
+/// the in-game NPC vendor sell price. We pull every item with
+/// `price_mid > 0` and stream them into the lookup table.
+///
+/// Idempotent and cheap (~thousands of rows, one bulk insert). Runs once
+/// on web-server startup before the first rollup refresh; doesn't need to
+/// run on a schedule because the data only changes when the game patches.
+pub async fn refresh_vendor_prices(ch: &ClickHouseClient) -> Result<u64, ClickHouseError> {
+    let data = xiv_gen_db::data_for(xiv_gen::Language::En);
+    #[derive(serde::Serialize, clickhouse::Row)]
+    struct VendorRow {
+        item_id: i32,
+        vendor_price: u32,
+    }
+
+    let mut insert = ch.client().insert::<VendorRow>("item_vendor_price").await?;
+    let mut n: u64 = 0;
+    for (item_id, item) in &data.items {
+        if item.price_mid == 0 {
+            continue;
+        }
+        insert
+            .write(&VendorRow {
+                item_id: item_id.0,
+                vendor_price: item.price_mid,
+            })
+            .await?;
+        n += 1;
+    }
+    insert.end().await?;
+    tracing::info!(rows = n, "item_vendor_price refreshed from xiv-gen");
+    Ok(n)
+}
+
 /// Refresh all standard windows once, then quality scores. Used by tests and
 /// by an initial-seed run on first deploy.
 pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
+    // Vendor prices first — the window refresh's noise filter references
+    // them. Skipping or failing this leaves the table empty, in which case
+    // the LEFT JOIN inside build_refresh_sql makes the vendor-anchored
+    // rule a no-op for every item.
+    if let Err(e) = refresh_vendor_prices(ch).await {
+        tracing::warn!(error = ?e, "vendor-price refresh failed; rollups will skip the vendor-anchored rule");
+    }
     for w in [1u16, 7, 30, 90] {
         refresh_window(ch, w).await?;
     }

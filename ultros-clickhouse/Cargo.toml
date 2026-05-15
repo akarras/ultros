@@ -15,6 +15,8 @@ chrono = { workspace = true }
 futures = { workspace = true }
 ultros-db = { path = "../ultros-db" }
 ultros-api-types = { path = "../ultros-api-types" }
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }
+xiv-gen = { workspace = true }
 
 [dev-dependencies]
 dotenvy = { workspace = true }

@@ -10160,6 +10160,8 @@ dependencies = [
  "tracing",
  "ultros-api-types",
  "ultros-db",
+ "xiv-gen",
+ "xiv-gen-db",
 ]
 
 [[package]]

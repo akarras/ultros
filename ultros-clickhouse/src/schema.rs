@@ -14,6 +14,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_sales_table(client).await?;
     apply_item_stats_window(client).await?;
     apply_item_quality_score(client).await?;
+    apply_item_vendor_price(client).await?;
     Ok(())
 }
 
@@ -102,6 +103,35 @@ async fn apply_item_stats_window(client: &Client) -> Result<(), ClickHouseError>
             ENGINE = ReplacingMergeTree(computed_at)
             ORDER BY (item_id, hq, world_id, window_days)
             SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Static lookup of in-game NPC vendor sell prices, keyed by item_id.
+///
+/// Populated once at startup from `xiv-gen` via
+/// [`crate::rollups::refresh_vendor_prices`]. Used by the rollup filter as
+/// a ground-truth floor — a single-unit sale priced >100× the vendor price
+/// is launder with near-certainty, because the buyer could just walk to an
+/// NPC instead.
+///
+/// Only items with `Item.PriceMid > 0` get a row here. Items that aren't
+/// sold by any NPC (gear, materia, raid drops) are absent, and the rollup
+/// filter degrades to the existing relative-price checks for those.
+async fn apply_item_vendor_price(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS item_vendor_price (
+                item_id      Int32,
+                vendor_price UInt32,
+                updated_at   DateTime DEFAULT now()
+            )
+            ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY item_id
             "#,
         )
         .execute()
