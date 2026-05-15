@@ -10,3 +10,7 @@
 ## 2025-03-02 - Optimize Nested Iterator Chains to Reduce Allocations
 **Learning:** In `get_retainer_undercut_items`, the previous implementation chained `.filter().collect::<Vec<_>>()` and then iterated again with `.iter().map().min()` to calculate `number_behind` and `price_to_beat`. This forced the allocation of a throwaway Vector for every single listing being checked just to compute its length and find a minimum value.
 **Action:** Always compute aggregates directly within a single zero-allocation `for` loop pass over the original iterator/slice instead of relying on intermediate `Vec` allocations from `.collect()` during multi-step iterator chains.
+
+## 2024-05-24 - [Discord List Resolution]
+**Learning:** Found an N+1 query issue masquerading as `get_lists_for_user`. The Discord bot commands fetched ALL lists across all 3 relations just to do a `.into_iter().find(...)` in memory! This fetched unneeded list data entirely across the wire and instantiated unused memory.
+**Action:** Always check the underlying DB functions behind fetching collections before using `.find(...)` on the collection in application code. Replace full collection retrievals with targeted queries if only one specific record is needed.

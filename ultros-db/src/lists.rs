@@ -259,6 +259,48 @@ impl UltrosDb {
         Ok(all_lists)
     }
 
+    pub async fn get_list_by_name_for_user(
+        &self,
+        discord_user: i64,
+        list_name: &str,
+    ) -> Result<Option<list::Model>> {
+        let owned_list = list::Entity::find()
+            .filter(list::Column::Owner.eq(discord_user))
+            .filter(list::Column::Name.eq(list_name))
+            .one(&self.db)
+            .await?;
+        if owned_list.is_some() {
+            return Ok(owned_list);
+        }
+
+        let shared_list = list::Entity::find()
+            .inner_join(list_shared_user::Entity)
+            .filter(list_shared_user::Column::UserId.eq(discord_user))
+            .filter(list::Column::Name.eq(list_name))
+            .one(&self.db)
+            .await?;
+        if shared_list.is_some() {
+            return Ok(shared_list);
+        }
+
+        let group_list = list::Entity::find()
+            .inner_join(list_shared_group::Entity)
+            .join(
+                JoinType::InnerJoin,
+                list_shared_group::Relation::UserGroup.def(),
+            )
+            .join(
+                JoinType::InnerJoin,
+                user_group::Relation::UserGroupMember.def(),
+            )
+            .filter(user_group_member::Column::UserId.eq(discord_user))
+            .filter(list::Column::Name.eq(list_name))
+            .one(&self.db)
+            .await?;
+
+        Ok(group_list)
+    }
+
     pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<list::Model> {
         let permission = self.get_permission(list_id, discord_user).await?;
         if permission < ListPermission::Read {
