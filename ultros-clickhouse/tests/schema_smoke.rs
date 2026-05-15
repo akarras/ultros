@@ -52,9 +52,11 @@ async fn migrate_then_insert_then_read_round_trip() {
         buyer_name: "smoke-test".to_string(),
     };
 
-    // Clean up any prior run.
+    // Clean up any prior run. `mutations_sync = 1` blocks until the
+    // mutation finishes — without it, ALTER ... DELETE returns immediately
+    // and our subsequent count assertions race against leftover rows.
     ch.client()
-        .query("ALTER TABLE sales DELETE WHERE item_id = ?")
+        .query("ALTER TABLE sales DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
         .bind(item_id)
         .execute()
         .await

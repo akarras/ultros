@@ -47,7 +47,7 @@ async fn batch_size_triggers_flush() {
     // Sentinel item — well outside real ranges. Clean up first.
     let item_id = -515151;
     ch.client()
-        .query("ALTER TABLE sales DELETE WHERE item_id = ?")
+        .query("ALTER TABLE sales DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
         .bind(item_id)
         .execute()
         .await
@@ -98,7 +98,7 @@ async fn interval_triggers_partial_flush() {
 
     let item_id = -515152;
     ch.client()
-        .query("ALTER TABLE sales DELETE WHERE item_id = ?")
+        .query("ALTER TABLE sales DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
         .bind(item_id)
         .execute()
         .await
@@ -146,7 +146,7 @@ async fn cancellation_drains_remaining_rows() {
 
     let item_id = -515153;
     ch.client()
-        .query("ALTER TABLE sales DELETE WHERE item_id = ?")
+        .query("ALTER TABLE sales DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
         .bind(item_id)
         .execute()
         .await

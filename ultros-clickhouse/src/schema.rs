@@ -12,6 +12,8 @@ use crate::ClickHouseError;
 
 pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_sales_table(client).await?;
+    apply_item_stats_window(client).await?;
+    apply_item_quality_score(client).await?;
     Ok(())
 }
 
@@ -48,6 +50,90 @@ async fn apply_sales_table(client: &Client) -> Result<(), ClickHouseError> {
             ENGINE = ReplacingMergeTree(inserted_at)
             PARTITION BY toYYYYMM(sold_date)
             ORDER BY (item_id, hq, world_id, sold_date, pg_id)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Multi-window aggregate per `(item_id, hq, world_id)`. The analyzer's
+/// deep-scan reads from this table; rows are produced by
+/// [`crate::rollups::refresh_window`] and the cleaned-sales filter applied
+/// inline at refresh time.
+///
+/// `window_days` is the window size: 1, 7, 30, 90.
+async fn apply_item_stats_window(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS item_stats_window (
+                item_id              Int32,
+                hq                   UInt8,
+                world_id             Int32,
+                window_days          UInt16,
+                computed_at          DateTime,
+
+                -- Total rows in the window, pre-filter
+                sample_size          UInt32,
+                -- Rows that survived both noise-filter layers
+                cleaned_sample_size  UInt32,
+                -- sample_size - cleaned_sample_size
+                excluded_count       UInt32,
+
+                -- Volume-weighted average price, computed on cleaned data
+                vwap                 UInt32,
+                p10                  UInt32,
+                p25                  UInt32,
+                p50                  UInt32,
+                p75                  UInt32,
+                p90                  UInt32,
+                -- Median absolute deviation, used by the analyzer to gauge
+                -- per-item price volatility
+                median_abs_deviation UInt32,
+
+                -- All cleaned, computed on the cleaned set
+                unit_volume          UInt64,
+                gil_volume           UInt64,
+                sale_count           UInt32,
+                unique_buyers        UInt32
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            ORDER BY (item_id, hq, world_id, window_days)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Trustworthiness score per item, derived from `item_stats_window`.
+/// The analyzer uses this single column to decide whether to surface,
+/// downrank, or suppress a recommendation.
+///
+/// `confidence_band`:
+///   1 high      → enough samples + buyer diversity, low launder suspicion
+///   2 medium    → usable but flagged in UI
+///   3 low       → only return as a rough hint
+///   4 unusable  → suppress from recommendations entirely
+async fn apply_item_quality_score(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS item_quality_score (
+                item_id               Int32,
+                hq                    UInt8,
+                world_id              Int32,
+                computed_at           DateTime,
+                quality_score         UInt8,
+                confidence_band       Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4),
+                sample_size_30d       UInt32,
+                launder_suspicion_pct Float32
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            ORDER BY (item_id, hq, world_id)
             SETTINGS index_granularity = 8192
             "#,
         )
