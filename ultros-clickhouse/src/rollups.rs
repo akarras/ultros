@@ -240,11 +240,21 @@ pub async fn refresh_quality_scores(ch: &ClickHouseClient) -> Result<u64, ClickH
                                 100.0 * (sample_size - excluded_count) / sample_size,
                                 0)                                     -- cleanliness
                 )) AS quality_score,
+                -- Confidence band derivation. `quality_score` rarely
+                -- bottoms below 15 in practice (even thin items get ~30
+                -- from buyer-diversity + cleanliness), so we also gate
+                -- on launder rate: anything where the filter dropped
+                -- 50%+ of samples is unusable regardless of score.
                 multiIf(
-                    quality_score >= 75, CAST('high'   AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
-                    quality_score >= 40, CAST('medium' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
-                    quality_score >= 15, CAST('low'    AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
-                                         CAST('unusable' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4))
+                    sample_size > 0 AND excluded_count >= sample_size / 2,
+                        CAST('unusable' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
+                    quality_score >= 75,
+                        CAST('high' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
+                    quality_score >= 40,
+                        CAST('medium' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
+                    quality_score >= 15,
+                        CAST('low' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4)),
+                        CAST('unusable' AS Enum8('high'=1,'medium'=2,'low'=3,'unusable'=4))
                 ) AS confidence_band,
                 sample_size AS sample_size_30d,
                 if(sample_size > 0,
