@@ -198,6 +198,15 @@ async fn main() -> Result<()> {
     // Load environment variables from `.env` file, if present
     dotenv().ok();
 
+    // Install a process-level rustls CryptoProvider. Multiple transitive deps
+    // (serenity/poise, reqwest 0.12/0.13, sqlx, tokio-rustls, sentry) unify on
+    // rustls 0.23 with BOTH `aws-lc-rs` and `ring` features active, so
+    // `ClientConfig::builder()` panics on first TLS connect ("Could not
+    // automatically determine the process-level CryptoProvider"). Install
+    // once at startup before any TLS handshake. Ignore the result because a
+    // double-install only fails if some upstream beat us to it, which is fine.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // Glitchtip / Sentry error reporting. No-op when GLITCHTIP_DSN is unset, so
     // local dev runs without it. The guard must be held for the duration of
     // main() so the background transport can flush on shutdown.
