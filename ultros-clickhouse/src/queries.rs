@@ -270,12 +270,16 @@ pub async fn category_heat(
     ch: &ClickHouseClient,
     world_id: i32,
 ) -> Result<Vec<CategoryHeatRow>, ClickHouseError> {
+    // Inner CTE aliases `gil_volume_24h` per item; the outer aggregate
+    // can't reuse that name without ClickHouse parsing it as nested
+    // aggregation. Inner column = `item_gil_volume`, outer aggregate =
+    // `gil_volume_24h`.
     let sql = r#"
         WITH per_item AS (
             SELECT s.item_id, m.category_id,
                    argMin(s.vwap, s.bucket) AS first_vwap,
                    argMax(s.vwap, s.bucket) AS last_vwap,
-                   sum(toUInt64(s.unit_volume) * toUInt64(s.vwap)) AS gil_volume_24h,
+                   sum(toUInt64(s.unit_volume) * toUInt64(s.vwap)) AS item_gil_volume,
                    sum(s.sale_count) AS sales_24h
             FROM sales_hourly s FINAL
             INNER JOIN item_category_map m FINAL USING (item_id)
@@ -292,12 +296,12 @@ pub async fn category_heat(
             -- volume have negligible weight; items with serious traffic
             -- dominate the category's signal.
             toFloat32(
-                sum(toFloat64(gil_volume_24h)
+                sum(toFloat64(item_gil_volume)
                     * (toFloat64(last_vwap) - toFloat64(first_vwap))
                     / toFloat64(first_vwap)) * 100.0
-                / greatest(sum(toFloat64(gil_volume_24h)), 1)
+                / greatest(sum(toFloat64(item_gil_volume)), 1)
             ) AS avg_pct_change_24h,
-            sum(gil_volume_24h) AS gil_volume_24h
+            sum(item_gil_volume) AS gil_volume_24h
         FROM per_item
         GROUP BY category_id
         ORDER BY category_id
