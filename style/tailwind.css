@@ -36,18 +36,25 @@
         --decor-spot: rgba(255, 255, 255, 0.06);
 
         /* === Dashboard accent tokens ===
-         * Aliases for the command-center home page. These sit alongside the
-         * brand-* scale so palette switching still works — the dashboard
-         * styling reads --accent / --accent-soft / --accent-glow / --line /
-         * --surface and gets the cooler violet wash by default. Picking
-         * different palettes (immortal-flames, etc.) only shifts the brand
-         * scale; the dashboard chrome stays consistent for now.
+         * Aliases for the command-center home page. These derive from the
+         * runtime brand scale so palette switching (violet, teal, ember,
+         * immortal-flames, ultros, …) re-tints the dashboard chrome — the
+         * cooler violet that the redesign mockup shipped with is just the
+         * default `violet` palette's brand-400 / brand-500 lit on dark.
+         *
+         * Glow / line / surface use color-mix against the brand scale so
+         * they don't have to be redefined per palette — alpha bands stay
+         * constant, only the hue follows the user's theme.
          */
-        --accent: #b66cff;
-        --accent-soft: #8b5cf6;
-        --accent-glow: rgba(182, 108, 255, 0.35);
+        --accent: var(--color-brand-400);
+        --accent-soft: var(--color-brand-500);
+        --accent-glow: color-mix(
+            in srgb,
+            var(--color-brand-400) 35%,
+            transparent
+        );
+        --line: color-mix(in srgb, var(--color-brand-300) 13%, transparent);
         --surface: rgba(255, 255, 255, 0.025);
-        --line: rgba(190, 160, 255, 0.13);
     }
 
     /* Fonts (kept as-is for wide support) */
@@ -148,6 +155,20 @@
     --brand-bg: var(--color-brand-200);
     --brand-fg: var(--color-brand-900);
     --brand-ring: var(--color-brand-600);
+
+    /* Dashboard accent tokens shift one rung darker in light mode so the
+     * accent reads as a deliberate ink color over the near-white surface
+     * instead of a pastel. Glow + line stay color-mix so they pick up the
+     * same palette hue automatically. */
+    --accent: var(--color-brand-600);
+    --accent-soft: var(--color-brand-500);
+    --accent-glow: color-mix(
+        in srgb,
+        var(--color-brand-500) 28%,
+        transparent
+    );
+    --line: color-mix(in srgb, var(--color-brand-700) 14%, transparent);
+    --surface: rgba(0, 0, 0, 0.025);
 
     /* Decorative spot for gradients in light */
     --decor-spot: rgba(0, 0, 0, 0.06);
