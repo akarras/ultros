@@ -120,22 +120,22 @@ pub fn ListItemRow(
                             <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let item = item.get();
-                                    let q = item.quantity.unwrap_or(1);
-                                    let a = item.acquired.unwrap_or(0);
-                                    if q > 1 {
-                                        view! {
-                                            <div class="flex flex-col gap-1 w-full">
-                                                <span>{format!("{a} / {q}")}</span>
-                                                <progress
-                                                    class="progress progress-primary h-2 w-full rounded"
-                                                    value=a
-                                                    max=q
-                                                ></progress>
-                                            </div>
-                                        }
-                                            .into_any()
-                                    } else {
-                                        view! { <span>{q}</span> }.into_any()
+                                    let q = item.quantity.unwrap_or(1).max(1);
+                                    let a = item.acquired.unwrap_or(0).max(0).min(q);
+                                    let complete = a >= q;
+                                    view! {
+                                        <div class="flex flex-col gap-1 w-full">
+                                            <span class=move || if complete {
+                                                "text-sm font-semibold text-green-300"
+                                            } else {
+                                                "text-sm"
+                                            }>{format!("{a} / {q}")}</span>
+                                            <progress
+                                                class="progress progress-primary h-2 w-full rounded"
+                                                value=a
+                                                max=q
+                                            ></progress>
+                                        </div>
                                     }
                                 }}
 
