@@ -82,19 +82,25 @@ const SURFACES = (world) => [
   },
   {
     // Item 4422 = Copper Ring (vendor price 170 gil). Real Ultros data shows
-    // listings at 11M+ — the canonical launder pattern Aaron flagged.
+    // listings at 11M+ — the canonical launder pattern Aaron flagged. The
+    // ConfidenceBadge should report "Suspicious" on the laundered variant.
     path: `/item/${world}/4422`,
     label: "item-4422-copper-ring-launder-prone",
     requires_home_world: false,
     bodyIncludesAny: ["Copper Ring"],
+    // Both the page title (item name) and one of the band labels must
+    // appear — proves the ConfidenceBadge LocalResource resolved.
+    bodyAlsoIncludesAny: ["High", "Medium", "Low", "Suspicious"],
   },
   {
     // Item 12 = Lightning Crystal (high-volume consumable, no launder).
     // Healthy market control: tight clustering, clean MAD, no exclusions.
+    // ConfidenceBadge should report "Medium" or "High".
     path: `/item/${world}/12`,
     label: "item-12-lightning-crystal-healthy",
     requires_home_world: false,
     bodyIncludesAny: ["Lightning Crystal", "Crystal"],
+    bodyAlsoIncludesAny: ["High", "Medium", "Low", "Suspicious"],
   },
 ];
 
@@ -166,17 +172,61 @@ async function captureOneSurface(
   }
 
   await page.waitForSelector("body", { timeout: 10000 }).catch(() => {});
-  // Hydration churn: dynamic islands (LiveSaleTicker, MarketPulse,
-  // RecentlyViewed) can still be settling after networkidle0. Brief pause
-  // gives the screenshot a stable frame.
-  await new Promise((r) => setTimeout(r, 2000));
+  // Hydration churn: dynamic islands (LiveSaleTicker, MarketPulse, the
+  // item-view ConfidenceBadge) are LocalResource-driven and only fire
+  // client-side after WASM loads. networkidle0 alone misses them, so we
+  // poll for the assertion text up to 8s and screenshot only once it
+  // appears (or we time out).
+  await new Promise((r) => setTimeout(r, 1000));
 
   if (surface.bodyIncludesAny && surface.bodyIncludesAny.length) {
+    const wanted = surface.bodyIncludesAny;
+    try {
+      await page.waitForFunction(
+        (needles) => {
+          const body = document.body.innerText || "";
+          return needles.some((s) => body.includes(s));
+        },
+        { timeout: 8000 },
+        wanted,
+      );
+    } catch (_e) {
+      // Fall through — we'll record the failure below, after one more
+      // body read for the error message.
+    }
     const body = await page.evaluate(() => document.body.innerText || "");
-    const hit = surface.bodyIncludesAny.some((s) => body.includes(s));
+    const hit = wanted.some((s) => body.includes(s));
     if (!hit) {
       failures.push(
-        `${surface.label} (${deviceLabel}): none of [${surface.bodyIncludesAny.join(", ")}] in body — component likely not rendered`,
+        `${surface.label} (${deviceLabel}): none of [${wanted.join(", ")}] in body — component likely not rendered`,
+      );
+    }
+  }
+
+  // Extra settle time after content appeared, so any in-flight icons or
+  // tooltip fades render before the screenshot.
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Second wave of assertions — for surfaces that depend on a separate
+  // LocalResource (e.g. the item view's ConfidenceBadge fetches stats
+  // *after* the listing page hydrates). Poll once more.
+  if (surface.bodyAlsoIncludesAny && surface.bodyAlsoIncludesAny.length) {
+    const wanted = surface.bodyAlsoIncludesAny;
+    try {
+      await page.waitForFunction(
+        (needles) => {
+          const body = document.body.innerText || "";
+          return needles.some((s) => body.includes(s));
+        },
+        { timeout: 6000 },
+        wanted,
+      );
+    } catch (_e) {}
+    const body = await page.evaluate(() => document.body.innerText || "");
+    const hit = wanted.some((s) => body.includes(s));
+    if (!hit) {
+      failures.push(
+        `${surface.label} (${deviceLabel}): none of [${wanted.join(", ")}] in body — ConfidenceBadge likely not rendered`,
       );
     }
   }
@@ -190,6 +240,33 @@ async function captureOneSurface(
   const file = path.join(outdir, filename);
   await page.screenshot({ path: file, fullPage: true });
   console.log(`[ok]   ${url} → ${file}`);
+
+  // For surfaces that have a focal element worth zooming into (e.g. the
+  // ConfidenceBadge on the item view sale-history header), capture a
+  // cropped follow-up. Helps reviewers see small UI changes that get
+  // lost in a long full-page PNG.
+  if (surface.label.startsWith("item-")) {
+    try {
+      const handle = await page.evaluateHandle(() => {
+        const h2 = Array.from(document.querySelectorAll("h2")).find((el) =>
+          (el.textContent || "").toLowerCase().includes("sale history"),
+        );
+        return h2 ? h2.closest("div.rounded-lg") : null;
+      });
+      const el = handle.asElement();
+      if (el) {
+        const closeup = path.join(
+          outdir,
+          `${sanitize(surface.label)}-${deviceLabel}-chip.png`,
+        );
+        await el.screenshot({ path: closeup });
+        console.log(`[zoom] sale-history header → ${closeup}`);
+      }
+      await handle.dispose();
+    } catch (_e) {
+      // Best-effort; full-page screenshot already captured above.
+    }
+  }
 
   await page.close();
   return failures;

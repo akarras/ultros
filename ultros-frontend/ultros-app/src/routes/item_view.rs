@@ -592,13 +592,16 @@ pub fn ChartWrapper(
     let (filter_outliers, set_filter_outliers) = signal(true);
     let (days_range, set_days_range) = signal(30i32); // 0 = All
 
-    // Per-item analyzer stats (ClickHouse-backed). Soft-fails: if the
-    // endpoint errors or returns no variant, the badge simply doesn't
-    // render. The rest of the chart works without it.
-    let item_stats_resource = Resource::new(
-        move || (item_id(), world()),
-        |(id, w)| async move { get_item_stats(&w, id).await },
-    );
+    // Per-item analyzer stats (ClickHouse-backed). LocalResource = client-
+    // only — the badge isn't part of SSR output, so we avoid a hydration
+    // mismatch when the resource resolves at different times on server vs
+    // client. Soft-fails: if the endpoint errors or returns no variant,
+    // the badge simply doesn't render and the rest of the chart works.
+    let item_stats_resource = LocalResource::new(move || {
+        let id = item_id();
+        let w = world();
+        async move { get_item_stats(&w, id).await }
+    });
     // When the user clicks "Load extended history", we replace the chart's sales with
     // a larger compact pull. Stored as Option<Vec<_>>: None means "use base resource".
     let (extended_sales, set_extended_sales) = signal::<Option<Vec<SaleHistory>>>(None);
@@ -677,10 +680,7 @@ pub fn ChartWrapper(
                                                 let want_hq = hq_only();
                                                 item_stats_resource
                                                     .get()
-                                                    .and_then(|r| r.ok())
-                                                    .and_then(|s| {
-                                                        s.variant_for(want_hq).cloned()
-                                                    })
+                                                    .and_then(|s| s.as_ref().as_ref().ok().and_then(|r| r.variant_for(want_hq).cloned()))
                                                     .map(|variant| view! {
                                                         <ConfidenceBadge
                                                             band=variant.confidence_band
