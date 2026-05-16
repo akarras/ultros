@@ -11,8 +11,8 @@ use leptos_router::hooks::use_params_map;
 use ultros_api_types::list::{ListActivity, ListItem, ListPermission};
 
 use crate::api::{
-    add_item_to_list, delete_list_item, delete_list_items, edit_list_item, get_list_activity,
-    get_list_items_with_listings,
+    add_item_to_list, delete_list_item, delete_list_items, edit_list, edit_list_item,
+    get_list_activity, get_list_items_with_listings,
 };
 use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
@@ -59,6 +59,8 @@ pub fn ListView() -> impl IntoView {
 
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
+    let edit_list_action =
+        Action::new(move |list: &ultros_api_types::list::List| edit_list(list.clone()));
 
     // We need to trigger refetch when items are added via modal.
     // We can use a signal for versioning external updates.
@@ -81,6 +83,7 @@ pub fn ListView() -> impl IntoView {
                     external_update_version.get(),
                     edit_item.version().get(),
                     delete_items.version().get(),
+                    edit_list_action.version().get(),
                 ),
             )
         },
@@ -180,6 +183,8 @@ pub fn ListView() -> impl IntoView {
     let (buying_view, set_buying_view) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
     let (settings_open, set_settings_open) = signal(false);
+    let (rename_open, set_rename_open) = signal(false);
+    let (rename_value, set_rename_value) = signal(String::new());
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
@@ -633,7 +638,74 @@ pub fn ListView() -> impl IntoView {
                                                         <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                                                             <div>
                                                                 <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_list_label)}</p>
-                                                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
+                                                                <div class="flex items-center gap-2">
+                                                                    {
+                                                                        let list_for_title = list.list.clone();
+                                                                        let display_name = list_for_title.name.clone();
+                                                                        move || {
+                                                                            if rename_open() && view_caps.with(|c| c.can_admin) {
+                                                                                let list_for_save = list_for_title.clone();
+                                                                                Either::Left(view! {
+                                                                                    <div class="flex flex-wrap items-center gap-2">
+                                                                                        <input
+                                                                                            class="input text-xl font-bold"
+                                                                                            prop:value=rename_value
+                                                                                            on:input=move |ev| set_rename_value(event_target_value(&ev))
+                                                                                            data-testid="list-rename-input"
+                                                                                        />
+                                                                                        <button
+                                                                                            class="btn-primary"
+                                                                                            data-testid="list-rename-save"
+                                                                                            on:click={
+                                                                                                let list_for_save = list_for_save.clone();
+                                                                                                move |_| {
+                                                                                                    let mut new_list = list_for_save.clone();
+                                                                                                    new_list.name = rename_value().trim().to_string();
+                                                                                                    if !new_list.name.is_empty() {
+                                                                                                        edit_list_action.dispatch(new_list);
+                                                                                                        set_rename_open(false);
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        >
+                                                                                            <Icon icon=i::BiSaveSolid />
+                                                                                            <span>{t!(i18n, list_view_settings_save)}</span>
+                                                                                        </button>
+                                                                                        <button
+                                                                                            class="btn-secondary"
+                                                                                            on:click=move |_| set_rename_open(false)
+                                                                                        >
+                                                                                            {t!(i18n, list_view_settings_cancel)}
+                                                                                        </button>
+                                                                                    </div>
+                                                                                })
+                                                                            } else {
+                                                                                let display_name = display_name.clone();
+                                                                                Either::Right(view! {
+                                                                                    <>
+                                                                                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{display_name.clone()}</h1>
+                                                                                        <Show when=move || view_caps.with(|c| c.can_admin)>
+                                                                                            <button
+                                                                                                class="btn-ghost p-1"
+                                                                                                aria-label=t_string!(i18n, edit_list).to_string()
+                                                                                                data-testid="list-rename-btn"
+                                                                                                on:click={
+                                                                                                    let name = display_name.clone();
+                                                                                                    move |_| {
+                                                                                                        set_rename_value(name.clone());
+                                                                                                        set_rename_open(true);
+                                                                                                    }
+                                                                                                }
+                                                                                            >
+                                                                                                <Icon icon=i::BsPencilFill />
+                                                                                            </button>
+                                                                                        </Show>
+                                                                                    </>
+                                                                                })
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                </div>
                                                                 <div class="mt-2">
                                                                     {live_indicator()}
                                                                 </div>
