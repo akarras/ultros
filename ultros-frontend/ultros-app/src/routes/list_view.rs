@@ -64,7 +64,11 @@ pub fn ListView() -> impl IntoView {
     // We can use a signal for versioning external updates.
     let (external_update_version, set_external_update_version) = signal(0);
     let (activity_update_version, set_activity_update_version) = signal(0);
-    let (realtime_status, set_realtime_status) = signal("Connecting".to_string());
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
+    #[allow(unused_variables)]
+    let (clock_tick, set_clock_tick) = signal(0_u32);
 
     let list_view = Resource::new(
         move || {
@@ -104,21 +108,23 @@ pub fn ListView() -> impl IntoView {
         list_subscription.update_value(|sub| *sub = None);
         let id = list_id.get();
         let Some(realtime) = realtime_for_list.clone() else {
-            set_realtime_status.set("Offline".to_string());
+            set_realtime_status.set("offline".to_string());
             return;
         };
         if id != 0 {
             let sub = realtime.subscribe_list(id, move |message| match message {
                 ServerClient::Subscribed { .. } => {
-                    set_realtime_status.set("Live".to_string());
+                    set_realtime_status.set("live".to_string());
                 }
                 ServerClient::ListUpdate(_) => {
-                    set_realtime_status.set("Live".to_string());
+                    set_realtime_status.set("live".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     list_view.refetch();
                     activity_view.refetch();
                 }
                 ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                    set_realtime_status.set("Reconnecting".to_string());
+                    set_realtime_status.set("reconnecting".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     list_view.refetch();
                     activity_view.refetch();
                 }
@@ -160,6 +166,15 @@ pub fn ListView() -> impl IntoView {
         list_market_subscription.update_value(|sub| *sub = None);
     });
 
+    #[cfg(not(feature = "ssr"))]
+    {
+        use gloo_timers::callback::Interval;
+        let interval = Interval::new(1_000, move || {
+            set_clock_tick.update(|n| *n = n.wrapping_add(1));
+        });
+        interval.forget();
+    }
+
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (buying_view, set_buying_view) = signal(false);
@@ -187,6 +202,61 @@ pub fn ListView() -> impl IntoView {
         }
         _ => ViewCaps::default(),
     });
+
+    let updated_label = Signal::derive(move || {
+        let _ = clock_tick.get();
+        let Some(t) = last_update_at.get() else {
+            return String::new();
+        };
+        let now = chrono::Utc::now();
+        let secs = now.signed_duration_since(t).num_seconds().max(0);
+        if secs < 2 {
+            t_string!(i18n, list_view_updated_just_now).to_string()
+        } else {
+            format!("Updated {secs}s ago")
+        }
+    });
+
+    let live_indicator = move || {
+        let status_key = realtime_status.get();
+        let (dot_class, status_label): (&'static str, String) = match status_key.as_str() {
+            "live" => (
+                "bg-green-400",
+                t_string!(i18n, list_view_live_status_live).to_string(),
+            ),
+            "reconnecting" => (
+                "bg-amber-400 animate-pulse",
+                t_string!(i18n, list_view_live_status_reconnecting).to_string(),
+            ),
+            "offline" => (
+                "bg-gray-500",
+                t_string!(i18n, list_view_live_status_offline).to_string(),
+            ),
+            _ => (
+                "bg-amber-400 animate-pulse",
+                t_string!(i18n, list_view_live_status_connecting).to_string(),
+            ),
+        };
+        let updated = updated_label.get();
+        let tooltip_text = if updated.is_empty() {
+            status_label.clone()
+        } else {
+            format!("{status_label} · {updated}")
+        };
+        let status_label_for_view = status_label.clone();
+        view! {
+            <Tooltip tooltip_text=tooltip_text>
+                <span
+                    class="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text-muted)]"
+                    data-testid="list-live-indicator"
+                    data-status=status_key.clone()
+                >
+                    <span class=format!("h-2 w-2 rounded-full {}", dot_class) aria-hidden="true"></span>
+                    <span>{status_label_for_view.clone()}</span>
+                </span>
+            </Tooltip>
+        }
+    };
 
     // Auto-mark logic moved to AutoMarkPurchases component
 
@@ -501,9 +571,7 @@ pub fn ListView() -> impl IntoView {
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
                                                             </div>
                                                             <div class="flex flex-wrap gap-2 text-sm">
-                                                                <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
-                                                                    {realtime_status}
-                                                                </span>
+                                                                {live_indicator()}
                                                                 <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
                                                                     {format!("{remaining_items} remaining")}
                                                                 </span>
@@ -525,8 +593,8 @@ pub fn ListView() -> impl IntoView {
                                                             <div>
                                                                 <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_list_label)}</p>
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
-                                                                <div class="mt-2 inline-flex rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-xs text-[color:var(--color-text-muted)]">
-                                                                    {realtime_status}
+                                                                <div class="mt-2">
+                                                                    {live_indicator()}
                                                                 </div>
                                                                 <div class="mt-3 flex items-center gap-3 text-sm">
                                                                     {if total_quantity > 0 {
