@@ -195,7 +195,15 @@ pub async fn begin_login(
     for r in &config.inner.scopes {
         request = request.add_scope(Scope::new(r.to_string()));
     }
-    let (url, _token) = request.url();
+    let (url, csrf_token) = request.url();
+
+    let cookies = cookies.add(
+        CookieBuilder::new("oauth_state", csrf_token.secret().clone())
+            .same_site(SameSite::Lax)
+            .secure(true)
+            .http_only(true)
+            .build(),
+    );
 
     (cookies, Redirect::to(url.as_str()))
 }
@@ -212,16 +220,22 @@ pub async fn redirect(
     Query(RedirectParameters { code, state }): Query<RedirectParameters>,
 ) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let code = AuthorizationCode::new(code);
-    let _state = CsrfToken::new(state);
+
+    let saved_state = cookies.get("oauth_state").ok_or(WebError::BadRequest)?;
+    if state != saved_state.value() {
+        return Err(WebError::BadRequest);
+    }
+    cookies = cookies.remove(saved_state);
+
     if let Some(pkce_challenge) = cookies.get("pkce_challenge") {
         cookies = cookies.remove(pkce_challenge);
     }
     let pkce_verifier = if let Some(pkce_verifier) = cookies.get("pkce_verifier") {
         let secret = pkce_verifier.value().to_string();
         cookies = cookies.remove(pkce_verifier);
-        Some(secret)
+        secret
     } else {
-        None
+        return Err(WebError::BadRequest);
     };
     let redirect_to = if let Some(login_next) = cookies.get(LOGIN_NEXT_COOKIE) {
         let redirect_to = safe_login_next(Some(login_next.value())).unwrap_or_else(|| "/".into());
@@ -231,9 +245,7 @@ pub async fn redirect(
         "/".to_string()
     };
     let mut request = config.inner.client.exchange_code(code);
-    if let Some(pkce_verifier) = pkce_verifier {
-        request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
-    }
+    request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
     let token = request
         .request_async(&config.inner.http_client)
         .await?
