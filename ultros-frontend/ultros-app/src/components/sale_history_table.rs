@@ -274,17 +274,21 @@ impl SalesSummaryData {
 #[component]
 fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let i18n = use_i18n();
-    let total_gil = Memo::new(move |_| sales.with(|s| s.total_gil));
-    let average_unit_price =
-        Memo::new(move |_| sales.with(|s| s.average_unit_price.round() as i32));
-    let max_unit_price = Memo::new(move |_| sales.with(|s| s.max_unit_price));
-    let median_unit_price = Memo::new(move |_| sales.with(|s| s.median_unit_price));
-    let min_unit_price = Memo::new(move |_| sales.with(|s| s.min_unit_price));
-    let median_stack_size = Memo::new(move |_| sales.with(|s| s.median_stack_size));
-    let guessed_next_sale_price =
-        Memo::new(move |_| sales.with(|s| s.guessed_next_sale_price.round() as i32));
-    let time_between_sales = Memo::new(move |_| sales.with(|s| s.time_between_sales));
-    let hq_percent = Memo::new(move |_| sales.with(|s| s.hq_percent));
+    // ⚡ Bolt Optimization:
+    // Replaced `Memo::new(...)` with closures `move || ...` for these 9 fields.
+    // Memoizing extremely cheap operations (like accessing a field or basic math)
+    // adds more overhead in reactive node creation, equality checking, and memory
+    // allocation than it saves. Leptos naturally treats `move || ...` as derived
+    // signals with minimal overhead.
+    let total_gil = move || sales.with(|s| s.total_gil);
+    let average_unit_price = move || sales.with(|s| s.average_unit_price.round() as i32);
+    let max_unit_price = move || sales.with(|s| s.max_unit_price);
+    let median_unit_price = move || sales.with(|s| s.median_unit_price);
+    let min_unit_price = move || sales.with(|s| s.min_unit_price);
+    let median_stack_size = move || sales.with(|s| s.median_stack_size);
+    let guessed_next_sale_price = move || sales.with(|s| s.guessed_next_sale_price.round() as i32);
+    let time_between_sales = move || sales.with(|s| s.time_between_sales);
+    let hq_percent = move || sales.with(|s| s.hq_percent);
     view! {
         <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
             <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
