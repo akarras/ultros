@@ -69,7 +69,10 @@ use crate::web::api::endpoints::{
     update_endpoint,
 };
 use crate::web::api::real_time_data::real_time_data;
-use crate::web::api::{cheapest_per_world, get_best_deals, get_trends, recent_sales};
+use crate::web::api::{
+    cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
+    get_movers, get_trends, post_sparklines, recent_sales,
+};
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
 use crate::web::{
     alerts_websocket::connect_websocket,
@@ -1390,6 +1393,11 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
         .route("/api/v1/trends/{world}", get(get_trends))
         .route("/api/v1/best_deals/{world}", get(get_best_deals))
+        .route("/api/v1/market_pulse/{world}", get(get_market_pulse))
+        .route("/api/v1/item_stats/{world}/{itemid}", get(get_item_stats))
+        .route("/api/v1/movers/{world}", get(get_movers))
+        .route("/api/v1/sparklines/{world}", post(post_sparklines))
+        .route("/api/v1/market_heat/{world}", get(get_market_heat))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
         .route("/api/v1/alerts/events", get(list_alert_events))
         .route(

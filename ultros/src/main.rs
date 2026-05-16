@@ -274,10 +274,28 @@ async fn main() -> Result<()> {
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
+
+    // ClickHouse: analytical store. Migration is idempotent — re-running it on
+    // every startup is fine. We log-and-continue on failure because PG is the
+    // source of truth and the analyzer's RAM caches keep the snappy tools
+    // alive even if CH is unreachable.
+    let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
+    if let Err(e) = ch_client.migrate().await {
+        warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
+    }
+    let ch_writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
+
+    // Background scheduler that keeps item_stats_window + item_quality_score
+    // fresh. Runs an immediate seed pass on startup, then on independent
+    // cadences (1d every 15min, 7d hourly, 30d/90d every 6h, quality hourly).
+    ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
+
     let analyzer_service = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
         world_cache.clone(),
+        ch_writer,
+        ch_client.clone(),
         token.clone(),
     )
     .await;
@@ -371,6 +389,7 @@ async fn main() -> Result<()> {
         leptos_options,
         search_service,
         token: token.clone(),
+        ch_client,
     };
     let web_task = tokio::spawn(web::start_web(web_state));
     tokio::select! {

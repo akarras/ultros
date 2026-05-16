@@ -9,6 +9,9 @@ license = "MIT or Apache-2.0"
 [dependencies]
 universalis = { path = "../universalis", features = ["websocket"] }
 ultros-db = { path = "../ultros-db", features = ["rkyv"] }
+ultros-clickhouse = { path = "../ultros-clickhouse" }
+clickhouse = { workspace = true }
+sea-orm = { workspace = true }
 anyhow = { workspace = true }
 axum.workspace = true
 axum-extra.workspace = true

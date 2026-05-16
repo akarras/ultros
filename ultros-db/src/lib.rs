@@ -37,6 +37,14 @@ pub struct UltrosDb {
 }
 
 impl UltrosDb {
+    /// Borrow the underlying `DatabaseConnection`. Used by one-shot maintenance
+    /// binaries (e.g. ClickHouse parity check) that need to run raw SQL not
+    /// covered by an existing helper. Production code should prefer the typed
+    /// methods on `UltrosDb`.
+    pub fn get_connection(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
     #[instrument]
     pub async fn connect() -> Result<Self> {
         let _ = dotenv();
@@ -174,6 +182,17 @@ impl UltrosDb {
             .await?
             .ok_or_else(|| anyhow::Error::msg("World not found"))?;
         Ok(worlds)
+    }
+
+    /// All worlds known to the database, in id order. Used by the ClickHouse
+    /// backfill which iterates worlds × month chunks for resumability.
+    #[instrument(skip(self))]
+    pub async fn list_worlds(&self) -> Result<Vec<world::Model>> {
+        use world::*;
+        Ok(Entity::find()
+            .order_by_asc(Column::Id)
+            .all(&self.db)
+            .await?)
     }
 
     #[instrument(skip(self))]

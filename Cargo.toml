@@ -3,6 +3,7 @@ members = [
     "ultros",
     "ultros-db",
     "ultros-api-types",
+    "ultros-clickhouse",
     "migration",
     "universalis",
     "xiv-gen",
@@ -100,6 +101,15 @@ leptos_i18n_build = "0.6.2"
 cfg-if = "1.0.4"
 gloo-net = { version = "0.7.0", features = ["http", "websocket"] }
 dotenvy = "0.15.7"
+clickhouse = { version = "0.15.0", features = [
+    "chrono",
+    "inserter",
+    "lz4",
+    "rustls-tls-webpki-roots",
+    "time",
+    "uuid",
+] }
+dashmap = "6.1"
 # Default features pull in `isahc` (libcurl) for sending — we route push delivery
 # through the existing `reqwest` client instead so we get embedded webpki-roots
 # for TLS and real error messages on failure (web-push collapses isahc errors to
@@ -163,6 +173,11 @@ opt-level = 1
 [[workspace.metadata.leptos]]
 name = "ultros"
 bin-package = "ultros"
+# Disambiguate when the bin-package contains multiple [[bin]] targets — the
+# ultros crate now ships `clickhouse_backfill`, `clickhouse_parity_check`,
+# and `clickhouse_inspect` as one-shot maintenance binaries alongside the
+# main server. Leptos only builds the server.
+bin-target = "ultros"
 lib-package = "ultros-client"
 output-name = "ultros"
 # Server binary built with the speed-optimized server-release profile;

@@ -10,6 +10,8 @@ use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
+use ultros_clickhouse::ClickHouseClient;
+
 use crate::analyzer_service::AnalyzerService;
 use crate::event::{EventReceivers, EventSenders};
 use crate::search_service::SearchService;
@@ -32,6 +34,9 @@ pub(crate) struct WebState {
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
     pub(crate) token: CancellationToken,
+    /// ClickHouse client for analytical queries (Phase 1+ uses this; Phase 0
+    /// only writes via the analyzer's dual-write path).
+    pub(crate) ch_client: ClickHouseClient,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -103,5 +108,11 @@ impl FromRef<WebState> for LeptosOptions {
 impl FromRef<WebState> for SearchService {
     fn from_ref(input: &WebState) -> Self {
         input.search_service.clone()
+    }
+}
+
+impl FromRef<WebState> for ClickHouseClient {
+    fn from_ref(input: &WebState) -> Self {
+        input.ch_client.clone()
     }
 }
