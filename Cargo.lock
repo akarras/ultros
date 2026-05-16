@@ -9863,6 +9863,7 @@ dependencies = [
  "reqwest 0.11.27",
  "resvg",
  "rkyv",
+ "rustls 0.23.36",
  "sentry",
  "sentry-tower",
  "sentry-tracing",

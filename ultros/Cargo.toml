@@ -93,6 +93,12 @@ web-push = { workspace = true }
 # installing OpenSSL dev headers separately, and on Linux it removes the libssl-dev
 # bootstrap requirement (CI still has libssl-dev installed; vendored is harmless there).
 openssl = { version = "0.10", features = ["vendored"] }
+# Direct dep so we can install a process-level CryptoProvider at startup.
+# Transitive consumers (serenity, reqwest 0.12/0.13, sqlx, tokio-rustls, sentry) pull
+# in rustls 0.23 with both `aws-lc-rs` and `ring` activated via feature unification,
+# which makes `ClientConfig::builder()` panic with "Could not automatically determine
+# the process-level CryptoProvider". We install one explicitly in `main()`.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 tempfile = "3.6.0"
