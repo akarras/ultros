@@ -1123,5 +1123,9 @@
     "top_opportunity_buy": "买入",
     "top_opportunity_sell": "卖出",
     "top_opportunity_profit": "利润",
-    "top_opportunity_roi": "投资回报率"
+    "top_opportunity_roi": "投资回报率",
+    "home_greeting_morning": "早上好。",
+    "home_greeting_afternoon": "下午好。",
+    "home_greeting_evening": "晚上好。",
+    "home_greeting_subtitle": "看看 %world% 上的最新动态。"
 }

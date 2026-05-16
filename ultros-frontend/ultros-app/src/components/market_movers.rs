@@ -62,16 +62,14 @@ fn MoverRow(item: MoverItem, world_name: String, index: usize) -> impl IntoView 
         format!("{pct:.1}%")
     };
 
-    let row_bg = if index.is_multiple_of(2) {
-        "bg-transparent"
-    } else {
-        "bg-[color:color-mix(in_srgb,var(--brand-ring)_4%,transparent)]"
-    };
+    // Drop zebra striping — the thin divider under each row is enough
+    // structure once the card background is gone. Keeps the row light.
+    let _ = index;
 
     view! {
         <a
             href=format!("/item/{}/{}", world_name, item_id)
-            class=format!("group grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 px-3 py-2 rounded-lg {row_bg} hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] transition-colors")
+            class="group grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 px-1 py-2 border-b border-[color:var(--line)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] transition-colors"
         >
             <ItemIcon item_id icon_size=IconSize::Small />
             <div class="min-w-0">
@@ -140,13 +138,13 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
     };
 
     view! {
-        <section class="panel rounded-2xl p-4 sm:p-5 border border-[color:var(--color-outline)]">
-            <header class="flex items-center justify-between gap-3 mb-3">
-                <div>
-                    <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)] flex items-center gap-2">
+        <section class="dashboard-section">
+            <header class="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+                <div class="flex items-baseline gap-3 flex-wrap">
+                    <h2 class="dashboard-section-title">
                         {t!(i18n, market_movers_title)}
                     </h2>
-                    <p class="text-xs text-[color:var(--color-text-muted)] mt-0.5">
+                    <p class="text-xs text-[color:var(--color-text-muted)]">
                         {t!(i18n, market_movers_subtitle)}
                     </p>
                 </div>

@@ -1123,5 +1123,9 @@
     "top_opportunity_buy": "매입",
     "top_opportunity_sell": "판매",
     "top_opportunity_profit": "이익",
-    "top_opportunity_roi": "ROI"
+    "top_opportunity_roi": "ROI",
+    "home_greeting_morning": "좋은 아침입니다.",
+    "home_greeting_afternoon": "좋은 오후입니다.",
+    "home_greeting_evening": "좋은 저녁입니다.",
+    "home_greeting_subtitle": "%world% 의 최신 동향을 확인하세요."
 }

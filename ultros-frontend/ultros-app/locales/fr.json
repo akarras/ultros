@@ -1123,5 +1123,9 @@
     "top_opportunity_buy": "Achat",
     "top_opportunity_sell": "Vente",
     "top_opportunity_profit": "Profit",
-    "top_opportunity_roi": "ROI"
+    "top_opportunity_roi": "ROI",
+    "home_greeting_morning": "Bonjour.",
+    "home_greeting_afternoon": "Bon après-midi.",
+    "home_greeting_evening": "Bonsoir.",
+    "home_greeting_subtitle": "Voici ce qui bouge sur %world%."
 }

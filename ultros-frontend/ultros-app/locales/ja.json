@@ -1123,5 +1123,9 @@
     "top_opportunity_buy": "仕入れ",
     "top_opportunity_sell": "売値",
     "top_opportunity_profit": "利益",
-    "top_opportunity_roi": "ROI"
+    "top_opportunity_roi": "ROI",
+    "home_greeting_morning": "おはようございます。",
+    "home_greeting_afternoon": "こんにちは。",
+    "home_greeting_evening": "こんばんは。",
+    "home_greeting_subtitle": "%world% の最新の動きをチェック。"
 }

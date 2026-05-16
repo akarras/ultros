@@ -41,30 +41,30 @@ pub fn TopOpportunity(world: Signal<Option<String>>) -> impl IntoView {
     let world_for_link = world;
 
     view! {
-        <section class="panel rounded-2xl p-4 sm:p-5 border border-[color:var(--color-outline)]">
-            <header class="flex items-center justify-between mb-3">
-                <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)] flex items-center gap-2">
-                    <span class="text-amber-300">"🔥"</span>
+        <section class="dashboard-section">
+            <header class="flex items-baseline justify-between mb-3">
+                <h2 class="dashboard-section-title">
+                    <span class="text-amber-300 mr-1">"🔥"</span>
                     {t!(i18n, top_opportunity_title)}
                 </h2>
                 <A
                     href=move || world_for_link.get()
                         .map(|w| format!("/flip-finder/{w}"))
                         .unwrap_or_else(|| "/flip-finder".to_string())
-                    attr:class="text-xs text-[color:var(--brand-fg)] hover:underline"
+                    attr:class="text-xs text-[color:var(--accent)] hover:underline"
                 >
                     {t!(i18n, top_opportunity_view_all)}
                 </A>
             </header>
             <Suspense fallback=move || view! {
-                <div class="h-32 rounded-xl bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] animate-pulse" />
+                <div class="h-24 rounded bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] animate-pulse" />
             }>
                 {move || {
                     let world_str = world.get().unwrap_or_default();
                     deal.get().map(|maybe| match maybe {
                         Some(d) => view! { <DealCard deal=d world_name=world_str /> }.into_any(),
                         None => view! {
-                            <div class="text-center py-8 text-[color:var(--color-text-muted)] rounded-xl border border-dashed border-[color:var(--color-outline)]">
+                            <div class="text-sm text-[color:var(--color-text-muted)] py-4">
                                 {t!(i18n, top_opportunity_empty)}
                             </div>
                         }.into_any(),
@@ -98,53 +98,45 @@ fn DealCard(deal: ResaleStatsDto, world_name: String) -> impl IntoView {
 
     let href = format!("/item/{}/{}", world_name, item_id);
 
+    // Split layout: item identity on the left (icon + name + demand), the
+    // numeric stack on the right with profit prominent and Buy/Sell/ROI
+    // tucked underneath. No big background — the section provides its own
+    // breathing room via dashboard-section.
     view! {
         <a
             href=href
-            class="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] gap-4 items-center rounded-xl p-3 sm:p-4 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] transition-colors"
+            class="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] gap-4 sm:gap-6 items-center py-1 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)] transition-colors rounded"
         >
             <div class="shrink-0">
                 <ItemIcon item_id icon_size=IconSize::Large />
             </div>
             <div class="min-w-0">
-                <div class="text-lg font-bold text-[color:var(--color-text)] truncate">{name}</div>
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 mt-2 text-sm">
-                    <div>
-                        <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                            {t!(i18n, top_opportunity_buy)}
-                        </div>
-                        <div class="font-mono text-[color:var(--color-text)]">
-                            <Gil amount=buy />
-                        </div>
-                    </div>
-                    <div>
-                        <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                            {t!(i18n, top_opportunity_sell)}
-                        </div>
-                        <div class="font-mono text-[color:var(--color-text)]">
-                            <Gil amount=sell />
-                        </div>
-                    </div>
-                    <div>
-                        <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                            {t!(i18n, top_opportunity_profit)}
-                        </div>
-                        <div class="font-mono font-bold text-emerald-300">
-                            <Gil amount=deal.profit />
-                        </div>
-                    </div>
-                    <div>
-                        <div class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                            {t!(i18n, top_opportunity_roi)}
-                        </div>
-                        <div class="font-mono text-[color:var(--color-text)]">
-                            {format!("{:.0}%", deal.return_on_investment)}
-                        </div>
-                    </div>
+                <div class="text-lg font-semibold text-[color:var(--color-text)] truncate">{name}</div>
+                <div class="mt-1 flex items-baseline gap-3 text-xs text-[color:var(--color-text-muted)] flex-wrap">
+                    <span class="flex items-baseline gap-1">
+                        <span class="uppercase tracking-wider">{t!(i18n, top_opportunity_buy)}</span>
+                        <span class="font-mono text-[color:var(--color-text)]"><Gil amount=buy /></span>
+                    </span>
+                    <span class="text-[color:var(--line)]">"·"</span>
+                    <span class="flex items-baseline gap-1">
+                        <span class="uppercase tracking-wider">{t!(i18n, top_opportunity_sell)}</span>
+                        <span class="font-mono text-[color:var(--color-text)]"><Gil amount=sell /></span>
+                    </span>
+                    <span class="text-[color:var(--line)]">"·"</span>
+                    <span class="flex items-baseline gap-1">
+                        <span class="uppercase tracking-wider">{t!(i18n, top_opportunity_roi)}</span>
+                        <span class="font-mono text-[color:var(--color-text)]">{format!("{:.0}%", deal.return_on_investment)}</span>
+                    </span>
                 </div>
             </div>
-            <div class="hidden sm:flex items-end flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
-                <span class="font-mono">{demand_label}</span>
+            <div class="flex flex-col items-end text-right shrink-0">
+                <span class="text-xs uppercase tracking-wider text-[color:var(--color-text-muted)]">
+                    {t!(i18n, top_opportunity_profit)}
+                </span>
+                <span class="text-2xl sm:text-3xl font-semibold font-mono text-emerald-300 leading-none tabular-nums">
+                    <Gil amount=deal.profit />
+                </span>
+                <span class="text-[10px] text-[color:var(--color-text-muted)] font-mono mt-1">{demand_label}</span>
             </div>
         </a>
     }

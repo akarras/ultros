@@ -24,43 +24,22 @@ fn category_label_key(id: u8) -> &'static str {
     }
 }
 
-/// Map band to color classes (chip background tint, arrow color). Uses
-/// the existing emerald/amber/red palette consistent with
-/// ConfidenceBadge and Sparkline.
-fn band_classes(band: HeatBand) -> (&'static str, &'static str, &'static str) {
+/// Map band to inline-strip color + arrow. Different shape from a card —
+/// just a colored arrow + label; no chip background.
+fn band_classes(band: HeatBand) -> (&'static str, &'static str) {
     match band {
-        HeatBand::Hot => (
-            "text-emerald-300",
-            "bg-[color:color-mix(in_srgb,#10b981_14%,transparent)] border-emerald-400/40",
-            "↑↑",
-        ),
-        HeatBand::Warm => (
-            "text-emerald-200/90",
-            "bg-[color:color-mix(in_srgb,#10b981_8%,transparent)] border-emerald-400/30",
-            "↑",
-        ),
-        HeatBand::Stable => (
-            "text-[color:var(--color-text)]",
-            "bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)] border-[color:var(--color-outline)]",
-            "→",
-        ),
-        HeatBand::Cool => (
-            "text-red-300",
-            "bg-[color:color-mix(in_srgb,#ef4444_10%,transparent)] border-red-400/30",
-            "↓",
-        ),
-        HeatBand::NoData => (
-            "text-[color:var(--color-text-muted)]",
-            "bg-transparent border-[color:var(--color-outline)]/40",
-            "—",
-        ),
+        HeatBand::Hot => ("text-emerald-300", "↑↑"),
+        HeatBand::Warm => ("text-emerald-200/90", "↑"),
+        HeatBand::Stable => ("text-[color:var(--color-text)]", "→"),
+        HeatBand::Cool => ("text-red-300", "↓"),
+        HeatBand::NoData => ("text-[color:var(--color-text-muted)]", "—"),
     }
 }
 
 #[component]
-fn HeatChip(cat: CategoryHeat) -> impl IntoView {
+fn HeatPip(cat: CategoryHeat) -> impl IntoView {
     let i18n = use_i18n();
-    let (text_class, container_class, arrow) = band_classes(cat.band);
+    let (text_class, arrow) = band_classes(cat.band);
     let label_key = category_label_key(cat.category_id);
     let name = match label_key {
         "market_heat_cat_weapons" => t_string!(i18n, market_heat_cat_weapons).to_string(),
@@ -77,26 +56,13 @@ fn HeatChip(cat: CategoryHeat) -> impl IntoView {
         HeatBand::Cool => t_string!(i18n, market_heat_band_cool).to_string(),
         HeatBand::NoData => t_string!(i18n, market_heat_band_no_data).to_string(),
     };
-    let pct_text = match cat.band {
-        HeatBand::NoData => "—".to_string(),
-        _ => format!("{:+.1}%", cat.avg_pct_change_24h),
-    };
 
     view! {
-        <div class=format!(
-            "flex-1 min-w-[120px] rounded-xl border px-3 py-2 {container_class}"
-        )>
-            <div class="text-[10px] uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                {name}
-            </div>
-            <div class=format!("flex items-baseline gap-1 mt-0.5 {text_class}")>
-                <span class="text-base font-semibold leading-none">{arrow}</span>
-                <span class="text-sm font-semibold">{band_label}</span>
-            </div>
-            <div class="text-xs text-[color:var(--color-text-muted)] font-mono mt-0.5">
-                {pct_text}
-            </div>
-        </div>
+        <span class="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+            <span class="text-[color:var(--color-text)] text-sm">{name}</span>
+            <span class=format!("text-base font-semibold leading-none {text_class}")>{arrow}</span>
+            <span class=format!("text-xs font-semibold {text_class}")>{band_label}</span>
+        </span>
     }
 }
 
@@ -112,34 +78,37 @@ pub fn MarketHeat(world: Signal<Option<String>>) -> impl IntoView {
     });
 
     view! {
-        <section class="panel rounded-2xl p-4 sm:p-5 border border-[color:var(--color-outline)]">
-            <header class="flex items-center justify-between mb-3">
-                <h2 class="text-sm uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                    {t!(i18n, market_heat_title)}
-                </h2>
+        <section class="dashboard-section">
+            <header class="flex items-baseline justify-between mb-2">
+                <h2 class="dashboard-section-title">{t!(i18n, market_heat_title)}</h2>
                 <span class="text-xs text-[color:var(--color-text-muted)]">
                     {t!(i18n, market_heat_subtitle)}
                 </span>
             </header>
             <Suspense fallback=move || view! {
-                <div class="flex flex-wrap gap-2">
-                    {(0..5).map(|_| view! {
-                        <div class="flex-1 min-w-[120px] h-16 rounded-xl bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] animate-pulse" />
-                    }).collect_view()}
-                </div>
+                <div class="h-6 bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] animate-pulse rounded" />
             }>
                 {move || {
                     heat.get().map(|maybe| match maybe {
-                        Some(resp) => view! {
-                            <div class="flex flex-wrap gap-2">
-                                {resp.categories
-                                    .into_iter()
-                                    .map(|c| view! { <HeatChip cat=c /> })
-                                    .collect_view()}
-                            </div>
-                        }.into_any(),
+                        Some(resp) => {
+                            let mut pieces: Vec<AnyView> = Vec::new();
+                            let total = resp.categories.len();
+                            for (idx, c) in resp.categories.into_iter().enumerate() {
+                                pieces.push(view! { <HeatPip cat=c /> }.into_any());
+                                if idx + 1 < total {
+                                    pieces.push(view! {
+                                        <span class="text-[color:var(--line)] mx-3" aria-hidden="true">"|"</span>
+                                    }.into_any());
+                                }
+                            }
+                            view! {
+                                <div class="flex flex-wrap items-baseline gap-y-2 leading-snug">
+                                    {pieces}
+                                </div>
+                            }.into_any()
+                        },
                         None => view! {
-                            <div class="text-sm text-[color:var(--color-text-muted)] py-4">
+                            <div class="text-sm text-[color:var(--color-text-muted)] py-2">
                                 {t!(i18n, market_heat_no_data)}
                             </div>
                         }.into_any(),

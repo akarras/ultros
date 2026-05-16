@@ -1123,5 +1123,9 @@
     "top_opportunity_buy": "Kauf",
     "top_opportunity_sell": "Verkauf",
     "top_opportunity_profit": "Gewinn",
-    "top_opportunity_roi": "ROI"
+    "top_opportunity_roi": "ROI",
+    "home_greeting_morning": "Guten Morgen.",
+    "home_greeting_afternoon": "Guten Tag.",
+    "home_greeting_evening": "Guten Abend.",
+    "home_greeting_subtitle": "Das tut sich gerade auf %world%."
 }
