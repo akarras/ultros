@@ -23,6 +23,7 @@ use ultros_api_types::{
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
+    sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers, group::UserGroup},
 };
@@ -130,6 +131,27 @@ pub(crate) async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseD
 
 pub(crate) async fn get_item_stats(world_name: &str, item_id: i32) -> AppResult<ItemStatsResponse> {
     fetch_api(&format!("/api/v1/item_stats/{}/{}", world_name, item_id)).await
+}
+
+/// `direction` is one of `rising` / `falling` / `volume`.
+pub(crate) async fn get_movers(
+    world_name: &str,
+    direction: &str,
+    limit: u32,
+) -> AppResult<MoversResponse> {
+    fetch_api(&format!(
+        "/api/v1/movers/{}?direction={}&limit={}",
+        world_name, direction, limit
+    ))
+    .await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn post_sparklines(
+    world_name: &str,
+    req: &SparklinesRequest,
+) -> AppResult<SparklinesResponse> {
+    post_api(&format!("/api/v1/sparklines/{}", world_name), req).await
 }
 
 /// Returns a list of the logged in user's retainers

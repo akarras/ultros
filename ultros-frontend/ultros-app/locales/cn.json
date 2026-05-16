@@ -1096,5 +1096,11 @@
     "market_pulse_sales_24h": "24 小时销量",
     "market_pulse_gil_volume": "市场交易额",
     "market_pulse_unit_volume": "24 小时成交数量",
-    "market_pulse_vs_yesterday": "对比昨日"
+    "market_pulse_vs_yesterday": "对比昨日",
+    "market_movers_title": "市场风向",
+    "market_movers_subtitle": "过去 24 小时热门商品",
+    "market_movers_rising": "上涨",
+    "market_movers_falling": "下跌",
+    "market_movers_volume": "高成交量",
+    "market_movers_no_data": "此时段暂无交易。"
 }

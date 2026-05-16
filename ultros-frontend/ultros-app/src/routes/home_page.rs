@@ -8,6 +8,7 @@ use leptos_router::components::A;
 use crate::components::{
     ad::Ad,
     live_sale_ticker::LiveSaleTicker,
+    market_movers::MarketMovers,
     market_pulse::MarketPulse,
     meta::{MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
@@ -115,10 +116,12 @@ pub fn HomePage() -> impl IntoView {
                         </div>
                     </div>
 
-                    // Market Pulse — only render when we have a home world; otherwise
-                    // the onboarding banner above is the right call to action.
+                    // Market Pulse + Market Movers — only render when we have a
+                    // home world; otherwise the onboarding banner above is the
+                    // right call to action.
                     {move || pulse_world.with(|w| w.is_some()).then(|| view! {
                         <MarketPulse world=pulse_world />
+                        <MarketMovers world=pulse_world />
                     })}
 
                     <TopDeals />

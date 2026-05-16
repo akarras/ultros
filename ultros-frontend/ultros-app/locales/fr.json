@@ -1096,5 +1096,11 @@
     "market_pulse_sales_24h": "Ventes (24 h)",
     "market_pulse_gil_volume": "Volume de marché",
     "market_pulse_unit_volume": "Unités vendues (24 h)",
-    "market_pulse_vs_yesterday": "vs hier"
+    "market_pulse_vs_yesterday": "vs hier",
+    "market_movers_title": "Mouvements du marché",
+    "market_movers_subtitle": "Top objets sur les 24 dernières heures",
+    "market_movers_rising": "En hausse",
+    "market_movers_falling": "En baisse",
+    "market_movers_volume": "Volume élevé",
+    "market_movers_no_data": "Aucune transaction dans cette fenêtre."
 }

@@ -1096,5 +1096,11 @@
     "market_pulse_sales_24h": "Sales (24h)",
     "market_pulse_gil_volume": "Market Volume",
     "market_pulse_unit_volume": "Units Traded (24h)",
-    "market_pulse_vs_yesterday": "vs yesterday"
+    "market_pulse_vs_yesterday": "vs yesterday",
+    "market_movers_title": "Market movers",
+    "market_movers_subtitle": "Top items in the last 24 hours",
+    "market_movers_rising": "Rising",
+    "market_movers_falling": "Falling",
+    "market_movers_volume": "High volume",
+    "market_movers_no_data": "No trades yet in this window."
 }

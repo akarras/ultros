@@ -1096,5 +1096,11 @@
     "market_pulse_sales_24h": "販売数（24時間）",
     "market_pulse_gil_volume": "取引高",
     "market_pulse_unit_volume": "取引数量（24時間）",
-    "market_pulse_vs_yesterday": "前日比"
+    "market_pulse_vs_yesterday": "前日比",
+    "market_movers_title": "マーケット動向",
+    "market_movers_subtitle": "過去24時間の注目アイテム",
+    "market_movers_rising": "上昇",
+    "market_movers_falling": "下落",
+    "market_movers_volume": "高取引量",
+    "market_movers_no_data": "この期間に取引はありません。"
 }
