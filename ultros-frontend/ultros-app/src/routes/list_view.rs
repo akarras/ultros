@@ -184,6 +184,47 @@ pub fn ListView() -> impl IntoView {
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
 
+    type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
+    let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
+    let prev_snapshot: StoredValue<RowSnapshot> = StoredValue::new(RowSnapshot::new());
+
+    Effect::new(move |_| {
+        let Some(Ok((_list, items))) = list_view.get() else {
+            return;
+        };
+        let new_snapshot: RowSnapshot = items
+            .iter()
+            .map(|(i, _)| (i.id, (i.quantity, i.acquired)))
+            .collect();
+        let mut newly_changed: HashSet<i32> = HashSet::new();
+        let prev = prev_snapshot.get_value();
+        for (id, current) in &new_snapshot {
+            if let Some(prior) = prev.get(id)
+                && prior != current
+            {
+                newly_changed.insert(*id);
+            }
+        }
+        prev_snapshot.set_value(new_snapshot);
+
+        if !newly_changed.is_empty() {
+            recently_changed.update(|set| set.extend(newly_changed.iter().copied()));
+            #[cfg(not(feature = "ssr"))]
+            {
+                use gloo_timers::callback::Timeout;
+                let ids: Vec<i32> = newly_changed.into_iter().collect();
+                Timeout::new(1500, move || {
+                    recently_changed.update(|set| {
+                        for id in &ids {
+                            set.remove(id);
+                        }
+                    });
+                })
+                .forget();
+            }
+        }
+    });
+
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     struct ViewCaps {
         can_write: bool,
@@ -742,6 +783,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 selected_items=selected_items
                                                                                 delete_item=delete_item
                                                                                 edit_item=edit_item
+                                                                                recently_changed=recently_changed
                                                                             />
                                                                         }
                                                                     }

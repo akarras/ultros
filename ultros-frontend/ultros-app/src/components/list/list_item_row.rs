@@ -32,6 +32,7 @@ pub fn ListItemRow(
     // Let's use `Action<i32, Result<(), crate::error::AppError>>`.
     delete_item: Action<i32, Result<(), crate::error::AppError>>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
+    recently_changed: RwSignal<HashSet<i32>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -49,10 +50,12 @@ pub fn ListItemRow(
             let q = item_now.quantity.unwrap_or(1).max(1);
             let a = item_now.acquired.unwrap_or(0);
             let complete = a >= q;
+            let highlighted = recently_changed.with(|set| set.contains(&item_now.id));
+            let highlight_class = if highlighted { " ring-2 ring-brand-400/60" } else { "" };
             if complete {
-                "group transition-colors bg-green-900/15 hover:bg-green-900/25"
+                format!("group transition-all duration-700 bg-green-900/15 hover:bg-green-900/25{highlight_class}")
             } else {
-                "group transition-colors hover:bg-[color:var(--color-background-panel)]"
+                format!("group transition-all duration-700 hover:bg-[color:var(--color-background-panel)]{highlight_class}")
             }
         }>
             {move || {
