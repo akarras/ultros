@@ -16,6 +16,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_item_quality_score(client).await?;
     apply_item_vendor_price(client).await?;
     apply_world_kpi_5min(client).await?;
+    apply_sales_hourly(client).await?;
     Ok(())
 }
 
@@ -140,6 +141,45 @@ async fn apply_world_kpi_5min(client: &Client) -> Result<(), ClickHouseError> {
             ENGINE = ReplacingMergeTree(computed_at)
             PARTITION BY toYYYYMM(bucket)
             ORDER BY (world_id, bucket)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Per (item, hq, world) hourly bucket of price + volume — drives the home
+/// page sparklines and Market Movers list. Refreshed every 15 minutes by
+/// [`crate::rollups::refresh_sales_hourly`].
+///
+/// We keep a separate table from `world_kpi_5min` because that one rolls
+/// up across items, while this one preserves per-item resolution. A 24h
+/// sparkline is 24 rows per item — cheap to compress and read.
+///
+/// The aggregates here are *raw* (no Layer 1/2 noise filter applied),
+/// because sparklines are a visual signal and showing the user the actual
+/// market behavior including noise is honest. The launder-aware filtering
+/// lives on `item_stats_window` for analyzer math.
+async fn apply_sales_hourly(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sales_hourly (
+                item_id      Int32,
+                hq           UInt8,
+                world_id     Int32,
+                bucket       DateTime,
+                computed_at  DateTime DEFAULT now(),
+                sale_count   UInt32,
+                unit_volume  UInt32,
+                vwap         UInt32,
+                min_price    UInt32,
+                max_price    UInt32
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            PARTITION BY toYYYYMM(bucket)
+            ORDER BY (item_id, hq, world_id, bucket)
             SETTINGS index_granularity = 8192
             "#,
         )

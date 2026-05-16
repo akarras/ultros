@@ -47,6 +47,207 @@ fn pct_delta(today: u64, yesterday: u64) -> Option<f32> {
     }
 }
 
+/// One row per item with 24 hourly buckets of VWAP. Used by the home-page
+/// sparklines + Market Movers.
+///
+/// Buckets that contained no sales are emitted as zero so the array length
+/// is always exactly the requested window length — the frontend can index
+/// into it without worrying about gaps. A `points` array is more compact
+/// than `Vec<HourlyBucket>` because the sparkline renderer only needs the
+/// price points, not the timestamps (they're implied by index + window
+/// length).
+#[derive(Debug, Clone, Row, Deserialize, serde::Serialize)]
+pub struct SparklineRow {
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    /// Trailing-window VWAP per hour, oldest first, length = hours requested.
+    pub points: Vec<u32>,
+    /// First non-zero point in the series (oldest price), for %change math.
+    pub first_price: u32,
+    /// Last non-zero point in the series (newest price), for %change math.
+    pub last_price: u32,
+}
+
+impl SparklineRow {
+    /// Pct change from first to last, or 0 when one side is missing.
+    pub fn pct_change(&self) -> f32 {
+        if self.first_price == 0 || self.last_price == 0 {
+            return 0.0;
+        }
+        ((self.last_price as f64 - self.first_price as f64) / self.first_price as f64 * 100.0)
+            as f32
+    }
+}
+
+/// Batch fetch trailing-24h hourly VWAP series for many (item, hq, world)
+/// tuples. Used by the home-page Market Movers + Top Deals retrofit.
+///
+/// `hours` controls window length (default 24). The query right-aligns
+/// each row to "now": bucket 0 is N hours ago, bucket N-1 is the latest
+/// completed hour.
+pub async fn sparklines_batch(
+    ch: &ClickHouseClient,
+    requests: &[(i32, u8, i32)],
+    hours: u16,
+) -> Result<Vec<SparklineRow>, ClickHouseError> {
+    if requests.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut tuples = String::with_capacity(requests.len() * 24);
+    for (i, (item_id, hq, world_id)) in requests.iter().enumerate() {
+        if i > 0 {
+            tuples.push(',');
+        }
+        tuples.push_str(&format!("({item_id},{hq},{world_id})"));
+    }
+
+    // The CTE builds a complete hour grid right-aligned to now() so missing
+    // hours appear as 0 rather than being dropped (which would break index
+    // alignment client-side). arrayMap+arrayFill could close gaps with
+    // last-known value, but for sparklines a zero gap reads "no trade in
+    // this hour" honestly — preferred over a misleading flat line.
+    let sql = format!(
+        r#"
+        WITH
+            req AS (
+                -- CH infers UInt8 from small literal tuples; cast to the
+                -- column types of sales_hourly so the LEFT JOIN below
+                -- matches without implicit conversion, and so the
+                -- SparklineRow deserializer sees Int32/UInt8/Int32.
+                SELECT
+                    toInt32(tupleElement(t, 1)) AS item_id,
+                    toUInt8(tupleElement(t, 2)) AS hq,
+                    toInt32(tupleElement(t, 3)) AS world_id
+                FROM (SELECT arrayJoin([{tuples}]) AS t)
+            ),
+            buckets AS (
+                SELECT toStartOfInterval(now() - INTERVAL n HOUR, INTERVAL 1 HOUR) AS bucket,
+                       (? - 1 - n) AS slot
+                FROM (SELECT arrayJoin(range(0, ?)) AS n)
+            ),
+            grid AS (
+                SELECT r.item_id, r.hq, r.world_id, b.bucket, b.slot
+                FROM req r
+                CROSS JOIN buckets b
+            ),
+            data AS (
+                SELECT g.item_id, g.hq, g.world_id, g.slot,
+                       coalesce(s.vwap, 0) AS vwap
+                FROM grid g
+                LEFT JOIN sales_hourly s FINAL
+                  ON g.item_id = s.item_id
+                 AND g.hq = s.hq
+                 AND g.world_id = s.world_id
+                 AND g.bucket = s.bucket
+            )
+        SELECT
+            item_id, toUInt8(hq) AS hq, world_id,
+            groupArray(vwap) AS points,
+            -- first/last non-zero in the array — drives %change math.
+            arrayElement(
+                arrayFilter(x -> x > 0, points),
+                1
+            ) AS first_price,
+            arrayElement(
+                reverse(arrayFilter(x -> x > 0, points)),
+                1
+            ) AS last_price
+        FROM (
+            SELECT * FROM data
+            ORDER BY item_id, hq, world_id, slot
+        )
+        GROUP BY item_id, hq, world_id
+        "#
+    );
+
+    let rows: Vec<SparklineRow> = ch
+        .client()
+        .query(&sql)
+        .bind(hours as u32)
+        .bind(hours as u32)
+        .fetch_all()
+        .await?;
+    Ok(rows)
+}
+
+/// Per-item % change in VWAP from N hours ago to now, with the most-recent
+/// sale price and volume. Drives the Market Movers home page section
+/// (Rising / Falling / High Volume tabs).
+#[derive(Debug, Clone, Row, Deserialize, serde::Serialize)]
+pub struct MoverRow {
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    pub price_now: u32,
+    pub pct_change_24h: f32,
+    pub volume_24h: u32,
+}
+
+/// Fetch the top N movers for a world.
+///
+/// `direction` controls ordering: "rising" (pct desc), "falling" (pct asc),
+/// "volume" (raw 24h volume desc). All three return up to `limit` rows.
+///
+/// Filtered to items with at least `min_samples_24h` to weed out items
+/// where a single sale would dominate the metric.
+pub async fn top_movers(
+    ch: &ClickHouseClient,
+    world_id: i32,
+    direction: MoverDirection,
+    limit: u32,
+) -> Result<Vec<MoverRow>, ClickHouseError> {
+    let order_by = match direction {
+        MoverDirection::Rising => "pct_change_24h DESC",
+        MoverDirection::Falling => "pct_change_24h ASC",
+        MoverDirection::Volume => "volume_24h DESC",
+    };
+    // argMin/argMax pick the value at the earliest/latest bucket per
+    // group — exactly the first vs last VWAP we need for %change. Items
+    // with < 3 sales in 24h are filtered out so a single noisy trade
+    // doesn't dominate the rankings.
+    let sql = format!(
+        r#"
+        SELECT
+            item_id, toUInt8(hq) AS hq, world_id,
+            argMax(vwap, bucket) AS price_now,
+            if(argMin(vwap, bucket) > 0,
+               toFloat32((toFloat64(argMax(vwap, bucket))
+                          - toFloat64(argMin(vwap, bucket)))
+                         / toFloat64(argMin(vwap, bucket)) * 100),
+               toFloat32(0)) AS pct_change_24h,
+            toUInt32(sum(unit_volume)) AS volume_24h
+        FROM sales_hourly FINAL
+        WHERE world_id = toInt32(?)
+          AND bucket > now() - INTERVAL 24 HOUR
+          AND vwap > 0
+        GROUP BY item_id, hq, world_id
+        HAVING sum(sale_count) >= 3
+           AND argMin(vwap, bucket) > 0
+           AND argMax(vwap, bucket) > 0
+        ORDER BY {order_by}
+        LIMIT ?
+        "#
+    );
+
+    let rows: Vec<MoverRow> = ch
+        .client()
+        .query(&sql)
+        .bind(world_id)
+        .bind(limit)
+        .fetch_all()
+        .await?;
+    Ok(rows)
+}
+
+/// Which sort to apply for [`top_movers`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoverDirection {
+    Rising,
+    Falling,
+    Volume,
+}
+
 /// Fetch today's + yesterday's rolled-up KPIs for a world.
 ///
 /// One query for both windows via conditional `sumIf` — the alternative

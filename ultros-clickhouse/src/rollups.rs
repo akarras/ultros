@@ -345,6 +345,47 @@ pub async fn refresh_world_kpi_5min(ch: &ClickHouseClient) -> Result<u64, ClickH
     Ok(count.n)
 }
 
+/// Refresh `sales_hourly` for the trailing 30 hours.
+///
+/// 30 hours covers the 24h sparkline plus a small buffer so the trailing
+/// edge is always populated. We rebuild rather than upsert because the
+/// most-recent hour is always still filling and ReplacingMergeTree merges
+/// duplicates by `computed_at` anyway.
+#[instrument(skip(ch))]
+pub async fn refresh_sales_hourly(ch: &ClickHouseClient) -> Result<u64, ClickHouseError> {
+    let sql = r#"
+        INSERT INTO sales_hourly
+        SELECT
+            item_id, hq, world_id,
+            toStartOfInterval(sold_date, INTERVAL 1 HOUR) AS bucket,
+            now() AS computed_at,
+            toUInt32(count()) AS sale_count,
+            toUInt32(sum(quantity)) AS unit_volume,
+            toUInt32(sum(total_gil) / greatest(sum(quantity), 1)) AS vwap,
+            toUInt32(min(price_per_item)) AS min_price,
+            toUInt32(max(price_per_item)) AS max_price
+        FROM sales FINAL
+        WHERE sold_date > now() - INTERVAL 30 HOUR
+        GROUP BY item_id, hq, world_id, bucket
+    "#;
+    ch.client().query(sql).execute().await?;
+
+    #[derive(clickhouse::Row, serde::Deserialize)]
+    struct Count {
+        n: u64,
+    }
+    let count: Count = ch
+        .client()
+        .query(
+            "SELECT count() AS n FROM sales_hourly FINAL \
+             WHERE bucket > now() - INTERVAL 30 HOUR",
+        )
+        .fetch_one()
+        .await?;
+    tracing::info!(rows = count.n, "sales_hourly refresh done");
+    Ok(count.n)
+}
+
 /// Refresh `item_vendor_price` from xiv-gen.
 ///
 /// xiv-gen ships with the game's Item table baked in; `Item.PriceMid` is
@@ -398,6 +439,9 @@ pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
     if let Err(e) = refresh_world_kpi_5min(ch).await {
         tracing::warn!(error = ?e, "world_kpi_5min refresh failed");
     }
+    if let Err(e) = refresh_sales_hourly(ch).await {
+        tracing::warn!(error = ?e, "sales_hourly refresh failed");
+    }
     Ok(())
 }
 
@@ -441,6 +485,11 @@ pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancellati
         let mut tick_30d_90d = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
         let mut tick_quality = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
         let mut tick_kpi = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+        // sales_hourly drives the home-page sparklines + Market Movers, so
+        // it wants to be reasonably fresh. 15 min is the same cadence as the
+        // 1-day rollup window and stays well ahead of the 60s browser cache
+        // on the consuming endpoint.
+        let mut tick_hourly = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
 
         // All intervals fire immediately on first .tick() — burn those since
         // we already seeded above.
@@ -449,6 +498,7 @@ pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancellati
         tick_30d_90d.tick().await;
         tick_quality.tick().await;
         tick_kpi.tick().await;
+        tick_hourly.tick().await;
 
         // If we miss a deadline (e.g. CH was slow), delay the next tick
         // rather than firing back-to-back catch-up ticks.
@@ -457,6 +507,7 @@ pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancellati
         tick_30d_90d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         tick_quality.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         tick_kpi.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick_hourly.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -491,6 +542,11 @@ pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancellati
                 _ = tick_kpi.tick() => {
                     if let Err(e) = refresh_world_kpi_5min(&ch).await {
                         tracing::warn!(error = ?e, "world_kpi_5min refresh failed");
+                    }
+                }
+                _ = tick_hourly.tick() => {
+                    if let Err(e) = refresh_sales_hourly(&ch).await {
+                        tracing::warn!(error = ?e, "sales_hourly refresh failed");
                     }
                 }
             }
