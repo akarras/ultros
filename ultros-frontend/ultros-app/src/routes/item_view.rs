@@ -1,4 +1,5 @@
-use crate::api::{get_extended_sale_history, get_listings};
+use crate::api::{get_extended_sale_history, get_item_stats, get_listings};
+use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
@@ -590,6 +591,14 @@ pub fn ChartWrapper(
     let (hq_only, set_hq_only) = signal(false);
     let (filter_outliers, set_filter_outliers) = signal(true);
     let (days_range, set_days_range) = signal(30i32); // 0 = All
+
+    // Per-item analyzer stats (ClickHouse-backed). Soft-fails: if the
+    // endpoint errors or returns no variant, the badge simply doesn't
+    // render. The rest of the chart works without it.
+    let item_stats_resource = Resource::new(
+        move || (item_id(), world()),
+        |(id, w)| async move { get_item_stats(&w, id).await },
+    );
     // When the user clicks "Load extended history", we replace the chart's sales with
     // a larger compact pull. Stored as Option<Vec<_>>: None means "use base resource".
     let (extended_sales, set_extended_sales) = signal::<Option<Vec<SaleHistory>>>(None);
@@ -658,7 +667,28 @@ pub fn ChartWrapper(
                             <div class="flex flex-col gap-3">
                                 <div class="flex flex-wrap items-start justify-between gap-3">
                                     <div>
-                                        <h2 class="text-xl font-bold leading-tight">{move || t_string!(i18n, sale_history).to_string()}</h2>
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <h2 class="text-xl font-bold leading-tight">{move || t_string!(i18n, sale_history).to_string()}</h2>
+                                            // Analyzer confidence chip — reflects ClickHouse-rolled
+                                            // sample size + launder suspicion over 30 days.
+                                            // Picks HQ or NQ variant based on the current toggle so
+                                            // users see the band that matches what they're looking at.
+                                            {move || {
+                                                let want_hq = hq_only();
+                                                item_stats_resource
+                                                    .get()
+                                                    .and_then(|r| r.ok())
+                                                    .and_then(|s| {
+                                                        s.variant_for(want_hq).cloned()
+                                                    })
+                                                    .map(|variant| view! {
+                                                        <ConfidenceBadge
+                                                            band=variant.confidence_band
+                                                            sample_size=variant.sample_size_30d
+                                                        />
+                                                    })
+                                            }}
+                                        </div>
                                         <p class="text-sm text-[color:var(--color-text-muted)]">
                                             {move || t!(i18n, based_on_sales, count = base_sales.with(|sales| sales.len()))}
                                         </p>

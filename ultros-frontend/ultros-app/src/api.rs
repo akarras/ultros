@@ -13,6 +13,7 @@ use ultros_api_types::{
         UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
+    item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
         ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
@@ -125,6 +126,10 @@ pub(crate) async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
 
 pub(crate) async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseDto> {
     fetch_api(&format!("/api/v1/market_pulse/{}", world_name)).await
+}
+
+pub(crate) async fn get_item_stats(world_name: &str, item_id: i32) -> AppResult<ItemStatsResponse> {
+    fetch_api(&format!("/api/v1/item_stats/{}/{}", world_name, item_id)).await
 }
 
 /// Returns a list of the logged in user's retainers

@@ -3,6 +3,7 @@ pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
 pub mod icon_size;
+pub mod item_stats;
 pub mod list;
 mod listings;
 pub mod market_pulse;
