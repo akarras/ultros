@@ -1116,5 +1116,12 @@
     "market_heat_band_warm": "上昇",
     "market_heat_band_stable": "安定",
     "market_heat_band_cool": "下降",
-    "market_heat_band_no_data": "閑散"
+    "market_heat_band_no_data": "閑散",
+    "top_opportunity_title": "イチオシのチャンス",
+    "top_opportunity_view_all": "Flip Finder で全て表示",
+    "top_opportunity_empty": "現在このワールドに該当する転売案件はありません。",
+    "top_opportunity_buy": "仕入れ",
+    "top_opportunity_sell": "売値",
+    "top_opportunity_profit": "利益",
+    "top_opportunity_roi": "ROI"
 }

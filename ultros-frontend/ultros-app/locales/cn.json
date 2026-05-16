@@ -1116,5 +1116,12 @@
     "market_heat_band_warm": "回暖",
     "market_heat_band_stable": "稳定",
     "market_heat_band_cool": "走低",
-    "market_heat_band_no_data": "平淡"
+    "market_heat_band_no_data": "平淡",
+    "top_opportunity_title": "热门机会",
+    "top_opportunity_view_all": "在 Flip Finder 查看全部",
+    "top_opportunity_empty": "当前服务器暂无符合条件的转售机会。",
+    "top_opportunity_buy": "买入",
+    "top_opportunity_sell": "卖出",
+    "top_opportunity_profit": "利润",
+    "top_opportunity_roi": "投资回报率"
 }

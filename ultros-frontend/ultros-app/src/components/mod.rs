@@ -62,7 +62,7 @@ pub mod tool_help;
 pub mod toolbar;
 pub mod tooltip;
 pub mod top_bar;
-pub mod top_deals;
+pub mod top_opportunity;
 pub mod ui_text;
 pub mod undercut_alert_drawer;
 pub mod virtual_scroller;

@@ -1116,5 +1116,12 @@
     "market_heat_band_warm": "상승",
     "market_heat_band_stable": "안정",
     "market_heat_band_cool": "하락",
-    "market_heat_band_no_data": "한산"
+    "market_heat_band_no_data": "한산",
+    "top_opportunity_title": "추천 기회",
+    "top_opportunity_view_all": "Flip Finder 전체 보기",
+    "top_opportunity_empty": "지금 이 월드에 추천할 만한 거래가 없습니다.",
+    "top_opportunity_buy": "매입",
+    "top_opportunity_sell": "판매",
+    "top_opportunity_profit": "이익",
+    "top_opportunity_roi": "ROI"
 }

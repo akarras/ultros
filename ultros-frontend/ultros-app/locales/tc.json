@@ -1116,5 +1116,12 @@
     "market_heat_band_warm": "回暖",
     "market_heat_band_stable": "穩定",
     "market_heat_band_cool": "走低",
-    "market_heat_band_no_data": "平淡"
+    "market_heat_band_no_data": "平淡",
+    "top_opportunity_title": "熱門機會",
+    "top_opportunity_view_all": "在 Flip Finder 查看全部",
+    "top_opportunity_empty": "目前此伺服器無符合條件的轉售機會。",
+    "top_opportunity_buy": "買入",
+    "top_opportunity_sell": "賣出",
+    "top_opportunity_profit": "利潤",
+    "top_opportunity_roi": "投資回報率"
 }

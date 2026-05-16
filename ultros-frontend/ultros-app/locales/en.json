@@ -1116,5 +1116,12 @@
     "market_heat_band_warm": "Warm",
     "market_heat_band_stable": "Stable",
     "market_heat_band_cool": "Cool",
-    "market_heat_band_no_data": "Quiet"
+    "market_heat_band_no_data": "Quiet",
+    "top_opportunity_title": "Top opportunity",
+    "top_opportunity_view_all": "View all in Flip Finder",
+    "top_opportunity_empty": "No qualifying flips on this world right now.",
+    "top_opportunity_buy": "Buy",
+    "top_opportunity_sell": "Sell",
+    "top_opportunity_profit": "Profit",
+    "top_opportunity_roi": "ROI"
 }

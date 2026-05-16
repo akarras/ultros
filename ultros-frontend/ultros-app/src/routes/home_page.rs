@@ -13,7 +13,7 @@ use crate::components::{
     market_pulse::MarketPulse,
     meta::{MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
-    top_deals::TopDeals,
+    top_opportunity::TopOpportunity,
 };
 
 #[component]
@@ -123,10 +123,13 @@ pub fn HomePage() -> impl IntoView {
                     {move || pulse_world.with(|w| w.is_some()).then(|| view! {
                         <MarketPulse world=pulse_world />
                         <MarketHeat world=pulse_world />
-                        <MarketMovers world=pulse_world />
+                        // Two-column on desktop: Top Opportunity (left) + Market
+                        // Movers (right). On mobile they stack vertically.
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <TopOpportunity world=pulse_world />
+                            <MarketMovers world=pulse_world />
+                        </div>
                     })}
-
-                    <TopDeals />
 
                     // Tool rail — flat chips instead of card grid
                     <div>
