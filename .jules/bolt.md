@@ -14,3 +14,7 @@
 ## 2024-05-24 - [Discord List Resolution]
 **Learning:** Found an N+1 query issue masquerading as `get_lists_for_user`. The Discord bot commands fetched ALL lists across all 3 relations just to do a `.into_iter().find(...)` in memory! This fetched unneeded list data entirely across the wire and instantiated unused memory.
 **Action:** Always check the underlying DB functions behind fetching collections before using `.find(...)` on the collection in application code. Replace full collection retrievals with targeted queries if only one specific record is needed.
+
+## 2025-03-02 - Avoid Unnecessary Memoization for Cheap Derivations in Leptos
+**Learning:** Found a component (`WindowStats`) wrapping 9 extremely cheap operations (like accessing a struct field or `.round() as i32`) inside `Memo::new`. `Memo` creates a new reactive node, which carries overhead for tracking dependencies, allocating state, and checking equality. For cheap operations, this reactive overhead exceeds the computation cost itself.
+**Action:** Always prefer simple closures (`move || ...`) for O(1) derived signals and cheap math. Only use `Memo::new` when the computation is actually expensive (e.g., sorting, iterating over large lists, or complex formatting) to avoid paying the cost on every update.
