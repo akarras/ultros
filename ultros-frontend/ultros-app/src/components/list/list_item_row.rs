@@ -44,7 +44,17 @@ pub fn ListItemRow(
     let listings = RwSignal::new(listings);
 
     view! {
-        <tr class="group transition-colors hover:bg-[color:var(--color-background-panel)]">
+        <tr class=move || {
+            let item_now = item.get();
+            let q = item_now.quantity.unwrap_or(1).max(1);
+            let a = item_now.acquired.unwrap_or(0);
+            let complete = a >= q;
+            if complete {
+                "group transition-colors bg-green-900/15 hover:bg-green-900/25"
+            } else {
+                "group transition-colors hover:bg-[color:var(--color-background-panel)]"
+            }
+        }>
             {move || {
                 if !edit() || edit_list_mode() {
                     Either::Left(
@@ -71,17 +81,29 @@ pub fn ListItemRow(
                             </td>
                             <td class="px-3 py-3 align-middle">
                                 {move || {
-                                    item
-                                        .with(|i| i.hq)
-                                        .and_then(|hq| {
-                                            hq.then_some(
-                                                view! {
+                                    let item_now = item.get();
+                                    let q = item_now.quantity.unwrap_or(1).max(1);
+                                    let a = item_now.acquired.unwrap_or(0);
+                                    let complete = a >= q;
+                                    view! {
+                                        <div class="flex flex-col items-start gap-1">
+                                            {item_now.hq.and_then(|hq| {
+                                                hq.then_some(view! {
                                                     <span class="inline-flex rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">
                                                         "HQ"
                                                     </span>
-                                                },
-                                            )
-                                        })
+                                                })
+                                            })}
+                                            {complete.then(|| view! {
+                                                <span
+                                                    class="inline-flex items-center gap-1 rounded-md border border-green-400/40 px-1.5 py-0.5 text-xs text-green-200"
+                                                    aria-label=t_string!(i18n, list_view_completed_row_aria).to_string()
+                                                >
+                                                    <Icon icon=i::BsCheckCircle />
+                                                </span>
+                                            })}
+                                        </div>
+                                    }
                                 }}
                             </td>
                             <td class="px-3 py-3 align-middle">
@@ -189,15 +211,37 @@ pub fn ListItemRow(
                                             if edit() { i::BsCheck } else { i::BsPencilFill }
                                         }) />
                                     </button>
-                                    <Tooltip tooltip_text=t_string!(i18n, list_item_row_mark_acquired).to_string()>
+                                    <Tooltip tooltip_text=Signal::derive(move || {
+                                        let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
+                                        let a = item.with(|i| i.acquired.unwrap_or(0));
+                                        if a >= q {
+                                            t_string!(i18n, list_view_mark_unacquired).to_string()
+                                        } else {
+                                            t_string!(i18n, list_item_row_mark_acquired).to_string()
+                                        }
+                                    })>
                                         <button
                                             class="btn-secondary h-8 w-8 p-0"
-                                            aria-label=t_string!(i18n, list_item_row_mark_acquired)
+                                            aria-label=move || {
+                                                let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
+                                                let a = item.with(|i| i.acquired.unwrap_or(0));
+                                                if a >= q {
+                                                    t_string!(i18n, list_view_mark_unacquired).to_string()
+                                                } else {
+                                                    t_string!(i18n, list_item_row_mark_acquired).to_string()
+                                                }
+                                            }
                                             on:click=move |_| {
                                                 item.update(|i| {
-                                                    i.acquired = i.quantity;
+                                                    let q = i.quantity.unwrap_or(1).max(1);
+                                                    let a = i.acquired.unwrap_or(0);
+                                                    if a >= q {
+                                                        i.acquired = Some(0);
+                                                    } else {
+                                                        i.acquired = i.quantity.or(Some(1));
+                                                    }
                                                 });
-                                                let _ = edit_item.dispatch(item());
+                                                let _ = edit_item.dispatch(item.get());
                                             }
                                         >
                                             <Icon icon=i::BiCheckRegular />
