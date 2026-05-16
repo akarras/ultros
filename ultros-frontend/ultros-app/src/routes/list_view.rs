@@ -164,6 +164,7 @@ pub fn ListView() -> impl IntoView {
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (buying_view, set_buying_view) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
+    let (settings_open, set_settings_open) = signal(false);
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
@@ -194,7 +195,7 @@ pub fn ListView() -> impl IntoView {
             <AutoMarkPurchases list_view=list_view />
 
             <div class="panel rounded-lg p-3">
-                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between list-toolbar">
                     <div class="flex flex-wrap items-center gap-2">
                         <Show when=move || view_caps.with(|c| c.can_write)>
                             <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
@@ -261,6 +262,17 @@ pub fn ListView() -> impl IntoView {
                             >
                                 <Icon icon=i::BiCartRegular />
                                 <span>{t!(i18n, list_view_purchasing_view)}</span>
+                            </button>
+                        </Tooltip>
+                        <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
+                            <button
+                                class="btn-secondary"
+                                aria-label=t_string!(i18n, list_view_settings)
+                                data-testid="list-settings-btn"
+                                on:click=move |_| set_settings_open(true)
+                            >
+                                <Icon icon=i::BsGear />
+                                <span>{t!(i18n, list_view_settings)}</span>
                             </button>
                         </Tooltip>
                     </div>
@@ -699,6 +711,10 @@ pub fn ListView() -> impl IntoView {
                 }}
 
             </Transition>
+
+            <Show when=settings_open>
+                <div data-testid="list-settings-placeholder"></div>
+            </Show>
         </div>
     }.into_any()
 }
