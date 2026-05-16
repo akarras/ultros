@@ -841,7 +841,7 @@ pub fn ListView() -> impl IntoView {
                                                                     </th>
                                                                     <th scope="col" class="w-16 px-3 py-3 text-left">{t!(i18n, list_view_hq)}</th>
                                                                     <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_item)}</th>
-                                                                    <th scope="col" class="w-40 px-3 py-3 text-left">{t!(i18n, list_view_quantity)}</th>
+                                                                    <th scope="col" class="w-40 px-3 py-3 text-left">{t!(i18n, list_view_acquired_quantity)}</th>
                                                                     <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_price)}</th>
                                                                     <th
                                                                         scope="col"
