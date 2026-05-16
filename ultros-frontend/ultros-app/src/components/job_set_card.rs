@@ -8,7 +8,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 
-use crate::components::gil::Gil;
+use crate::components::gil::GilOrDash;
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::JobSetGroup;
 use crate::global_state::cheapest_prices::CheapestPrices;
@@ -194,8 +194,12 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
         })
     });
 
-    let total_nq = move || totals.with(|(nq, _)| *nq);
-    let total_hq = move || totals.with(|(_, hq)| *hq);
+    // Pre-narrow the totals into the `Option<i32>` shape `GilOrDash` consumes;
+    // the conversion has to happen before the view block so the SSR/CSR view
+    // trees do not branch on `Some`/`None` at the element level (see the
+    // module docs on `GilOrDash` for the hydration-mismatch failure mode).
+    let total_nq = Signal::derive(move || totals.with(|(nq, _)| nq.map(|t| t as i32)));
+    let total_hq = Signal::derive(move || totals.with(|(_, hq)| hq.map(|t| t as i32)));
 
     view! {
         <div class="group relative flex flex-col p-4 rounded-xl panel
@@ -248,10 +252,7 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                         {t!(i18n, job_set_card_total_nq)}
                     </span>
                     <div class="flex flex-row items-center gap-1.5">
-                        {move || match total_nq() {
-                            Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                            None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                        }}
+                        <GilOrDash amount=total_nq />
                     </div>
                 </div>
                 <div class="flex flex-col">
@@ -259,10 +260,7 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                         {t!(i18n, job_set_card_total_hq)}
                     </span>
                     <div class="flex flex-row items-center gap-1.5">
-                        {move || match total_hq() {
-                            Some(t) => view! { <Gil amount=t as i32 /> }.into_any(),
-                            None => view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any(),
-                        }}
+                        <GilOrDash amount=total_hq />
                     </div>
                 </div>
                 <A

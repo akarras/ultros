@@ -146,10 +146,8 @@ async fn share_user(
     let list = ctx
         .data()
         .db
-        .get_lists_for_user(owner.id)
+        .get_list_by_name_for_user(owner.id, &list_name)
         .await?
-        .into_iter()
-        .find(|list| list.name == list_name)
         .ok_or(anyhow!("Unable to find list `{list_name}`"))?;
 
     ctx.data()
@@ -192,10 +190,8 @@ async fn create_invite(
     let list = ctx
         .data()
         .db
-        .get_lists_for_user(owner.id)
+        .get_list_by_name_for_user(owner.id, &list_name)
         .await?
-        .into_iter()
-        .find(|list| list.name == list_name)
         .ok_or(anyhow!("Unable to find list `{list_name}`"))?;
     let invite = ctx
         .data()
@@ -290,14 +286,11 @@ async fn remove(
     list_name: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let user_lists = ctx
+    let lists = ctx
         .data()
         .db
-        .get_lists_for_user(ctx.author().id.get() as i64)
-        .await?;
-    let lists = user_lists
-        .into_iter()
-        .find(|list| list.name == list_name)
+        .get_list_by_name_for_user(ctx.author().id.get() as i64, &list_name)
+        .await?
         .ok_or(anyhow!("Failed to find list {list_name}"))?;
     ctx.data()
         .db
@@ -336,10 +329,8 @@ async fn add_item(
     let list = ctx
         .data()
         .db
-        .get_lists_for_user(author_id)
+        .get_list_by_name_for_user(author_id, &list_name)
         .await?
-        .into_iter()
-        .find(|l| l.name == list_name)
         .ok_or(anyhow!("List not found"))?;
     ctx.data()
         .db
@@ -367,10 +358,11 @@ async fn remove_item(
 ) -> Result<(), Error> {
     let author_id = ctx.author().id.get() as i64;
     let id = resolve_item_id_any_locale(&item_name).ok_or(anyhow!("Unable to find item"))?;
-    let lists = ctx.data().db.get_lists_for_user(author_id).await?;
-    let list = lists
-        .into_iter()
-        .find(|l| l.name == list_name)
+    let list = ctx
+        .data()
+        .db
+        .get_list_by_name_for_user(author_id, &list_name)
+        .await?
         .ok_or(anyhow!("Unable to find list"))?;
     let item = ctx
         .data()
@@ -396,10 +388,11 @@ async fn show_list(
 ) -> Result<(), Error> {
     ctx.defer_or_broadcast().await?;
     let discord_user = ctx.author().id.get() as i64;
-    let lists = ctx.data().db.get_lists_for_user(discord_user).await?;
-    let list = lists
-        .into_iter()
-        .find(|list| list.name == list_name)
+    let list = ctx
+        .data()
+        .db
+        .get_list_by_name_for_user(discord_user, &list_name)
+        .await?
         .ok_or(anyhow!("Unable to get list"))?;
     let mut list_listings = ctx
         .data()

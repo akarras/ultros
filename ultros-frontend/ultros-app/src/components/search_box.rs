@@ -2,6 +2,7 @@ use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::tooltip::Tooltip;
 use crate::components::virtual_scroller::*;
+use crate::i18n::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
@@ -127,6 +128,7 @@ fn get_static_pages() -> &'static [SearchResult] {
 
 #[component]
 pub fn SearchBox() -> impl IntoView {
+    let i18n = use_i18n();
     let text_input = NodeRef::<Input>::new();
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
@@ -327,11 +329,11 @@ pub fn SearchBox() -> impl IntoView {
                     on:input=on_input
                     on:focusin=focus_in
                     on:focusout=focus_out
-                    placeholder="Search items, currencies, categories... (⌘K / CTRL K)"
+                    placeholder=t_string!(i18n, search_box_placeholder)
                     class="input w-full pl-10 pr-10"
                     type="text"
                     prop:value=search
-                    aria-label="Search items"
+                    aria-label=t_string!(i18n, search_box_aria_label)
                     aria-keyshortcuts="Meta+K Control+K"
                     aria-busy=move || loading().to_string()
                     aria-controls="search-results"
@@ -352,7 +354,7 @@ pub fn SearchBox() -> impl IntoView {
                 </div>
                 <div class="absolute right-3 top-1/2 -translate-y-1/2">
                     <Show when=move || !search.get().is_empty()>
-                        <Tooltip tooltip_text="Clear search">
+                        <Tooltip tooltip_text=t_string!(i18n, search_box_clear_tooltip)>
                             <button
                                 class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none rounded-full"
                                 on:click=move |_| {
@@ -362,7 +364,7 @@ pub fn SearchBox() -> impl IntoView {
                                     }
                                     set_active(true);
                                 }
-                                aria-label="Clear search"
+                                aria-label=t_string!(i18n, search_box_clear_tooltip)
                             >
                                 <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
                             </button>
@@ -387,7 +389,7 @@ pub fn SearchBox() -> impl IntoView {
                 <Show when=move || !loading.get() && search_results.with(|v| v.is_empty()) && !search.get().is_empty()>
                     <div class="p-8 text-center text-[color:var(--color-text-muted)] flex flex-col items-center gap-2 bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg">
                         <Icon icon=i::AiSearchOutlined attr:class="w-8 h-8 opacity-50" />
-                        <span>"No results found"</span>
+                        <span>{t!(i18n, search_no_results)}</span>
                     </div>
                 </Show>
 

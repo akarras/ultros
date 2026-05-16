@@ -1150,6 +1150,7 @@ fn DiscordCommandChip(
     #[prop(into)] item_id: Signal<i32>,
     #[prop(into)] world_name: Signal<String>,
 ) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
     // The `item` slash-command parameter is typed as an INTEGER on the Discord side,
     // so a pasted command needs the item id, not a name. We show the name in the chip
     // for human readability and put the id in the clipboard payload.
@@ -1169,7 +1170,7 @@ fn DiscordCommandChip(
     });
     view! {
         <div class="inline-flex items-center gap-2 rounded-md border border-brand-500/30 bg-black/30 px-2.5 py-1 text-xs">
-            <span class="text-[color:var(--color-text-muted)]">"Discord:"</span>
+            <span class="text-[color:var(--color-text-muted)]">{t!(i18n, item_view_discord_label)}</span>
             <code class="font-mono">{move || display_command.get()}</code>
             <Clipboard clipboard_text=clipboard_command />
         </div>

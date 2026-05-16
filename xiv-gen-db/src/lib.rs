@@ -1,4 +1,4 @@
-use flate2::FlushDecompress;
+use anyhow::anyhow;
 #[cfg(feature = "embed")]
 use std::sync::OnceLock;
 use std::sync::RwLock;
@@ -11,15 +11,15 @@ use xiv_gen::Language;
 static XIV_DATA: RwLock<Option<&'static xiv_gen::Data>> = RwLock::new(None);
 
 #[cfg(feature = "embed")]
-pub fn bincode(lang: Language) -> &'static [u8] {
+pub fn embedded_bytes(lang: Language) -> &'static [u8] {
     match lang {
-        Language::En => include_bytes!(concat!(env!("OUT_DIR"), "/database_en.bincode")),
-        Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.bincode")),
-        Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.bincode")),
-        Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.bincode")),
-        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.bincode")),
-        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.bincode")),
-        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.bincode")),
+        Language::En => include_bytes!(concat!(env!("OUT_DIR"), "/database_en.rkyv")),
+        Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.rkyv")),
+        Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.rkyv")),
+        Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.rkyv")),
+        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.rkyv")),
+        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.rkyv")),
+        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.rkyv")),
     }
 }
 
@@ -28,7 +28,7 @@ pub fn data() -> &'static xiv_gen::Data {
     if let Some(d) = *XIV_DATA.read().unwrap() {
         return d;
     }
-    let _ = try_init(bincode(Language::En));
+    try_init(embedded_bytes(Language::En)).expect("failed to initialize embedded xiv data");
     XIV_DATA.read().unwrap().expect("just initialized")
 }
 
@@ -86,7 +86,8 @@ static PER_LOCALE: [OnceLock<&'static xiv_gen::Data>; LOCALE_COUNT] = [
 #[cfg(feature = "embed")]
 pub fn data_for(lang: Language) -> &'static xiv_gen::Data {
     PER_LOCALE[language_index(lang)].get_or_init(|| {
-        let decoded = decompress_data(bincode(lang)).expect("embedded bincode must decode");
+        let decoded =
+            decompress_data(embedded_bytes(lang)).expect("embedded xiv-gen data must decode");
         Box::leak(Box::new(decoded))
     })
 }
@@ -110,12 +111,29 @@ pub fn decompress_data(bytes: &[u8]) -> anyhow::Result<xiv_gen::Data> {
     if bytes.is_empty() {
         return Ok(xiv_gen::Data::default());
     }
-    let mut decompressor = flate2::Decompress::new(true);
-    let mut data: Vec<u8> = Vec::with_capacity(bytes.len() * 5);
-    decompressor
-        .decompress_vec(bytes, &mut data, FlushDecompress::Sync)
-        .unwrap();
-    let (data, _) = bincode::decode_from_slice(&data, xiv_gen::bincode_config())?;
+    // Decompress via `ZlibDecoder::read_to_end` rather than the lower-level
+    // `Decompress::decompress_vec`, because the latter does not grow the output
+    // Vec and silently returns `BufError` once capacity is exhausted — leaving
+    // a truncated buffer that rkyv then misinterprets as a misaligned/corrupt
+    // archive. The English archive decompresses to ~50 MB which exceeds any
+    // reasonable hand-picked `bytes.len() * N` heuristic.
+    use std::io::Read;
+    let mut decoded: Vec<u8> = Vec::new();
+    flate2::read::ZlibDecoder::new(bytes)
+        .read_to_end(&mut decoded)
+        .map_err(|e| anyhow!("failed to decompress xiv-gen data: {e}"))?;
+    // rkyv requires the byte buffer to be aligned to `FixedIsize` (4 bytes
+    // under `size_32`). `Vec<u8>` only guarantees byte alignment, so copy into
+    // an `AlignedVec` before deserializing. Without this, `from_bytes` fails
+    // with an "unaligned pointer" context error on allocators that don't
+    // happen to hand back sufficiently aligned `Vec<u8>` storage (notably
+    // Windows).
+    let mut aligned = rkyv::AlignedVec::with_capacity(decoded.len());
+    aligned.extend_from_slice(&decoded);
+    // rkyv's deserialization errors don't implement `std::error::Error` in 0.7,
+    // so funnel them through anyhow's string-based fallback.
+    let data = rkyv::from_bytes::<xiv_gen::Data>(&aligned)
+        .map_err(|e| anyhow!("failed to deserialize xiv-gen data: {e}"))?;
     Ok(data)
 }
 

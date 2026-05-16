@@ -2,6 +2,7 @@ use crate::components::{
     icon::Icon,
     meta::{MetaDescription, MetaTitle},
 };
+use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 use leptos_router::{components::A, hooks::use_params_map};
@@ -282,7 +283,7 @@ pub fn help_topic(slug: &str) -> Option<HelpTopic> {
 }
 
 #[component]
-fn TopicSection(title: &'static str, items: &'static [&'static str]) -> impl IntoView {
+fn TopicSection(#[prop(into)] title: String, items: &'static [&'static str]) -> impl IntoView {
     view! {
         <section class="panel p-5 rounded-xl">
             <h2 class="text-lg font-bold text-[color:var(--brand-fg)] mb-3">{title}</h2>
@@ -300,15 +301,16 @@ fn TopicSection(title: &'static str, items: &'static [&'static str]) -> impl Int
 
 #[component]
 pub fn HelpIndex() -> impl IntoView {
+    let i18n = use_i18n();
     view! {
-        <MetaTitle title="Help - Ultros" />
-        <MetaDescription text="Task-focused help for Ultros market, crafting, retainer, and currency tools." />
+        <MetaTitle title=t_string!(i18n, help_meta_title).to_string() />
+        <MetaDescription text=t_string!(i18n, help_meta_desc).to_string() />
         <div class="main-content p-2 sm:p-6">
             <div class="container mx-auto max-w-7xl flex flex-col gap-6">
                 <section class="panel p-6 sm:p-8 rounded-2xl">
-                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-3">"Help"</h1>
+                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-3">{t!(i18n, help_page_heading)}</h1>
                     <p class="text-lg text-[color:var(--color-text)] max-w-3xl">
-                        "Short, task-focused guides for understanding what each Ultros tool optimizes for, what data it uses, and what to do next."
+                        {t!(i18n, help_index_intro)}
                     </p>
                 </section>
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -327,6 +329,7 @@ pub fn HelpIndex() -> impl IntoView {
 
 #[component]
 pub fn HelpArticle() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let topic = Memo::new(move |_| {
         params
@@ -343,7 +346,7 @@ pub fn HelpArticle() -> impl IntoView {
                         <MetaDescription text=topic.summary />
                         <A href="/help" attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-2">
                             <Icon icon=i::FaArrowLeftSolid width="0.85em" height="0.85em" />
-                            "All help topics"
+                            {t!(i18n, help_all_topics_link)}
                         </A>
                         <section class="panel p-6 sm:p-8 rounded-2xl">
                             <span class="text-xs uppercase tracking-wide text-brand-300 font-bold">{topic.category}</span>
@@ -352,18 +355,18 @@ pub fn HelpArticle() -> impl IntoView {
                             <p class="mt-4 text-sm text-[color:var(--color-text-muted)]">{topic.purpose}</p>
                         </section>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <TopicSection title="Inputs" items=topic.inputs />
-                            <TopicSection title="Assumptions" items=topic.assumptions />
-                            <TopicSection title="How to read results" items=topic.results />
-                            <TopicSection title="Next actions" items=topic.next_actions />
+                            <TopicSection title=t_string!(i18n, help_section_inputs).to_string() items=topic.inputs />
+                            <TopicSection title=t_string!(i18n, help_section_assumptions).to_string() items=topic.assumptions />
+                            <TopicSection title=t_string!(i18n, help_section_how_to_read).to_string() items=topic.results />
+                            <TopicSection title=t_string!(i18n, help_section_next_actions).to_string() items=topic.next_actions />
                         </div>
                     }.into_any(),
                     None => view! {
-                        <MetaTitle title="Help topic not found - Ultros" />
+                        <MetaTitle title=t_string!(i18n, help_not_found_meta_title).to_string() />
                         <section class="panel p-6 rounded-2xl text-center">
-                            <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Help topic not found"</h1>
-                            <p class="mt-2 text-[color:var(--color-text-muted)]">"That guide may have moved."</p>
-                            <A href="/help" attr:class="btn-primary mt-4">"Browse help"</A>
+                            <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, help_not_found_heading)}</h1>
+                            <p class="mt-2 text-[color:var(--color-text-muted)]">{t!(i18n, help_not_found_body)}</p>
+                            <A href="/help" attr:class="btn-primary mt-4">{t!(i18n, help_browse_link)}</A>
                         </section>
                     }.into_any(),
                 }}

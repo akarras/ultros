@@ -1,19 +1,32 @@
 #![allow(unused_imports, dead_code)]
 
-#[cfg(feature = "csv_to_bincode")]
-pub mod csv_to_bincode;
+#[cfg(feature = "csv_to_rkyv")]
+pub mod csv_to_rkyv;
 
 mod deserialize_custom;
 pub mod subrow_key;
 
-use bincode::{Decode, Encode, config::Config};
 use deserialize_custom::*;
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 use xiv_gen_macros::FromCsv;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+)]
+#[archive(check_bytes)]
 pub enum Language {
     En,
     Ja,
@@ -36,10 +49,6 @@ impl Language {
             Language::Tc => "tc",
         }
     }
-}
-
-pub fn bincode_config() -> impl Config {
-    bincode::config::standard()
 }
 
 pub fn data_version() -> &'static str {
@@ -67,11 +76,16 @@ macro_rules! define_id {
             PartialEq,
             Eq,
             Hash,
-            Encode,
-            Decode,
+            Archive,
+            RkyvDeserialize,
+            RkyvSerialize,
             derive_more::FromStr,
             Default,
         )]
+        #[archive(check_bytes)]
+        // The archived form of an Id newtype is used directly as a HashMap key
+        // in archived `Data`, so it has to implement Hash + Eq.
+        #[archive_attr(derive(PartialEq, Eq, Hash))]
         pub struct $name(pub i32);
     };
 }
@@ -107,7 +121,18 @@ define_id!(CompanyCraftDraftCategoryId);
 define_id!(CompanyCraftTypeId);
 define_id!(CompanyCraftDraftId);
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "Item")]
 pub struct Item {
     #[xiv_gen(column = "#")]
@@ -150,7 +175,18 @@ pub struct Item {
     pub class_job_category: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "Recipe")]
 pub struct Recipe {
     #[xiv_gen(column = "#")]
@@ -169,7 +205,18 @@ pub struct Recipe {
     pub recipe_level_table: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ClassJob")]
 pub struct ClassJob {
     #[xiv_gen(column = "#")]
@@ -186,7 +233,18 @@ pub struct ClassJob {
     pub ui_priority: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ClassJobCategory")]
 pub struct ClassJobCategory {
     #[xiv_gen(column = "#")]
@@ -281,7 +339,18 @@ pub struct ClassJobCategory {
     pub pct: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "BaseParam")]
 pub struct BaseParam {
     #[xiv_gen(column = "#")]
@@ -294,7 +363,18 @@ pub struct BaseParam {
     pub order_priority: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "SpecialShop")]
 pub struct SpecialShop {
     #[xiv_gen(column = "#")]
@@ -325,7 +405,18 @@ pub struct SpecialShop {
     pub count_cost_2: Vec<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "Leve")]
 pub struct Leve {
     #[xiv_gen(column = "#")]
@@ -342,7 +433,18 @@ pub struct Leve {
     pub gil_reward: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "LeveRewardItem")]
 pub struct LeveRewardItem {
     #[xiv_gen(column = "#")]
@@ -384,7 +486,18 @@ pub struct LeveRewardItem {
     pub probability_percent_7: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "LeveRewardItemGroup")]
 pub struct LeveRewardItemGroup {
     #[xiv_gen(column = "#")]
@@ -430,7 +543,18 @@ pub struct LeveRewardItemGroup {
     pub count_8: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ENpcBase")]
 pub struct ENpcBase {
     #[xiv_gen(column = "#")]
@@ -439,7 +563,18 @@ pub struct ENpcBase {
     pub e_npc_data: [u32; 32],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ENpcResident")]
 pub struct ENpcResident {
     #[xiv_gen(column = "#")]
@@ -448,7 +583,18 @@ pub struct ENpcResident {
     pub singular: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "GilShop")]
 pub struct GilShop {
     #[xiv_gen(column = "#")]
@@ -457,7 +603,18 @@ pub struct GilShop {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "GilShopItem")]
 pub struct GilShopItem {
     #[xiv_gen(column = "#")]
@@ -466,7 +623,18 @@ pub struct GilShopItem {
     pub item: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "TopicSelect")]
 pub struct TopicSelect {
     #[xiv_gen(column = "#")]
@@ -475,7 +643,18 @@ pub struct TopicSelect {
     pub shop: [i32; 10],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "PreHandler")]
 pub struct PreHandler {
     #[xiv_gen(column = "#")]
@@ -484,7 +663,18 @@ pub struct PreHandler {
     pub target: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ItemSearchCategory")]
 pub struct ItemSearchCategory {
     #[xiv_gen(column = "#")]
@@ -499,7 +689,18 @@ pub struct ItemSearchCategory {
     pub class_job: i8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ItemUICategory")]
 pub struct ItemUiCategory {
     #[xiv_gen(column = "#")]
@@ -508,7 +709,18 @@ pub struct ItemUiCategory {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "ItemSortCategory")]
 pub struct ItemSortCategory {
     #[xiv_gen(column = "#")]
@@ -517,7 +729,18 @@ pub struct ItemSortCategory {
     pub param: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftSequence")]
 pub struct CompanyCraftSequence {
     #[xiv_gen(column = "#")]
@@ -530,7 +753,18 @@ pub struct CompanyCraftSequence {
     pub company_craft_part: [i32; 8],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftPart")]
 pub struct CompanyCraftPart {
     #[xiv_gen(column = "#")]
@@ -539,7 +773,18 @@ pub struct CompanyCraftPart {
     pub company_craft_process: [i32; 3],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftProcess")]
 pub struct CompanyCraftProcess {
     #[xiv_gen(column = "#")]
@@ -552,7 +797,18 @@ pub struct CompanyCraftProcess {
     pub sets_required: [i32; 12],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftSupplyItem")]
 pub struct CompanyCraftSupplyItem {
     #[xiv_gen(column = "#")]
@@ -561,7 +817,18 @@ pub struct CompanyCraftSupplyItem {
     pub item: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftDraftCategory")]
 pub struct CompanyCraftDraftCategory {
     #[xiv_gen(column = "#")]
@@ -570,7 +837,18 @@ pub struct CompanyCraftDraftCategory {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftType")]
 pub struct CompanyCraftType {
     #[xiv_gen(column = "#")]
@@ -579,7 +857,18 @@ pub struct CompanyCraftType {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CompanyCraftDraft")]
 pub struct CompanyCraftDraft {
     #[xiv_gen(column = "#")]
@@ -592,7 +881,18 @@ pub struct CompanyCraftDraft {
     pub required_item_count: [i32; 3],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "RetainerTask")]
 pub struct RetainerTask {
     #[xiv_gen(column = "#")]
@@ -607,7 +907,18 @@ pub struct RetainerTask {
     pub is_random: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "RetainerTaskNormal")]
 pub struct RetainerTaskNormal {
     #[xiv_gen(column = "#")]
@@ -618,7 +929,18 @@ pub struct RetainerTaskNormal {
     pub quantity_0: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "RecipeLevelTable")]
 pub struct RecipeLevelTable {
     #[xiv_gen(column = "#")]
@@ -627,7 +949,18 @@ pub struct RecipeLevelTable {
     pub class_job_level: i8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CollectablesShopItem")]
 pub struct CollectablesShopItem {
     #[xiv_gen(column = "#")]
@@ -638,7 +971,18 @@ pub struct CollectablesShopItem {
     pub collectables_shop_reward_scrip: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CollectablesShopRewardScrip")]
 pub struct CollectablesShopRewardScrip {
     #[xiv_gen(column = "#")]
@@ -649,7 +993,18 @@ pub struct CollectablesShopRewardScrip {
     pub high_reward: i16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, FromCsv)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CraftLeve")]
 pub struct CraftLeve {
     #[xiv_gen(column = "#")]
@@ -662,7 +1017,18 @@ pub struct CraftLeve {
     pub item_count_0: i8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Encode, Decode, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    Default,
+)]
+#[archive(check_bytes)]
 pub struct Data {
     pub items: HashMap<ItemId, Item>,
     pub recipes: HashMap<RecipeId, Recipe>,

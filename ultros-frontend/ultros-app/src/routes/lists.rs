@@ -1,5 +1,5 @@
 use crate::components::icon::Icon;
-use crate::i18n::{t, t_string};
+use crate::i18n::*;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
@@ -120,6 +120,7 @@ fn AccessRow(
 
 #[component]
 fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
+    let i18n = use_i18n();
     let list_id = list.id;
     let list_name = list.name.clone();
     let (recipient, set_recipient) = signal(String::new());
@@ -209,7 +210,7 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
         <Modal set_visible=set_visible max_width="max-w-5xl w-[96%] sm:w-[820px]".to_string()>
             <div class="space-y-6">
                 <div class="pr-10">
-                    <h2 class="text-3xl font-black text-[color:var(--color-text)]">"Share list: " {list_name.clone()}</h2>
+                    <h2 class="text-3xl font-black text-[color:var(--color-text)]">{t!(i18n, lists_share_heading_prefix)} {list_name.clone()}</h2>
                 </div>
 
                 <Suspense fallback=move || view! { <Loading /> }>
@@ -224,11 +225,11 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
                             view! {
                                 <div class="space-y-6">
                                     <section class="space-y-3">
-                                        <h3 class="text-lg font-bold text-[color:var(--color-text)]">"Add people or groups"</h3>
+                                        <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_add_people_heading)}</h3>
                                         <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
                                             <input
                                                 class="input w-full text-base"
-                                                placeholder="Search Discord ID or Group name..."
+                                                placeholder=t_string!(i18n, lists_share_search_placeholder)
                                                 prop:value=recipient
                                                 on:input=move |ev| set_recipient(event_target_value(&ev))
                                             />
@@ -236,8 +237,8 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
                                                 class="input w-full"
                                                 on:change=move |ev| set_recipient_permission(editable_permission(&event_target_value(&ev)))
                                             >
-                                                <option value="Read">"Read"</option>
-                                                <option value="Write">"Write"</option>
+                                                <option value="Read">{t!(i18n, permission_read)}</option>
+                                                <option value="Write">{t!(i18n, permission_write)}</option>
                                             </select>
                                             <button
                                                 type="button"
@@ -271,26 +272,26 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
                                     </section>
 
                                     <section class="space-y-3">
-                                        <h3 class="text-lg font-bold text-[color:var(--color-text)]">"Or share via link"</h3>
+                                        <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_via_link_heading)}</h3>
                                         <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_9rem_14rem]">
                                             <input
                                                 class="input w-full font-mono text-sm"
                                                 readonly
                                                 prop:value=latest_invite_url
-                                                placeholder="Create an invite link..."
+                                                placeholder=t_string!(i18n, lists_invite_create_placeholder)
                                                 on:click=move |_| copy_latest_invite(invites_for_copy.clone())
                                             />
                                             <select
                                                 class="input w-full"
                                                 on:change=move |ev| set_invite_permission(editable_permission(&event_target_value(&ev)))
                                             >
-                                                <option value="Read">"Read"</option>
-                                                <option value="Write">"Write"</option>
+                                                <option value="Read">{t!(i18n, permission_read)}</option>
+                                                <option value="Write">{t!(i18n, permission_write)}</option>
                                             </select>
                                             <input
                                                 class="input w-full"
                                                 inputmode="numeric"
-                                                placeholder="Max uses"
+                                                placeholder=t_string!(i18n, lists_invite_max_uses_placeholder)
                                                 prop:value=invite_max_uses
                                                 on:input=move |ev| set_invite_max_uses(event_target_value(&ev))
                                             />
@@ -308,7 +309,7 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
                                                 }
                                             >
                                                 <Icon icon=i::BsClipboard2Fill />
-                                                <span>"Copy Invite Link"</span>
+                                                <span>{t!(i18n, lists_invite_copy_button)}</span>
                                             </button>
                                         </div>
                                     </section>
@@ -316,7 +317,7 @@ fn ShareListModal(list: List, set_visible: WriteSignal<bool>) -> impl IntoView {
                                     <div class="h-px bg-[color:var(--color-outline)]"></div>
 
                                     <section class="space-y-3">
-                                        <h3 class="text-lg font-bold text-[color:var(--color-text)]">"Who has access"</h3>
+                                        <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_who_has_access_heading)}</h3>
                                         <AccessList
                                             users=users
                                             groups=shared_groups
@@ -429,6 +430,7 @@ fn AccessList(
 
 #[component]
 pub fn ListInviteAccept() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let navigate = use_navigate();
     let invite_id =
@@ -462,8 +464,8 @@ pub fn ListInviteAccept() -> impl IntoView {
         <div class="panel mx-auto max-w-xl rounded-xl p-6">
             <div class="space-y-4">
                 <div>
-                    <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">"Accept list invite"</h1>
-                    <p class="text-sm text-[color:var(--color-text-muted)]">"Sign in with Discord to add this shared list to your account."</p>
+                    <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, lists_accept_invite_heading)}</h1>
+                    <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_accept_invite_body)}</p>
                 </div>
 
                 <Suspense fallback=move || view! { <Loading /> }>
@@ -484,7 +486,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                         </div>
                                         <a class="btn-primary" href=href>
                                             <Icon icon=i::BsPersonCircle />
-                                            <span>"Sign in with Discord"</span>
+                                            <span>{t!(i18n, lists_sign_in_discord_button)}</span>
                                         </a>
                                     </div>
                                 }.into_any()
@@ -497,12 +499,12 @@ pub fn ListInviteAccept() -> impl IntoView {
                         Some(Ok(_)) => {
                             match redeem_invite.value().get() {
                                 Some(Ok(_)) => view! {
-                                    <div class="text-sm text-[color:var(--color-text-muted)]">"Opening shared list..."</div>
+                                    <div class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_opening_shared_list)}</div>
                                 }.into_any(),
                                 Some(Err(e)) => view! {
                                     <div class="space-y-3">
                                         <div class="alert alert-error">{format!("Could not accept invite: {e}")}</div>
-                                        <A href="/list" attr:class="btn-secondary">"Back to lists"</A>
+                                        <A href="/list" attr:class="btn-secondary">{t!(i18n, lists_back_to_lists_link)}</A>
                                     </div>
                                 }.into_any(),
                                 None => view! {
@@ -822,10 +824,10 @@ pub fn EditLists() -> impl IntoView {
 
             <div class="panel p-4 rounded-xl flex flex-col md:flex-row gap-3 md:items-end">
                 <div class="flex-1">
-                    <label class="label text-sm font-semibold">"Redeem invite"</label>
+                    <label class="label text-sm font-semibold">{t!(i18n, lists_redeem_invite_label)}</label>
                     <input
                         class="input w-full"
-                        placeholder="Invite code"
+                        placeholder=t_string!(i18n, lists_invite_code_placeholder)
                         prop:value=invite_id
                         on:input=move |ev| set_invite_id(event_target_value(&ev))
                     />

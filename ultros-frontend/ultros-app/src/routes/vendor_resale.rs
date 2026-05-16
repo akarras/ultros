@@ -314,7 +314,7 @@ fn VendorResaleTable(
         <div class="flex flex-col gap-6">
             // Primary filter toolbar
             <Toolbar>
-                <ToolbarField label="Profit (Min)">
+                <ToolbarField label=t_string!(i18n, vendor_resale_filter_profit_min_label).to_string()>
                     <input
                         class="input input-sm w-32"
                         min=0
@@ -333,7 +333,7 @@ fn VendorResaleTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="ROI (Min)">
+                <ToolbarField label=t_string!(i18n, vendor_resale_filter_roi_min_label).to_string()>
                     <input
                         class="input input-sm w-28"
                         min=0
@@ -352,14 +352,14 @@ fn VendorResaleTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Sales (Min, of 6)">
+                <ToolbarField label=t_string!(i18n, vendor_resale_filter_sales_min_label).to_string()>
                     <input
                         class="input input-sm w-24"
                         min=0
                         max=6
                         step=1
                         placeholder="0–6"
-                        title="Each item only ships its 6 most recent sales. Set 1–6 to require that many of those sales were observed."
+                        title=t_string!(i18n, analyzer_tooltip_sales_min)
                         type="number"
                         prop:value=minimum_sales
                         on:input=move |input| {
@@ -372,7 +372,7 @@ fn VendorResaleTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Category">
+                <ToolbarField label=t_string!(i18n, vendor_resale_filter_category_label).to_string()>
                     <select
                         class="input input-sm w-48"
                         on:change=move |ev| {
@@ -399,7 +399,7 @@ fn VendorResaleTable(
                         }
                     </select>
                 </ToolbarField>
-                <ToolbarField label="Prices">
+                <ToolbarField label=t_string!(i18n, vendor_resale_filter_prices_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if tax_enabled().unwrap_or(true) { "false" } else { "true" }
@@ -428,11 +428,11 @@ fn VendorResaleTable(
             // Secondary filter toolbar (expanded)
             {move || show_more.get().then(|| view! {
                 <Toolbar>
-                    <ToolbarField label="Max Sale Time">
+                    <ToolbarField label=t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()>
                         <input
                             class="input input-sm w-32"
                             placeholder="e.g. 7d 12h"
-                            title="Accepts formats like 1h 30m, 7d, 1M (month), etc."
+                            title=t_string!(i18n, analyzer_tooltip_duration_format)
                             prop:value=move || max_predicted_time().unwrap_or_default()
                             on:input=move |input| {
                                 let value = event_target_value(&input);
@@ -455,7 +455,7 @@ fn VendorResaleTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, vendor_resale_profit_gte)} <Gil amount=p />
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -470,7 +470,7 @@ fn VendorResaleTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, vendor_resale_category_colon)} {cat_name}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -480,7 +480,7 @@ fn VendorResaleTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, vendor_resale_sales_gte)} {sales}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -490,7 +490,7 @@ fn VendorResaleTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, vendor_resale_roi_gte)} {format!("{roi}%")}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -500,7 +500,7 @@ fn VendorResaleTable(
                             chips.push(view! {
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, vendor_resale_next_sale_lte)} {predicted_time_string()}
-                                    <button aria-label="Remove filter" class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -513,7 +513,7 @@ fn VendorResaleTable(
                         }
                     }}
                 </div>
-                <button aria-label="Clear all filters" class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
+                <button aria-label=t_string!(i18n, aria_clear_all_filters) class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
                     set_minimum_profit(None);
                     set_minimum_roi(None);
                     set_max_predicted_time(None);
@@ -684,11 +684,11 @@ pub fn VendorWorldView() -> impl IntoView {
             <MetaTitle title=move || format!("{} - {}", t_string!(i18n, vendor_resale_title), world()) />
             <div class="flex flex-col gap-8">
                 <ToolHeader
-                    title="Vendor Resale"
-                    summary="Find NPC vendor items that may be worth buying as NQ items and reselling on the selected world."
-                    context="HQ market listings are excluded because vendor purchases are normal quality. Specific NPC source names are not available yet."
+                    title=t_string!(i18n, vendor_resale).to_string()
+                    summary=t_string!(i18n, vendor_resale_tool_summary_v2).to_string()
+                    context=t_string!(i18n, vendor_resale_tool_context).to_string()
                     help_href="/help/vendor-resale"
-                    help_body="Vendor Resale is useful for low-risk market checks where the buy price is fixed. Favor results with recent sales; high ROI on an item that rarely sells is still slow gil."
+                    help_body=t_string!(i18n, vendor_resale_tool_help).to_string()
                 />
 
                 // Controls Section
@@ -716,14 +716,14 @@ pub fn VendorWorldView() -> impl IntoView {
                             <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
                         </div>
                         <CalculationSummary
-                            title="How profit is estimated"
-                            formula="profit = market price - vendor price - market tax"
-                            details="Vendor items are treated as NQ. The table compares fixed NPC cost against current market-board listings and recent sale speed."
+                            title=t_string!(i18n, vendor_resale_calc_title).to_string()
+                            formula=t_string!(i18n, vendor_resale_calc_formula).to_string()
+                            details=t_string!(i18n, vendor_resale_calc_details).to_string()
                         />
                         <div class="flex flex-wrap gap-2">
-                            <AssumptionBadge text="NQ vendor purchase" />
-                            <AssumptionBadge text="HQ listings excluded" />
-                            <AssumptionBadge text="Vendor source names not shown yet" />
+                            <AssumptionBadge text=t_string!(i18n, vendor_resale_assumption_nq_purchase).to_string() />
+                            <AssumptionBadge text=t_string!(i18n, vendor_resale_assumption_hq_excluded).to_string() />
+                            <AssumptionBadge text=t_string!(i18n, vendor_resale_assumption_no_vendor_names).to_string() />
                         </div>
                     </div>
                 </div>

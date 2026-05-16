@@ -364,13 +364,13 @@ fn FCCraftingAnalyzerTable(
         <div class="flex flex-col gap-6">
             <ActiveListBanner />
             <Toolbar>
-                <ToolbarField label="Profit (Min)">
+                <ToolbarField label=t_string!(i18n, fc_crafting_filter_profit_min_label).to_string()>
                     <input
                         class="input input-sm w-32"
                         min=0
                         step=100000
                         type="number"
-                        placeholder="e.g. 100000"
+                        placeholder=t_string!(i18n, placeholder_eg_100000)
                         prop:value=minimum_profit
                         on:input=move |input| {
                             let value = event_target_value(&input);
@@ -382,13 +382,13 @@ fn FCCraftingAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="ROI (Min)">
+                <ToolbarField label=t_string!(i18n, fc_crafting_filter_roi_min_label).to_string()>
                     <input
                         class="input input-sm w-28"
                         min=0
                         step=10
                         type="number"
-                        placeholder="e.g. 50"
+                        placeholder=t_string!(i18n, placeholder_eg_50)
                         prop:value=minimum_roi
                         on:input=move |input| {
                             let value = event_target_value(&input);
@@ -400,13 +400,13 @@ fn FCCraftingAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Daily Sales (Min)">
+                <ToolbarField label=t_string!(i18n, fc_crafting_filter_daily_sales_min_label).to_string()>
                     <input
                         class="input input-sm w-28"
                         type="number"
                         min="0"
                         step="0.1"
-                        placeholder="e.g. 0.1"
+                        placeholder=t_string!(i18n, fc_crafting_placeholder_0_1)
                         prop:value=min_daily_sales
                         on:input=move |input| {
                             let value = event_target_value(&input);
@@ -418,36 +418,36 @@ fn FCCraftingAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Exclude Shards">
+                <ToolbarField label=t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if exclude_shards_enabled() { "false" } else { "true" }
-                            title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile."
+                            title=t_string!(i18n, tooltip_exclude_shards)
                             on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if exclude_shards_enabled() { "true" } else { "false" }
-                            title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile."
+                            title=t_string!(i18n, tooltip_exclude_shards)
                             on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
                         >
                             "On"
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
-                <ToolbarField label="Use On-Hand">
+                <ToolbarField label=t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if use_on_hand_enabled() { "false" } else { "true" }
-                            title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page."
+                            title=t_string!(i18n, tooltip_use_on_hand)
                             on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if use_on_hand_enabled() { "true" } else { "false" }
-                            title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page."
+                            title=t_string!(i18n, tooltip_use_on_hand)
                             on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
                         >
                             "On"
@@ -546,7 +546,7 @@ fn FCCraftingAnalyzerTable(
                                         </div>
                                         <div class="flex flex-col truncate">
                                             <span>{item}</span>
-                                            <ResultBreakdownDisclosure title="Material breakdown">
+                                            <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
                                                 <div class="flex flex-col gap-1">
                                                     {material_rows.into_iter().map(|(name, qty, unit_cost)| view! {
                                                         <div class="flex justify-between gap-3">
@@ -631,11 +631,11 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 
              <div class="flex flex-col gap-4">
                 <ToolHeader
-                    title="FC Crafting Analyzer"
-                    summary="Estimate Free Company workshop project profit from material costs and recent output sales."
-                    context="Workshop outputs can have sparse sales, so pair profit with velocity before committing expensive materials."
+                    title=t_string!(i18n, fc_crafting_analyzer_title).to_string()
+                    summary=t_string!(i18n, fc_crafting_tool_summary).to_string()
+                    context=t_string!(i18n, fc_crafting_tool_context).to_string()
                     help_href="/help/fc-crafting"
-                    help_body="FC Crafting Analyzer totals company craft materials at current market prices, compares that against the output item, and flags how much recent sales data supports the recommendation."
+                    help_body=t_string!(i18n, fc_crafting_tool_help).to_string()
                 />
                  <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
@@ -662,14 +662,14 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                     </div>
                 </Show>
                 <CalculationSummary
-                    title="Project cost model"
-                    formula="profit = output market price - total material cost"
-                    details="Total cost is derived from company craft supply items, required sets, and current market-board listings for each material."
+                    title=t_string!(i18n, fc_crafting_calc_title).to_string()
+                    formula=t_string!(i18n, fc_crafting_calc_formula).to_string()
+                    details=t_string!(i18n, fc_crafting_calc_details).to_string()
                 />
                 <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text="Material prices come from market listings" />
-                    <AssumptionBadge text="Sparse output sales lower confidence" />
-                    <AssumptionBadge text="Workshop labor/time is not priced" />
+                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_market_prices).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string() />
                 </div>
 
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>

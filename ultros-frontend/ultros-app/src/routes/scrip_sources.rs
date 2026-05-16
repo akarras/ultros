@@ -515,11 +515,11 @@ pub fn ScripSources() -> impl IntoView {
 
             <div class="flex flex-col gap-4">
                 <ToolHeader
-                    title="Scrip Sources"
-                    summary="Find collectables with the lowest estimated gil cost per scrip."
-                    context="The default sort optimizes efficiency: lower cost per scrip is better."
+                    title=t_string!(i18n, scrip_sources_title).to_string()
+                    summary=t_string!(i18n, scrip_sources_summary).to_string()
+                    context=t_string!(i18n, scrip_sources_context).to_string()
                     help_href="/help/scrip-sources"
-                    help_body="Scrip Sources assumes high collectability rewards and calculates ingredient cost from market listings. Use scrip type and job filters to narrow to what you can actually turn in."
+                    help_body=t_string!(i18n, scrip_sources_help_body).to_string()
                 />
 
                 <Toolbar>
@@ -535,14 +535,14 @@ pub fn ScripSources() -> impl IntoView {
                     {t!(i18n, scrip_sources_description)}
                 </div>
                 <CalculationSummary
-                    title="Efficiency model"
-                    formula="cost per scrip = ingredient cost / high collectability scrip reward"
-                    details="The high reward is used as the max collectability target. Gathering and non-craftable sources are intentionally limited in this pass."
+                    title=t_string!(i18n, scrip_sources_efficiency_model).to_string()
+                    formula=t_string!(i18n, scrip_sources_efficiency_formula).to_string()
+                    details=t_string!(i18n, scrip_sources_efficiency_details).to_string()
                 />
                 <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text="High collectability reward" />
-                    <AssumptionBadge text="Market ingredient cost" />
-                    <AssumptionBadge text="Lower cost per scrip is better" />
+                    <AssumptionBadge text=t_string!(i18n, scrip_sources_assumption_high_reward).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, scrip_sources_assumption_market_cost).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, scrip_sources_assumption_lower_better).to_string() />
                 </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>

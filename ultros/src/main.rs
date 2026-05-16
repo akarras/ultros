@@ -359,7 +359,7 @@ async fn main() -> Result<()> {
     let search_service = SearchService::new()?;
     let conf = get_configuration(Some("Cargo.toml")).unwrap();
     let mut leptos_options = conf.leptos_options;
-    let git_hash = git_const::git_short_hash!();
+    let git_hash = env!("GIT_HASH");
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
     let web_state = WebState {
         analyzer_service,

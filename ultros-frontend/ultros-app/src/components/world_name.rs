@@ -2,9 +2,11 @@ use leptos::{either::Either, prelude::*};
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::global_state::LocalWorldData;
+use crate::i18n::{t, use_i18n};
 
 #[component]
 pub(crate) fn WorldName(id: AnySelector) -> impl IntoView {
+    let i18n = use_i18n();
     match use_context::<LocalWorldData>()
         .expect("Local world data must be verified")
         .0
@@ -17,7 +19,7 @@ pub(crate) fn WorldName(id: AnySelector) -> impl IntoView {
                     .unwrap_or_default()}
             </span>
         }),
-        _ => Either::Right(view! { <span>"None"</span> }),
+        _ => Either::Right(view! { <span>{t!(i18n, none_label)}</span> }),
     }
     .into_any()
 }

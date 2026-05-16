@@ -7,9 +7,11 @@ use crate::api::{get_alert_events, resend_alert_event};
 use crate::components::icon::Icon;
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
+use crate::i18n::{t, use_i18n};
 
 #[component]
 pub fn HistoryPanel() -> impl IntoView {
+    let i18n = use_i18n();
     let version = RwSignal::new(0u64);
     let events = Resource::new(move || version.get(), move |_| get_alert_events());
     let toasts = use_toast();
@@ -38,21 +40,21 @@ pub fn HistoryPanel() -> impl IntoView {
     };
 
     view! {
-        <Suspense fallback=move || view! { <div>"Loading..."</div> }>
+        <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
             {move || events.get().map(|r| match r {
                 Ok(rows) if rows.is_empty() => view! {
-                    <p class="opacity-70">"No fires yet."</p>
+                    <p class="opacity-70">{t!(i18n, history_no_fires)}</p>
                 }.into_any(),
                 Ok(rows) => view! {
                     <div class="overflow-x-auto">
                         <table class="w-full text-sm">
                             <thead>
                                 <tr>
-                                    <th class="text-left p-1">"Time"</th>
-                                    <th class="text-left p-1">"Item"</th>
-                                    <th class="text-left p-1">"Matched price"</th>
-                                    <th class="text-left p-1">"Delivered"</th>
-                                    <th class="text-left p-1">"Actions"</th>
+                                    <th class="text-left p-1">{t!(i18n, col_time)}</th>
+                                    <th class="text-left p-1">{t!(i18n, item)}</th>
+                                    <th class="text-left p-1">{t!(i18n, history_col_matched_price)}</th>
+                                    <th class="text-left p-1">{t!(i18n, history_col_delivered)}</th>
+                                    <th class="text-left p-1">{t!(i18n, actions)}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -80,7 +82,7 @@ pub fn HistoryPanel() -> impl IntoView {
                                                     <Show when=move || !delivered>
                                                         <button class="btn-ghost" on:click=move |_| resend(event_id)>
                                                             <Icon icon=i::BsArrowRepeat />
-                                                            <span class="ml-1">"Resend"</span>
+                                                            <span class="ml-1">{t!(i18n, history_resend_button)}</span>
                                                         </button>
                                                     </Show>
                                                 </td>

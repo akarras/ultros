@@ -1336,10 +1336,10 @@ async fn delete_user(
     Ok((cookie_jar, Redirect::to("/")))
 }
 
-async fn get_bincode(
+async fn get_xiv_data_bytes(
     Path((_version, lang)): Path<(String, String)>,
 ) -> Result<&'static [u8], WebError> {
-    let lang = match lang.strip_suffix(".bincode").unwrap_or(&lang) {
+    let lang = match lang.strip_suffix(".rkyv").unwrap_or(&lang) {
         "en" => xiv_gen::Language::En,
         "ja" => xiv_gen::Language::Ja,
         "de" => xiv_gen::Language::De,
@@ -1349,7 +1349,7 @@ async fn get_bincode(
         "tc" => xiv_gen::Language::Tc,
         _ => return Err(anyhow::anyhow!("Unsupported language").into()),
     };
-    Ok(xiv_gen_db::bincode(lang))
+    Ok(xiv_gen_db::embedded_bytes(lang))
 }
 
 /// Returns a region- attempts to guess it from the CF Region header
@@ -1512,7 +1512,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/static/{*path}", get(static_path))
         .route("/static/itemicon/fallback", get(fallback_item_icon))
         .route("/static/itemicon/{path}", get(get_item_icon))
-        .route("/static/data/{version}/{lang}", get(get_bincode))
+        .route("/static/data/{version}/{lang}", get(get_xiv_data_bytes))
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))

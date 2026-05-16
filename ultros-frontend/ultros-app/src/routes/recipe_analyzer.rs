@@ -340,12 +340,12 @@ fn RecipeAnalyzerTable(
             <ActiveListBanner />
             // Primary filter toolbar
             <Toolbar>
-                <ToolbarField label="Profit (Min)">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_profit_min_label).to_string()>
                     <input
                         class="input input-sm w-32"
                         min=0
                         step=1000
-                        placeholder="e.g. 10000"
+                        placeholder=t_string!(i18n, placeholder_eg_10000)
                         type="number"
                         prop:value=minimum_profit
                         on:input=move |input| {
@@ -358,12 +358,12 @@ fn RecipeAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="ROI (Min)">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_roi_min_label).to_string()>
                     <input
                         class="input input-sm w-28"
                         min=0
                         step=10
-                        placeholder="e.g. 200"
+                        placeholder=t_string!(i18n, placeholder_eg_200)
                         type="number"
                         prop:value=minimum_roi
                         on:input=move |input| {
@@ -376,7 +376,7 @@ fn RecipeAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Daily Sales (Min)">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_daily_sales_min_label).to_string()>
                     <input
                         class="input input-sm w-24"
                         type="number"
@@ -394,7 +394,7 @@ fn RecipeAnalyzerTable(
                         }
                     />
                 </ToolbarField>
-                <ToolbarField label="Job">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_job_label).to_string()>
                     <select
                         class="input input-sm w-40"
                         on:change=move |ev| {
@@ -417,90 +417,90 @@ fn RecipeAnalyzerTable(
                         <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
                     </select>
                 </ToolbarField>
-                <ToolbarField label="Sub-crafts">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_subcrafts_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if use_subcrafts().unwrap_or(false) { "false" } else { "true" }
-                            title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board."
+                            title=t_string!(i18n, recipe_analyzer_subcrafts_tooltip)
                             on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if use_subcrafts().unwrap_or(false) { "true" } else { "false" }
-                            title="If enabled, the analyzer will check if it's cheaper to craft intermediate ingredients rather than buying them from the market board."
+                            title=t_string!(i18n, recipe_analyzer_subcrafts_tooltip)
                             on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
                         >
                             "On"
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
-                <ToolbarField label="Require HQ">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_require_hq_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if require_hq().unwrap_or(false) { "false" } else { "true" }
-                            title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists."
+                            title=t_string!(i18n, recipe_analyzer_require_hq_tooltip)
                             on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if require_hq().unwrap_or(false) { "true" } else { "false" }
-                            title="If enabled, ingredient costs will prefer HQ listings when available. Falls back to LQ if no HQ listing exists."
+                            title=t_string!(i18n, recipe_analyzer_require_hq_tooltip)
                             on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
                         >
                             "On"
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
-                <ToolbarField label="Filter Outliers">
+                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if filter_outliers().unwrap_or(false) { "false" } else { "true" }
-                            title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method."
+                            title=t_string!(i18n, venture_analyzer_filter_outliers_tooltip)
                             on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if filter_outliers().unwrap_or(false) { "true" } else { "false" }
-                            title="If enabled, sales outliers will be removed from the average price calculation using the Interquartile Range (IQR) method."
+                            title=t_string!(i18n, venture_analyzer_filter_outliers_tooltip)
                             on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
                         >
                             "On"
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
-                <ToolbarField label="Exclude Shards">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_exclude_shards_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if exclude_shards_enabled() { "false" } else { "true" }
-                            title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile."
+                            title=t_string!(i18n, tooltip_exclude_shards)
                             on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if exclude_shards_enabled() { "true" } else { "false" }
-                            title="If enabled, crystal/shard/cluster ingredient costs are not counted toward the craft cost. Most crafters keep a stockpile."
+                            title=t_string!(i18n, tooltip_exclude_shards)
                             on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
                         >
                             "On"
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
-                <ToolbarField label="Use On-Hand">
+                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string()>
                     <ToolbarPills>
                         <button
                             aria-pressed=move || if use_on_hand_enabled() { "false" } else { "true" }
-                            title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page."
+                            title=t_string!(i18n, tooltip_use_on_hand)
                             on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
                         >
                             "Off"
                         </button>
                         <button
                             aria-pressed=move || if use_on_hand_enabled() { "true" } else { "false" }
-                            title="Deduct ingredients you already own from the craft cost. Set per-ingredient totals on the item page."
+                            title=t_string!(i18n, tooltip_use_on_hand)
                             on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
                         >
                             "On"
@@ -512,7 +512,7 @@ fn RecipeAnalyzerTable(
 
             <Show when=move || !has_levels()>
                 <ActionableEmptyState
-                    title="Set crafter levels to see recipe recommendations"
+                    title=t_string!(i18n, recipe_analyzer_empty_set_levels_title).to_string()
                     body="Recipe Analyzer filters to crafts your character can make. Open the crafting profile section above and enter at least one crafter level."
                     action_href="/help/recipe-analyzer"
                     action_label="Read recipe help"
@@ -529,7 +529,7 @@ fn RecipeAnalyzerTable(
                     variable_height=false
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">"Item"</div>
+                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">{t!(i18n, item)}</div>
                              <div role="columnheader" class="w-32 shrink-0 p-4">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -537,7 +537,7 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="profit"
                                 >
-                                    "Profit"
+                                    {t!(i18n, profit)}
                                 </QueryButton>
                              </div>
                              <div role="columnheader" class="w-32 shrink-0 p-4">
@@ -547,11 +547,11 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="roi"
                                 >
-                                    "ROI"
+                                    {t!(i18n, roi)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">"Cost / unit"</div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">"Price"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, recipe_analyzer_col_cost_per_unit)}</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, price)}</div>
                              <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">
                                 <QueryButton
                                     class="!text-brand-300 hover:text-brand-200"
@@ -559,11 +559,11 @@ fn RecipeAnalyzerTable(
                                     key="sort"
                                     value="velocity"
                                 >
-                                    "Daily Sales"
+                                    {t!(i18n, daily_sales)}
                                 </QueryButton>
                              </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">"Avg Price"</div>
-                             <div role="columnheader" class="w-20 shrink-0 p-4">"Actions"</div>
+                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">{t!(i18n, avg_price)}</div>
+                             <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -701,6 +701,7 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
+    let i18n = use_i18n();
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
@@ -731,24 +732,24 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     view! {
         <div class="flex flex-col gap-4 h-full">
             <MetaTitle title="Recipe Analyzer - Ultros" />
-            <MetaDescription text="Analyze crafting recipes for profitability" />
+            <MetaDescription text=t_string!(i18n, recipe_analyzer_meta_desc) />
 
             <div class="flex flex-col gap-4">
                 <ToolHeader
-                    title="Recipe Analyzer"
-                    summary="Find recipes where estimated craft cost is lower than the market price for the finished item."
-                    context="Configure crafter levels first so the results match recipes you can actually make."
+                    title=t_string!(i18n, recipe_analyzer).to_string()
+                    summary=t_string!(i18n, recipe_analyzer_tool_summary).to_string()
+                    context=t_string!(i18n, recipe_analyzer_tool_context).to_string()
                     help_href="/help/recipe-analyzer"
-                    help_body="Recipe Analyzer uses cheapest ingredient listings, optional subcraft checks, your crafter levels, and recent sales. A profitable recipe is strongest when the output also sells regularly."
+                    help_body=t_string!(i18n, recipe_analyzer_tool_help).to_string()
                 />
                 <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=|| view! { <div class="text-brand-300 text-sm animate-pulse">"Loading sales data..."</div> }>
+                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, loading_sales_data)}</div> }>
                             {move || {
                                 recent_sales_clone
                                     .get()
                                     .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">"Error loading sales data"</div> })
+                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                             }}
                         </Suspense>
                     </div>
@@ -778,19 +779,19 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }
                 }
                 <CalculationSummary
-                    title="Ingredient policy"
-                    formula="profit = output market price - ingredient cost"
-                    details="Ingredient cost uses the cheapest matching listings. Subcraft mode checks whether crafting intermediate ingredients is cheaper than buying them directly."
+                    title=t_string!(i18n, recipe_analyzer_calc_title).to_string()
+                    formula=t_string!(i18n, recipe_analyzer_calc_formula).to_string()
+                    details=t_string!(i18n, recipe_analyzer_calc_details).to_string()
                 />
                 <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text="Crafter levels filter available recipes" />
-                    <AssumptionBadge text="Subcraft recursion is limited" />
-                    <AssumptionBadge text="Sales velocity affects confidence" />
+                    <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_crafter_levels).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_subcraft_recursion).to_string() />
+                    <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_sales_velocity).to_string() />
                 </div>
 
                 <Show when=move || selected_world.get().is_some()>
                     <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">"Select World for Sales Data:"</label>
+                        <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world_for_sales_data)}</label>
                         <div class="w-full md:w-auto">
                             <WorldOnlyPicker
                                 current_world=selected_world.into()

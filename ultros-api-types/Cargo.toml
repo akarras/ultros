@@ -11,11 +11,15 @@ serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
-rkyv = { version = "0.7.42", features = ["validation", "size_64", "hashbrown"], default-features = false, optional = true }
+rkyv = { version = "0.7.42", features = ["validation", "size_32", "hashbrown"], default-features = false, optional = true }
 
 [features]
 default = []
-rkyv = ["dep:rkyv", "chrono/rkyv-64", "chrono/rkyv-validation"]
+# Use `size_32` so rkyv can also compile for wasm32 (where `i64: Offset` is
+# gated on `target_pointer_width = "64"`). Must agree with the size feature
+# selected in xiv-gen and xiv-gen-db, otherwise rkyv's mutually-exclusive
+# size features collide during workspace feature unification.
+rkyv = ["dep:rkyv", "chrono/rkyv-32", "chrono/rkyv-validation"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

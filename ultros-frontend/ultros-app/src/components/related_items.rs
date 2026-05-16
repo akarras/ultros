@@ -292,7 +292,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                     <a
                         class="btn-secondary text-xs px-2 py-1 flex flex-row items-center gap-1"
                         href=analyzer_href
-                        aria-label="Open this recipe in the analyzer"
+                        aria-label=t_string!(i18n, related_items_aria_open_recipe)
                     >
                         <Icon icon=icondata::AiBarChartOutlined />
                         "Analyzer"
@@ -544,6 +544,7 @@ fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
 
 #[component]
 fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let exchanges = Memo::new(move |_| {
         let item_id = item_id();
@@ -565,7 +566,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                 <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-brand-700/30">
                                     <span class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{shop.name.as_str()}</span>
                                     <div class="flex items-center gap-2 flex-wrap text-xs text-[color:var(--color-text-muted)] mt-1">
-                                        <span class="font-semibold text-brand-300">"Costs:"</span>
+                                        <span class="font-semibold text-brand-300">{t!(i18n, related_items_costs_label)}</span>
                                         {
                                             costs.into_iter().map(|(item_id, count)| {
                                                 if let Some(item) = data.items.get(&item_id) {
@@ -728,6 +729,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let db = tracked_data();
     let item = Memo::new(move |_| db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
@@ -791,7 +793,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     view! {
         <div class="flex flex-col gap-6">
             <div class="panel p-4 sm:p-6" class:hidden=move || related_items_data.with(|i| i.is_empty())>
-                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">"Related Items"</h2>
+                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">{t!(i18n, related_items_heading)}</h2>
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                     {item_set}
                     {move || {
@@ -848,7 +850,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 class:hidden=move || recipes.with(|recipes| recipes.is_empty())
             >
                 <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
-                    <h2 class="text-xl font-bold text-brand-200 px-1">"Crafting Recipes"</h2>
+                    <h2 class="text-xl font-bold text-brand-200 px-1">{t!(i18n, related_items_crafting_recipes_heading)}</h2>
                     <CraftOptionsToggleRow />
                 </div>
                 <ActiveListBanner />
