@@ -107,7 +107,10 @@ pub(crate) fn AccessRow(
 }
 
 #[component]
-pub(crate) fn ShareListSection(list: List) -> impl IntoView {
+pub(crate) fn ShareListSection(
+    list: List,
+    #[prop(into, optional)] refresh_signal: Option<Signal<u32>>,
+) -> impl IntoView {
     let i18n = use_i18n();
     let list_id = list.id;
     let (recipient, set_recipient) = signal(String::new());
@@ -156,6 +159,7 @@ pub(crate) fn ShareListSection(list: List) -> impl IntoView {
                 unshare_group.version().get(),
                 create_invite.version().get(),
                 delete_invite.version().get(),
+                refresh_signal.map(|s| s.get()).unwrap_or(0),
             )
         },
         move |_| async move {

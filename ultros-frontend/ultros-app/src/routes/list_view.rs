@@ -19,7 +19,7 @@ use crate::components::{
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
-        list_item_row::ListItemRow, list_summary::*,
+        list_item_row::ListItemRow, list_settings_drawer::ListSettingsDrawer, list_summary::*,
     },
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
@@ -89,6 +89,9 @@ pub fn ListView() -> impl IntoView {
         },
         move |(id, _)| get_list_items_with_listings(id),
     );
+    let user_resource = Resource::new(|| {}, |_| async move { crate::api::get_login().await.ok() });
+    let self_user_id = Signal::derive(move || user_resource.get().flatten().map(|u| u.id));
+
     let activity_view = Resource::new(
         move || {
             (
@@ -247,6 +250,13 @@ pub fn ListView() -> impl IntoView {
             }
         }
         _ => ViewCaps::default(),
+    });
+
+    let drawer_refresh = Signal::derive(move || {
+        last_update_at
+            .get()
+            .map(|t| t.timestamp_millis() as u32)
+            .unwrap_or(0)
     });
 
     let updated_label = Signal::derive(move || {
@@ -895,7 +905,22 @@ pub fn ListView() -> impl IntoView {
             </Transition>
 
             <Show when=settings_open>
-                <div data-testid="list-settings-placeholder"></div>
+                {move || {
+                    let Some(Ok((list_with_perm, _))) = list_view.get() else {
+                        return view! { <div></div> }.into_any();
+                    };
+                    view! {
+                        <ListSettingsDrawer
+                            list=list_with_perm.list.clone()
+                            permission=list_with_perm.permission
+                            self_user_id=self_user_id
+                            edit_list=edit_list_action
+                            refresh_signal=drawer_refresh
+                            set_visible=set_settings_open
+                        />
+                    }
+                    .into_any()
+                }}
             </Show>
         </div>
     }.into_any()
