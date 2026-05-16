@@ -386,6 +386,50 @@ pub async fn refresh_sales_hourly(ch: &ClickHouseClient) -> Result<u64, ClickHou
     Ok(count.n)
 }
 
+/// Refresh `item_category_map` from xiv-gen.
+///
+/// Maps every item with a known ItemSearchCategory to that category's
+/// top-level group (1=Weapons, 2=Tools, 3=Armor, 4=Items, 5=Housing).
+/// Items with category=0 (uncategorized) are skipped — they'd just add
+/// noise to the heat band.
+///
+/// Idempotent and runs once at startup; static-per-patch data.
+pub async fn refresh_item_category_map(ch: &ClickHouseClient) -> Result<u64, ClickHouseError> {
+    let data = xiv_gen_db::data_for(xiv_gen::Language::En);
+
+    #[derive(serde::Serialize, clickhouse::Row)]
+    struct MapRow {
+        item_id: i32,
+        category_id: u8,
+    }
+
+    let mut insert = ch.client().insert::<MapRow>("item_category_map").await?;
+    let mut n: u64 = 0;
+    for (item_id, item) in &data.items {
+        if item.item_search_category == 0 {
+            continue;
+        }
+        let category = data
+            .item_search_categorys
+            .get(&xiv_gen::ItemSearchCategoryId(item.item_search_category))
+            .map(|c| c.category)
+            .unwrap_or(0);
+        if category == 0 {
+            continue;
+        }
+        insert
+            .write(&MapRow {
+                item_id: item_id.0,
+                category_id: category,
+            })
+            .await?;
+        n += 1;
+    }
+    insert.end().await?;
+    tracing::info!(rows = n, "item_category_map refreshed from xiv-gen");
+    Ok(n)
+}
+
 /// Refresh `item_vendor_price` from xiv-gen.
 ///
 /// xiv-gen ships with the game's Item table baked in; `Item.PriceMid` is
@@ -431,6 +475,9 @@ pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
     // rule a no-op for every item.
     if let Err(e) = refresh_vendor_prices(ch).await {
         tracing::warn!(error = ?e, "vendor-price refresh failed; rollups will skip the vendor-anchored rule");
+    }
+    if let Err(e) = refresh_item_category_map(ch).await {
+        tracing::warn!(error = ?e, "category map refresh failed; Market Heat will show no data");
     }
     for w in [1u16, 7, 30, 90] {
         refresh_window(ch, w).await?;

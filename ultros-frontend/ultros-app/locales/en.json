@@ -1102,5 +1102,19 @@
     "market_movers_rising": "Rising",
     "market_movers_falling": "Falling",
     "market_movers_volume": "High volume",
-    "market_movers_no_data": "No trades yet in this window."
+    "market_movers_no_data": "No trades yet in this window.",
+    "market_heat_title": "Market heat",
+    "market_heat_subtitle": "24-hour activity",
+    "market_heat_no_data": "No category activity in the last 24 hours.",
+    "market_heat_cat_weapons": "Weapons",
+    "market_heat_cat_tools": "Tools",
+    "market_heat_cat_armor": "Armor",
+    "market_heat_cat_items": "Items",
+    "market_heat_cat_housing": "Housing",
+    "market_heat_cat_other": "Other",
+    "market_heat_band_hot": "Hot",
+    "market_heat_band_warm": "Warm",
+    "market_heat_band_stable": "Stable",
+    "market_heat_band_cool": "Cool",
+    "market_heat_band_no_data": "Quiet"
 }

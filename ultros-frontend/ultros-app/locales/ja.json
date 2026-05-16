@@ -1102,5 +1102,19 @@
     "market_movers_rising": "上昇",
     "market_movers_falling": "下落",
     "market_movers_volume": "高取引量",
-    "market_movers_no_data": "この期間に取引はありません。"
+    "market_movers_no_data": "この期間に取引はありません。",
+    "market_heat_title": "マーケット温度",
+    "market_heat_subtitle": "過去24時間の活動",
+    "market_heat_no_data": "過去24時間にカテゴリ別の活動はありません。",
+    "market_heat_cat_weapons": "武器",
+    "market_heat_cat_tools": "道具",
+    "market_heat_cat_armor": "防具",
+    "market_heat_cat_items": "アイテム",
+    "market_heat_cat_housing": "ハウジング",
+    "market_heat_cat_other": "その他",
+    "market_heat_band_hot": "急騰",
+    "market_heat_band_warm": "上昇",
+    "market_heat_band_stable": "安定",
+    "market_heat_band_cool": "下降",
+    "market_heat_band_no_data": "閑散"
 }

@@ -1102,5 +1102,19 @@
     "market_movers_rising": "上涨",
     "market_movers_falling": "下跌",
     "market_movers_volume": "高成交量",
-    "market_movers_no_data": "此时段暂无交易。"
+    "market_movers_no_data": "此时段暂无交易。",
+    "market_heat_title": "市场热度",
+    "market_heat_subtitle": "24 小时活跃度",
+    "market_heat_no_data": "过去 24 小时无分类活动。",
+    "market_heat_cat_weapons": "武器",
+    "market_heat_cat_tools": "工具",
+    "market_heat_cat_armor": "防具",
+    "market_heat_cat_items": "物品",
+    "market_heat_cat_housing": "家具",
+    "market_heat_cat_other": "其他",
+    "market_heat_band_hot": "火热",
+    "market_heat_band_warm": "回暖",
+    "market_heat_band_stable": "稳定",
+    "market_heat_band_cool": "走低",
+    "market_heat_band_no_data": "平淡"
 }

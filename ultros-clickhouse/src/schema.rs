@@ -17,6 +17,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_item_vendor_price(client).await?;
     apply_world_kpi_5min(client).await?;
     apply_sales_hourly(client).await?;
+    apply_item_category_map(client).await?;
     Ok(())
 }
 
@@ -181,6 +182,39 @@ async fn apply_sales_hourly(client: &Client) -> Result<(), ClickHouseError> {
             PARTITION BY toYYYYMM(bucket)
             ORDER BY (item_id, hq, world_id, bucket)
             SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Static map item_id -> dashboard category bucket, populated once at
+/// startup from xiv-gen via [`crate::rollups::refresh_item_category_map`].
+/// Drives the home-page Market Heat band.
+///
+/// Categories use the FFXIV top-level ItemSearchCategory.Category grouping:
+///   1 = Weapons (combat arms)
+///   2 = Tools (crafter/gatherer arms)
+///   3 = Armor
+///   4 = Items (consumables, materia, mats, misc)
+///   5 = Housing
+///
+/// We could subdivide further (raid consumables vs alchemy, etc) by
+/// hand-curating from ItemUICategory ids, but that needs domain knowledge
+/// and locale-aware names. Start with the 5 game-defined groupings; the
+/// frontend can present them with friendlier labels.
+async fn apply_item_category_map(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS item_category_map (
+                item_id     Int32,
+                category_id UInt8,
+                updated_at  DateTime DEFAULT now()
+            )
+            ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY item_id
             "#,
         )
         .execute()

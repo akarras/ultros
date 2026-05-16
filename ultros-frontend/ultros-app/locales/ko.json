@@ -1102,5 +1102,19 @@
     "market_movers_rising": "상승",
     "market_movers_falling": "하락",
     "market_movers_volume": "거래량 상위",
-    "market_movers_no_data": "이 기간에 거래가 없습니다."
+    "market_movers_no_data": "이 기간에 거래가 없습니다.",
+    "market_heat_title": "시장 열기",
+    "market_heat_subtitle": "최근 24시간 활동",
+    "market_heat_no_data": "최근 24시간 카테고리 활동이 없습니다.",
+    "market_heat_cat_weapons": "무기",
+    "market_heat_cat_tools": "도구",
+    "market_heat_cat_armor": "방어구",
+    "market_heat_cat_items": "아이템",
+    "market_heat_cat_housing": "하우징",
+    "market_heat_cat_other": "기타",
+    "market_heat_band_hot": "급등",
+    "market_heat_band_warm": "상승",
+    "market_heat_band_stable": "안정",
+    "market_heat_band_cool": "하락",
+    "market_heat_band_no_data": "한산"
 }

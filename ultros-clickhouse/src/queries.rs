@@ -248,6 +248,64 @@ pub enum MoverDirection {
     Volume,
 }
 
+/// One row of the home-page Market Heat band. The frontend buckets
+/// `avg_pct_change_24h` into Hot/Warm/Stable/Cool labels with a colored
+/// indicator. `gil_volume_24h` is shown as a sparkline-adjacent stat.
+#[derive(Debug, Clone, Row, Deserialize, serde::Serialize)]
+pub struct CategoryHeatRow {
+    pub category_id: u8,
+    pub item_count: u32,
+    pub avg_pct_change_24h: f32,
+    pub gil_volume_24h: u64,
+}
+
+/// Fetch the Market Heat rollup for a world.
+///
+/// For each (category, world), compute the volume-weighted average of
+/// each item's pct_change over the trailing 24h. The weighting avoids
+/// a sleepy-but-volatile item dragging a whole category's signal:
+/// categories with one item swinging 1000% don't go "Hot" unless that
+/// item is also actually moving volume.
+pub async fn category_heat(
+    ch: &ClickHouseClient,
+    world_id: i32,
+) -> Result<Vec<CategoryHeatRow>, ClickHouseError> {
+    let sql = r#"
+        WITH per_item AS (
+            SELECT s.item_id, m.category_id,
+                   argMin(s.vwap, s.bucket) AS first_vwap,
+                   argMax(s.vwap, s.bucket) AS last_vwap,
+                   sum(toUInt64(s.unit_volume) * toUInt64(s.vwap)) AS gil_volume_24h,
+                   sum(s.sale_count) AS sales_24h
+            FROM sales_hourly s FINAL
+            INNER JOIN item_category_map m FINAL USING (item_id)
+            WHERE s.world_id = toInt32(?)
+              AND s.bucket > now() - INTERVAL 24 HOUR
+              AND s.vwap > 0
+            GROUP BY s.item_id, m.category_id
+            HAVING first_vwap > 0 AND last_vwap > 0 AND sales_24h >= 2
+        )
+        SELECT
+            toUInt8(category_id) AS category_id,
+            toUInt32(count()) AS item_count,
+            -- Volume-weighted average pct change. Items that don't move
+            -- volume have negligible weight; items with serious traffic
+            -- dominate the category's signal.
+            toFloat32(
+                sum(toFloat64(gil_volume_24h)
+                    * (toFloat64(last_vwap) - toFloat64(first_vwap))
+                    / toFloat64(first_vwap)) * 100.0
+                / greatest(sum(toFloat64(gil_volume_24h)), 1)
+            ) AS avg_pct_change_24h,
+            sum(gil_volume_24h) AS gil_volume_24h
+        FROM per_item
+        GROUP BY category_id
+        ORDER BY category_id
+    "#;
+    let rows: Vec<CategoryHeatRow> = ch.client().query(sql).bind(world_id).fetch_all().await?;
+    Ok(rows)
+}
+
 /// Fetch today's + yesterday's rolled-up KPIs for a world.
 ///
 /// One query for both windows via conditional `sumIf` — the alternative

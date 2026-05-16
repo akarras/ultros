@@ -1102,5 +1102,19 @@
     "market_movers_rising": "Steigend",
     "market_movers_falling": "Fallend",
     "market_movers_volume": "Hohes Volumen",
-    "market_movers_no_data": "Keine Trades in diesem Zeitraum."
+    "market_movers_no_data": "Keine Trades in diesem Zeitraum.",
+    "market_heat_title": "Marktklima",
+    "market_heat_subtitle": "24-Stunden-Aktivität",
+    "market_heat_no_data": "Keine Kategorie-Aktivität in den letzten 24 Stunden.",
+    "market_heat_cat_weapons": "Waffen",
+    "market_heat_cat_tools": "Werkzeuge",
+    "market_heat_cat_armor": "Rüstung",
+    "market_heat_cat_items": "Gegenstände",
+    "market_heat_cat_housing": "Möbel",
+    "market_heat_cat_other": "Sonstige",
+    "market_heat_band_hot": "Heiß",
+    "market_heat_band_warm": "Warm",
+    "market_heat_band_stable": "Stabil",
+    "market_heat_band_cool": "Kalt",
+    "market_heat_band_no_data": "Ruhig"
 }

@@ -18,6 +18,7 @@ use ultros_api_types::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
         ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
     },
+    market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
@@ -129,6 +130,10 @@ pub(crate) async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseD
     fetch_api(&format!("/api/v1/market_pulse/{}", world_name)).await
 }
 
+pub(crate) async fn get_market_heat(world_name: &str) -> AppResult<MarketHeatResponse> {
+    fetch_api(&format!("/api/v1/market_heat/{}", world_name)).await
+}
+
 pub(crate) async fn get_item_stats(world_name: &str, item_id: i32) -> AppResult<ItemStatsResponse> {
     fetch_api(&format!("/api/v1/item_stats/{}/{}", world_name, item_id)).await
 }
@@ -149,7 +154,7 @@ pub(crate) async fn get_movers(
 #[allow(dead_code)]
 pub(crate) async fn post_sparklines(
     world_name: &str,
-    req: &SparklinesRequest,
+    req: SparklinesRequest,
 ) -> AppResult<SparklinesResponse> {
     post_api(&format!("/api/v1/sparklines/{}", world_name), req).await
 }

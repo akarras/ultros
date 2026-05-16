@@ -6,6 +6,7 @@ pub mod icon_size;
 pub mod item_stats;
 pub mod list;
 mod listings;
+pub mod market_heat;
 pub mod market_pulse;
 pub mod recent_sales;
 pub mod result;

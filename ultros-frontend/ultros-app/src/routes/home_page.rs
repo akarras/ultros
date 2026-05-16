@@ -8,6 +8,7 @@ use leptos_router::components::A;
 use crate::components::{
     ad::Ad,
     live_sale_ticker::LiveSaleTicker,
+    market_heat::MarketHeat,
     market_movers::MarketMovers,
     market_pulse::MarketPulse,
     meta::{MetaDescription, MetaTitle},
@@ -121,6 +122,7 @@ pub fn HomePage() -> impl IntoView {
                     // right call to action.
                     {move || pulse_world.with(|w| w.is_some()).then(|| view! {
                         <MarketPulse world=pulse_world />
+                        <MarketHeat world=pulse_world />
                         <MarketMovers world=pulse_world />
                     })}
 
