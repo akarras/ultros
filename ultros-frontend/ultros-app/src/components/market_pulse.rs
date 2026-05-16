@@ -7,7 +7,7 @@
 
 use leptos::prelude::*;
 
-use crate::{api::get_market_pulse, components::gil::Gil, error::AppError, i18n::*};
+use crate::{api::get_market_pulse, error::AppError, i18n::*};
 
 /// Format a number with K/M/B suffix for compact display in KPI cards.
 /// We don't render the full thousands-separated number because the cards
@@ -100,20 +100,12 @@ pub fn MarketPulse(world: Signal<Option<String>>) -> impl IntoView {
                                 />
                             </div>
                         }.into_any(),
-                        Err(_) => view! {
-                            // Soft-fail: empty placeholder. The home page has plenty of other content.
-                            <div></div>
-                        }.into_any(),
+                        // Server soft-fails CH errors to a zeroed DTO so this
+                        // branch only fires for hard errors (e.g. unknown world).
+                        Err(_) => view! { <div></div> }.into_any(),
                     })
                 }}
             </Suspense>
         </section>
     }
-}
-
-// Mark Gil as used so clippy doesn't complain when the import lives here for
-// future "Market Volume" rendering with the proper gil icon (TODO).
-#[allow(dead_code)]
-fn _unused_gil_marker() -> impl IntoView {
-    view! { <Gil amount=0 /> }
 }

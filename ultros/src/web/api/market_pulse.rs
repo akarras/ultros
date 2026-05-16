@@ -45,21 +45,39 @@ pub(crate) async fn get_market_pulse(
         .count(db.get_connection());
 
     let (pulse, active_listings) = tokio::join!(ch_future, pg_future);
-    let pulse = pulse.map_err(|e| {
-        tracing::warn!(error = ?e, world_id, "market_pulse CH query failed");
-        anyhow::anyhow!("ClickHouse market_pulse query failed: {e}")
-    })?;
     let active_listings = active_listings.unwrap_or(0);
 
-    let dto = MarketPulseDto {
-        world_id: pulse.world_id,
-        sales_today: pulse.sales_today,
-        sales_yesterday: pulse.sales_yesterday,
-        gil_volume_today: pulse.gil_volume_today,
-        gil_volume_yesterday: pulse.gil_volume_yesterday,
-        unit_volume_today: pulse.unit_volume_today,
-        unit_volume_yesterday: pulse.unit_volume_yesterday,
-        active_listings,
+    // ClickHouse soft-fail: when the rollup query errors (CH down,
+    // `ILLEGAL_AGGREGATION` on the world_kpi_5min CTE, etc.) we still
+    // want to render the strip with the PG-backed `active_listings`
+    // card and zeros for the time-series cards rather than 500ing the
+    // whole home page. The frontend's normal zero-state rendering
+    // already reads as a "quiet world" — delta chips fall back to "—"
+    // when yesterday is zero. Log so the issue is still visible.
+    let dto = match pulse {
+        Ok(p) => MarketPulseDto {
+            world_id: p.world_id,
+            sales_today: p.sales_today,
+            sales_yesterday: p.sales_yesterday,
+            gil_volume_today: p.gil_volume_today,
+            gil_volume_yesterday: p.gil_volume_yesterday,
+            unit_volume_today: p.unit_volume_today,
+            unit_volume_yesterday: p.unit_volume_yesterday,
+            active_listings,
+        },
+        Err(e) => {
+            tracing::warn!(error = ?e, world_id, "market_pulse CH query failed, returning quiet placeholders");
+            MarketPulseDto {
+                world_id,
+                sales_today: 0,
+                sales_yesterday: 0,
+                gil_volume_today: 0,
+                gil_volume_yesterday: 0,
+                unit_volume_today: 0,
+                unit_volume_yesterday: 0,
+                active_listings,
+            }
+        }
     };
 
     // 30s cache: the 5-min refresh interval on the rollup is the lower
