@@ -460,6 +460,22 @@ pub fn ListView() -> impl IntoView {
                                         })
                                         .count();
                                     let acquired_items = total_items.saturating_sub(remaining_items);
+                                    let total_quantity: i32 = item_snapshot
+                                        .iter()
+                                        .map(|(i, _)| i.quantity.unwrap_or(1).max(1))
+                                        .sum();
+                                    let total_acquired: i32 = item_snapshot
+                                        .iter()
+                                        .map(|(i, _)| {
+                                            let q = i.quantity.unwrap_or(1).max(1);
+                                            i.acquired.unwrap_or(0).clamp(0, q)
+                                        })
+                                        .sum();
+                                    let pct: i32 = if total_quantity > 0 {
+                                        100 * total_acquired / total_quantity
+                                    } else {
+                                        0
+                                    };
                                     let list_name = list.list.name.clone();
 
                                     if buying_view() {
@@ -500,6 +516,31 @@ pub fn ListView() -> impl IntoView {
                                                                 <div class="mt-2 inline-flex rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-xs text-[color:var(--color-text-muted)]">
                                                                     {realtime_status}
                                                                 </div>
+                                                                <div class="mt-3 flex items-center gap-3 text-sm">
+                                                                    {if total_quantity > 0 {
+                                                                        Either::Left(view! {
+                                                                            <div
+                                                                                class="flex min-w-0 flex-1 flex-col gap-1"
+                                                                                aria-label=format!("Overall progress: {total_acquired} of {total_quantity} units acquired")
+                                                                            >
+                                                                                <span class="text-[color:var(--color-text-muted)]">
+                                                                                    {t!(i18n, list_view_units_acquired_progress, acquired = total_acquired, quantity = total_quantity, pct = pct)}
+                                                                                </span>
+                                                                                <progress
+                                                                                    class="progress progress-primary h-2 w-full rounded"
+                                                                                    value=total_acquired
+                                                                                    max=total_quantity
+                                                                                ></progress>
+                                                                            </div>
+                                                                        })
+                                                                    } else {
+                                                                        Either::Right(view! {
+                                                                            <span class="text-[color:var(--color-text-muted)]">
+                                                                                {t!(i18n, list_view_no_items_yet)}
+                                                                            </span>
+                                                                        })
+                                                                    }}
+                                                                </div>
                                                             </div>
                                                             <div class="grid grid-cols-3 gap-2 text-center text-sm">
                                                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
@@ -510,10 +551,14 @@ pub fn ListView() -> impl IntoView {
                                                                     <div class="text-lg font-bold">{remaining_items}</div>
                                                                     <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_remaining)}</div>
                                                                 </div>
-                                                                <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
-                                                                    <div class="text-lg font-bold">{acquired_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_done)}</div>
-                                                                </div>
+                                                                <Tooltip tooltip_text=Signal::derive(move || {
+                                                                    format!("{acquired_items} of {total_items} items fully acquired")
+                                                                })>
+                                                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
+                                                                        <div class="text-lg font-bold">{acquired_items}</div>
+                                                                        <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_acquired)}</div>
+                                                                    </div>
+                                                                </Tooltip>
                                                             </div>
                                                         </div>
                                                     </div>
