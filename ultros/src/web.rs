@@ -30,10 +30,11 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 use tower::ServiceBuilder;
+use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, warn};
+use tracing::{Span, debug, warn};
 use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListActivity, ListActivityKind, ListInvite, ListItem,
     ListSharedGroup, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
@@ -1543,7 +1544,31 @@ pub(crate) async fn start_web(state: WebState) {
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
-        .layer(TraceLayer::new_for_http())
+        // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
+        // which the `sentry_tracing` layer turns into a GlitchTip issue. The
+        // analyzer service returns 503 during its warm-up window — those aren't
+        // bugs, just a transient startup state (see WebError::as_status_code and
+        // issues 5033/5034). Drop 503 to debug so it stays out of error logs.
+        .layer(TraceLayer::new_for_http().on_failure(
+            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| match class {
+                ServerErrorsFailureClass::StatusCode(status)
+                    if status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
+                {
+                    tracing::debug!(
+                        %status,
+                        ?latency,
+                        "response failed (likely warm-up)",
+                    );
+                }
+                _ => {
+                    tracing::error!(
+                        classification = %class,
+                        ?latency,
+                        "response failed",
+                    );
+                }
+            },
+        ))
         // Sentry/Glitchtip: bind a fresh Hub per request and decorate captured
         // events with HTTP context (method, URL, status). NewSentryLayer must
         // come before SentryHttpLayer; ServiceBuilder applies in declared
