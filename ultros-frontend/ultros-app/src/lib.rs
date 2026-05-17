@@ -53,7 +53,6 @@ use crate::{
         welcome::*,
     },
 };
-use git_const::git_short_hash;
 use icondata as i;
 use leptos::html::Div;
 use leptos::prelude::*;
@@ -123,7 +122,7 @@ fn error_reporting_script() -> Option<String> {
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(0.0);
-    let release = format!("ultros@{}", git_short_hash!());
+    let release = format!("ultros@{}", env!("GIT_HASH"));
 
     let config = serde_json::json!({
         "dsn": dsn,
@@ -376,7 +375,7 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
 
 #[component]
 pub fn Footer() -> impl IntoView {
-    let git_hash = git_short_hash!();
+    let git_hash = env!("GIT_HASH");
     let i18n = use_i18n();
     view! {
         <footer class="bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">

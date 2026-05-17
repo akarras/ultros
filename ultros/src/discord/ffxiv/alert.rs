@@ -11,6 +11,13 @@ use crate::event::EventType;
 use super::{Context, Error, ULTROS_COLOR};
 
 /// Manage price alerts and delivery endpoints.
+//
+// Discord slash commands support at most two levels of nesting (command > group >
+// subcommand). `ffxiv > alert` already consumes both levels, so the inner `endpoint`
+// group cannot be a subcommand group of its own — Discord rejects registration with
+// `Invalid Form Body (... .options.N: Value of field "type" must be one of (1,).)`.
+// We flatten the former `endpoint` group into `endpoint-list`/`endpoint-remove`/
+// `endpoint-here` siblings here.
 #[poise::command(
     slash_command,
     prefix_command,
@@ -22,13 +29,15 @@ use super::{Context, Error, ULTROS_COLOR};
         "mute",
         "unmute",
         "remove",
-        "endpoint",
+        "endpoint_list",
+        "endpoint_remove",
+        "endpoint_here",
         "webhook"
     )
 )]
 pub(crate) async fn alert(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say(
-        "Use one of: `price`, `list`, `list-subscribe`, `list-updates`, `mute`, `unmute`, `remove`, `endpoint`, `webhook`.\n\
+        "Use one of: `price`, `list`, `list-subscribe`, `list-updates`, `mute`, `unmute`, `remove`, `endpoint-list`, `endpoint-remove`, `endpoint-here`, `webhook`.\n\
          e.g. `/ffxiv alert price item:Tsai_tou_Vounou price:50000`",
     )
     .await?;
@@ -421,27 +430,19 @@ async fn remove(
     Ok(())
 }
 
-// ----- endpoint sub-subcommand -----
-
-/// Manage delivery endpoints used by your alerts.
-#[poise::command(
-    slash_command,
-    prefix_command,
-    subcommands("endpoint_list", "endpoint_remove", "endpoint_here")
-)]
-async fn endpoint(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("Use one of: `list`, `remove`, `here`.").await?;
-    Ok(())
-}
+// ----- endpoint flat subcommands -----
+// Previously these lived under a nested `endpoint` subcommand group, but Discord
+// doesn't allow a subcommand group inside a subcommand group (see comment on
+// `alert` above). They're flat siblings of the other alert subcommands now.
 
 /// List your delivery endpoints.
-#[poise::command(slash_command, prefix_command, rename = "list")]
+#[poise::command(slash_command, prefix_command, rename = "endpoint-list")]
 async fn endpoint_list(ctx: Context<'_>) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
     let endpoints = ctx.data().db.list_endpoints(owner).await?;
     if endpoints.is_empty() {
         ctx.say(
-            "You have no endpoints. Create one with `/ffxiv alert endpoint here` or \
+            "You have no endpoints. Create one with `/ffxiv alert endpoint-here` or \
              `/ffxiv alert price` (which creates a DM endpoint automatically).",
         )
         .await?;
@@ -472,10 +473,10 @@ async fn endpoint_list(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Delete an endpoint (also unlinks it from any alert).
-#[poise::command(slash_command, prefix_command, rename = "remove")]
+#[poise::command(slash_command, prefix_command, rename = "endpoint-remove")]
 async fn endpoint_remove(
     ctx: Context<'_>,
-    #[description = "Endpoint id (see `/ffxiv alert endpoint list`)"] id: i32,
+    #[description = "Endpoint id (see `/ffxiv alert endpoint-list`)"] id: i32,
 ) -> Result<(), Error> {
     let owner = ctx.author().id.get() as i64;
     ctx.data().db.delete_endpoint(owner, id).await?;
@@ -484,7 +485,7 @@ async fn endpoint_remove(
 }
 
 /// Register the current channel as a delivery endpoint and bind it to one of your alerts.
-#[poise::command(slash_command, prefix_command, rename = "here")]
+#[poise::command(slash_command, prefix_command, rename = "endpoint-here")]
 async fn endpoint_here(
     ctx: Context<'_>,
     #[description = "Alert id to also bind to this channel (optional)"] bind_to: Option<i32>,
@@ -544,7 +545,7 @@ async fn endpoint_here(
     } else {
         ctx.say(format!(
             "Endpoint `#{endpoint_id}` registered for this channel. \
-             Use `/ffxiv alert endpoint here bind_to:<alert_id>` to attach it to an alert."
+             Use `/ffxiv alert endpoint-here bind_to:<alert_id>` to attach it to an alert."
         ))
         .await?;
     }

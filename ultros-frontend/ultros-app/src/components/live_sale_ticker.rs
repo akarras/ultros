@@ -135,15 +135,15 @@ pub fn LiveSaleTicker() -> impl IntoView {
     });
 
     view! {
-        <div class="p-6 rounded-xl panel">
+        <div class="py-2">
             // No homeworld set warning
-            <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_some())>
-                <h3 class="text-xl font-bold text-[color:var(--color-text)]">{t!(i18n, live_sale_no_homeworld_title)}</h3>
-                <div class="text-[color:var(--color-text-muted)]">
+            <div class="space-y-3" class:hidden=move || homeworld.with(|w| w.is_some())>
+                <h3 class="dashboard-section-title">{t!(i18n, live_sale_no_homeworld_title)}</h3>
+                <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, live_sale_no_homeworld_prefix)}
                     <A
                         href="/settings"
-                        attr:class="text-[color:var(--brand-fg)] hover:underline transition-colors"
+                        attr:class="text-[color:var(--accent)] hover:underline transition-colors"
                     >
                         {t!(i18n, settings)}
                     </A>
@@ -151,18 +151,19 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 </div>
             </div>
 
-            // Sales ticker content
-            <div class="space-y-4" class:hidden=move || homeworld.with(|w| w.is_none())>
-                <div class="flex items-center justify-between">
-                    <h3 class="text-xl font-bold text-[color:var(--color-text)]">
+            // Sales ticker content — vertical timeline. Each entry gets a
+            // glowing dot anchored to a vertical accent line on the left,
+            // matching the dashboard mockup.
+            <div class="" class:hidden=move || homeworld.with(|w| w.is_none())>
+                <div class="flex items-baseline justify-between mb-3">
+                    <h3 class="dashboard-section-title">
                         {t!(i18n, live_sale_recent_sales_on)}
-                        <span class="text-[color:var(--color-text)]">
+                        <span class="text-[color:var(--color-text)] normal-case tracking-normal ml-1">
                             {move || homeworld().map(|world| world.name).unwrap_or_default()}
                         </span>
                     </h3>
                     <button
-                        class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors
-                        flex items-center gap-2"
+                        class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors flex items-center gap-1"
                         on:click=move |_| {
                             sales.update(|s| s.clear());
                             set_done_loading(false);
@@ -174,13 +175,14 @@ pub fn LiveSaleTicker() -> impl IntoView {
                     </button>
                 </div>
 
-                <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden
-                scrollbar-thin">
+                <div class="relative max-h-[480px] overflow-y-auto overflow-x-hidden scrollbar-thin pl-4">
+                    // Vertical accent rail running the height of the timeline.
+                    <div class="absolute left-1 top-1 bottom-1 w-px bg-[color:color-mix(in_srgb,var(--accent)_45%,transparent)]" aria-hidden="true" />
                     <Show
                         when=done_loading
                         fallback=move || {
                             view! {
-                                <div class="h-[400px] animate-pulse">
+                                <div class="h-[300px] animate-pulse">
                                     <BoxSkeleton />
                                 </div>
                             }
@@ -194,10 +196,14 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     sale.item_id,
                                 )
                             }>
-                                <div class="px-2 py-2 rounded-lg hover:bg-[color:color-mix(in_srgb,var(--brand-bg)_10%,transparent)] transition-colors duration-200 group">
-                                    <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
-                                        <ItemIcon item_id=sale.item_id icon_size=IconSize::Medium />
-
+                                <div class="relative pl-4 py-2 group rounded-r hover:bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)] transition-colors">
+                                    // Glowing timeline dot
+                                    <span
+                                        aria-hidden="true"
+                                        class="absolute -left-[3px] top-[1.05rem] w-2 h-2 rounded-full bg-[color:var(--accent)] shadow-[0_0_8px_var(--accent-glow)] group-hover:scale-125 transition-transform"
+                                    />
+                                    <div class="flex items-center gap-3 w-full">
+                                        <ItemIcon item_id=sale.item_id icon_size=IconSize::Small />
                                         <div class="flex flex-col min-w-0 flex-1">
                                             <div class="flex items-center gap-2">
                                                 <Item item_id=sale.item_id />
@@ -205,14 +211,14 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                                     .hq
                                                     .then(|| {
                                                         view! {
-                                                            <span class="px-1.5 py-0.5 rounded text-xs bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--brand-fg)]">
+                                                            <span class="px-1.5 py-0.5 rounded text-[10px] bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--brand-fg)]">
                                                                 "HQ"
                                                             </span>
                                                         }
                                                     })}
                                             </div>
-                                            <div class="flex items-center gap-4 text-sm text-[color:var(--color-text-muted)]">
-                                                <Gil amount=sale.price />
+                                            <div class="flex items-center gap-3 text-xs text-[color:var(--color-text-muted)]">
+                                                <span class="font-mono"><Gil amount=sale.price /></span>
                                                 <RelativeToNow timestamp=sale.sold_date />
                                             </div>
                                         </div>

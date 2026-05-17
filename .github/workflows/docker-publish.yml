@@ -9,6 +9,16 @@ on:
             - "**/*.md"
             - ".github/workflows/book.yml"
             - ".github/workflows/book-check.yml"
+    # PRs build the image to catch Dockerfile breakage early, but never push,
+    # sign, or upload symbols. The `push:` flag below is gated on event_name.
+    pull_request:
+        branches:
+            - "main"
+        paths-ignore:
+            - "userguide/**"
+            - "**/*.md"
+            - ".github/workflows/book.yml"
+            - ".github/workflows/book-check.yml"
 
 env:
     # Use ghcr.io for GitHub Container Registry
@@ -27,7 +37,7 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v4
+              uses: actions/checkout@v4.2.2
               with:
                   submodules: recursive
 
@@ -38,6 +48,7 @@ jobs:
               uses: docker/setup-buildx-action@v3
 
             - name: Log in to registry
+              if: github.event_name != 'pull_request'
               uses: docker/login-action@v3
               with:
                   registry: ${{ env.REGISTRY }}
@@ -60,13 +71,70 @@ jobs:
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
                   cache-from: type=gha
-                  cache-to: type=gha,mode=max
+                  # PRs read main's cache but don't write — avoids thrashing
+                  # the shared cache from short-lived branches.
+                  cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
 
             - name: Install cosign
+              if: github.event_name != 'pull_request'
               uses: sigstore/cosign-installer@v4.0.0
             - name: Sign published Docker image
+              if: github.event_name != 'pull_request'
               env:
                   TAGS: ${{ steps.meta.outputs.tags }}
                   DIGEST: ${{ steps.build-and-push.outputs.digest }}
               run: |
                   echo "$TAGS" | xargs -I {} cosign sign --yes {}@"$DIGEST"
+
+            # ---- Debug-symbol upload to GlitchTip --------------------------
+            # Splits debug info out of the runtime binary via the `debug-files`
+            # target stage in the Dockerfile, then uploads the unstripped ELF
+            # to GlitchTip so stack traces from Sentry SDK events get
+            # symbolicated server-side. Gated on the GLITCHTIP_* repo secrets
+            # being set; cleanly no-ops if they aren't.
+
+            - name: Check GlitchTip configuration
+              if: github.event_name != 'pull_request'
+              id: glitchtip-check
+              env:
+                  AUTH_TOKEN: ${{ secrets.GLITCHTIP_AUTH_TOKEN }}
+                  URL: ${{ secrets.GLITCHTIP_URL }}
+              run: |
+                  if [ -n "$AUTH_TOKEN" ] && [ -n "$URL" ]; then
+                      echo "configured=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "configured=false" >> "$GITHUB_OUTPUT"
+                      echo "::notice::GLITCHTIP_AUTH_TOKEN / GLITCHTIP_URL secrets not set; skipping debug symbol upload."
+                  fi
+
+            - name: Extract debug-files artifact
+              if: steps.glitchtip-check.outputs.configured == 'true'
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  platforms: linux/amd64
+                  target: debug-files
+                  outputs: type=local,dest=./debug
+                  # Reuse the layer cache the main build already populated;
+                  # this step just emits the unstripped binary as a local file.
+                  cache-from: type=gha
+
+            - name: Upload debug symbols to GlitchTip
+              if: steps.glitchtip-check.outputs.configured == 'true'
+              env:
+                  # glitchtip-cli reads the same env-var names as sentry-cli.
+                  SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_AUTH_TOKEN }}
+                  SENTRY_URL: ${{ secrets.GLITCHTIP_URL }}
+                  SENTRY_ORG: ${{ secrets.GLITCHTIP_ORG }}
+                  SENTRY_PROJECT: ${{ secrets.GLITCHTIP_PROJECT }}
+              run: |
+                  # Pinned glitchtip-cli v1.0.0 (released 2026-05-14). Bump
+                  # when you intentionally want to upgrade — the project just
+                  # crossed 1.0 so flag/command shape should now be stable.
+                  GLITCHTIP_CLI_VERSION="v1.0.0"
+                  CLI="$RUNNER_TEMP/glitchtip-cli"
+                  curl -fsSL --retry 3 -o "$CLI" \
+                      "https://gitlab.com/glitchtip/glitchtip-cli/-/jobs/artifacts/${GLITCHTIP_CLI_VERSION}/raw/artifacts/glitchtip-cli-linux-x86_64?job=build-linux-x86_64"
+                  chmod +x "$CLI"
+                  "$CLI" --version
+                  "$CLI" debug-files upload ./debug

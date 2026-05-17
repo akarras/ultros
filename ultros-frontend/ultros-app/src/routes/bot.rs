@@ -24,6 +24,7 @@ pub fn BotGuide() -> impl IntoView {
                     {t!(i18n, bot_invite_suffix)}
                 </p>
                 <a
+                    rel="external"
                     href="/invitebot"
                     class="self-start rounded-md bg-brand-500 px-5 py-2.5 font-semibold text-white shadow hover:bg-brand-400 transition-colors"
                 >

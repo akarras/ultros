@@ -1,2 +1,40 @@
+# Build artifacts
 /target
+**/target
+
+# Docker
 Dockerfile
+.dockerignore
+
+# IMPORTANT: do NOT exclude /.git or submodule dirs.
+#   - `git-const::git_short_hash!()` is a proc-macro that reads .git at compile time
+#     (ultros/src/main.rs, ultros-app/src/lib.rs, etc.)
+#   - xiv-gen/build.rs runs `git rev-parse HEAD` to embed GIT_HASH
+#   - xiv-gen-db's build script reads from the xiv-gen/ffxiv-datamining/ submodule
+#     (and its nested submodules for cn/ko/tc locale data)
+
+# Agent / editor state
+/.claude
+/.Jules
+/.vscode
+/.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Node / E2E (rebuilt inside the image if needed; large)
+/integration/node_modules
+/integration/screenshots
+/integration/.cache
+
+# Local env / secrets (defense in depth — never bake into images)
+.env
+.env.*
+!.env.example
+
+# Repo-level docs (not needed in the runtime image; build context only)
+/README.md
+/AGENTS.md
+/CLAUDE.md
+/docs

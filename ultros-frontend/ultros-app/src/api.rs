@@ -13,14 +13,18 @@ use ultros_api_types::{
         UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
+    item_stats::ItemStatsResponse,
     list::{
         CreateInvite, CreateList, List, ListActivity, ListInvite, ListItem, ListSharedGroup,
         ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
     },
+    market_heat::MarketHeatResponse,
+    market_pulse::MarketPulseDto,
     recent_sales::RecentSales,
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
+    sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
     user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers, group::UserGroup},
 };
@@ -120,6 +124,39 @@ pub(crate) async fn get_recent_sales_for_world(region_name: &str) -> AppResult<R
 
 pub(crate) async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
     fetch_api(&format!("/api/v1/trends/{}", world_name)).await
+}
+
+pub(crate) async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseDto> {
+    fetch_api(&format!("/api/v1/market_pulse/{}", world_name)).await
+}
+
+pub(crate) async fn get_market_heat(world_name: &str) -> AppResult<MarketHeatResponse> {
+    fetch_api(&format!("/api/v1/market_heat/{}", world_name)).await
+}
+
+pub(crate) async fn get_item_stats(world_name: &str, item_id: i32) -> AppResult<ItemStatsResponse> {
+    fetch_api(&format!("/api/v1/item_stats/{}/{}", world_name, item_id)).await
+}
+
+/// `direction` is one of `rising` / `falling` / `volume`.
+pub(crate) async fn get_movers(
+    world_name: &str,
+    direction: &str,
+    limit: u32,
+) -> AppResult<MoversResponse> {
+    fetch_api(&format!(
+        "/api/v1/movers/{}?direction={}&limit={}",
+        world_name, direction, limit
+    ))
+    .await
+}
+
+#[allow(dead_code)]
+pub(crate) async fn post_sparklines(
+    world_name: &str,
+    req: SparklinesRequest,
+) -> AppResult<SparklinesResponse> {
+    post_api(&format!("/api/v1/sparklines/{}", world_name), req).await
 }
 
 /// Returns a list of the logged in user's retainers

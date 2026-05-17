@@ -13,7 +13,6 @@ use axum::{
     http::Request,
     response::{IntoResponse, Response},
 };
-use git_const::git_short_hash;
 use leptos::prelude::*;
 use leptos_axum::{LeptosRoutes, generate_route_list};
 #[cfg(not(debug_assertions))]
@@ -131,7 +130,7 @@ pub(crate) async fn create_leptos_app(
     // because all Errors are converted into Responses
     // let static_service = HandleError::new(ServeDir::new("./static"), handle_file_error);
     //let pkg_service = HandleError::new(ServeDir::new("./pkg"), handle_file_error);
-    let git_hash = git_short_hash!();
+    let git_hash = env!("GIT_HASH");
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
     // let cargo_leptos_service = HandleError::new(ServeDir::new(&bundle_filepath), handle_file_error);
     let cargo_leptos_service = ServeDir::new(&bundle_filepath);

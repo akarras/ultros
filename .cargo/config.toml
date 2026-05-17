@@ -1,6 +1,17 @@
 [build]
-rustflags=["--cfg=web_sys_unstable_apis"]
+rustflags = ["--cfg=web_sys_unstable_apis"]
 
-#[target.aarch64-unknown-linux-gnu]
-#rustflags=["-C", "target-cpu=native"]
-
+# Target-scoped rustflags REPLACE [build].rustflags rather than merging, so the
+# web_sys cfg is repeated here. Only applied to native x86_64 Linux builds —
+# the WASM target (wasm32-unknown-unknown) keeps the [build] rustflags above,
+# which is important because target-cpu=* is meaningless / breaking for WASM.
+#
+# x86-64-v3 = modern AMD64 baseline (Haswell+, Zen+): AVX2, BMI1/2, FMA, F16C.
+# Chosen over znver2 because cargo applies these rustflags to build scripts and
+# proc-macros (compiled for the *host* target, which on Linux is also
+# x86_64-unknown-linux-gnu). GitHub Actions runners aren't all Zen 2, so
+# znver2-targeted build scripts would intermittently SIGILL mid-build. v3 is
+# universal across modern x86 and gives up only minor scheduling hints vs
+# znver2 — set `RUSTFLAGS` locally if you want a hotter target for dev builds.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["--cfg=web_sys_unstable_apis", "-C", "target-cpu=x86-64-v3"]

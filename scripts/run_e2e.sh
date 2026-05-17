@@ -148,10 +148,14 @@ case "$DEVICE" in
     both|*)  test_script="test" ;;
 esac
 
-log "running npm run $test_script in integration/ against $BASE_URL"
 test_exit=0
-# `|| test_exit=$?` captures the npm exit code without triggering set -e.
-( cd integration && BASE_URL="$BASE_URL" npm run "$test_script" ) || test_exit=$?
+if [ "${DASHBOARD_ONLY:-0}" = "1" ]; then
+    log "DASHBOARD_ONLY=1 — skipping the broad desktop+mobile route suite"
+else
+    log "running npm run $test_script in integration/ against $BASE_URL"
+    # `|| test_exit=$?` captures the npm exit code without triggering set -e.
+    ( cd integration && BASE_URL="$BASE_URL" npm run "$test_script" ) || test_exit=$?
+fi
 
 # If we built with test-auth, also exercise the login flow even when the
 # screenshot suite failed — failures may be unrelated and the login signal
@@ -184,6 +188,19 @@ case " ${LEPTOS_FEATURES:-} " in
         fi
         ;;
 esac
+
+# Optional focused dashboard screenshots — covers the new home-page
+# MarketPulse + Trends ConfidenceBadge + item view surfaces. Captured into
+# integration/artifacts/dashboard/ regardless of the broader suite outcome.
+# Set RUN_DASHBOARD=0 to skip.
+if [ "${RUN_DASHBOARD:-1}" != "0" ]; then
+    log "running dashboard screenshots"
+    dashboard_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:dashboard ) || dashboard_exit=$?
+    if [ "$dashboard_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$dashboard_exit"
+    fi
+fi
 
 log "screenshots in integration/artifacts/ (exit=$test_exit)"
 exit "$test_exit"

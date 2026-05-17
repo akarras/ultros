@@ -9,6 +9,9 @@ license = "MIT or Apache-2.0"
 [dependencies]
 universalis = { path = "../universalis", features = ["websocket"] }
 ultros-db = { path = "../ultros-db", features = ["rkyv"] }
+ultros-clickhouse = { path = "../ultros-clickhouse" }
+clickhouse = { workspace = true }
+sea-orm = { workspace = true }
 anyhow = { workspace = true }
 axum.workspace = true
 axum-extra.workspace = true
@@ -66,7 +69,6 @@ plotters-svg = { version = "0.3.7", features = ["bitmap_encoder"] }
 resvg = "0.47.0"
 image.workspace = true
 isocountry = "0.3.2"
-git-const.workspace = true
 http-body-util = "0.1.3"
 arrayvec = "0.7.6"
 tikv-jemallocator = { version = "0.6.1", features = [
@@ -94,6 +96,12 @@ web-push = { workspace = true }
 # installing OpenSSL dev headers separately, and on Linux it removes the libssl-dev
 # bootstrap requirement (CI still has libssl-dev installed; vendored is harmless there).
 openssl = { version = "0.10", features = ["vendored"] }
+# Direct dep so we can install a process-level CryptoProvider at startup.
+# Transitive consumers (serenity, reqwest 0.12/0.13, sqlx, tokio-rustls, sentry) pull
+# in rustls 0.23 with both `aws-lc-rs` and `ring` activated via feature unification,
+# which makes `ClientConfig::builder()` panic with "Could not automatically determine
+# the process-level CryptoProvider". We install one explicitly in `main()`.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 tempfile = "3.6.0"

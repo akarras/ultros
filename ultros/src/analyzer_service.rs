@@ -335,13 +335,33 @@ fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) ->
 
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct AnalyzerService {
     /// world_id -> TopSellers
     recent_sale_history: Arc<BTreeMap<i32, RwLock<SaleHistory>>>,
     /// Cheapest items get stored as any anyselector. Currently exists for WorldID/RegionID, but not datacenter.
     cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>>,
     initiated: Arc<AtomicBool>,
+    /// Dual-writes every observed sale into the ClickHouse `sales` table.
+    /// Non-blocking, fire-and-forget — Postgres remains the source of truth so
+    /// dropped rows are recoverable via the backfill binary.
+    ch_writer: ultros_clickhouse::writer::Writer,
+    /// Read-side ClickHouse client for the deep-scan pass. The hot path
+    /// (CheapestListings + RecentSales BTreeMaps) doesn't touch this — only
+    /// the deep_scan_batch enrichment on get_best_resale / get_trends does.
+    ch_client: ultros_clickhouse::ClickHouseClient,
+}
+
+impl std::fmt::Debug for AnalyzerService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalyzerService")
+            .field("recent_sale_history", &self.recent_sale_history)
+            .field("cheapest_items", &self.cheapest_items)
+            .field("initiated", &self.initiated)
+            .field("ch_writer", &"<Writer>")
+            .field("ch_client", &"<ClickHouseClient>")
+            .finish()
+    }
 }
 
 impl AnalyzerService {
@@ -350,6 +370,8 @@ impl AnalyzerService {
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
         world_cache: Arc<WorldCache>,
+        ch_writer: ultros_clickhouse::writer::Writer,
+        ch_client: ultros_clickhouse::ClickHouseClient,
         token: CancellationToken,
     ) -> Self {
         tokio::fs::create_dir_all("analyzer-data")
@@ -382,6 +404,8 @@ impl AnalyzerService {
             recent_sale_history,
             cheapest_items,
             initiated: Arc::default(),
+            ch_writer,
+            ch_client,
         };
 
         let task_self = temp.clone();
@@ -597,6 +621,13 @@ impl AnalyzerService {
                                 crate::event::EventType::Add(sales) => {
                                     for (sale, _) in sales.sales.iter() {
                                         second_worker_instance.add_sale(sale).await;
+                                        // Mirror into ClickHouse. Non-blocking;
+                                        // see ultros_clickhouse::writer for the
+                                        // crash-safety contract (PG is source
+                                        // of truth, backfill recovers gaps).
+                                        second_worker_instance.ch_writer.send(
+                                            ultros_clickhouse::rows::SaleRow::from_api_sale(sale),
+                                        );
                                     }
                                 }
                                 crate::event::EventType::Update(_) => {}
@@ -714,6 +745,12 @@ impl AnalyzerService {
                     world_id,
                     average_sale_price: avg_price,
                     sales_per_week,
+                    // Pass-1 defaults; enriched below if deep_scan succeeds.
+                    vwap_30d: 0,
+                    price_percentile_30d: 0,
+                    confidence_band: ultros_api_types::trends::ConfidenceBand::Unknown,
+                    sample_size_30d: 0,
+                    launder_suspicion: 0.0,
                 };
 
                 if sales_per_week > 10.0 {
@@ -764,6 +801,68 @@ impl AnalyzerService {
         high_velocity.truncate(50);
         rising_price.truncate(50);
         falling_price.truncate(50);
+
+        // === Phase 2 deep-scan enrichment for trends ===
+        //
+        // Each bucket holds up to 50 items, all on `world_id`. One batch
+        // query covers all three buckets at once via a deduplicated request
+        // list, then we re-walk the buckets to attach the data.
+        let mut scan_req: Vec<(i32, u8, i32)> = high_velocity
+            .iter()
+            .chain(rising_price.iter())
+            .chain(falling_price.iter())
+            .map(|t| (t.item_id, t.hq as u8, world_id))
+            .collect();
+        scan_req.sort_unstable();
+        scan_req.dedup();
+
+        let scan_by_key: std::collections::HashMap<
+            (i32, u8, i32),
+            ultros_clickhouse::queries::DeepScan,
+        > = match ultros_clickhouse::queries::deep_scan_batch(&self.ch_client, 30, &scan_req).await
+        {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|d| ((d.item_id, d.hq, d.world_id), d))
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = ?e, world_id, "deep-scan enrichment unavailable for trends");
+                std::collections::HashMap::new()
+            }
+        };
+
+        let enrich = |t: &mut TrendItem| {
+            if let Some(d) = scan_by_key.get(&(t.item_id, t.hq as u8, t.world_id)) {
+                t.vwap_30d = d.vwap as i32;
+                t.price_percentile_30d = d.price_percentile(t.price as u32);
+                t.confidence_band = d.confidence_band();
+                t.sample_size_30d = d.sample_size;
+                t.launder_suspicion = d.launder_suspicion_pct;
+            }
+        };
+        for t in high_velocity.iter_mut() {
+            enrich(t);
+        }
+        for t in rising_price.iter_mut() {
+            enrich(t);
+        }
+        for t in falling_price.iter_mut() {
+            enrich(t);
+        }
+
+        // Drop Unusable from all three buckets — these are launder-polluted
+        // items where the Pass-1 trend classification is meaningless.
+        let drop_unusable = |v: &mut Vec<TrendItem>| {
+            v.retain(|t| {
+                !matches!(
+                    t.confidence_band,
+                    ultros_api_types::trends::ConfidenceBand::Unusable
+                )
+            })
+        };
+        drop_unusable(&mut high_velocity);
+        drop_unusable(&mut rising_price);
+        drop_unusable(&mut falling_price);
 
         Some(TrendsData {
             high_velocity,
@@ -839,7 +938,7 @@ impl AnalyzerService {
             .get(&AnySelector::World(world_id))?
             .read()
             .await;
-        let possible_sales: Vec<_> = region
+        let mut possible_sales: Vec<_> = region
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
@@ -852,11 +951,17 @@ impl AnalyzerService {
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
+                    hq: item_key.hq,
                     return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
                         * 100.0)
                         - 100.0,
                     world_id: cheapest_price.world_id,
                     sold_within,
+                    // Pass-1 defaults; the deep-scan pass fills these in.
+                    confidence_band: ultros_api_types::trends::ConfidenceBand::Unknown,
+                    vwap_30d: 0,
+                    sample_size_30d: 0,
+                    launder_suspicion: 0.0,
                 })
             })
             .filter(|w| {
@@ -888,6 +993,73 @@ impl AnalyzerService {
                     .unwrap_or(true)
             })
             .collect();
+
+        // === Phase 2 deep-scan enrichment ===
+        //
+        // Sort by raw profit, take the top N, batch-fetch ClickHouse stats,
+        // suppress Unusable, downrank Low. The deep-scan pass is async and
+        // optional: a ClickHouse outage degrades to "all rows return at
+        // ConfidenceBand::Unknown" without errors propagating to the
+        // caller. We sort by profit first so the deep-scan only fires for
+        // the N candidates a user would actually see.
+        const DEEP_SCAN_TOP_N: usize = 200;
+        possible_sales.sort_by_key(|s| std::cmp::Reverse(s.profit));
+        possible_sales.truncate(DEEP_SCAN_TOP_N);
+
+        // Read the sale_world_id off `world_id` arg — `s.world_id` on the
+        // stats is the *source* world (where the cheapest listing is), but
+        // for deep-scan we want the *sale* world (where the user lists it).
+        let scan_req: Vec<(i32, u8, i32)> = possible_sales
+            .iter()
+            .map(|s| (s.item_id, s.hq as u8, world_id))
+            .collect();
+        let scans =
+            match ultros_clickhouse::queries::deep_scan_batch(&self.ch_client, 30, &scan_req).await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    // Log-and-degrade. PG + RAM caches still produced a
+                    // valid Pass-1 answer; the frontend will just render
+                    // confidence_band=Unknown chips.
+                    tracing::warn!(
+                        error = ?e,
+                        world_id,
+                        "deep-scan enrichment unavailable; returning Pass-1 results only",
+                    );
+                    return Some(possible_sales);
+                }
+            };
+
+        // Build a lookup keyed by (item_id, hq, world_id). The map only
+        // contains rows that exist in the rollup; missing entries leave
+        // the stat at its Pass-1 ConfidenceBand::Unknown default, which
+        // the frontend treats as "use cautiously".
+        let scan_by_key: std::collections::HashMap<
+            (i32, u8, i32),
+            &ultros_clickhouse::queries::DeepScan,
+        > = scans
+            .iter()
+            .map(|d| ((d.item_id, d.hq, d.world_id), d))
+            .collect();
+
+        for stats in possible_sales.iter_mut() {
+            if let Some(d) = scan_by_key.get(&(stats.item_id, stats.hq as u8, world_id)) {
+                stats.confidence_band = d.confidence_band();
+                stats.vwap_30d = d.vwap as i32;
+                stats.sample_size_30d = d.sample_size;
+                stats.launder_suspicion = d.launder_suspicion_pct;
+            }
+        }
+
+        // Drop Unusable rows entirely. These are typically items with
+        // launder_suspicion > 50% — the Pass-1 ROI estimate on them is
+        // pure noise and we'd rather show nothing than mislead.
+        possible_sales.retain(|s| {
+            !matches!(
+                s.confidence_band,
+                ultros_api_types::trends::ConfidenceBand::Unusable
+            )
+        });
 
         Some(possible_sales)
     }
@@ -1199,9 +1371,19 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
     pub(crate) item_id: i32,
+    pub(crate) hq: bool,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    // === Phase 2 deep-scan enrichment ===
+    //
+    // Filled in by the second pass against ClickHouse. Pass-1 results
+    // default to ConfidenceBand::Unknown so the UI can render a "loading…"
+    // chip until the deep-scan refines them.
+    pub(crate) confidence_band: ultros_api_types::trends::ConfidenceBand,
+    pub(crate) vwap_30d: i32,
+    pub(crate) sample_size_30d: u32,
+    pub(crate) launder_suspicion: f32,
 }
 
 #[derive(Default)]
@@ -1727,6 +1909,8 @@ mod tests {
             recent_sale_history: Arc::new(recent_sale_history),
             cheapest_items: Arc::new(cheapest_items),
             initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
 
         // Serialize the state
@@ -1771,6 +1955,8 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: new_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(new_analyzer_service.try_restore_from_snapshot().await);
 
@@ -1795,6 +1981,8 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(true)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         // Serialize
         dc_analyzer_service.serialize_state(false).await.unwrap();
@@ -1809,6 +1997,8 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: restore_dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(
             restore_dc_analyzer_service

@@ -246,6 +246,24 @@ impl UltrosDb {
             .stream(&self.db)
             .await?)
     }
+
+    /// Stream sales for a single (world, half-open date range). Used by the
+    /// ClickHouse backfill, which chunks history into `(world_id, year-month)`
+    /// units for resumability.
+    #[instrument(skip(self))]
+    pub async fn stream_sales_in_range(
+        &self,
+        world_id: i32,
+        start: NaiveDateTime,
+        end: NaiveDateTime,
+    ) -> Result<impl Stream<Item = Result<sale_history::Model, DbErr>> + '_, anyhow::Error> {
+        Ok(sale_history::Entity::find()
+            .filter(sale_history::Column::WorldId.eq(world_id))
+            .filter(sale_history::Column::SoldDate.gte(start))
+            .filter(sale_history::Column::SoldDate.lt(end))
+            .stream(&self.db)
+            .await?)
+    }
 }
 
 #[derive(Debug, FromQueryResult)]

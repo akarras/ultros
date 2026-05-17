@@ -34,6 +34,27 @@
         );
         --chart-grid: rgba(255, 255, 255, 0.06);
         --decor-spot: rgba(255, 255, 255, 0.06);
+
+        /* === Dashboard accent tokens ===
+         * Aliases for the command-center home page. These derive from the
+         * runtime brand scale so palette switching (violet, teal, ember,
+         * immortal-flames, ultros, …) re-tints the dashboard chrome — the
+         * cooler violet that the redesign mockup shipped with is just the
+         * default `violet` palette's brand-400 / brand-500 lit on dark.
+         *
+         * Glow / line / surface use color-mix against the brand scale so
+         * they don't have to be redefined per palette — alpha bands stay
+         * constant, only the hue follows the user's theme.
+         */
+        --accent: var(--color-brand-400);
+        --accent-soft: var(--color-brand-500);
+        --accent-glow: color-mix(
+            in srgb,
+            var(--color-brand-400) 35%,
+            transparent
+        );
+        --line: color-mix(in srgb, var(--color-brand-300) 13%, transparent);
+        --surface: rgba(255, 255, 255, 0.025);
     }
 
     /* Fonts (kept as-is for wide support) */
@@ -134,6 +155,20 @@
     --brand-bg: var(--color-brand-200);
     --brand-fg: var(--color-brand-900);
     --brand-ring: var(--color-brand-600);
+
+    /* Dashboard accent tokens shift one rung darker in light mode so the
+     * accent reads as a deliberate ink color over the near-white surface
+     * instead of a pastel. Glow + line stay color-mix so they pick up the
+     * same palette hue automatically. */
+    --accent: var(--color-brand-600);
+    --accent-soft: var(--color-brand-500);
+    --accent-glow: color-mix(
+        in srgb,
+        var(--color-brand-500) 28%,
+        transparent
+    );
+    --line: color-mix(in srgb, var(--color-brand-700) 14%, transparent);
+    --surface: rgba(0, 0, 0, 0.025);
 
     /* Decorative spot for gradients in light */
     --decor-spot: rgba(0, 0, 0, 0.06);
@@ -792,11 +827,12 @@
     --color-brand-900: #4c1d95;
     --color-brand-950: #2e1065;
 
-    /* Dark background tokens */
-    --color-background: #0a0a0b;
-    --color-background-muted: #0d0c12;
-    --color-background-elevated: #11101a;
-    --color-background-panel: #0f0e16;
+    /* Dark background tokens — deepened from the previous near-black to
+     * the command-center "void" feel the dashboard redesign asked for. */
+    --color-background: #05070d;
+    --color-background-muted: #0a0c14;
+    --color-background-elevated: #0e1119;
+    --color-background-panel: #0b0e16;
 }
 
 .btn {
@@ -1480,6 +1516,84 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 
 @utility animate-float {
     animation: float 6s ease-in-out infinite;
+}
+
+/* ===== Command-center dashboard styling =====
+ * Used by the home page sections (MarketPulse, MarketHeat, MarketMovers,
+ * TopOpportunity) to opt out of the rounded-panel look in favor of
+ * transparent sections separated by thin lines and accent dividers.
+ */
+
+/* Section wrapper: no card background, just a subtle bottom rule and
+ * generous vertical spacing. Pairs well with `.dashboard-section-title`. */
+@utility dashboard-section {
+    padding: 1.25rem 0;
+    border-bottom: 1px solid var(--line);
+}
+.dashboard-section:last-of-type {
+    border-bottom: none;
+}
+
+/* Eyebrow heading inside a dashboard section. Uppercase + muted, with
+ * a tiny accent dot to its left for visual rhythm. */
+@utility dashboard-section-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+.dashboard-section-title::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* Inline divider between metric columns. Thin vertical line, fades at
+ * the top and bottom so it reads as a stroke rather than a hard rule. */
+@utility metric-divider {
+    width: 1px;
+    align-self: stretch;
+    background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        var(--line) 22%,
+        var(--line) 78%,
+        transparent 100%
+    );
+}
+
+/* Command-center greeting block: heading text plus a soft purple glow
+ * behind the right-hand decorative icon. */
+@utility command-greeting {
+    position: relative;
+    padding: 1.5rem 0 1rem;
+    overflow: visible;
+}
+.command-greeting::after {
+    content: "";
+    position: absolute;
+    top: -2rem;
+    right: -2rem;
+    width: 18rem;
+    height: 18rem;
+    border-radius: 9999px;
+    background: radial-gradient(
+        circle at center,
+        var(--accent-glow) 0%,
+        transparent 60%
+    );
+    pointer-events: none;
+    z-index: -1;
+    opacity: 0.6;
+    filter: blur(20px);
 }
 
 /* Legacy app-route-shell kept for back-compat with any route body that

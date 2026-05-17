@@ -484,6 +484,21 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         let page = pages
             .get()
             .with_offset((page().unwrap_or_default() - 1).try_into().unwrap_or(0));
+        // `paginate::Pages::with_offset(out_of_range)` returns
+        // `Page { start: 0, end: 0, length: 0 }`. Because we then index
+        // with the *inclusive* range `start..=end`, that range degrades to
+        // `0..=0` and silently surfaces `items[0]` instead of an empty
+        // page — which then disagrees with the rest of the view (no active
+        // pagination button, the "next page" CTA hidden, items_len/pages
+        // saying 0) and makes tachys' hydration walker hit
+        // `failed_to_cast_element` on `/items/jobset/<JOB>` deep-links
+        // carried over from a different job set with more pages
+        // (GlitchTip issues 4902/306/4911/3005/etc., URL pattern
+        // `?page=35&sort=ilvl`). Bail out explicitly when the page is
+        // empty so server and client render the same nothing.
+        if page.is_empty() {
+            return Vec::new();
+        }
         sorted_items.with(|items| {
             items
                 .get(page.start..=page.end)
@@ -722,6 +737,37 @@ pub fn ItemExplorer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::collect_job_items_sorted;
+    use paginate::Pages;
+
+    /// Regression for the `?page=35` family of GlitchTip hydration
+    /// panics on `/items/jobset/<JOB>`. `paginate::Pages::with_offset`
+    /// returns `Page { start: 0, end: 0, length: 0 }` for any
+    /// out-of-bounds offset — and the inclusive `start..=end` slice
+    /// `0..=0` then surfaces the first item on what should be an empty
+    /// page. `ItemList::filtered_items` must treat that page as empty
+    /// rather than indexing into the slice.
+    #[test]
+    fn paginate_oob_offset_reports_empty_but_inclusive_range_is_not() {
+        let pages = Pages::new(200, 50); // 4 valid pages (offsets 0..=3)
+        let page = pages.with_offset(34); // ?page=35 → offset 34, far past end
+        assert_eq!(page.length, 0, "OOB page must have length 0");
+        assert!(page.is_empty());
+        // The trap we have to guard against in `filtered_items`: the
+        // inclusive range `start..=end` covers index 0 even though the
+        // page is supposed to be empty. Don't fix this here, just
+        // document it so the production code stays vigilant.
+        assert_eq!(
+            page.start..=page.end,
+            0..=0,
+            "OOB Page's start..=end range degrades to 0..=0 (includes index 0!)",
+        );
+        let items: Vec<i32> = (0..200).collect();
+        assert_eq!(
+            items.get(page.start..=page.end).unwrap_or_default(),
+            &[0],
+            "the dangerous behavior: items[0..=0] is items[0], not empty",
+        );
+    }
 
     #[test]
     fn collect_job_items_returns_ascending_ids() {

@@ -2,7 +2,6 @@ use crate::components::icon::Icon;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
-use git_const::git_short_hash;
 use icondata as i;
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -29,7 +28,7 @@ pub fn SideNav() -> impl IntoView {
         })
     };
 
-    let git_hash = git_short_hash!();
+    let git_hash = env!("GIT_HASH");
 
     view! {
         <aside class="side-nav" aria-label=t_string!(i18n, side_nav_aria_primary)>

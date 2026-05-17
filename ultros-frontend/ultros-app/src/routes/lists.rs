@@ -74,7 +74,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                         <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4 text-sm text-[color:var(--color-text-muted)]">
                                             "This invite is tied to your Ultros account, so you need to log in before accepting it."
                                         </div>
-                                        <a class="btn-primary" href=href>
+                                        <a class="btn-primary" rel="external" href=href>
                                             <Icon icon=i::BsPersonCircle />
                                             <span>{t!(i18n, lists_sign_in_discord_button)}</span>
                                         </a>

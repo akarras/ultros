@@ -90,21 +90,6 @@ pub fn AssumptionBadge(#[prop(into)] text: Oco<'static, str>) -> impl IntoView {
 }
 
 #[component]
-pub fn MetricExplainer(
-    #[prop(into)] label: Oco<'static, str>,
-    #[prop(into)] explanation: Oco<'static, str>,
-) -> impl IntoView {
-    view! {
-        <details class="panel p-3 rounded-lg text-sm">
-            <summary class="cursor-pointer font-semibold text-[color:var(--brand-fg)]">
-                {label}
-            </summary>
-            <p class="mt-2 text-[color:var(--color-text-muted)] leading-relaxed">{explanation}</p>
-        </details>
-    }
-}
-
-#[component]
 pub fn ConfidenceBadge(total_sales: usize, daily_sales: f32) -> impl IntoView {
     let i18n = use_i18n();
     let (label, class) = if total_sales >= 20 && daily_sales >= 1.0 {

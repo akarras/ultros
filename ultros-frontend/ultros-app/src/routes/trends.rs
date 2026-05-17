@@ -12,8 +12,11 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::Clipboard,
+        confidence_badge::ConfidenceBadge,
         gil::Gil,
         item_icon::ItemIcon,
+        market_heat::MarketHeat,
+        market_movers::MarketMovers,
         meta::{MetaDescription, MetaTitle},
         skeleton::BoxSkeleton,
         tool_help::*,
@@ -36,7 +39,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
     });
 
     view! {
-        <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+        <div class="overflow-x-auto content-visible contain-layout contain-paint will-change-scroll forced-layer">
             <VirtualScroller
                 viewport_height=720.0
                 row_height=40.0
@@ -44,7 +47,7 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                 header_height=48.0
                 variable_height=false
                 header=view! {
-                    <div class="flex flex-row align-top h-12 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] font-semibold text-[color:var(--brand-fg)]" role="rowgroup">
+                    <div class="flex flex-row align-top h-12 border-b border-[color:var(--line)] font-semibold text-[10px] uppercase tracking-[0.14em] text-[color:var(--color-text-muted)]" role="rowgroup">
                         <div role="columnheader" class="w-[40px] px-2 py-3 text-center">
                             "HQ"
                         </div>
@@ -60,6 +63,9 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                         <div role="columnheader" class="w-32 px-4 py-3 text-right">
                             "Sales/Week"
                         </div>
+                        <div role="columnheader" class="w-28 px-4 py-3 text-center">
+                            "Quality"
+                        </div>
                     </div>
                 }.into_any()
                 each=items.into()
@@ -71,11 +77,10 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                     let item_name = item_data.map(|i| i.name.as_str()).unwrap_or("Unknown Item").to_string();
                     let icon_loading = if index < 20 { "eager" } else { "" };
 
-                    let classes = if (index % 2) == 0 {
-                        "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                    } else {
-                        "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                    };
+                    // Single hairline divider between rows — no zebra
+                    // striping, no panel background, in line with the new
+                    // dashboard aesthetic.
+                    let classes = "flex flex-row items-center flex-nowrap h-10 border-b border-[color:var(--line)] hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] transition-colors";
 
                     view! {
                         <div class=classes role="row-group">
@@ -107,6 +112,9 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
                             </div>
                             <div role="cell" class="px-4 py-2 w-32 text-right flex items-center justify-end text-[color:var(--color-text)]">
                                 {format!("{:.1}", item.sales_per_week)}
+                            </div>
+                            <div role="cell" class="px-4 py-2 w-28 flex items-center justify-center">
+                                <ConfidenceBadge band=item.confidence_band sample_size=item.sample_size_30d />
                             </div>
                         </div>
                     }.into_any()
@@ -179,12 +187,19 @@ pub fn Trends() -> impl IntoView {
         get_trends(&w).await.map(Some)
     });
 
+    // For MarketHeat / MarketMovers signal compat — they take an
+    // Option<String> so they can no-op when no world is selected.
+    let world_signal: Signal<Option<String>> = Signal::derive(move || {
+        let w = world();
+        if w.is_empty() { None } else { Some(w) }
+    });
+
     view! {
         <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, trends_meta_desc).to_string() />
 
         <div class="main-content p-6">
-            <div class="flex flex-col gap-8">
+            <div class="flex flex-col gap-6 max-w-7xl mx-auto">
                 <ToolHeader
                     title=t_string!(i18n, market_trends).to_string()
                     summary=t_string!(i18n, trends_tool_summary).to_string()
@@ -222,12 +237,33 @@ pub fn Trends() -> impl IntoView {
                     </ToolbarField>
                 </Toolbar>
 
-                // Metric explainers
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <MetricExplainer label=t_string!(i18n, trends_tab_high_velocity).to_string() explanation=t_string!(i18n, trends_explanation_high_velocity).to_string() />
-                    <MetricExplainer label=t_string!(i18n, trends_tab_rising).to_string() explanation=t_string!(i18n, trends_explanation_rising).to_string() />
-                    <MetricExplainer label=t_string!(i18n, trends_tab_falling).to_string() explanation=t_string!(i18n, trends_explanation_falling).to_string() />
-                </div>
+                // Market Heat band (gated on a selected world). Gives a
+                // quick read on category-level sentiment before the detail
+                // table.
+                {move || world_signal.with(|w| w.is_some()).then(|| view! {
+                    <MarketHeat world=world_signal />
+                })}
+
+                // Market Movers — wider view than the home page rail. The
+                // tabbed component handles its own rising/falling/volume
+                // bucket so it complements (not duplicates) the
+                // TrendTab filter below.
+                {move || world_signal.with(|w| w.is_some()).then(|| view! {
+                    <MarketMovers world=world_signal />
+                })}
+
+                // Trend detail table. The MarketMovers strip above gives
+                // the at-a-glance picture; this is the deep-dive surface
+                // with full price, sales/week, and confidence columns.
+                <section class="dashboard-section">
+                    <h2 class="dashboard-section-title mb-2">
+                        {move || match selected_tab.get() {
+                            TrendTab::Velocity => t_string!(i18n, trends_tab_high_velocity).to_string(),
+                            TrendTab::Rising => t_string!(i18n, trends_tab_rising).to_string(),
+                            TrendTab::Falling => t_string!(i18n, trends_tab_falling).to_string(),
+                        }}
+                    </h2>
+                </section>
 
                 // Content
                 <div class="min-h-[500px]">

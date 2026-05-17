@@ -198,6 +198,15 @@ async fn main() -> Result<()> {
     // Load environment variables from `.env` file, if present
     dotenv().ok();
 
+    // Install a process-level rustls CryptoProvider. Multiple transitive deps
+    // (serenity/poise, reqwest 0.12/0.13, sqlx, tokio-rustls, sentry) unify on
+    // rustls 0.23 with BOTH `aws-lc-rs` and `ring` features active, so
+    // `ClientConfig::builder()` panics on first TLS connect ("Could not
+    // automatically determine the process-level CryptoProvider"). Install
+    // once at startup before any TLS handshake. Ignore the result because a
+    // double-install only fails if some upstream beat us to it, which is fine.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // Glitchtip / Sentry error reporting. No-op when GLITCHTIP_DSN is unset, so
     // local dev runs without it. The guard must be held for the duration of
     // main() so the background transport can flush on shutdown.
@@ -265,10 +274,28 @@ async fn main() -> Result<()> {
     // on first run, the world cache may be empty
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
+
+    // ClickHouse: analytical store. Migration is idempotent — re-running it on
+    // every startup is fine. We log-and-continue on failure because PG is the
+    // source of truth and the analyzer's RAM caches keep the snappy tools
+    // alive even if CH is unreachable.
+    let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
+    if let Err(e) = ch_client.migrate().await {
+        warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
+    }
+    let ch_writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
+
+    // Background scheduler that keeps item_stats_window + item_quality_score
+    // fresh. Runs an immediate seed pass on startup, then on independent
+    // cadences (1d every 15min, 7d hourly, 30d/90d every 6h, quality hourly).
+    ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
+
     let analyzer_service = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
         world_cache.clone(),
+        ch_writer,
+        ch_client.clone(),
         token.clone(),
     )
     .await;
@@ -341,7 +368,7 @@ async fn main() -> Result<()> {
     let search_service = SearchService::new()?;
     let conf = get_configuration(Some("Cargo.toml")).unwrap();
     let mut leptos_options = conf.leptos_options;
-    let git_hash = git_const::git_short_hash!();
+    let git_hash = env!("GIT_HASH");
     leptos_options.site_pkg_dir = Arc::from(["pkg/", git_hash].concat());
     let web_state = WebState {
         analyzer_service,
@@ -362,6 +389,7 @@ async fn main() -> Result<()> {
         leptos_options,
         search_service,
         token: token.clone(),
+        ch_client,
     };
     let web_task = tokio::spawn(web::start_web(web_state));
     tokio::select! {

@@ -30,7 +30,7 @@ pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse
         ("method", method.to_string()),
         ("path", path),
         ("status", status),
-        ("user-agent", user_agent),
+        ("user_agent", user_agent),
     ];
 
     metrics::counter!("ultros_http_requests_total", &labels).increment(1);

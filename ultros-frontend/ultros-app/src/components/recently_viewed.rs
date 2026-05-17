@@ -1,5 +1,7 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
+use crate::api::post_sparklines;
+use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
 use codee::string::JsonSerdeCodec;
 use leptos::leptos_dom::helpers::set_timeout;
@@ -7,9 +9,12 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_use::storage::use_local_storage;
 use ultros_api_types::icon_size::IconSize;
+use ultros_api_types::sparklines::{SparklineSeries, SparklinesRequest};
 use xiv_gen::ItemId;
 
-use crate::components::{item_icon::ItemIcon, skeleton::BoxSkeleton};
+use crate::components::{
+    gil::Gil, item_icon::ItemIcon, skeleton::BoxSkeleton, sparkline::Sparkline,
+};
 use crate::i18n::*;
 
 #[derive(Clone, Copy)]
@@ -57,33 +62,121 @@ impl RecentItems {
     }
 }
 
+/// One row in the Continue Tracking panel — item icon, name, current
+/// price, %change pill, and inline 24h sparkline.
+#[component]
+fn TrackedRow(item_id: i32, world_name: String, series: Option<SparklineSeries>) -> impl IntoView {
+    let item_data = tracked_data().items.get(&ItemId(item_id));
+    let name = item_data
+        .map(|i| i.name.as_str().to_string())
+        .unwrap_or_default();
+
+    let (pct_change, last_price, points): (Option<f32>, Option<u32>, Vec<u32>) = match series {
+        Some(s) => {
+            // Compute pct change from first/last endpoints. Guard against
+            // zero first_price — those rows show "—" instead of garbage.
+            let pct = if s.first_price > 0 {
+                Some(((s.last_price as f32 - s.first_price as f32) / s.first_price as f32) * 100.0)
+            } else {
+                None
+            };
+            (pct, Some(s.last_price), s.points)
+        }
+        None => (None, None, Vec::new()),
+    };
+
+    let pct_class = match pct_change {
+        Some(p) if p > 0.05 => "text-emerald-300",
+        Some(p) if p < -0.05 => "text-red-300",
+        Some(_) => "text-[color:var(--color-text-muted)]",
+        None => "text-[color:var(--color-text-muted)]",
+    };
+    let pct_text = match pct_change {
+        Some(p) if p.abs() < 0.05 => "—".to_string(),
+        Some(p) if p >= 0.0 => format!("+{p:.1}%"),
+        Some(p) => format!("{p:.1}%"),
+        None => "—".to_string(),
+    };
+
+    // The /item/{world}/{id} route is the canonical product page when we
+    // have a world. Without a world, fall back to /item/{id}.
+    let href = if world_name.is_empty() {
+        format!("/item/{item_id}")
+    } else {
+        format!("/item/{world_name}/{item_id}")
+    };
+
+    view! {
+        <A href=href>
+            <div class="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2 px-1 py-2 border-b border-[color:var(--line)] hover:bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)] transition-colors rounded">
+                <ItemIcon item_id icon_size=IconSize::Small />
+                <div class="min-w-0">
+                    <div class="text-sm text-[color:var(--color-text)] truncate">{name}</div>
+                    <div class="text-[10px] font-mono text-[color:var(--color-text-muted)] leading-tight">
+                        {last_price.map(|p| view! { <Gil amount=p as i32 /> })}
+                    </div>
+                </div>
+                <span class=format!("text-xs font-mono font-semibold tabular-nums {pct_class}")>
+                    {pct_text}
+                </span>
+                {(!points.is_empty()).then(|| view! {
+                    <Sparkline points pct_change=pct_change.unwrap_or(0.0) />
+                })}
+            </div>
+        </A>
+    }
+}
+
 #[component]
 pub fn RecentlyViewed() -> impl IntoView {
     let i18n = use_i18n();
     let item_data = use_context::<RecentItems>().unwrap();
     let items = item_data.reader();
-    let local_items = LocalResource::new(move || async move { items() });
+    let (homeworld, _) = use_home_world();
+    // Limit to top 8 to keep the rail focused. The /history page is the
+    // overflow surface for everything older.
+    let recent_top: Signal<Vec<i32>> =
+        Signal::derive(move || items.with(|q| q.iter().take(8).copied().collect()));
+    let world_name: Signal<Option<String>> =
+        Signal::derive(move || homeworld.with(|w| w.as_ref().map(|w| w.name.clone())));
+
+    // Fetch sparklines for the visible top-N items. Re-runs when either
+    // home world or the recently-viewed list changes.
+    let sparklines = LocalResource::new(move || {
+        let world = world_name.get();
+        let ids = recent_top.get();
+        async move {
+            let world = world?;
+            if ids.is_empty() {
+                return None;
+            }
+            let req = SparklinesRequest {
+                items: ids.into_iter().map(|id| (id, false)).collect(),
+                hours: Some(24),
+            };
+            post_sparklines(&world, req).await.ok()
+        }
+    });
+
     let (confirm_clear, set_confirm_clear) = signal(false);
 
     view! {
-        <div class="p-6 rounded-xl panel">
+        <div class="py-2">
             <Suspense fallback=move || {
                 view! {
-                    <div class="h-[400px] animate-pulse">
+                    <div class="h-[280px] animate-pulse">
                         <BoxSkeleton />
                     </div>
                 }
             }>
                 <div
-                    class="space-y-4"
-                    class:hidden=move || {
-                        local_items.with(|i| i.as_ref().map(|i| i.is_empty()).unwrap_or(true))
-                    }
+                    class=""
+                    class:hidden=move || recent_top.with(|i| i.is_empty())
                 >
-                    <div class="flex items-center justify-between">
-                        <h4 class="text-xl font-bold text-[color:var(--color-text)]">{t!(i18n, recently_viewed_title)}</h4>
+                    <div class="flex items-baseline justify-between mb-2">
+                        <h4 class="dashboard-section-title">{t!(i18n, recently_viewed_title)}</h4>
                         <button
-                            class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-ring)] rounded px-2"
+                            class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)] rounded px-1"
                             on:click=move |_| {
                                 if confirm_clear.get_untracked() {
                                     item_data.clear_items();
@@ -107,35 +200,41 @@ pub fn RecentlyViewed() -> impl IntoView {
                         </button>
                     </div>
 
-                    <div class="space-y-2 max-h-[400px] overflow-y-auto overflow-x-hidden scrollbar-thin">
+                    <div class="max-h-[420px] overflow-y-auto overflow-x-hidden scrollbar-thin">
                         {move || {
-                            let items = local_items.get();
+                            let ids = recent_top.get();
+                            if ids.is_empty() {
+                                return None;
+                            }
+                            // Build series lookup so each row picks up its
+                            // sparkline without a second list scan. When the
+                            // request fails or world is unset, the map is
+                            // empty and rows just render without sparklines.
+                            // LocalResource resolves to Option<Option<SparklinesResponse>>.
+                            // The outer Option means "has the resource resolved", the
+                            // inner Option is the body itself (None on missing world or
+                            // fetch error). Flatten to Option<SparklinesResponse>.
+                            let series_map: HashMap<i32, SparklineSeries> = sparklines
+                                .get()
+                                .flatten()
+                                .map(|resp| {
+                                    resp.series
+                                        .into_iter()
+                                        .map(|s| (s.item_id, s))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let world = world_name.get().unwrap_or_default();
                             Some(
-                                items?
-                                    .iter()
-                                    .map(|item| {
-                                        let item_id = *item;
-                                        let item_data = tracked_data()
-                                            .items
-                                            .get(&ItemId(item_id));
-
+                                ids.into_iter()
+                                    .map(|item_id| {
+                                        let series = series_map.get(&item_id).cloned();
                                         view! {
-                                            <A href=format!("/item/{item_id}")>
-
-                                                <div class="px-2 py-2 rounded-lg hover:bg-[color:color-mix(in_srgb,var(--brand-bg)_10%,transparent)] transition-colors duration-200 group">
-                                                    <div class="flex items-center gap-4 w-full transform transition-transform duration-200 group-hover:translate-x-1">
-                                                        <ItemIcon item_id icon_size=IconSize::Medium />
-
-                                                        <div class="flex flex-col min-w-0 flex-1">
-                                                            <div class="flex items-center gap-2 truncate">
-                                                                <span class="text-[color:var(--color-text)] truncate">
-                                                                    {item_data.map(|i| i.name.as_str()).unwrap_or_default()}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </A>
+                                            <TrackedRow
+                                                item_id
+                                                world_name=world.clone()
+                                                series
+                                            />
                                         }
                                     })
                                     .collect::<Vec<_>>(),
@@ -143,10 +242,10 @@ pub fn RecentlyViewed() -> impl IntoView {
                         }}
                     </div>
 
-                    <div class="text-center pt-2 border-t border-[color:var(--color-outline)]">
+                    <div class="text-right pt-2">
                         <a
                             href="/history"
-                            class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--brand-fg)] transition-colors"
+                            class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--accent)] transition-colors"
                         >
                             {t!(i18n, recently_viewed_view_all)}
                         </a>
