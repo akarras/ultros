@@ -183,6 +183,8 @@ pub async fn begin_login(
     );
     let cookies = cookies.add(
         CookieBuilder::new("pkce_verifier", pkce_verifier.secret().clone())
+            .same_site(SameSite::Lax)
+            .secure(true)
             .http_only(true)
             .build(),
     );
