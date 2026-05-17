@@ -240,16 +240,20 @@ pub fn ListView() -> impl IntoView {
         can_leave: bool,
     }
 
-    let view_caps = Memo::new(move |_| match list_view.get() {
-        Some(Ok((list_with_perm, _))) => {
-            let p = list_with_perm.permission;
-            ViewCaps {
-                can_write: p >= ListPermission::Write,
-                can_admin: p >= ListPermission::Owner,
-                can_leave: p == ListPermission::Write || p == ListPermission::Read,
+    let view_caps = RwSignal::new(ViewCaps::default());
+    Effect::new(move |_| {
+        let next = match list_view.get() {
+            Some(Ok((list_with_perm, _))) => {
+                let p = list_with_perm.permission;
+                ViewCaps {
+                    can_write: p >= ListPermission::Write,
+                    can_admin: p >= ListPermission::Owner,
+                    can_leave: p == ListPermission::Write || p == ListPermission::Read,
+                }
             }
-        }
-        _ => ViewCaps::default(),
+            _ => ViewCaps::default(),
+        };
+        view_caps.set(next);
     });
 
     let drawer_refresh = Signal::derive(move || {
@@ -324,46 +328,48 @@ pub fn ListView() -> impl IntoView {
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between list-toolbar">
                     <div class="flex flex-wrap items-center gap-2">
                         <Show when=move || view_caps.with(|c| c.can_write)>
-                            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
-                                <button
-                                    class="btn-primary"
-                                    class:active=move || menu() == MenuState::Item
-                                    on:click=move |_| set_menu(
-                                        match menu() {
-                                            MenuState::Item => MenuState::None,
-                                            _ => MenuState::Item,
-                                        },
-                                    )
-                                >
-                                    <Icon icon=i::BiPlusRegular />
-                                    <span>{t!(i18n, list_view_add_item)}</span>
-                                </button>
-                            </Tooltip>
-                            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
-                                <button
-                                    class="btn-secondary"
-                                    class:active=move || recipe_modal_open()
-                                    on:click=move |_| set_recipe_modal_open(true)
-                                >
-                                    <Icon icon=i::BiBookAddRegular />
-                                    <span>{t!(i18n, list_view_add_recipe)}</span>
-                                </button>
-                            </Tooltip>
-                            <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
-                                <button
-                                    class="btn-secondary"
-                                    class:active=move || menu() == MenuState::MakePlace
-                                    on:click=move |_| set_menu(
-                                        match menu() {
-                                            MenuState::MakePlace => MenuState::None,
-                                            _ => MenuState::MakePlace,
-                                        },
-                                    )
-                                >
-                                    <Icon icon=i::BiImportRegular />
-                                    <span>{t!(i18n, list_view_make_place)}</span>
-                                </button>
-                            </Tooltip>
+                            <>
+                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
+                                    <button
+                                        class="btn-primary"
+                                        class:active=move || menu() == MenuState::Item
+                                        on:click=move |_| set_menu(
+                                            match menu() {
+                                                MenuState::Item => MenuState::None,
+                                                _ => MenuState::Item,
+                                            },
+                                        )
+                                    >
+                                        <Icon icon=i::BiPlusRegular />
+                                        <span>{t!(i18n, list_view_add_item)}</span>
+                                    </button>
+                                </Tooltip>
+                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
+                                    <button
+                                        class="btn-secondary"
+                                        class:active=move || recipe_modal_open()
+                                        on:click=move |_| set_recipe_modal_open(true)
+                                    >
+                                        <Icon icon=i::BiBookAddRegular />
+                                        <span>{t!(i18n, list_view_add_recipe)}</span>
+                                    </button>
+                                </Tooltip>
+                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
+                                    <button
+                                        class="btn-secondary"
+                                        class:active=move || menu() == MenuState::MakePlace
+                                        on:click=move |_| set_menu(
+                                            match menu() {
+                                                MenuState::MakePlace => MenuState::None,
+                                                _ => MenuState::MakePlace,
+                                            },
+                                        )
+                                    >
+                                        <Icon icon=i::BiImportRegular />
+                                        <span>{t!(i18n, list_view_make_place)}</span>
+                                    </button>
+                                </Tooltip>
+                            </>
                         </Show>
                     </div>
 

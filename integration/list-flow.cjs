@@ -72,6 +72,24 @@ async function waitFor(page, selector, timeout) {
   return page.waitForSelector(selector, { timeout, visible: true });
 }
 
+// Wait until the WASM client has hydrated AND the view_caps Effect has
+// updated permission-gated affordances. The Settings button is always
+// rendered, so wait for it first. Then wait for an owner-only button to
+// appear (proves view_caps fired with can_admin=true).
+async function waitForHydration(page, timeout) {
+  await page.waitForFunction(
+    () => !!document.querySelector('[data-testid="list-settings-btn"]'),
+    { timeout },
+  );
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
+        (b.innerText || "").includes("Add Item"),
+      ),
+    { timeout },
+  );
+}
+
 // Find a button (or any element) whose visible text matches `text`.
 // Returns an ElementHandle or null.
 async function findByText(page, selector, text) {
@@ -88,15 +106,23 @@ async function findByText(page, selector, text) {
 }
 
 async function clickByText(page, selector, text) {
-  const handle = await findByText(page, selector, text);
-  const el = handle.asElement();
-  if (!el) {
-    await handle.dispose();
-    return false;
-  }
-  await el.click();
-  await handle.dispose();
-  return true;
+  // Click via evaluate so we trigger the listener directly even when the
+  // element is inside a Tooltip wrapper (which may intercept synthetic
+  // pointer events).
+  return page.evaluate(
+    (sel, t) => {
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+      const target = norm(t);
+      const el = Array.from(document.querySelectorAll(sel)).find((e) =>
+        norm(e.innerText).includes(target),
+      );
+      if (!el) return false;
+      el.click();
+      return true;
+    },
+    selector,
+    text,
+  );
 }
 
 async function main() {
@@ -114,8 +140,13 @@ async function main() {
   let listId = null;
 
   try {
-    const ownerPage = await browser.newPage();
-    const readerPage = await browser.newPage();
+    // Use separate browser contexts so each user keeps their own cookie jar.
+    // The default context is shared across pages — the second /test/login
+    // would overwrite the first's discord_auth cookie.
+    const ownerContext = await browser.createBrowserContext();
+    const readerContext = await browser.createBrowserContext();
+    const ownerPage = await ownerContext.newPage();
+    const readerPage = await readerContext.newPage();
     for (const p of [ownerPage, readerPage]) {
       p.setDefaultTimeout(TIMEOUT_MS);
       // Force desktop viewport so the list-toolbar buttons render in their
@@ -157,23 +188,51 @@ async function main() {
     console.log("[step] owner adds an item via the UI");
     const listUrl = new URL(`/list/${listId}`, BASE_URL).toString();
     await ownerPage.goto(listUrl, { waitUntil: "domcontentloaded" });
-    await ownerPage.waitForFunction(() => !!document.querySelector("h1"), { timeout: TIMEOUT_MS });
+    await waitForHydration(ownerPage, TIMEOUT_MS);
 
-    if (!(await clickByText(ownerPage, ".list-toolbar button", "Add Item"))) {
-      fail(failures, "Add Item button not found");
+    // Verify we can see write-only affordances (we are the owner).
+    const hasAddItem = await ownerPage.evaluate(() =>
+      Array.from(document.querySelectorAll(".list-toolbar button")).some((b) =>
+        (b.innerText || "").includes("Add Item"),
+      ),
+    );
+    if (!hasAddItem) {
+      const toolbarText = await ownerPage.evaluate(() => {
+        const tb = document.querySelector(".list-toolbar");
+        return tb ? tb.innerText.slice(0, 300) : "(no .list-toolbar)";
+      });
+      fail(failures, `Add Item button not found — toolbar text: ${toolbarText}`);
+    } else if (!(await clickByText(ownerPage, ".list-toolbar button", "Add Item"))) {
+      fail(failures, "Add Item click failed");
     } else {
-      await waitFor(ownerPage, "input[placeholder]", 5000);
-      // The search input is the most recently-rendered placeholder input.
-      const inputs = await ownerPage.$$("input[placeholder]");
-      const searchInput = inputs[inputs.length - 1];
+      // Brief settle: the click toggles MenuState::Item which renders the
+      // search panel — that closure can take a tick under WASM dev builds.
+      await new Promise((r) => setTimeout(r, 1000));
+      await waitFor(ownerPage, "input[placeholder*='search items']", 15000);
+      const searchInput = await ownerPage.$("input[placeholder*='search items']");
       await searchInput.click({ clickCount: 3 });
       await searchInput.type("Maple Log");
-      await new Promise((r) => setTimeout(r, 1000));
-      // Click a row-level "Add" button.
-      if (!(await clickByText(ownerPage, "button", "Add"))) {
-        fail(failures, "row-level Add button not found");
+      // Wait for the row-level "add" button to render (locale string is lowercase).
+      await ownerPage
+        .waitForFunction(
+          () =>
+            Array.from(document.querySelectorAll("button")).some(
+              (b) => (b.innerText || "").trim().toLowerCase() === "add",
+            ),
+          { timeout: 10000 },
+        )
+        .catch(() => {});
+      const rowAddBtn = await ownerPage.evaluateHandle(() =>
+        Array.from(document.querySelectorAll("button")).find(
+          (b) => (b.innerText || "").trim().toLowerCase() === "add",
+        ),
+      );
+      const rowAdd = rowAddBtn.asElement();
+      if (!rowAdd) {
+        fail(failures, "row-level add button not found");
       } else {
-        await new Promise((r) => setTimeout(r, 1500));
+        await rowAdd.click();
+        await new Promise((r) => setTimeout(r, 2500));
         const apiRes = await api(ownerPage, "GET", `/api/v1/list/${listId}/listings`);
         const itemsLen = apiRes.body && apiRes.body[1] ? apiRes.body[1].length : 0;
         if (itemsLen < 1) {
@@ -181,6 +240,7 @@ async function main() {
         } else {
           pass(`added item via UI (api items=${itemsLen})`);
         }
+        await rowAddBtn.dispose();
       }
     }
 
@@ -190,22 +250,41 @@ async function main() {
       fail(failures, "Add Recipe button not found");
     } else {
       try {
-        await waitFor(ownerPage, "input[placeholder]", 5000);
+        // The recipe modal renders its own search input. Use its placeholder
+        // text to pinpoint it (avoids racing the global top-bar search).
+        await ownerPage.waitForFunction(
+          () =>
+            !!Array.from(document.querySelectorAll("input[placeholder]")).find((i) =>
+              /recipe|search/i.test(i.placeholder),
+            ),
+          { timeout: 5000 },
+        );
+        // Pick the input nearest to the modal — last placeholder-bearing input.
         const inputs = await ownerPage.$$("input[placeholder]");
-        // After the modal opens, the modal's search input is the most recent.
         const modalInput = inputs[inputs.length - 1];
         await modalInput.click({ clickCount: 3 });
         await modalInput.type("Bronze Ingot");
-        await new Promise((r) => setTimeout(r, 1500));
-        // Look for any button containing "Add" or "Ingredient" text in the modal.
-        const added =
-          (await clickByText(ownerPage, "button", "Add ingredients")) ||
-          (await clickByText(ownerPage, "button", "Add Ingredients")) ||
-          (await clickByText(ownerPage, "button", "Add to list"));
-        if (!added) {
+        // Wait for any modal button whose trimmed text is exactly "Add".
+        await ownerPage
+          .waitForFunction(
+            () =>
+              Array.from(document.querySelectorAll("button")).some(
+                (b) => (b.innerText || "").trim() === "Add",
+              ),
+            { timeout: 10000 },
+          )
+          .catch(() => {});
+        const recipeAddHandle = await ownerPage.evaluateHandle(() =>
+          Array.from(document.querySelectorAll("button")).find(
+            (b) => (b.innerText || "").trim() === "Add",
+          ),
+        );
+        const recipeAdd = recipeAddHandle.asElement();
+        if (!recipeAdd) {
           fail(failures, "recipe add button not found");
         } else {
-          await new Promise((r) => setTimeout(r, 2000));
+          await recipeAdd.click();
+          await new Promise((r) => setTimeout(r, 2500));
           await ownerPage.keyboard.press("Escape");
           await new Promise((r) => setTimeout(r, 500));
           const apiRes = await api(ownerPage, "GET", `/api/v1/list/${listId}/listings`);
@@ -216,6 +295,7 @@ async function main() {
             pass(`added recipe via UI (api items=${itemsLen})`);
           }
         }
+        await recipeAddHandle.dispose();
       } catch (e) {
         fail(failures, `recipe modal interaction failed: ${e.message || e}`);
       }
@@ -223,12 +303,19 @@ async function main() {
 
     // ===== Step 3: Mark an item acquired via the row toggle =====
     console.log("[step] owner marks an item acquired");
-    const markBtn = await ownerPage.$('button[aria-label="Mark acquired"]');
+    // Aria-label is "Mark as acquired" (from list_item_row_mark_acquired in en.json).
+    const markBtn = await ownerPage.$('button[aria-label="Mark as acquired"]');
     if (!markBtn) {
-      fail(failures, "Mark acquired button not found");
+      fail(failures, "Mark as acquired button not found");
     } else {
       await markBtn.click();
-      await new Promise((r) => setTimeout(r, 1500));
+      // Wait for the optimistic local update + refetch + re-render.
+      await ownerPage
+        .waitForFunction(
+          () => !!document.querySelector('button[aria-label="Mark unacquired"]'),
+          { timeout: 10000 },
+        )
+        .catch(() => {});
       const unmarkBtn = await ownerPage.$('button[aria-label="Mark unacquired"]');
       if (!unmarkBtn) {
         fail(failures, "after toggle, expected Mark unacquired aria-label");
@@ -245,12 +332,16 @@ async function main() {
 
     // ===== Step 4: Settings drawer — rename + invite =====
     console.log("[step] owner opens settings drawer");
-    const settingsBtn = await ownerPage.$('[data-testid="list-settings-btn"]');
-    if (!settingsBtn) {
+    const settingsClicked = await ownerPage.evaluate(() => {
+      const b = document.querySelector('[data-testid="list-settings-btn"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    if (!settingsClicked) {
       fail(failures, "Settings button not found");
     } else {
-      await settingsBtn.click();
-      await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 5000);
+      await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
       pass("settings drawer opened");
 
       // Rename via drawer.
@@ -266,7 +357,13 @@ async function main() {
           fail(failures, "drawer save button not found");
         } else {
           await saveBtn.click();
-          await new Promise((r) => setTimeout(r, 2000));
+          // edit_list_action -> Resource refetch -> heading re-render.
+          await ownerPage
+            .waitForFunction(
+              () => (document.querySelector("h1")?.textContent || "").includes("(renamed)"),
+              { timeout: 10000 },
+            )
+            .catch(() => {});
           const heading = await ownerPage.$eval("h1", (h) => h.textContent || "");
           if (!heading.includes("(renamed)")) {
             fail(failures, `expected heading to include '(renamed)', got '${heading}'`);
@@ -281,17 +378,34 @@ async function main() {
       if (!inviteSection) {
         fail(failures, "drawer sharing section not found");
       } else {
-        // Find the "Copy" button inside the sharing section (creates invite + copies URL).
-        const inviteBtnHandle = await ownerPage.evaluateHandle((section) => {
-          const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-          const buttons = Array.from(section.querySelectorAll("button"));
-          return buttons.find((b) => /copy/i.test(norm(b.innerText))) || null;
-        }, inviteSection);
-        const inviteBtn = inviteBtnHandle.asElement();
-        if (!inviteBtn) {
+        // The sharing section streams in via Suspense — wait for the Copy
+        // Invite Link button before clicking.
+        await ownerPage
+          .waitForFunction(
+            () => {
+              const sec = document.querySelector('[data-testid="list-settings-sharing"]');
+              if (!sec) return false;
+              return Array.from(sec.querySelectorAll("button")).some((b) =>
+                /copy/i.test((b.innerText || "").trim()),
+              );
+            },
+            { timeout: 10000 },
+          )
+          .catch(() => {});
+        // Click via JS evaluate (avoids Tooltip wrapper intercept).
+        const clicked = await ownerPage.evaluate(() => {
+          const sec = document.querySelector('[data-testid="list-settings-sharing"]');
+          if (!sec) return false;
+          const btn = Array.from(sec.querySelectorAll("button")).find((b) =>
+            /copy/i.test((b.innerText || "").trim()),
+          );
+          if (!btn) return false;
+          btn.click();
+          return true;
+        });
+        if (!clicked) {
           fail(failures, "drawer invite-create button not found");
         } else {
-          await inviteBtn.click();
           await new Promise((r) => setTimeout(r, 2000));
           const invitesResp = await api(ownerPage, "GET", `/api/v1/list/${listId}/invites`);
           if (
@@ -349,20 +463,28 @@ async function main() {
               }
             }
           }
-          await inviteBtnHandle.dispose();
         }
       }
 
       await ownerPage.keyboard.press("Escape");
-      await new Promise((r) => setTimeout(r, 500));
+      await ownerPage
+        .waitForFunction(
+          () => !document.querySelector('[data-testid="list-settings-drawer"]'),
+          { timeout: 5000 },
+        )
+        .catch(() => {});
     }
 
     // ===== Step 6: Delete the list =====
     console.log("[step] owner deletes the list");
-    const settingsBtn2 = await ownerPage.$('[data-testid="list-settings-btn"]');
-    if (settingsBtn2) {
-      await settingsBtn2.click();
-      await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 5000);
+    const settingsClicked2 = await ownerPage.evaluate(() => {
+      const b = document.querySelector('[data-testid="list-settings-btn"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    if (settingsClicked2) {
+      await waitFor(ownerPage, '[data-testid="list-settings-drawer"]', 10000);
       const deleteBtn = await ownerPage.$('[data-testid="list-delete-btn"]');
       if (!deleteBtn) {
         fail(failures, "delete button not found");
