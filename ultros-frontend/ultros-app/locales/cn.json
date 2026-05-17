@@ -1097,6 +1097,7 @@
     "market_pulse_gil_volume": "市场交易额",
     "market_pulse_unit_volume": "24 小时成交数量",
     "market_pulse_vs_yesterday": "对比昨日",
+    "market_pulse_load_failed": "无法加载市场数据，请稍后重试",
     "market_movers_title": "市场风向",
     "market_movers_subtitle": "过去 24 小时热门商品",
     "market_movers_rising": "上涨",

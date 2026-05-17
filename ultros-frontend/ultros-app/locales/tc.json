@@ -1097,6 +1097,7 @@
     "market_pulse_gil_volume": "市場交易額",
     "market_pulse_unit_volume": "24 小時成交數量",
     "market_pulse_vs_yesterday": "對比昨日",
+    "market_pulse_load_failed": "無法載入市場數據，請稍後重試",
     "market_movers_title": "市場風向",
     "market_movers_subtitle": "過去 24 小時熱門商品",
     "market_movers_rising": "上漲",
