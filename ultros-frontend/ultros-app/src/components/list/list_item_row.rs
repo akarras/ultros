@@ -33,6 +33,7 @@ pub fn ListItemRow(
     delete_item: Action<i32, Result<(), crate::error::AppError>>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
     recently_changed: RwSignal<HashSet<i32>>,
+    can_write: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -191,47 +192,48 @@ pub fn ListItemRow(
                                             <Icon icon=i::BsBell />
                                         </button>
                                     </Tooltip>
-                                    <button
-                                        class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
-                                        aria-label=t_string!(i18n, list_item_row_delete_aria)
-                                        on:click=move |_| {
-                                            let _ = delete_item.dispatch(item.with(|i| i.id));
-                                        }
-                                    >
-                                        <Icon icon=i::BiTrashSolid />
-                                    </button>
-                                    <button
-                                        class="btn-secondary h-8 w-8 p-0"
-                                        aria-label=move || if edit() { t_string!(i18n, list_item_row_save_edit_aria) } else { t_string!(i18n, list_item_row_edit_item_aria) }
-                                        on:click=move |_| {
-                                            if temp_item() != item() {
-                                                let _ = edit_item.dispatch(temp_item());
+                                    <Show when=move || can_write.get()>
+                                        <button
+                                            class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
+                                            aria-label=t_string!(i18n, list_item_row_delete_aria)
+                                            on:click=move |_| {
+                                                let _ = delete_item.dispatch(item.with(|i| i.id));
                                             }
-                                            set_edit(!edit())
-                                        }
-                                    >
-                                        <Icon icon=Signal::derive(move || {
-                                            if edit() { i::BsCheck } else { i::BsPencilFill }
-                                        }) />
-                                    </button>
-                                    <Tooltip tooltip_text=Signal::derive(move || {
-                                        let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
-                                        let a = item.with(|i| i.acquired.unwrap_or(0));
-                                        if a >= q {
-                                            t_string!(i18n, list_view_mark_unacquired).to_string()
-                                        } else {
-                                            t_string!(i18n, list_item_row_mark_acquired).to_string()
-                                        }
-                                    })>
+                                        >
+                                            <Icon icon=i::BiTrashSolid />
+                                        </button>
                                         <button
                                             class="btn-secondary h-8 w-8 p-0"
-                                            aria-label=move || {
-                                                let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
-                                                let a = item.with(|i| i.acquired.unwrap_or(0));
-                                                if a >= q {
-                                                    t_string!(i18n, list_view_mark_unacquired).to_string()
-                                                } else {
-                                                    t_string!(i18n, list_item_row_mark_acquired).to_string()
+                                            aria-label=move || if edit() { t_string!(i18n, list_item_row_save_edit_aria) } else { t_string!(i18n, list_item_row_edit_item_aria) }
+                                            on:click=move |_| {
+                                                if temp_item() != item() {
+                                                    let _ = edit_item.dispatch(temp_item());
+                                                }
+                                                set_edit(!edit())
+                                            }
+                                        >
+                                            <Icon icon=Signal::derive(move || {
+                                                if edit() { i::BsCheck } else { i::BsPencilFill }
+                                            }) />
+                                        </button>
+                                        <Tooltip tooltip_text=Signal::derive(move || {
+                                            let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
+                                            let a = item.with(|i| i.acquired.unwrap_or(0));
+                                            if a >= q {
+                                                t_string!(i18n, list_view_mark_unacquired).to_string()
+                                            } else {
+                                                t_string!(i18n, list_item_row_mark_acquired).to_string()
+                                            }
+                                        })>
+                                            <button
+                                                class="btn-secondary h-8 w-8 p-0"
+                                                aria-label=move || {
+                                                    let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
+                                                    let a = item.with(|i| i.acquired.unwrap_or(0));
+                                                    if a >= q {
+                                                        t_string!(i18n, list_view_mark_unacquired).to_string()
+                                                    } else {
+                                                        t_string!(i18n, list_item_row_mark_acquired).to_string()
                                                 }
                                             }
                                             on:click=move |_| {
@@ -249,7 +251,8 @@ pub fn ListItemRow(
                                         >
                                             <Icon icon=i::BiCheckRegular />
                                         </button>
-                                    </Tooltip>
+                                        </Tooltip>
+                                    </Show>
                                 </div>
                             </td>
                         },

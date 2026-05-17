@@ -872,6 +872,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 delete_item=delete_item
                                                                                 edit_item=edit_item
                                                                                 recently_changed=recently_changed
+                                                                                can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
                                                                             />
                                                                         }
                                                                     }
