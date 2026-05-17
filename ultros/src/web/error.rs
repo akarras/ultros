@@ -200,7 +200,13 @@ impl WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         let status = self.as_status_code();
-        if status.is_server_error() {
+        // Analyzer warm-up (503) is an expected transient state at startup, not
+        // a real server bug. Keep it out of `tracing::error!` so the
+        // `sentry_tracing` layer doesn't capture it as a GlitchTip issue
+        // (see issues 5033/5034 — e2e harness racing the warm-up window).
+        let is_transient_warmup =
+            matches!(self, WebError::AnalyzerError(AnalyzerError::Uninitialized));
+        if status.is_server_error() && !is_transient_warmup {
             tracing::error!(error = %self, %status, "Returning web error");
         } else {
             tracing::debug!(error = %self, %status, "Returning web error");
