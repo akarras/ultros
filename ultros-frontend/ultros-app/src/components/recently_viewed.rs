@@ -7,7 +7,7 @@ use codee::string::JsonSerdeCodec;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
 use leptos_router::components::A;
-use leptos_use::storage::use_local_storage;
+use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::sparklines::{SparklineSeries, SparklinesRequest};
 use xiv_gen::ItemId;
@@ -25,8 +25,21 @@ pub struct RecentItems {
 
 impl RecentItems {
     pub fn new() -> Self {
+        // `delay_during_hydration` is required: without it leptos-use reads
+        // localStorage synchronously inside the component setup, which on the
+        // client races the still-running hydration. The CSR signal then holds
+        // a non-empty VecDeque while the SSR'd DOM was rendered with the
+        // empty default, so tachys' walker hits a different element shape at
+        // the `RecentlyViewed` slot and panics at `hydration.rs:163`
+        // (`failed_to_cast_element`). Deferring the storage read to the next
+        // animation frame lets hydration finish with matching shapes first,
+        // then the rail repopulates reactively. Drove the homepage panics
+        // (GlitchTip 3147 + 4327) and contributed to item-page cascades.
         let (read_signal, write_signal, _delete_fn) =
-            use_local_storage::<VecDeque<i32>, JsonSerdeCodec>("recently_viewed");
+            use_local_storage_with_options::<VecDeque<i32>, JsonSerdeCodec>(
+                "recently_viewed",
+                UseStorageOptions::default().delay_during_hydration(true),
+            );
         Self {
             read_signal,
             write_signal,
