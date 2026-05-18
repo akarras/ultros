@@ -131,9 +131,17 @@ impl ApiError {
                 Some(ListError::InviteExhausted) => ultros_api_types::result::ApiError::BadRequest(
                     "Invite has reached max uses".into(),
                 ),
-                None => ultros_api_types::result::ApiError::Message(self.to_string()),
+                None => {
+                    ultros_api_types::result::ApiError::Message("Internal server error".to_string())
+                }
             },
-            _ => ultros_api_types::result::ApiError::Message(self.to_string()),
+            _ => {
+                if self.as_status_code().is_server_error() {
+                    ultros_api_types::result::ApiError::Message("Internal server error".to_string())
+                } else {
+                    ultros_api_types::result::ApiError::Message(self.to_string())
+                }
+            }
         }
     }
 }
@@ -206,11 +214,18 @@ impl IntoResponse for WebError {
         // (see issues 5033/5034 — e2e harness racing the warm-up window).
         let is_transient_warmup =
             matches!(self, WebError::AnalyzerError(AnalyzerError::Uninitialized));
+
+        let message = if status.is_server_error() && !is_transient_warmup {
+            "Internal server error".to_string()
+        } else {
+            format!("{self}")
+        };
+
         if status.is_server_error() && !is_transient_warmup {
             tracing::error!(error = %self, %status, "Returning web error");
         } else {
             tracing::debug!(error = %self, %status, "Returning web error");
         }
-        (status, format!("{self}")).into_response()
+        (status, message).into_response()
     }
 }
