@@ -11,15 +11,15 @@ use leptos_router::hooks::use_params_map;
 use ultros_api_types::list::{ListActivity, ListItem, ListPermission};
 
 use crate::api::{
-    add_item_to_list, delete_list_item, delete_list_items, edit_list_item, get_list_activity,
-    get_list_items_with_listings,
+    add_item_to_list, delete_list_item, delete_list_items, edit_list, edit_list_item,
+    get_list_activity, get_list_items_with_listings,
 };
 use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
     item_icon::*,
     list::{
         auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
-        list_item_row::ListItemRow, list_summary::*,
+        list_item_row::ListItemRow, list_settings_drawer::ListSettingsDrawer, list_summary::*,
     },
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
@@ -59,12 +59,18 @@ pub fn ListView() -> impl IntoView {
 
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
+    let edit_list_action =
+        Action::new(move |list: &ultros_api_types::list::List| edit_list(list.clone()));
 
     // We need to trigger refetch when items are added via modal.
     // We can use a signal for versioning external updates.
     let (external_update_version, set_external_update_version) = signal(0);
     let (activity_update_version, set_activity_update_version) = signal(0);
-    let (realtime_status, set_realtime_status) = signal("Connecting".to_string());
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
+    #[allow(unused_variables)]
+    let (clock_tick, set_clock_tick) = signal(0_u32);
 
     let list_view = Resource::new(
         move || {
@@ -77,11 +83,15 @@ pub fn ListView() -> impl IntoView {
                     external_update_version.get(),
                     edit_item.version().get(),
                     delete_items.version().get(),
+                    edit_list_action.version().get(),
                 ),
             )
         },
         move |(id, _)| get_list_items_with_listings(id),
     );
+    let user_resource = Resource::new(|| {}, |_| async move { crate::api::get_login().await.ok() });
+    let self_user_id = Signal::derive(move || user_resource.get().flatten().map(|u| u.id));
+
     let activity_view = Resource::new(
         move || {
             (
@@ -104,21 +114,23 @@ pub fn ListView() -> impl IntoView {
         list_subscription.update_value(|sub| *sub = None);
         let id = list_id.get();
         let Some(realtime) = realtime_for_list.clone() else {
-            set_realtime_status.set("Offline".to_string());
+            set_realtime_status.set("offline".to_string());
             return;
         };
         if id != 0 {
             let sub = realtime.subscribe_list(id, move |message| match message {
                 ServerClient::Subscribed { .. } => {
-                    set_realtime_status.set("Live".to_string());
+                    set_realtime_status.set("live".to_string());
                 }
                 ServerClient::ListUpdate(_) => {
-                    set_realtime_status.set("Live".to_string());
+                    set_realtime_status.set("live".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     list_view.refetch();
                     activity_view.refetch();
                 }
                 ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                    set_realtime_status.set("Reconnecting".to_string());
+                    set_realtime_status.set("reconnecting".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     list_view.refetch();
                     activity_view.refetch();
                 }
@@ -160,13 +172,151 @@ pub fn ListView() -> impl IntoView {
         list_market_subscription.update_value(|sub| *sub = None);
     });
 
+    #[cfg(not(feature = "ssr"))]
+    {
+        use gloo_timers::callback::Interval;
+        let interval = Interval::new(1_000, move || {
+            set_clock_tick.update(|n| *n = n.wrapping_add(1));
+        });
+        interval.forget();
+    }
+
     let (menu, set_menu) = signal(MenuState::None);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (buying_view, set_buying_view) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
+    let (settings_open, set_settings_open) = signal(false);
+    let (rename_open, set_rename_open) = signal(false);
+    let (rename_value, set_rename_value) = signal(String::new());
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
+
+    type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
+    let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
+    let prev_snapshot: StoredValue<RowSnapshot> = StoredValue::new(RowSnapshot::new());
+
+    Effect::new(move |_| {
+        let Some(Ok((_list, items))) = list_view.get() else {
+            return;
+        };
+        let new_snapshot: RowSnapshot = items
+            .iter()
+            .map(|(i, _)| (i.id, (i.quantity, i.acquired)))
+            .collect();
+        let mut newly_changed: HashSet<i32> = HashSet::new();
+        let prev = prev_snapshot.get_value();
+        for (id, current) in &new_snapshot {
+            if let Some(prior) = prev.get(id)
+                && prior != current
+            {
+                newly_changed.insert(*id);
+            }
+        }
+        prev_snapshot.set_value(new_snapshot);
+
+        if !newly_changed.is_empty() {
+            recently_changed.update(|set| set.extend(newly_changed.iter().copied()));
+            #[cfg(not(feature = "ssr"))]
+            {
+                use gloo_timers::callback::Timeout;
+                let ids: Vec<i32> = newly_changed.into_iter().collect();
+                Timeout::new(1500, move || {
+                    recently_changed.update(|set| {
+                        for id in &ids {
+                            set.remove(id);
+                        }
+                    });
+                })
+                .forget();
+            }
+        }
+    });
+
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    struct ViewCaps {
+        can_write: bool,
+        can_admin: bool,
+        can_leave: bool,
+    }
+
+    let view_caps = RwSignal::new(ViewCaps::default());
+    Effect::new(move |_| {
+        let next = match list_view.get() {
+            Some(Ok((list_with_perm, _))) => {
+                let p = list_with_perm.permission;
+                ViewCaps {
+                    can_write: p >= ListPermission::Write,
+                    can_admin: p >= ListPermission::Owner,
+                    can_leave: p == ListPermission::Write || p == ListPermission::Read,
+                }
+            }
+            _ => ViewCaps::default(),
+        };
+        view_caps.set(next);
+    });
+
+    let drawer_refresh = Signal::derive(move || {
+        last_update_at
+            .get()
+            .map(|t| t.timestamp_millis() as u32)
+            .unwrap_or(0)
+    });
+
+    let updated_label = Signal::derive(move || {
+        let _ = clock_tick.get();
+        let Some(t) = last_update_at.get() else {
+            return String::new();
+        };
+        let now = chrono::Utc::now();
+        let secs = now.signed_duration_since(t).num_seconds().max(0);
+        if secs < 2 {
+            t_string!(i18n, list_view_updated_just_now).to_string()
+        } else {
+            format!("Updated {secs}s ago")
+        }
+    });
+
+    let live_indicator = move || {
+        let status_key = realtime_status.get();
+        let (dot_class, status_label): (&'static str, String) = match status_key.as_str() {
+            "live" => (
+                "bg-green-400",
+                t_string!(i18n, list_view_live_status_live).to_string(),
+            ),
+            "reconnecting" => (
+                "bg-amber-400 animate-pulse",
+                t_string!(i18n, list_view_live_status_reconnecting).to_string(),
+            ),
+            "offline" => (
+                "bg-gray-500",
+                t_string!(i18n, list_view_live_status_offline).to_string(),
+            ),
+            _ => (
+                "bg-amber-400 animate-pulse",
+                t_string!(i18n, list_view_live_status_connecting).to_string(),
+            ),
+        };
+        let updated = updated_label.get();
+        let tooltip_text = if updated.is_empty() {
+            status_label.clone()
+        } else {
+            format!("{status_label} · {updated}")
+        };
+        let status_label_for_view = status_label.clone();
+        view! {
+            <Tooltip tooltip_text=tooltip_text>
+                <span
+                    class="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text-muted)]"
+                    data-testid="list-live-indicator"
+                    data-status=status_key.clone()
+                >
+                    <span class=format!("h-2 w-2 rounded-full {}", dot_class) aria-hidden="true"></span>
+                    <span>{status_label_for_view.clone()}</span>
+                </span>
+            </Tooltip>
+        }
+    };
 
     // Auto-mark logic moved to AutoMarkPurchases component
 
@@ -175,48 +325,52 @@ pub fn ListView() -> impl IntoView {
             <AutoMarkPurchases list_view=list_view />
 
             <div class="panel rounded-lg p-3">
-                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between list-toolbar">
                     <div class="flex flex-wrap items-center gap-2">
-                        <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
-                            <button
-                                class="btn-primary"
-                                class:active=move || menu() == MenuState::Item
-                                on:click=move |_| set_menu(
-                                    match menu() {
-                                        MenuState::Item => MenuState::None,
-                                        _ => MenuState::Item,
-                                    },
-                                )
-                            >
-                                <Icon icon=i::BiPlusRegular />
-                                <span>{t!(i18n, list_view_add_item)}</span>
-                            </button>
-                        </Tooltip>
-                        <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
-                            <button
-                                class="btn-secondary"
-                                class:active=move || recipe_modal_open()
-                                on:click=move |_| set_recipe_modal_open(true)
-                            >
-                                <Icon icon=i::BiBookAddRegular />
-                                <span>{t!(i18n, list_view_add_recipe)}</span>
-                            </button>
-                        </Tooltip>
-                        <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
-                            <button
-                                class="btn-secondary"
-                                class:active=move || menu() == MenuState::MakePlace
-                                on:click=move |_| set_menu(
-                                    match menu() {
-                                        MenuState::MakePlace => MenuState::None,
-                                        _ => MenuState::MakePlace,
-                                    },
-                                )
-                            >
-                                <Icon icon=i::BiImportRegular />
-                                <span>{t!(i18n, list_view_make_place)}</span>
-                            </button>
-                        </Tooltip>
+                        <Show when=move || view_caps.with(|c| c.can_write)>
+                            <>
+                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
+                                    <button
+                                        class="btn-primary"
+                                        class:active=move || menu() == MenuState::Item
+                                        on:click=move |_| set_menu(
+                                            match menu() {
+                                                MenuState::Item => MenuState::None,
+                                                _ => MenuState::Item,
+                                            },
+                                        )
+                                    >
+                                        <Icon icon=i::BiPlusRegular />
+                                        <span>{t!(i18n, list_view_add_item)}</span>
+                                    </button>
+                                </Tooltip>
+                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
+                                    <button
+                                        class="btn-secondary"
+                                        class:active=move || recipe_modal_open()
+                                        on:click=move |_| set_recipe_modal_open(true)
+                                    >
+                                        <Icon icon=i::BiBookAddRegular />
+                                        <span>{t!(i18n, list_view_add_recipe)}</span>
+                                    </button>
+                                </Tooltip>
+                                <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
+                                    <button
+                                        class="btn-secondary"
+                                        class:active=move || menu() == MenuState::MakePlace
+                                        on:click=move |_| set_menu(
+                                            match menu() {
+                                                MenuState::MakePlace => MenuState::None,
+                                                _ => MenuState::MakePlace,
+                                            },
+                                        )
+                                    >
+                                        <Icon icon=i::BiImportRegular />
+                                        <span>{t!(i18n, list_view_make_place)}</span>
+                                    </button>
+                                </Tooltip>
+                            </>
+                        </Show>
                     </div>
 
                     <div class="flex flex-wrap gap-2 self-start lg:self-auto">
@@ -240,6 +394,17 @@ pub fn ListView() -> impl IntoView {
                             >
                                 <Icon icon=i::BiCartRegular />
                                 <span>{t!(i18n, list_view_purchasing_view)}</span>
+                            </button>
+                        </Tooltip>
+                        <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
+                            <button
+                                class="btn-secondary"
+                                aria-label=t_string!(i18n, list_view_settings)
+                                data-testid="list-settings-btn"
+                                on:click=move |_| set_settings_open(true)
+                            >
+                                <Icon icon=i::BsGear />
+                                <span>{t!(i18n, list_view_settings)}</span>
                             </button>
                         </Tooltip>
                     </div>
@@ -439,7 +604,22 @@ pub fn ListView() -> impl IntoView {
                                         })
                                         .count();
                                     let acquired_items = total_items.saturating_sub(remaining_items);
-                                    let can_write = list.permission >= ListPermission::Write;
+                                    let total_quantity: i32 = item_snapshot
+                                        .iter()
+                                        .map(|(i, _)| i.quantity.unwrap_or(1).max(1))
+                                        .sum();
+                                    let total_acquired: i32 = item_snapshot
+                                        .iter()
+                                        .map(|(i, _)| {
+                                            let q = i.quantity.unwrap_or(1).max(1);
+                                            i.acquired.unwrap_or(0).clamp(0, q)
+                                        })
+                                        .sum();
+                                    let pct: i32 = if total_quantity > 0 {
+                                        100 * total_acquired / total_quantity
+                                    } else {
+                                        0
+                                    };
                                     let list_name = list.list.name.clone();
 
                                     if buying_view() {
@@ -453,9 +633,7 @@ pub fn ListView() -> impl IntoView {
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
                                                             </div>
                                                             <div class="flex flex-wrap gap-2 text-sm">
-                                                                <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
-                                                                    {realtime_status}
-                                                                </span>
+                                                                {live_indicator()}
                                                                 <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
                                                                     {format!("{remaining_items} remaining")}
                                                                 </span>
@@ -476,9 +654,101 @@ pub fn ListView() -> impl IntoView {
                                                         <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                                                             <div>
                                                                 <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_list_label)}</p>
-                                                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
-                                                                <div class="mt-2 inline-flex rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-xs text-[color:var(--color-text-muted)]">
-                                                                    {realtime_status}
+                                                                <div class="flex items-center gap-2">
+                                                                    {
+                                                                        let list_for_title = list.list.clone();
+                                                                        let display_name = list_for_title.name.clone();
+                                                                        move || {
+                                                                            if rename_open() && view_caps.with(|c| c.can_admin) {
+                                                                                let list_for_save = list_for_title.clone();
+                                                                                Either::Left(view! {
+                                                                                    <div class="flex flex-wrap items-center gap-2">
+                                                                                        <input
+                                                                                            class="input text-xl font-bold"
+                                                                                            prop:value=rename_value
+                                                                                            on:input=move |ev| set_rename_value(event_target_value(&ev))
+                                                                                            data-testid="list-rename-input"
+                                                                                        />
+                                                                                        <button
+                                                                                            class="btn-primary"
+                                                                                            data-testid="list-rename-save"
+                                                                                            on:click={
+                                                                                                let list_for_save = list_for_save.clone();
+                                                                                                move |_| {
+                                                                                                    let mut new_list = list_for_save.clone();
+                                                                                                    new_list.name = rename_value().trim().to_string();
+                                                                                                    if !new_list.name.is_empty() {
+                                                                                                        edit_list_action.dispatch(new_list);
+                                                                                                        set_rename_open(false);
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        >
+                                                                                            <Icon icon=i::BiSaveSolid />
+                                                                                            <span>{t!(i18n, list_view_settings_save)}</span>
+                                                                                        </button>
+                                                                                        <button
+                                                                                            class="btn-secondary"
+                                                                                            on:click=move |_| set_rename_open(false)
+                                                                                        >
+                                                                                            {t!(i18n, list_view_settings_cancel)}
+                                                                                        </button>
+                                                                                    </div>
+                                                                                })
+                                                                            } else {
+                                                                                let display_name = display_name.clone();
+                                                                                Either::Right(view! {
+                                                                                    <>
+                                                                                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{display_name.clone()}</h1>
+                                                                                        <Show when=move || view_caps.with(|c| c.can_admin)>
+                                                                                            <button
+                                                                                                class="btn-ghost p-1"
+                                                                                                aria-label=t_string!(i18n, edit_list).to_string()
+                                                                                                data-testid="list-rename-btn"
+                                                                                                on:click={
+                                                                                                    let name = display_name.clone();
+                                                                                                    move |_| {
+                                                                                                        set_rename_value(name.clone());
+                                                                                                        set_rename_open(true);
+                                                                                                    }
+                                                                                                }
+                                                                                            >
+                                                                                                <Icon icon=i::BsPencilFill />
+                                                                                            </button>
+                                                                                        </Show>
+                                                                                    </>
+                                                                                })
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                </div>
+                                                                <div class="mt-2">
+                                                                    {live_indicator()}
+                                                                </div>
+                                                                <div class="mt-3 flex items-center gap-3 text-sm">
+                                                                    {if total_quantity > 0 {
+                                                                        Either::Left(view! {
+                                                                            <div
+                                                                                class="flex min-w-0 flex-1 flex-col gap-1"
+                                                                                aria-label=format!("Overall progress: {total_acquired} of {total_quantity} units acquired")
+                                                                            >
+                                                                                <span class="text-[color:var(--color-text-muted)]">
+                                                                                    {t!(i18n, list_view_units_acquired_progress, acquired = total_acquired, quantity = total_quantity, pct = pct)}
+                                                                                </span>
+                                                                                <progress
+                                                                                    class="progress progress-primary h-2 w-full rounded"
+                                                                                    value=total_acquired
+                                                                                    max=total_quantity
+                                                                                ></progress>
+                                                                            </div>
+                                                                        })
+                                                                    } else {
+                                                                        Either::Right(view! {
+                                                                            <span class="text-[color:var(--color-text-muted)]">
+                                                                                {t!(i18n, list_view_no_items_yet)}
+                                                                            </span>
+                                                                        })
+                                                                    }}
                                                                 </div>
                                                             </div>
                                                             <div class="grid grid-cols-3 gap-2 text-center text-sm">
@@ -490,75 +760,79 @@ pub fn ListView() -> impl IntoView {
                                                                     <div class="text-lg font-bold">{remaining_items}</div>
                                                                     <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_remaining)}</div>
                                                                 </div>
-                                                                <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
-                                                                    <div class="text-lg font-bold">{acquired_items}</div>
-                                                                    <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_done)}</div>
-                                                                </div>
+                                                                <Tooltip tooltip_text=Signal::derive(move || {
+                                                                    format!("{acquired_items} of {total_items} items fully acquired")
+                                                                })>
+                                                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
+                                                                        <div class="text-lg font-bold">{acquired_items}</div>
+                                                                        <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_acquired)}</div>
+                                                                    </div>
+                                                                </Tooltip>
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    <div class="flex flex-col gap-3 border-b border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]/60 p-3 lg:flex-row lg:items-center lg:justify-between">
-                                                        <div class="flex flex-wrap items-center gap-2">
-                                                            <button
-                                                                class="btn-secondary"
-                                                                class:bg-brand-950=edit_list_mode
-                                                                disabled=move || !can_write
-                                                                on:click=move |_| {
-                                                                    edit_list_mode
-                                                                        .update(|u| {
-                                                                            *u = !*u;
-                                                                        })
-                                                                }
-                                                            >
-                                                                <Icon icon=i::BsPencilFill />
-                                                                <span>{t!(i18n, list_view_bulk_edit)}</span>
-                                                            </button>
-                                                            <div class:hidden=move || !edit_list_mode()>
+                                                    <Show when=move || view_caps.with(|c| c.can_write)>
+                                                        <div class="flex flex-col gap-3 border-b border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]/60 p-3 lg:flex-row lg:items-center lg:justify-between">
+                                                            <div class="flex flex-wrap items-center gap-2">
                                                                 <button
-                                                                    class="btn-danger"
-                                                                    disabled=move || !can_write
+                                                                    class="btn-secondary"
+                                                                    class:bg-brand-950=edit_list_mode
                                                                     on:click=move |_| {
-                                                                        let items = selected_items
-                                                                            .with_untracked(|s| {
-                                                                                s.iter().copied().collect::<Vec<_>>()
-                                                                            });
-                                                                        selected_items.update(|i| i.clear());
-                                                                        delete_items.dispatch(items);
+                                                                        edit_list_mode
+                                                                            .update(|u| {
+                                                                                *u = !*u;
+                                                                            })
                                                                     }
                                                                 >
-                                                                    <Icon icon=i::BiTrashSolid />
-                                                                    <span>{t!(i18n, list_view_delete)}</span>
+                                                                    <Icon icon=i::BsPencilFill />
+                                                                    <span>{t!(i18n, list_view_bulk_edit)}</span>
+                                                                </button>
+                                                                <div class:hidden=move || !edit_list_mode()>
+                                                                    <button
+                                                                        class="btn-danger"
+                                                                        on:click=move |_| {
+                                                                            let items = selected_items
+                                                                                .with_untracked(|s| {
+                                                                                    s.iter().copied().collect::<Vec<_>>()
+                                                                                });
+                                                                            selected_items.update(|i| i.clear());
+                                                                            delete_items.dispatch(items);
+                                                                        }
+                                                                    >
+                                                                        <Icon icon=i::BiTrashSolid />
+                                                                        <span>{t!(i18n, list_view_delete)}</span>
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <div
+                                                                class="flex flex-wrap items-center gap-2"
+                                                                class:hidden=move || !edit_list_mode()
+                                                            >
+                                                                <button
+                                                                    class="btn-secondary"
+                                                                    on:click=move |_| {
+                                                                        selected_items
+                                                                            .update(|i| {
+                                                                                for (item, _) in items.get_value() {
+                                                                                    i.insert(item.id);
+                                                                                }
+                                                                            })
+                                                                    }
+                                                                >
+                                                                    {t!(i18n, list_view_select_all)}
+                                                                </button>
+                                                                <button
+                                                                    class="btn-secondary"
+                                                                    on:click=move |_| {
+                                                                        selected_items.update(|i| i.clear());
+                                                                    }
+                                                                >
+                                                                    {t!(i18n, list_view_deselect_all)}
                                                                 </button>
                                                             </div>
                                                         </div>
-                                                        <div
-                                                            class="flex flex-wrap items-center gap-2"
-                                                            class:hidden=move || !edit_list_mode()
-                                                        >
-                                                            <button
-                                                                class="btn-secondary"
-                                                                on:click=move |_| {
-                                                                    selected_items
-                                                                        .update(|i| {
-                                                                            for (item, _) in items.get_value() {
-                                                                                i.insert(item.id);
-                                                                            }
-                                                                        })
-                                                                }
-                                                            >
-                                                                {t!(i18n, list_view_select_all)}
-                                                            </button>
-                                                            <button
-                                                                class="btn-secondary"
-                                                                on:click=move |_| {
-                                                                    selected_items.update(|i| i.clear());
-                                                                }
-                                                            >
-                                                                {t!(i18n, list_view_deselect_all)}
-                                                            </button>
-                                                        </div>
-                                                    </div>
+                                                    </Show>
 
                                                     <div class="overflow-x-auto">
                                                         <table class="w-full min-w-[760px] text-sm">
@@ -573,7 +847,7 @@ pub fn ListView() -> impl IntoView {
                                                                     </th>
                                                                     <th scope="col" class="w-16 px-3 py-3 text-left">{t!(i18n, list_view_hq)}</th>
                                                                     <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_item)}</th>
-                                                                    <th scope="col" class="w-40 px-3 py-3 text-left">{t!(i18n, list_view_quantity)}</th>
+                                                                    <th scope="col" class="w-40 px-3 py-3 text-left">{t!(i18n, list_view_acquired_quantity)}</th>
                                                                     <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_price)}</th>
                                                                     <th
                                                                         scope="col"
@@ -597,6 +871,8 @@ pub fn ListView() -> impl IntoView {
                                                                                 selected_items=selected_items
                                                                                 delete_item=delete_item
                                                                                 edit_item=edit_item
+                                                                                recently_changed=recently_changed
+                                                                                can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
                                                                             />
                                                                         }
                                                                     }
@@ -634,6 +910,25 @@ pub fn ListView() -> impl IntoView {
                 }}
 
             </Transition>
+
+            <Show when=settings_open>
+                {move || {
+                    let Some(Ok((list_with_perm, _))) = list_view.get() else {
+                        return view! { <div></div> }.into_any();
+                    };
+                    view! {
+                        <ListSettingsDrawer
+                            list=list_with_perm.list.clone()
+                            permission=list_with_perm.permission
+                            self_user_id=self_user_id
+                            edit_list=edit_list_action
+                            refresh_signal=drawer_refresh
+                            set_visible=set_settings_open
+                        />
+                    }
+                    .into_any()
+                }}
+            </Show>
         </div>
     }.into_any()
 }

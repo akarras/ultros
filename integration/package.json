@@ -13,6 +13,7 @@
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
     "test:shared-list": "node ./shared-list.cjs",
+    "test:list-flow": "node ./list-flow.cjs",
     "test:dashboard": "node ./dashboard.cjs"
   },
   "devDependencies": {

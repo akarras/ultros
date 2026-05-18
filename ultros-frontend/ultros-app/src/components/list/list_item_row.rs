@@ -32,6 +32,8 @@ pub fn ListItemRow(
     // Let's use `Action<i32, Result<(), crate::error::AppError>>`.
     delete_item: Action<i32, Result<(), crate::error::AppError>>,
     edit_item: Action<ListItem, Result<(), crate::error::AppError>>,
+    recently_changed: RwSignal<HashSet<i32>>,
+    can_write: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -44,7 +46,19 @@ pub fn ListItemRow(
     let listings = RwSignal::new(listings);
 
     view! {
-        <tr class="group transition-colors hover:bg-[color:var(--color-background-panel)]">
+        <tr class=move || {
+            let item_now = item.get();
+            let q = item_now.quantity.unwrap_or(1).max(1);
+            let a = item_now.acquired.unwrap_or(0);
+            let complete = a >= q;
+            let highlighted = recently_changed.with(|set| set.contains(&item_now.id));
+            let highlight_class = if highlighted { " ring-2 ring-brand-400/60" } else { "" };
+            if complete {
+                format!("group transition-all duration-700 bg-green-900/15 hover:bg-green-900/25{highlight_class}")
+            } else {
+                format!("group transition-all duration-700 hover:bg-[color:var(--color-background-panel)]{highlight_class}")
+            }
+        }>
             {move || {
                 if !edit() || edit_list_mode() {
                     Either::Left(
@@ -71,17 +85,29 @@ pub fn ListItemRow(
                             </td>
                             <td class="px-3 py-3 align-middle">
                                 {move || {
-                                    item
-                                        .with(|i| i.hq)
-                                        .and_then(|hq| {
-                                            hq.then_some(
-                                                view! {
+                                    let item_now = item.get();
+                                    let q = item_now.quantity.unwrap_or(1).max(1);
+                                    let a = item_now.acquired.unwrap_or(0);
+                                    let complete = a >= q;
+                                    view! {
+                                        <div class="flex flex-col items-start gap-1">
+                                            {item_now.hq.and_then(|hq| {
+                                                hq.then_some(view! {
                                                     <span class="inline-flex rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">
                                                         "HQ"
                                                     </span>
-                                                },
-                                            )
-                                        })
+                                                })
+                                            })}
+                                            {complete.then(|| view! {
+                                                <span
+                                                    class="inline-flex items-center gap-1 rounded-md border border-green-400/40 px-1.5 py-0.5 text-xs text-green-200"
+                                                    aria-label=t_string!(i18n, list_view_completed_row_aria).to_string()
+                                                >
+                                                    <Icon icon=i::BsCheckCircle />
+                                                </span>
+                                            })}
+                                        </div>
+                                    }
                                 }}
                             </td>
                             <td class="px-3 py-3 align-middle">
@@ -120,22 +146,22 @@ pub fn ListItemRow(
                             <td class="px-3 py-3 align-middle">
                                 {move || {
                                     let item = item.get();
-                                    let q = item.quantity.unwrap_or(1);
-                                    let a = item.acquired.unwrap_or(0);
-                                    if q > 1 {
-                                        view! {
-                                            <div class="flex flex-col gap-1 w-full">
-                                                <span>{format!("{a} / {q}")}</span>
-                                                <progress
-                                                    class="progress progress-primary h-2 w-full rounded"
-                                                    value=a
-                                                    max=q
-                                                ></progress>
-                                            </div>
-                                        }
-                                            .into_any()
-                                    } else {
-                                        view! { <span>{q}</span> }.into_any()
+                                    let q = item.quantity.unwrap_or(1).max(1);
+                                    let a = item.acquired.unwrap_or(0).max(0).min(q);
+                                    let complete = a >= q;
+                                    view! {
+                                        <div class="flex flex-col gap-1 w-full">
+                                            <span class=move || if complete {
+                                                "text-sm font-semibold text-green-300"
+                                            } else {
+                                                "text-sm"
+                                            }>{format!("{a} / {q}")}</span>
+                                            <progress
+                                                class="progress progress-primary h-2 w-full rounded"
+                                                value=a
+                                                max=q
+                                            ></progress>
+                                        </div>
                                     }
                                 }}
 
@@ -166,43 +192,67 @@ pub fn ListItemRow(
                                             <Icon icon=i::BsBell />
                                         </button>
                                     </Tooltip>
-                                    <button
-                                        class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
-                                        aria-label=t_string!(i18n, list_item_row_delete_aria)
-                                        on:click=move |_| {
-                                            let _ = delete_item.dispatch(item.with(|i| i.id));
-                                        }
-                                    >
-                                        <Icon icon=i::BiTrashSolid />
-                                    </button>
-                                    <button
-                                        class="btn-secondary h-8 w-8 p-0"
-                                        aria-label=move || if edit() { t_string!(i18n, list_item_row_save_edit_aria) } else { t_string!(i18n, list_item_row_edit_item_aria) }
-                                        on:click=move |_| {
-                                            if temp_item() != item() {
-                                                let _ = edit_item.dispatch(temp_item());
+                                    <Show when=move || can_write.get()>
+                                        <button
+                                            class="btn-secondary h-8 w-8 p-0 hover:text-red-200"
+                                            aria-label=t_string!(i18n, list_item_row_delete_aria)
+                                            on:click=move |_| {
+                                                let _ = delete_item.dispatch(item.with(|i| i.id));
                                             }
-                                            set_edit(!edit())
-                                        }
-                                    >
-                                        <Icon icon=Signal::derive(move || {
-                                            if edit() { i::BsCheck } else { i::BsPencilFill }
-                                        }) />
-                                    </button>
-                                    <Tooltip tooltip_text=t_string!(i18n, list_item_row_mark_acquired).to_string()>
+                                        >
+                                            <Icon icon=i::BiTrashSolid />
+                                        </button>
                                         <button
                                             class="btn-secondary h-8 w-8 p-0"
-                                            aria-label=t_string!(i18n, list_item_row_mark_acquired)
+                                            aria-label=move || if edit() { t_string!(i18n, list_item_row_save_edit_aria) } else { t_string!(i18n, list_item_row_edit_item_aria) }
+                                            on:click=move |_| {
+                                                if temp_item() != item() {
+                                                    let _ = edit_item.dispatch(temp_item());
+                                                }
+                                                set_edit(!edit())
+                                            }
+                                        >
+                                            <Icon icon=Signal::derive(move || {
+                                                if edit() { i::BsCheck } else { i::BsPencilFill }
+                                            }) />
+                                        </button>
+                                        <Tooltip tooltip_text=Signal::derive(move || {
+                                            let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
+                                            let a = item.with(|i| i.acquired.unwrap_or(0));
+                                            if a >= q {
+                                                t_string!(i18n, list_view_mark_unacquired).to_string()
+                                            } else {
+                                                t_string!(i18n, list_item_row_mark_acquired).to_string()
+                                            }
+                                        })>
+                                            <button
+                                                class="btn-secondary h-8 w-8 p-0"
+                                                aria-label=move || {
+                                                    let q = item.with(|i| i.quantity.unwrap_or(1).max(1));
+                                                    let a = item.with(|i| i.acquired.unwrap_or(0));
+                                                    if a >= q {
+                                                        t_string!(i18n, list_view_mark_unacquired).to_string()
+                                                    } else {
+                                                        t_string!(i18n, list_item_row_mark_acquired).to_string()
+                                                }
+                                            }
                                             on:click=move |_| {
                                                 item.update(|i| {
-                                                    i.acquired = i.quantity;
+                                                    let q = i.quantity.unwrap_or(1).max(1);
+                                                    let a = i.acquired.unwrap_or(0);
+                                                    if a >= q {
+                                                        i.acquired = Some(0);
+                                                    } else {
+                                                        i.acquired = i.quantity.or(Some(1));
+                                                    }
                                                 });
-                                                let _ = edit_item.dispatch(item());
+                                                let _ = edit_item.dispatch(item.get());
                                             }
                                         >
                                             <Icon icon=i::BiCheckRegular />
                                         </button>
-                                    </Tooltip>
+                                        </Tooltip>
+                                    </Show>
                                 </div>
                             </td>
                         },

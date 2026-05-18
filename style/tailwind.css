@@ -1336,6 +1336,36 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     text-red-100;
 }
 
+/* Scoped button consistency for the list-view toolbar.
+   The legacy `.btn-secondary` plain CSS at line 865 makes secondary buttons
+   render as oversized rounded pills. We don't touch the global rule (it
+   affects every secondary button in the app and warrants its own audit);
+   instead we override only inside this wrapper. */
+.list-toolbar .btn-primary,
+.list-toolbar .btn-secondary,
+.list-toolbar .btn-ghost {
+    padding: 0.5rem 0.75rem;
+    margin: 0;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    height: 2.25rem;
+    min-height: 2.25rem;
+    line-height: 1;
+}
+.list-toolbar .btn-primary > *,
+.list-toolbar .btn-secondary > *,
+.list-toolbar .btn-ghost > * {
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+.list-toolbar .btn-primary > svg,
+.list-toolbar .btn-secondary > svg,
+.list-toolbar .btn-ghost > svg {
+    width: 1rem;
+    height: 1rem;
+}
+
 /* Inputs */
 @utility input-base {
     @apply w-full px-3 py-2 rounded-lg transition-all duration-200;
