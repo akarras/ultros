@@ -101,8 +101,15 @@ pub fn MarketPulse(world: Signal<Option<String>>) -> impl IntoView {
                             </div>
                         }.into_any(),
                         // Server soft-fails CH errors to a zeroed DTO so this
-                        // branch only fires for hard errors (e.g. unknown world).
-                        Err(_) => view! { <div></div> }.into_any(),
+                        // branch only fires for hard errors (e.g. unknown world
+                        // or analyzer warming up after a fresh deploy). Render
+                        // a visible muted line at the same height as the loaded
+                        // strip so the layout doesn't shift when it recovers.
+                        Err(_) => view! {
+                            <div class="flex items-center justify-center h-[5.25rem] text-sm text-[color:var(--color-text-muted)]">
+                                {t!(i18n, market_pulse_load_failed)}
+                            </div>
+                        }.into_any(),
                     })
                 }}
             </Suspense>

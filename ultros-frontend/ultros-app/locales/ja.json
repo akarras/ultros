@@ -1097,6 +1097,7 @@
     "market_pulse_gil_volume": "取引高",
     "market_pulse_unit_volume": "取引数量（24時間）",
     "market_pulse_vs_yesterday": "前日比",
+    "market_pulse_load_failed": "市場データを読み込めませんでした。しばらくしてからお試しください",
     "market_movers_title": "マーケット動向",
     "market_movers_subtitle": "過去24時間の注目アイテム",
     "market_movers_rising": "上昇",

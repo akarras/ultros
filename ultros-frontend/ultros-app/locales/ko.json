@@ -1097,6 +1097,7 @@
     "market_pulse_gil_volume": "거래 금액",
     "market_pulse_unit_volume": "거래 수량 (24h)",
     "market_pulse_vs_yesterday": "어제 대비",
+    "market_pulse_load_failed": "시장 데이터를 불러올 수 없습니다. 잠시 후 다시 시도하세요",
     "market_movers_title": "시장 동향",
     "market_movers_subtitle": "최근 24시간 인기 아이템",
     "market_movers_rising": "상승",
