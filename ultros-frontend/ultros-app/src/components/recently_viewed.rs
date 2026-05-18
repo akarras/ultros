@@ -135,8 +135,18 @@ pub fn RecentlyViewed() -> impl IntoView {
     let (homeworld, _) = use_home_world();
     // Limit to top 8 to keep the rail focused. The /history page is the
     // overflow surface for everything older.
-    let recent_top: Signal<Vec<i32>> =
-        Signal::derive(move || items.with(|q| q.iter().take(8).copied().collect()));
+    //
+    // `items` is backed by `use_local_storage`, which returns the empty
+    // default on SSR but reads localStorage synchronously on the client.
+    // Driving the view directly off it would render zero rows on the
+    // server but N rows during the client's first walk — tachys would
+    // step into elements that aren't there and panic at hydration.rs:163.
+    // Hold `recent_top` at its SSR-shape value (empty) until an Effect
+    // fires post-hydration, then mirror the storage value into it.
+    let recent_top: RwSignal<Vec<i32>> = RwSignal::new(Vec::new());
+    Effect::new(move |_| {
+        recent_top.set(items.with(|q| q.iter().take(8).copied().collect()));
+    });
     let world_name: Signal<Option<String>> =
         Signal::derive(move || homeworld.with(|w| w.as_ref().map(|w| w.name.clone())));
 
