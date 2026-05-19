@@ -433,10 +433,47 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     let listings_resource = cheapest_prices.read_listings;
     let (price_zone, _) = get_price_zone();
 
+    // Defer the price-based filter + sort until after hydration.
+    //
+    // `sorted_items` previously read `listings_resource.get()` directly. On
+    // SSR that resource is `None` at render time (the wrapping `<Suspense>`
+    // never suspends — `.get()` doesn't subscribe-and-suspend the way
+    // `.read()` does), so the SSR HTML reflects the ilvl fallback with NO
+    // price filter applied. On the client, Leptos serialises the resolved
+    // resource into the payload so `listings_resource.get()` returns
+    // `Some(map)` immediately during hydration — which would make the first
+    // CSR render apply the price filter (dropping items without listings)
+    // AND sort by price. The resulting `<For>` children then mismatch the
+    // SSR DOM in both count and order, and tachys' walker panics at
+    // `hydration.rs:163`/`:195` (`failed_to_cast_element`). That's the
+    // `?sort=price`/`?page=N` cluster in GlitchTip — issues 707
+    // (`/items/jobset/DNC?page=7&sort=price`, 47 events), 156
+    // (`/items/jobset/NIN?page=21&sort=price`, 18 events), 4951+5002
+    // (`RefCell already borrowed` cascades from the same trace), plus the
+    // category-page mirrors (4968/4969 on Dancer's Arms etc.).
+    //
+    // Gate the price map behind a signal that defaults to `false` and
+    // flips to `true` from an `Effect` — `Effect::new` runs only on the
+    // client (same idiom as `WasmLoadingIndicator`), and only AFTER the
+    // initial view is rendered. So the SSR render and the first CSR
+    // hydration render both see `hydrated == false`, both fall back to
+    // the ilvl sort with all items included, and shapes/positions match.
+    // A frame later the effect fires, the memo re-runs with the real
+    // price map, and the `<For>` reactively reorders/filters — by which
+    // point hydration is finished and tachys is no longer walking.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
     let sorted_items = Memo::new(move |_| {
         let direction = direction().unwrap_or(SortDirection::Desc);
         let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
-        let price_map = listings_resource.get().and_then(|r| r.ok());
+        let price_map = if hydrated.get() {
+            listings_resource.get().and_then(|r| r.ok())
+        } else {
+            None
+        };
         items()
             .into_iter()
             .filter(|(id, _)| {
