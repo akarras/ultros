@@ -268,7 +268,12 @@ fn ListCard(
                                         </Tooltip>
                                     </Show>
                                     <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
-                                        <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
+                                        <button
+                                            type="button"
+                                            class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                            aria-label=move || t_string!(i18n, edit_list).to_string()
+                                            on:click=move |_| set_is_edit(true)
+                                        >
                                             <Icon icon=i::BsPencilFill />
                                         </button>
                                     </Tooltip>
