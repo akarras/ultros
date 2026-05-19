@@ -14,8 +14,8 @@
     "side_nav_toggle_navigation": "ナビゲーションを切替",
     "final_fantasy_copyright": "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved.",
     "switch_language": "言語を切り替える",
-    "meta_title": "Ultros - ホーム",
-    "meta_description": "Ultrosは高速なマーケットボード分析ツールです。リテイナーを把握し、いつでも最良の価格を見つけましょう！",
+    "meta_title": "Ultros · FFXIVマーケットボード分析・リテイナー管理",
+    "meta_description": "FFXIVのマーケットボードをリアルタイムで分析。クロスワールドのフリップファインダー、クラフトの利益計算、リテイナーの差し値アラート、Discord連携、買い物リストを全データセンターで無料提供。",
     "ultros_tagline": "FINAL FANTASY XIV のマーケットボード分析",
     "ultros_description": "安く買って高く売る。モダンで高速なUIでリテイナーも管理できます。",
     "get_started": "はじめる",
@@ -1406,5 +1406,14 @@
     "modal_aria_close": "ダイアログを閉じる",
     "ad_settings_link": "設定",
     "ad_aria_label": "広告",
-    "item_view_discord_label": "Discord:"
+    "item_view_discord_label": "Discord:",
+    "alerts_meta_title": "アラート · Ultros",
+    "alerts_meta_desc": "Ultrosのアラート通知先、差し値ルール、配信履歴を管理。FFXIVのリテイナーが差し値された瞬間に通知を受け取りましょう。",
+    "lists_meta_title": "ショッピングリスト · Ultros",
+    "lists_meta_desc": "データセンター内で最安値のFFXIV買い物リストを作成。フリーカンパニーと共有し、入手済みアイテムを自動で記録します。",
+    "list_invite_meta_title": "リスト招待を承認 · Ultros",
+    "list_view_meta_title": "%name% · ショッピングリスト · Ultros",
+    "list_view_default_meta_title": "ショッピングリスト · Ultros",
+    "list_view_meta_desc": "アイテムの入手状況を追跡し、最安値のワールドを見つけ、フリーカンパニーで進捗を共有できます。",
+    "profile_meta_title": "プロフィール · Ultros"
 }

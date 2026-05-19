@@ -3,6 +3,7 @@ use crate::global_state::home_world::use_home_world;
 use crate::i18n::{t, t_string};
 use icondata as i;
 use leptos::prelude::*;
+use leptos_meta::Script;
 use leptos_router::components::A;
 
 use crate::components::{
@@ -11,10 +12,60 @@ use crate::components::{
     market_heat::MarketHeat,
     market_movers::MarketMovers,
     market_pulse::MarketPulse,
-    meta::{MetaDescription, MetaTitle},
+    meta::{MetaCanonical, MetaDescription, MetaImage, MetaTitle},
     recently_viewed::RecentlyViewed,
     top_opportunity::TopOpportunities,
 };
+
+/// JSON-LD structured data for Google. Two graphs:
+///
+/// 1. `WebSite` — declares the canonical URL, name, and a `SearchAction`
+///    pointing at the item explorer. Eligible to render a sitelinks
+///    search box for the brand "ultros" in Google results.
+/// 2. `SoftwareApplication` — positions Ultros as a free FFXIV market-board
+///    tool. Helps Google understand the app's category and surface it for
+///    "ffxiv market board tool" style queries.
+///
+/// Static at build time so we can inline it as a constant — no per-render
+/// allocation. Pre-escaped (no `<`, no `</script>` substrings) and JSON
+/// strings only contain ASCII so we can embed safely without
+/// `escape_for_script_tag`.
+const HOME_JSON_LD: &str = r#"{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://ultros.app/#website",
+      "url": "https://ultros.app/",
+      "name": "Ultros",
+      "description": "FFXIV market board analytics, retainer tracking, crafting profit calculators, and Discord alerts for Final Fantasy XIV.",
+      "inLanguage": "en",
+      "publisher": {"@type": "Organization", "name": "Ultros", "url": "https://ultros.app/"},
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {"@type": "EntryPoint", "urlTemplate": "https://ultros.app/items?search={search_term_string}"},
+        "query-input": "required name=search_term_string"
+      }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "Ultros",
+      "url": "https://ultros.app/",
+      "description": "Final Fantasy XIV market board analytics — flip finder, recipe profit calculator, retainer undercut alerts, and Discord bot integration.",
+      "applicationCategory": "WebApplication",
+      "operatingSystem": "Web",
+      "browserRequirements": "Requires JavaScript and WebAssembly. Modern browser recommended.",
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+      "featureList": [
+        "Real-time FFXIV market board listings",
+        "Flip finder for cross-world arbitrage",
+        "Recipe and Free Company crafting profit analyzer",
+        "Levequest and Venture profitability calculators",
+        "Retainer undercut alerts via Discord"
+      ]
+    }
+  ]
+}"#;
 
 #[component]
 fn ToolChip(href: &'static str, label: AnyView, children: ChildrenFn) -> impl IntoView {
@@ -90,6 +141,9 @@ pub fn HomePage() -> impl IntoView {
     view! {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
+        <MetaImage url="https://ultros.app/static/fallback-image.png" />
+        <MetaCanonical href="https://ultros.app/" />
+        <Script type_="application/ld+json">{HOME_JSON_LD}</Script>
         <div class="main-content p-2 sm:p-6">
             <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
                 // Right sidebar

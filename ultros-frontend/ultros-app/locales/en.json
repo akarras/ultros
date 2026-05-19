@@ -14,8 +14,8 @@
     "side_nav_toggle_navigation": "Toggle navigation",
     "final_fantasy_copyright": "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved.",
     "switch_language": "Switch Language",
-    "meta_title": "Ultros - Home",
-    "meta_description": "Ultros is a fast market board analysis tool, keep up to date with all of your retainers and ensure you've got the best prices!",
+    "meta_title": "Ultros · FFXIV Market Board Analytics & Retainer Tracker",
+    "meta_description": "Live Final Fantasy XIV market board analytics: cross-world flip finder, recipe profit calculator, retainer undercut alerts, Discord bot, and shopping lists — free for every data center.",
     "ultros_tagline": "market board analytics for final fantasy xiv",
     "ultros_description": "buy low, sell high, and track your retainers with a fast, modern ui.",
     "get_started": "get started",
@@ -1406,5 +1406,14 @@
     "modal_aria_close": "Close modal",
     "ad_settings_link": "Settings",
     "ad_aria_label": "Advertisements",
-    "item_view_discord_label": "Discord:"
+    "item_view_discord_label": "Discord:",
+    "alerts_meta_title": "Alerts · Ultros",
+    "alerts_meta_desc": "Manage your Ultros alert endpoints, undercut rules, and delivery history. Get notified the moment your FFXIV retainer is undercut.",
+    "lists_meta_title": "Shopping Lists · Ultros",
+    "lists_meta_desc": "Build FFXIV shopping lists with the cheapest prices across your data center. Share lists with your free company and auto-track acquired items.",
+    "list_invite_meta_title": "Accept list invite · Ultros",
+    "list_view_meta_title": "%name% · Shopping list · Ultros",
+    "list_view_default_meta_title": "Shopping list · Ultros",
+    "list_view_meta_desc": "Track item acquisition, find the cheapest world for every item, and share progress with your free company on Ultros.",
+    "profile_meta_title": "Profile · Ultros"
 }

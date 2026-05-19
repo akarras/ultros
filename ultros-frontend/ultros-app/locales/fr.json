@@ -14,8 +14,8 @@
     "side_nav_toggle_navigation": "Basculer la navigation",
     "final_fantasy_copyright": "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. Tous droits réservés.",
     "switch_language": "Changer de langue",
-    "meta_title": "Ultros - Accueil",
-    "meta_description": "Ultros est un outil rapide d’analyse de l’hôtel des ventes — suivez vos servants et obtenez les meilleurs prix !",
+    "meta_title": "Ultros · Analyse de l’hôtel des ventes FFXIV & suivi des servants",
+    "meta_description": "Analyse en direct de l’hôtel des ventes FFXIV : flip finder inter-mondes, calculateur de bénéfices d’artisanat, alertes de sous-cotation, bot Discord et listes de courses — gratuit sur tous les centres de données.",
     "ultros_tagline": "analyse de l’hôtel des ventes pour final fantasy xiv",
     "ultros_description": "achetez bas, vendez haut et suivez vos servants avec une interface moderne et rapide.",
     "get_started": "commencer",
@@ -1406,5 +1406,14 @@
     "modal_aria_close": "Fermer la fenêtre",
     "ad_settings_link": "Paramètres",
     "ad_aria_label": "Publicités",
-    "item_view_discord_label": "Discord :"
+    "item_view_discord_label": "Discord :",
+    "alerts_meta_title": "Alertes · Ultros",
+    "alerts_meta_desc": "Gérez vos destinataires d’alerte Ultros, vos règles de sous-cotation et votre historique de livraison. Soyez averti dès qu’un servant FFXIV est sous-coté.",
+    "lists_meta_title": "Listes de courses · Ultros",
+    "lists_meta_desc": "Créez des listes de courses FFXIV avec les meilleurs prix de votre centre de données. Partagez-les avec votre compagnie libre et suivez automatiquement les objets acquis.",
+    "list_invite_meta_title": "Accepter l’invitation à la liste · Ultros",
+    "list_view_meta_title": "%name% · Liste de courses · Ultros",
+    "list_view_default_meta_title": "Liste de courses · Ultros",
+    "list_view_meta_desc": "Suivez l’acquisition des objets, trouvez le monde le moins cher pour chaque objet et partagez vos progrès avec votre compagnie libre sur Ultros.",
+    "profile_meta_title": "Profil · Ultros"
 }

@@ -24,6 +24,7 @@ use crate::components::{
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
     make_place_importer::*,
+    meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
     tooltip::*,
 };
 use crate::i18n::*;
@@ -320,7 +321,27 @@ pub fn ListView() -> impl IntoView {
 
     // Auto-mark logic moved to AutoMarkPurchases component
 
+    let list_name_for_meta = Signal::derive(move || {
+        list_view
+            .get()
+            .and_then(|r| r.ok().map(|(l, _)| l.list.name))
+            .unwrap_or_default()
+    });
+    let meta_title = move || {
+        let name = list_name_for_meta.get();
+        if name.is_empty() {
+            t_string!(i18n, list_view_default_meta_title).to_string()
+        } else {
+            t_string!(i18n, list_view_meta_title)
+                .to_string()
+                .replace("%name%", &name)
+        }
+    };
+
     view! {
+        <MetaTitle title=meta_title />
+        <MetaDescription text=move || t_string!(i18n, list_view_meta_desc).to_string() />
+        <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
             <AutoMarkPurchases list_view=list_view />
 

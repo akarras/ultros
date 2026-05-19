@@ -14,8 +14,8 @@
     "side_nav_toggle_navigation": "切换导航",
     "final_fantasy_copyright": "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. 保留所有权利。",
     "switch_language": "切换语言",
-    "meta_title": "Ultros - 首页",
-    "meta_description": "Ultros 是一款快捷的市场分析工具，帮助你跟踪雇员状态并把握最优价格！",
+    "meta_title": "Ultros · FFXIV 市场板分析与雇员追踪",
+    "meta_description": "实时分析 FFXIV 市场板：跨服倒卖搜索、配方利润计算、雇员被低价警报、Discord 机器人和购物清单，全大区免费使用。",
     "ultros_tagline": "面向 FINAL FANTASY XIV 的市场分析",
     "ultros_description": "低买高卖，通过现代化、快速的界面跟踪你的雇员。",
     "get_started": "开始使用",
@@ -1406,5 +1406,14 @@
     "modal_aria_close": "关闭弹窗",
     "ad_settings_link": "设置",
     "ad_aria_label": "广告",
-    "item_view_discord_label": "Discord："
+    "item_view_discord_label": "Discord：",
+    "alerts_meta_title": "警报 · Ultros",
+    "alerts_meta_desc": "管理 Ultros 警报接收端、低价规则和发送记录。当 FFXIV 雇员被低价时即时收到通知。",
+    "lists_meta_title": "购物清单 · Ultros",
+    "lists_meta_desc": "用大区内最低价创建 FFXIV 购物清单。与部队共享，并自动追踪已获取的物品。",
+    "list_invite_meta_title": "接受清单邀请 · Ultros",
+    "list_view_meta_title": "%name% · 购物清单 · Ultros",
+    "list_view_default_meta_title": "购物清单 · Ultros",
+    "list_view_meta_desc": "追踪物品获取情况，为每件物品找到最便宜的服务器，并与部队共享进度。",
+    "profile_meta_title": "个人资料 · Ultros"
 }

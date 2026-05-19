@@ -448,6 +448,7 @@ pub fn Retainers() -> impl IntoView {
     let i18n = use_i18n();
     // let retainers = create_resource(|| "retainers", move |_| get_retainer_listings(cx));
     view! {
+        <MetaRobotsNoIndex />
         <div class="flex items-center gap-2 md:gap-3 mb-3">
             <A exact=true attr:class="nav-link" href="/retainers/edit">
                 <Icon height="1.25em" width="1.25em" icon=i::BsPencilFill />

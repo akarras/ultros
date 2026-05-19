@@ -14,6 +14,7 @@ use crate::api::{
 };
 use crate::components::ad::Ad;
 use crate::components::list::share_list_modal::ShareListModal;
+use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{CreateList, List, ListPermission, ListWithPermission};
@@ -51,6 +52,8 @@ pub fn ListInviteAccept() -> impl IntoView {
     });
 
     view! {
+        <MetaTitle title=move || t_string!(i18n, list_invite_meta_title).to_string() />
+        <MetaRobotsNoIndex />
         <div class="panel mx-auto max-w-xl rounded-xl p-6">
             <div class="space-y-4">
                 <div>
@@ -331,6 +334,9 @@ pub fn EditLists() -> impl IntoView {
     });
 
     view! {
+        <MetaTitle title=move || t_string!(i18n, lists_meta_title).to_string() />
+        <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
+        <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
             <div class="flex items-center gap-2 md:gap-3">
                 <A exact=true attr:class="nav-link" href="/list">

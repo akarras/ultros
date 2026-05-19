@@ -14,8 +14,8 @@
     "side_nav_toggle_navigation": "내비게이션 전환",
     "final_fantasy_copyright": "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. All Rights Reserved.",
     "switch_language": "언어 변경",
-    "meta_title": "Ultros - 홈",
-    "meta_description": "Ultros는 빠른 마켓 보드 분석 도구입니다. 친구상인을 관리하고 최고의 가격을 확보하세요!",
+    "meta_title": "Ultros · FFXIV 마켓 보드 분석 & 친구상인 관리",
+    "meta_description": "실시간 FFXIV 마켓 보드 분석: 월드 간 차익 거래 검색기, 제작 수익 계산기, 친구상인 가격 인하 알림, 디스코드 봇, 쇼핑 리스트를 모든 데이터 센터에서 무료로 제공합니다.",
     "ultros_tagline": "파이널 판타지 XIV 마켓 보드 분석",
     "ultros_description": "싸게 사고 비싸게 팔며, 모던하고 빠른 UI로 친구상인을 관리하세요.",
     "get_started": "시작하기",
@@ -1406,5 +1406,14 @@
     "modal_aria_close": "모달 닫기",
     "ad_settings_link": "설정",
     "ad_aria_label": "광고",
-    "item_view_discord_label": "디스코드:"
+    "item_view_discord_label": "디스코드:",
+    "alerts_meta_title": "알림 · Ultros",
+    "alerts_meta_desc": "Ultros 알림 수신처, 가격 인하 규칙, 전송 기록을 관리하세요. FFXIV 친구상인이 가격 인하된 즉시 알림을 받습니다.",
+    "lists_meta_title": "쇼핑 리스트 · Ultros",
+    "lists_meta_desc": "데이터 센터 내 최저가로 FFXIV 쇼핑 리스트를 만드세요. 프리 컴퍼니와 공유하고 획득한 아이템을 자동으로 추적합니다.",
+    "list_invite_meta_title": "리스트 초대 수락 · Ultros",
+    "list_view_meta_title": "%name% · 쇼핑 리스트 · Ultros",
+    "list_view_default_meta_title": "쇼핑 리스트 · Ultros",
+    "list_view_meta_desc": "아이템 획득을 추적하고, 각 아이템의 최저가 월드를 찾고, 프리 컴퍼니와 진행 상황을 공유하세요.",
+    "profile_meta_title": "프로필 · Ultros"
 }

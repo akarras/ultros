@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use crate::components::alert_rules_panel::AlertRulesPanel;
 use crate::components::endpoints_panel::EndpointsPanel;
 use crate::components::history_panel::HistoryPanel;
+use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
@@ -22,6 +23,9 @@ pub fn Alerts() -> impl IntoView {
     };
 
     view! {
+        <MetaTitle title=move || t_string!(i18n, alerts_meta_title).to_string() />
+        <MetaDescription text=move || t_string!(i18n, alerts_meta_desc).to_string() />
+        <MetaRobotsNoIndex />
         <div class="p-4 space-y-6">
             <h1 class="text-2xl font-bold">{t!(i18n, alerts_page_heading)}</h1>
 

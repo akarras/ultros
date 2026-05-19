@@ -2,7 +2,7 @@ use crate::api::{
     check_character_verification, claim_character, delete_user, get_character_verifications,
     get_characters, search_characters, unclaim_character,
 };
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{
     ad::*, crafter_settings::CrafterSettings, loading::*, toggle::Toggle, world_name::*,
     world_picker::*,
@@ -338,6 +338,7 @@ pub fn Settings() -> impl IntoView {
         <div class="main-content p-6">
             <MetaTitle title=move || t_string!(i18n, settings_page_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, settings_page_desc).to_string() />
+            <MetaRobotsNoIndex />
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, settings)}</h1>
@@ -373,6 +374,8 @@ pub fn Profile() -> impl IntoView {
     );
 
     view! {
+        <MetaTitle title=move || t_string!(i18n, profile_meta_title).to_string() />
+        <MetaRobotsNoIndex />
         <div class="main-content p-6">
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">
