@@ -255,7 +255,7 @@ where
     let mut projections: Vec<GroupableItem> = items
         .into_iter()
         .filter(|item| is_job_match(item))
-        .filter(|item| item.level_item > 0)
+        .filter(|item| item.level_item == target_ilvl)
         .filter(|item| item.item_search_category > 0)
         .map(|item| GroupableItem {
             id: item.key_id,
@@ -271,7 +271,7 @@ where
     });
 
     let (groups, _) = group_into_sets(projections);
-    groups.into_iter().find(|g| g.ilvl == target_ilvl)
+    groups.into_iter().next()
 }
 
 /// Aggregated crafting material entry across every craftable item in
