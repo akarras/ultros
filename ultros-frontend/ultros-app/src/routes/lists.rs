@@ -259,13 +259,13 @@ fn ListCard(
                                 <div class="flex items-center gap-1">
                                     <Show when=move || { permission >= ListPermission::Owner }>
                                         <Tooltip tooltip_text=Signal::derive(move || "Share list".to_string())>
-                                            <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_share_open(true) aria-label="Share list">
+                                            <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_share_open(true) aria_label="Share list">
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
                                         </Tooltip>
                                     </Show>
                                     <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
-                                        <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria-label=move || t_string!(i18n, edit_list).to_string()>
+                                        <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_is_edit(true) aria_label=move || t_string!(i18n, edit_list).to_string()>
                                             <Icon icon=i::BsPencilFill />
                                         </button>
                                     </Tooltip>

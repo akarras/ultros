@@ -4,6 +4,6 @@
 ## 2026-05-14 - Added aria-label to max_purchase_price filter button
 **Learning:** Found that the button to remove the `max_purchase_price` filter chip in `analyzer.rs` was missing an `aria-label`, unlike the other filter removal buttons. This is an accessibility issue where screen readers wouldn't announce the purpose of the icon-only button.
 **Action:** Always verify that dynamically generated icon-only buttons (like inside a loop or conditional rendering block) have appropriate `aria-label` attributes.
-## 2026-05-19 - Fixed typo in aria-label attributes
-**Learning:** In Leptos, HTML attributes should use hyphens, such as `aria-label`, not underscores (`aria_label`). Using an underscore creates a custom attribute that is not recognized by screen readers, rendering icon-only buttons inaccessible.
-**Action:** When adding or reviewing accessibility attributes in Leptos `view!` macros, verify that standard HTML attribute naming conventions (like hyphens) are used, instead of Rust-style snake_case, unless using `attr:aria-label`.
+## 2026-05-19 - Leptos handles snake_case attributes
+**Learning:** Leptos converts snake_case HTML attributes like `aria_label` to kebab-case `aria-label` during compilation automatically. Re-writing `aria_label` to `aria-label` is a no-op.
+**Action:** When inspecting Leptos views for accessibility issues, remember that `aria_label` is correctly compiled to `aria-label`. Focus on missing attributes or incorrect semantic structures, rather than converting snake_case to kebab-case.
