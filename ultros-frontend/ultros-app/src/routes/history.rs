@@ -1,5 +1,5 @@
 use crate::components::item_icon::ItemIcon;
-use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::recently_viewed::RecentItems;
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::xiv_data::tracked_data;
@@ -25,6 +25,7 @@ pub fn History() -> impl IntoView {
         <div class="main-content p-6">
             <MetaTitle title=move || t_string!(i18n, history_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, history_meta_desc).to_string() />
+            <MetaRobotsNoIndex />
 
             <div class="container mx-auto max-w-7xl space-y-6">
                 <div class="flex items-center justify-between">

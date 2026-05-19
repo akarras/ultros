@@ -79,27 +79,127 @@ pub(crate) async fn sitemap_index() -> Result<Xml, WebError> {
 }
 
 pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
-    let sitemap_urls = ["https://ultros.app", "https://ultros.app/items"]
+    // (url, priority, change_frequency). Order matters for sitemap consumers
+    // that don't sort: high-priority entries first. We list the home page
+    // and the highest-traffic tool routes near the top so crawlers don't
+    // run out of budget on long-tail category pages.
+    //
+    // Excluded on purpose: /alerts, /retainers/*, /list, /list/*, /history,
+    // /settings, /profile, /welcome (onboarding), /privacy, /cookie-policy,
+    // and other login-gated or user-state pages — they emit `<meta robots
+    // noindex>` from the route and don't belong in the sitemap.
+    let tool_pages: &[(&str, f32, ChangeFrequency)] = &[
+        ("https://ultros.app/", 1.0, ChangeFrequency::Hourly),
+        ("https://ultros.app/items", 0.9, ChangeFrequency::Daily),
+        (
+            "https://ultros.app/flip-finder",
+            0.9,
+            ChangeFrequency::Hourly,
+        ),
+        (
+            "https://ultros.app/vendor-resale",
+            0.8,
+            ChangeFrequency::Daily,
+        ),
+        (
+            "https://ultros.app/recipe-analyzer",
+            0.8,
+            ChangeFrequency::Daily,
+        ),
+        (
+            "https://ultros.app/leve-analyzer",
+            0.7,
+            ChangeFrequency::Weekly,
+        ),
+        (
+            "https://ultros.app/venture-analyzer",
+            0.7,
+            ChangeFrequency::Weekly,
+        ),
+        (
+            "https://ultros.app/fc-crafting-analyzer",
+            0.7,
+            ChangeFrequency::Daily,
+        ),
+        (
+            "https://ultros.app/scrip-sources",
+            0.7,
+            ChangeFrequency::Weekly,
+        ),
+        (
+            "https://ultros.app/currency-exchange",
+            0.7,
+            ChangeFrequency::Daily,
+        ),
+        ("https://ultros.app/trends", 0.8, ChangeFrequency::Hourly),
+        ("https://ultros.app/bot", 0.6, ChangeFrequency::Monthly),
+        ("https://ultros.app/about", 0.5, ChangeFrequency::Monthly),
+        ("https://ultros.app/help", 0.6, ChangeFrequency::Monthly),
+    ];
+
+    let mut urls: Vec<Url> = tool_pages
         .iter()
-        .map(|i| i.to_string());
-    let mut url_xml = Vec::new();
+        .map(|(href, priority, freq)| {
+            let mut builder = Url::builder((*href).to_string());
+            builder.priority(*priority);
+            builder.change_frequency(*freq);
+            builder.build().unwrap()
+        })
+        .collect();
+
+    // Help articles — surface them so deep-linkable, evergreen content can
+    // rank for task-specific queries ("ffxiv flip finder", "ultros lists").
+    // Kept in sync with ultros-app/src/routes/help.rs HELP_TOPICS; adding a
+    // slug there should add it here too.
+    const HELP_SLUGS: &[&str] = &[
+        "getting-started",
+        "flip-finder",
+        "vendor-resale",
+        "recipe-analyzer",
+        "leve-analyzer",
+        "fc-crafting",
+        "scrip-sources",
+        "venture-analyzer",
+        "market-trends",
+        "lists-alerts-retainers",
+    ];
+    for slug in HELP_SLUGS {
+        let mut builder = Url::builder(format!("https://ultros.app/help/{slug}"));
+        builder.priority(0.5);
+        builder.change_frequency(ChangeFrequency::Monthly);
+        if let Ok(url) = builder.build() {
+            urls.push(url);
+        }
+    }
+
     let data = xiv_gen_db::data();
-    let class_jobs = data
-        .class_jobs
-        .values()
-        .map(|class| ["https://ultros.app/items/jobset/", &class.abbreviation].concat());
-    let item_categories = data
+    // Class/jobset pages — medium priority, weekly change frequency
+    // because the items in them only shift when expansions/patches add gear.
+    for class in data.class_jobs.values() {
+        let mut builder =
+            Url::builder(["https://ultros.app/items/jobset/", &class.abbreviation].concat());
+        builder.priority(0.6);
+        builder.change_frequency(ChangeFrequency::Weekly);
+        if let Ok(url) = builder.build() {
+            urls.push(url);
+        }
+    }
+    // Item category pages — same rationale.
+    for cat in data
         .item_search_categorys
         .values()
         .filter(|cat| (1..=4).contains(&cat.category))
-        .map(|cat| ["https://ultros.app/items/category/", &cat.name].concat());
-    let url_set = UrlSet::new(
-        sitemap_urls
-            .chain(class_jobs)
-            .chain(item_categories)
-            .map(|url| Url::builder(url).build().unwrap())
-            .collect(),
-    )?;
+    {
+        let mut builder = Url::builder(["https://ultros.app/items/category/", &cat.name].concat());
+        builder.priority(0.6);
+        builder.change_frequency(ChangeFrequency::Weekly);
+        if let Ok(url) = builder.build() {
+            urls.push(url);
+        }
+    }
+
+    let url_set = UrlSet::new(urls)?;
+    let mut url_xml = Vec::new();
     url_set
         .write(&mut url_xml)
         .map_err(|_| anyhow!("Error creating sitemap"))?;
@@ -214,11 +314,26 @@ pub(crate) async fn item_sitemap(
             .sorted()
             .map(|id| {
                 let mut builder = Url::builder(format!("https://ultros.app/item/{id}"));
+                // Items with recent sales get higher priority than dead-stock
+                // items — same /item sitemap entry, but signal to crawlers
+                // that the page changes meaningfully more often. Dead items
+                // (no sales seen) stay at low priority so we don't waste
+                // crawl budget on never-traded gear.
                 if let Some((last_modified, change)) = frequency_map.get(&id) {
                     if let Some(modified) = last_modified {
                         builder.last_modified(modified.and_utc().fixed_offset());
                     }
                     builder.change_frequency(*change);
+                    let priority = match change {
+                        ChangeFrequency::Always | ChangeFrequency::Hourly => 0.7,
+                        ChangeFrequency::Daily => 0.6,
+                        ChangeFrequency::Weekly => 0.5,
+                        ChangeFrequency::Monthly => 0.4,
+                        _ => 0.3,
+                    };
+                    builder.priority(priority);
+                } else {
+                    builder.priority(0.3);
                 }
                 builder.images(vec![Image::new(format!(
                     "https://ultros.app/static/itemicon/{id}?size=Large"

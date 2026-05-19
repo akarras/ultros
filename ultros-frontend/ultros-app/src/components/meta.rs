@@ -28,3 +28,20 @@ pub fn MetaDescription(#[prop(into)] text: TextProp) -> impl IntoView {
         <Meta name="description" content=text />
     }
 }
+
+/// Tells search engines not to index this page. Use on routes that show
+/// per-user data (alerts, retainers, settings, profile) or transient state
+/// (invite-accept flows). These pages have no organic value and should
+/// not be served as search results.
+#[component]
+pub fn MetaRobotsNoIndex() -> impl IntoView {
+    view! { <Meta name="robots" content="noindex, follow" /> }
+}
+
+/// Sets a canonical URL for the current page. Use on routes that may be
+/// reachable via multiple URLs (e.g. /item/{world}/{id} and /item/{id})
+/// or that accept query params that don't change page content.
+#[component]
+pub fn MetaCanonical(href: &'static str) -> impl IntoView {
+    view! { <Link rel="canonical" href=href /> }
+}

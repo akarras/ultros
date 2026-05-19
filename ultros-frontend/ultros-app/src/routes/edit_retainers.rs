@@ -61,6 +61,7 @@ pub fn EditRetainers() -> impl IntoView {
     view! {
         <div class="container mx-auto p-4 flex flex-col lg:flex-row gap-6 items-start justify-center">
             <MetaTitle title=t_string!(i18n, retainers_edit_title).to_string() />
+            <MetaRobotsNoIndex />
 
             <div class="retainer-list panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
                 <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_title)}</h2>

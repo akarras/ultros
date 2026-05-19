@@ -346,10 +346,18 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 />
                 <link id="leptos" rel="stylesheet" href=sheet_url />
                 <meta name="twitter:card" content="summary_large_image" />
+                <meta name="twitter:site" content="@ultros_app" />
                 <meta name="viewport" content="initial-scale=1.0,width=device-width" />
                 <meta name="theme-color" content="#0f0710" />
+                <meta name="application-name" content="Ultros" />
                 <meta property="og:type" content="website" />
-                <meta property="og:locale" content="en-US" />
+                <meta property="og:locale" content="en_US" />
+                <meta property="og:locale:alternate" content="ja_JP" />
+                <meta property="og:locale:alternate" content="fr_FR" />
+                <meta property="og:locale:alternate" content="de_DE" />
+                <meta property="og:locale:alternate" content="ko_KR" />
+                <meta property="og:locale:alternate" content="zh_CN" />
+                <meta property="og:locale:alternate" content="zh_TW" />
                 <meta property="og:site_name" content="Ultros" />
                 {error_reporting_script
                     .map(|script| {

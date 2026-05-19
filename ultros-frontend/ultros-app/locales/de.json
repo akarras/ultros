@@ -14,8 +14,8 @@
     "side_nav_toggle_navigation": "Navigation umschalten",
     "final_fantasy_copyright": "FINAL FANTASY XIV © 2010 - 2020 SQUARE ENIX CO., LTD. Alle Rechte vorbehalten.",
     "switch_language": "Sprache wechseln",
-    "meta_title": "Ultros - Startseite",
-    "meta_description": "Ultros ist ein schnelles Werkzeug zur Marktbrett-Analyse — behalte den Überblick über deine Gehilfen und sichere dir die besten Preise!",
+    "meta_title": "Ultros · FFXIV-Marktbrett-Analyse & Gehilfen-Tracker",
+    "meta_description": "Live-Analyse des FFXIV-Marktbretts: weltübergreifender Flip-Finder, Profit-Rechner für Rezepte, Unterbietungswarnungen für Gehilfen, Discord-Bot und Einkaufslisten — kostenlos für jedes Datenzentrum.",
     "ultros_tagline": "marktbrett-analytik für final fantasy xiv",
     "ultros_description": "günstig kaufen, teuer verkaufen und deine gehilfen im blick behalten — in einer schnellen, modernen oberfläche.",
     "get_started": "loslegen",
@@ -1371,5 +1371,14 @@
     "modal_aria_close": "Dialog schließen",
     "ad_settings_link": "Einstellungen",
     "ad_aria_label": "Werbung",
-    "item_view_discord_label": "Discord:"
+    "item_view_discord_label": "Discord:",
+    "alerts_meta_title": "Warnungen · Ultros",
+    "alerts_meta_desc": "Verwalte deine Ultros-Warnungsempfänger, Unterbietungsregeln und den Zustellverlauf. Erhalte eine Benachrichtigung, sobald dein FFXIV-Gehilfe unterboten wird.",
+    "lists_meta_title": "Einkaufslisten · Ultros",
+    "lists_meta_desc": "Erstelle FFXIV-Einkaufslisten mit den günstigsten Preisen im Datenzentrum. Teile sie mit deiner Freien Gesellschaft und verfolge erhaltene Gegenstände automatisch.",
+    "list_invite_meta_title": "Listeneinladung annehmen · Ultros",
+    "list_view_meta_title": "%name% · Einkaufsliste · Ultros",
+    "list_view_default_meta_title": "Einkaufsliste · Ultros",
+    "list_view_meta_desc": "Verfolge den Erwerb deiner Gegenstände, finde die günstigste Welt für jedes Item und teile den Fortschritt mit deiner Freien Gesellschaft auf Ultros.",
+    "profile_meta_title": "Profil · Ultros"
 }

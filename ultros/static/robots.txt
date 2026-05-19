@@ -1,3 +1,18 @@
 User-agent: *
 Allow: /
+# Login-gated or per-user pages: noindex via <meta> as well, but blocking
+# at the crawler level saves crawl budget on routes that have no organic
+# value and never link out to indexable content.
+Disallow: /alerts
+Disallow: /list/invite/
+Disallow: /profile
+Disallow: /settings
+Disallow: /history
+Disallow: /retainers/
+Disallow: /login
+Disallow: /logout
+Disallow: /api/
+Disallow: /invitebot
+Disallow: /redirect
+
 Sitemap: https://ultros.app/sitemap.xml
