@@ -13,7 +13,7 @@ use crate::components::{
     market_pulse::MarketPulse,
     meta::{MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
-    top_opportunity::TopOpportunity,
+    top_opportunity::TopOpportunities,
 };
 
 #[component]
@@ -207,7 +207,7 @@ pub fn HomePage() -> impl IntoView {
                         // Two-column on desktop: Top Opportunity (left) + Market
                         // Movers (right). On mobile they stack vertically.
                         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            <TopOpportunity world=pulse_world />
+                            <TopOpportunities world=pulse_world />
                             <MarketMovers world=pulse_world />
                         </div>
                     })}

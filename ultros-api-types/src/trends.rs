@@ -63,11 +63,58 @@ pub struct TrendItem {
     /// item is being used for currency-transfer launder.
     #[serde(default)]
     pub launder_suspicion: f32,
+
+    // === Trends v2 additions ===
+    //
+    // The Trends page rebuild sources its table directly from CH's
+    // `item_stats_window` rather than the 6-sample in-memory bucketing.
+    // These fields are populated by `get_trends_v2`; the legacy
+    // `get_trends` leaves them at zero/empty so the old buckets still
+    // render correctly for any holdout consumer.
+    //
+    /// Echo of the queried window (7, 30, or 90). The UI uses this when
+    /// formatting labels like "Sales / 30d".
+    #[serde(default)]
+    pub window_days: u16,
+    /// VWAP for the selected window.
+    #[serde(default)]
+    pub vwap_window: i32,
+    /// Cleaned sample size for the selected window — drives sales/day.
+    #[serde(default)]
+    pub sales_in_window: u32,
+    /// Units traded in the selected window.
+    #[serde(default)]
+    pub unit_volume_window: u64,
+    /// Gil traded in the selected window.
+    #[serde(default)]
+    pub gil_volume_window: u64,
+    /// `sales_in_window / window_days`. Pre-computed server-side so the
+    /// FE can sort/filter without having to know the window length math.
+    #[serde(default)]
+    pub sales_per_day: f32,
+    /// `(price - vwap_window) / vwap_window * 100` — current price vs
+    /// window VWAP, as a percent. Sortable proxy for "how stretched is
+    /// the cheapest listing right now."
+    #[serde(default)]
+    pub pct_change_window: f32,
+    /// Trailing-24h hourly VWAP series, zero-filled. Length always 24.
+    #[serde(default)]
+    pub sparkline_24h: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrendsData {
+    /// Trends v2: single flat list, sorted server-side, FE applies
+    /// further sort/filter/pagination locally. Empty when the legacy
+    /// pre-bucketed response is in use.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<TrendItem>,
+    /// Legacy pre-bucketed lists. Still populated by the v1 server path
+    /// so older clients keep working; the v2 page reads from `items`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub high_velocity: Vec<TrendItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rising_price: Vec<TrendItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub falling_price: Vec<TrendItem>,
 }

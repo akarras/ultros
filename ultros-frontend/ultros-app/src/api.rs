@@ -21,6 +21,7 @@ use ultros_api_types::{
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
     recent_sales::RecentSales,
+    resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
     search::SearchResult,
@@ -92,17 +93,58 @@ pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<Cheapes
 pub(crate) struct ResaleStatsDto {
     pub(crate) profit: i32,
     pub(crate) item_id: i32,
+    #[serde(default)]
+    pub(crate) hq: bool,
     pub(crate) sold_within: String,
     pub(crate) return_on_investment: f32,
     pub(crate) world_id: i32,
+    // Phase 2 deep-scan enrichment from the server. Defaulted so older
+    // backends (or CH-degraded responses) still deserialize cleanly.
+    #[serde(default)]
+    pub(crate) confidence_band: ultros_api_types::trends::ConfidenceBand,
+    #[serde(default)]
+    pub(crate) vwap_30d: i32,
+    #[serde(default)]
+    pub(crate) sample_size_30d: u32,
+    #[serde(default)]
+    pub(crate) launder_suspicion: f32,
 }
 
-pub(crate) async fn get_best_deals(world_name: &str) -> AppResult<Vec<ResaleStatsDto>> {
-    fetch_api(&format!(
-        "/api/v1/best_deals/{}?min_profit=10000&filter_sale=Week",
-        world_name
-    ))
-    .await
+/// Query parameters for [`get_best_deals`]. All optional — server applies
+/// sensible defaults (min_profit=None, filter_sale=None, limit=50,
+/// show_suspicious=false).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BestDealsParams {
+    pub min_profit: Option<i32>,
+    /// "Day" | "Week" | "Month".
+    pub filter_sale: Option<&'static str>,
+    pub limit: Option<u32>,
+    pub show_suspicious: Option<bool>,
+}
+
+pub(crate) async fn get_best_deals(
+    world_name: &str,
+    params: BestDealsParams,
+) -> AppResult<Vec<ResaleStatsDto>> {
+    let mut qs: Vec<String> = Vec::with_capacity(4);
+    if let Some(p) = params.min_profit {
+        qs.push(format!("min_profit={p}"));
+    }
+    if let Some(s) = params.filter_sale {
+        qs.push(format!("filter_sale={s}"));
+    }
+    if let Some(l) = params.limit {
+        qs.push(format!("limit={l}"));
+    }
+    if let Some(b) = params.show_suspicious {
+        qs.push(format!("show_suspicious={}", if b { 1 } else { 0 }));
+    }
+    let query = if qs.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", qs.join("&"))
+    };
+    fetch_api(&format!("/api/v1/best_deals/{world_name}{query}")).await
 }
 
 #[allow(dead_code)]
@@ -122,8 +164,45 @@ pub(crate) async fn get_recent_sales_for_world(region_name: &str) -> AppResult<R
     fetch_api(&format!("/api/v1/recentSales/{}", region_name)).await
 }
 
+/// Legacy v1 trends fetch — pre-bucketed `high_velocity / rising_price /
+/// falling_price` lists. The new Trends page uses [`get_trends_v2`] and
+/// reads `items` instead. Kept around for parity with the server
+/// endpoint's no-query-arg behavior and any external consumer.
+#[allow(dead_code)]
 pub(crate) async fn get_trends(world_name: &str) -> AppResult<TrendsData> {
-    fetch_api(&format!("/api/v1/trends/{}", world_name)).await
+    fetch_api(&format!("/api/v1/trends/{world_name}")).await
+}
+
+/// Batch deep-scan enrichment for the Flip Finder. Returns per-row
+/// confidence band, VWAP, sample size, and laundering suspicion for the
+/// given `(item_id, hq)` tuples on `world_name`. `window_days` should be
+/// 7, 30, or 90 (clamped server-side).
+#[allow(dead_code)]
+pub(crate) async fn get_resale_quality(
+    world_name: &str,
+    items: Vec<(i32, bool)>,
+    window_days: u16,
+) -> AppResult<ResaleQualityResponse> {
+    let req = ResaleQualityRequest {
+        items,
+        window_days: Some(window_days),
+    };
+    post_api(&format!("/api/v1/resale_quality/{world_name}"), req).await
+}
+
+/// V2 trends fetch — flat `items` list backed by ClickHouse window
+/// aggregates. `window_days` should be 7, 30, or 90 (other values are
+/// clamped server-side to 30).
+pub(crate) async fn get_trends_v2(
+    world_name: &str,
+    window_days: u16,
+    show_suspicious: bool,
+) -> AppResult<TrendsData> {
+    fetch_api(&format!(
+        "/api/v1/trends/{world_name}?window={window_days}&show_suspicious={}",
+        if show_suspicious { 1 } else { 0 }
+    ))
+    .await
 }
 
 pub(crate) async fn get_market_pulse(world_name: &str) -> AppResult<MarketPulseDto> {

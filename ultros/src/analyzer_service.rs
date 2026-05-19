@@ -751,6 +751,16 @@ impl AnalyzerService {
                     confidence_band: ultros_api_types::trends::ConfidenceBand::Unknown,
                     sample_size_30d: 0,
                     launder_suspicion: 0.0,
+                    // v2 fields: legacy v1 path leaves these zeroed —
+                    // only the v2 codepath (`get_trends_v2`) populates them.
+                    window_days: 0,
+                    vwap_window: 0,
+                    sales_in_window: 0,
+                    unit_volume_window: 0,
+                    gil_volume_window: 0,
+                    sales_per_day: 0.0,
+                    pct_change_window: 0.0,
+                    sparkline_24h: Vec::new(),
                 };
 
                 if sales_per_week > 10.0 {
@@ -865,10 +875,160 @@ impl AnalyzerService {
         drop_unusable(&mut falling_price);
 
         Some(TrendsData {
+            items: vec![],
             high_velocity,
             rising_price,
             falling_price,
         })
+    }
+
+    /// CH-backed Trends page data source.
+    ///
+    /// Replaces the 6-sample in-memory bucketing in `get_trends` with
+    /// real per-window aggregates from `item_stats_window`. One DB
+    /// roundtrip via `deep_scan_batch`, one via `sparklines_batch`. Rows
+    /// without CH coverage are dropped — the Trends page is by
+    /// definition only useful for items the rollup knows about.
+    pub(crate) async fn get_trends_v2(
+        &self,
+        world_id: i32,
+        window_days: u16,
+        include_suspicious: bool,
+    ) -> Option<Vec<TrendItem>> {
+        if !self.initiated.load(Ordering::Relaxed) {
+            return None;
+        }
+        let cheapest = self
+            .cheapest_items
+            .get(&AnySelector::World(world_id))?
+            .read()
+            .await;
+
+        // Build the request tuple list from every item the cheapest map
+        // knows about on this world. Cap to a sane upper bound so a fresh
+        // world with thousands of listings doesn't blow up the SQL.
+        const MAX_TUPLES: usize = 1500;
+        let mut requests: Vec<(i32, u8, i32)> = cheapest
+            .item_map
+            .iter()
+            .take(MAX_TUPLES)
+            .map(|(key, _)| (key.item_id, key.hq as u8, world_id))
+            .collect();
+        requests.sort_unstable();
+        requests.dedup();
+
+        if requests.is_empty() {
+            return Some(Vec::new());
+        }
+
+        // One CH call to pull the window aggregates.
+        let scans = match ultros_clickhouse::queries::deep_scan_batch(
+            &self.ch_client,
+            window_days,
+            &requests,
+        )
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(error = ?e, world_id, window_days, "trends v2 deep_scan_batch failed");
+                return Some(Vec::new());
+            }
+        };
+
+        // Subset of requests that actually have a DeepScan — drives the
+        // sparkline batch (no point fetching a sparkline for an item the
+        // rollup has nothing on).
+        let scan_keys: std::collections::HashSet<(i32, u8, i32)> = scans
+            .iter()
+            .map(|d| (d.item_id, d.hq, d.world_id))
+            .collect();
+        let spark_req: Vec<(i32, u8, i32)> = requests
+            .into_iter()
+            .filter(|t| scan_keys.contains(t))
+            .collect();
+
+        let sparks = ultros_clickhouse::queries::sparklines_batch(&self.ch_client, &spark_req, 24)
+            .await
+            .unwrap_or_default();
+        let spark_by_key: std::collections::HashMap<(i32, u8, i32), Vec<u32>> = sparks
+            .into_iter()
+            .map(|s| ((s.item_id, s.hq, s.world_id), s.points))
+            .collect();
+
+        let filter = if include_suspicious {
+            ultros_clickhouse::ResaleQualityFilter::show_all()
+        } else {
+            ultros_clickhouse::ResaleQualityFilter::default()
+        };
+
+        let mut items: Vec<TrendItem> = scans
+            .iter()
+            .filter(|d| filter.keep(Some(d)))
+            .filter_map(|d| {
+                // Skip rows where the rollup ran but produced an empty
+                // window (no sales in the period). The FE renders these
+                // as noise; honest empty buckets aren't "trends" to
+                // surface.
+                if d.sample_size == 0 || d.vwap == 0 {
+                    return None;
+                }
+                let key = ItemKey {
+                    item_id: d.item_id,
+                    hq: d.hq != 0,
+                };
+                let cheapest_price = cheapest.item_map.get(&key)?.price;
+                let window_days_f32 = (window_days as f32).max(1.0);
+                let sales_per_day = d.cleaned_sample_size as f32 / window_days_f32;
+                let pct_change_window = if d.vwap > 0 {
+                    (cheapest_price as f32 - d.vwap as f32) / d.vwap as f32 * 100.0
+                } else {
+                    0.0
+                };
+                let spark = spark_by_key
+                    .get(&(d.item_id, d.hq, d.world_id))
+                    .cloned()
+                    .unwrap_or_else(|| vec![0; 24]);
+
+                Some(TrendItem {
+                    item_id: d.item_id,
+                    hq: d.hq != 0,
+                    price: cheapest_price,
+                    world_id,
+                    // Legacy fields — set to sensible v2 equivalents so
+                    // the FE that reads the old field also gets a value
+                    // if someone forgot to switch.
+                    average_sale_price: d.vwap as f32,
+                    sales_per_week: sales_per_day * 7.0,
+                    vwap_30d: if window_days == 30 { d.vwap as i32 } else { 0 },
+                    price_percentile_30d: if window_days == 30 {
+                        d.price_percentile(cheapest_price as u32)
+                    } else {
+                        0
+                    },
+                    confidence_band: d.confidence_band(),
+                    sample_size_30d: d.sample_size,
+                    launder_suspicion: d.launder_suspicion_pct,
+                    // v2 fields.
+                    window_days,
+                    vwap_window: d.vwap as i32,
+                    sales_in_window: d.cleaned_sample_size,
+                    unit_volume_window: d.unit_volume,
+                    gil_volume_window: d.gil_volume,
+                    sales_per_day,
+                    pct_change_window,
+                    sparkline_24h: spark,
+                })
+            })
+            .collect();
+
+        // Default sort: units traded descending — the most useful
+        // initial view ("what's actually moving"). FE applies further
+        // sort/filter locally.
+        items.sort_by(|a, b| b.unit_volume_window.cmp(&a.unit_volume_window));
+        items.truncate(500);
+
+        Some(items)
     }
 
     pub(crate) async fn get_best_resale(
@@ -1051,14 +1211,18 @@ impl AnalyzerService {
             }
         }
 
-        // Drop Unusable rows entirely. These are typically items with
-        // launder_suspicion > 50% — the Pass-1 ROI estimate on them is
-        // pure noise and we'd rather show nothing than mislead.
+        // Apply the cross-cutting junk filter — same policy the Trends
+        // page and the Top Opportunities card use. Default policy drops
+        // Unusable + launder_suspicion > 0.7; callers can pass
+        // ResaleOptions::include_suspicious=true to bypass.
+        let filter = if resale_options.include_suspicious {
+            ultros_clickhouse::ResaleQualityFilter::show_all()
+        } else {
+            ultros_clickhouse::ResaleQualityFilter::default()
+        };
         possible_sales.retain(|s| {
-            !matches!(
-                s.confidence_band,
-                ultros_api_types::trends::ConfidenceBand::Unusable
-            )
+            let scan = scan_by_key.get(&(s.item_id, s.hq as u8, world_id)).copied();
+            filter.keep(scan)
         });
 
         Some(possible_sales)
@@ -1392,6 +1556,10 @@ pub(crate) struct ResaleOptions {
     pub(crate) filter_world: Option<i32>,
     pub(crate) filter_datacenter: Option<i32>,
     pub(crate) filter_sale: Option<SoldWithin>,
+    /// When true, skip the cross-cutting quality filter so the caller
+    /// sees suspicious (`Unusable` / high-launder) rows. Used by the
+    /// analyzer's "Show suspicious" toggle.
+    pub(crate) include_suspicious: bool,
 }
 
 #[cfg(test)]
