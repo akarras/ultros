@@ -9,6 +9,7 @@ mod listings;
 pub mod market_heat;
 pub mod market_pulse;
 pub mod recent_sales;
+pub mod resale_quality;
 pub mod result;
 pub mod retainer;
 mod sale_history;

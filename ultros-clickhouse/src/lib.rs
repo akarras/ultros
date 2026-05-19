@@ -14,11 +14,14 @@
 //! Analyzer, FC Crafting). CH backs the deeper trend/historical math.
 
 pub mod backfill;
+pub mod quality_filter;
 pub mod queries;
 pub mod rollups;
 pub mod rows;
 pub mod schema;
 pub mod writer;
+
+pub use quality_filter::ResaleQualityFilter;
 
 use std::sync::Arc;
 

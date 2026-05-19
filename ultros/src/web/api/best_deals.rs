@@ -14,6 +14,13 @@ use ultros_db::world_data::world_cache::WorldCache;
 pub(crate) struct BestDealsQuery {
     pub(crate) min_profit: Option<i32>,
     pub(crate) filter_sale: Option<String>, // "Day", "Week", etc.
+    /// `1` or `true` skips the cross-cutting `ResaleQualityFilter` so
+    /// suspicious rows (Unusable / high-launder) appear with a chip.
+    /// Default false — these are the rows the Flip Finder used to surface
+    /// gil-trader laundering on (e.g. Copper Wristlets 3 → 18.9M).
+    pub(crate) show_suspicious: Option<bool>,
+    /// Cap on returned rows. Default 50, clamped to [1, 200].
+    pub(crate) limit: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -74,7 +81,9 @@ pub(crate) async fn get_best_deals(
         filter_world: None,
         filter_datacenter: None,
         filter_sale,
+        include_suspicious: query.show_suspicious.unwrap_or(false),
     };
+    let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
 
     let stats = analyzer
         .get_best_resale(world_id, region.id, options, &world_cache)
@@ -83,7 +92,7 @@ pub(crate) async fn get_best_deals(
     let dtos = stats
         .unwrap_or_default()
         .into_iter()
-        .take(50) // Limit to top 50 to avoid huge payloads
+        .take(limit)
         .map(ResaleStatsDto::from)
         .collect();
 

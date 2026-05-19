@@ -1,17 +1,19 @@
-use crate::analysis::{SaleSummary, format_duration_short, roi_badge_class};
+use crate::analysis::{SaleSummary, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
-    api::{get_cheapest_listings, get_recent_sales_for_world},
+    api::{get_cheapest_listings, get_recent_sales_for_world, get_resale_quality, post_sparklines},
     components::{
         add_to_list::AddToList,
         clipboard::*,
+        confidence_badge::ConfidenceBadge,
         gil::*,
         icon::Icon,
         item_icon::*,
         meta::*,
         query_button::QueryButton,
         skeleton::BoxSkeleton,
+        sparkline::Sparkline,
         toggle::Toggle,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -23,6 +25,60 @@ use crate::{
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
 };
+use ultros_api_types::{
+    resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
+};
+
+/// ClickHouse-backed per-row enrichment for the analyzer table. Built
+/// asynchronously from one `resale_quality` + one `sparklines` batch
+/// fetch and looked up by `(item_id, hq)` while rendering rows.
+#[derive(Clone, Debug, Default)]
+struct EnrichmentMaps {
+    quality: HashMap<(i32, bool), ResaleQualityRow>,
+    sparkline: HashMap<(i32, bool), Vec<u32>>,
+}
+
+impl EnrichmentMaps {
+    fn quality_for(&self, key: &(i32, bool)) -> Option<&ResaleQualityRow> {
+        self.quality.get(key)
+    }
+    fn sparkline_for(&self, key: &(i32, bool)) -> Option<&Vec<u32>> {
+        self.sparkline.get(key)
+    }
+}
+
+/// Cap on the batch size sent to `/api/v1/resale_quality` and
+/// `/api/v1/sparklines`. Both endpoints reject payloads above ~250; we
+/// stay safely under to leave headroom for serialization overhead.
+const ENRICHMENT_BATCH_CAP: usize = 240;
+
+/// Quality filter mode selectable in the analyzer toolbar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QualityFilter {
+    Any,
+    MediumPlus,
+    HighOnly,
+}
+
+impl QualityFilter {
+    fn from_param(s: Option<&str>) -> Self {
+        match s {
+            Some("medium") => QualityFilter::MediumPlus,
+            Some("high") => QualityFilter::HighOnly,
+            _ => QualityFilter::Any,
+        }
+    }
+
+    fn keep(self, band: ConfidenceBand) -> bool {
+        match self {
+            QualityFilter::Any => true,
+            QualityFilter::MediumPlus => {
+                matches!(band, ConfidenceBand::Medium | ConfidenceBand::High)
+            }
+            QualityFilter::HighOnly => matches!(band, ConfidenceBand::High),
+        }
+    }
+}
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
 use icondata as i;
@@ -302,6 +358,10 @@ fn AnalyzerTable(
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
     filter_outliers: bool,
+    /// CH-backed per-row enrichment (quality band + sparkline). Empty
+    /// when the enrichment fetch is in flight or failed — the table
+    /// degrades gracefully to Pass-1 rendering.
+    enrichment: Signal<EnrichmentMaps>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let profits = ProfitTable::new(
@@ -325,6 +385,10 @@ fn AnalyzerTable(
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
     let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
+    let (quality_param, set_quality_param) = query_signal::<String>("quality");
+    let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
+    let quality_filter = Memo::new(move |_| QualityFilter::from_param(quality_param().as_deref()));
+    let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -468,6 +532,38 @@ fn AnalyzerTable(
                     != lookup_world()
                         .and_then(|w| w.as_world_id())
                         .unwrap_or_default()
+            })
+            .filter(move |data| {
+                // Quality + suspicious filters. Rows without enrichment
+                // (no CH coverage yet, or CH outage) are kept under
+                // QualityFilter::Any but dropped when the user explicitly
+                // narrows to Medium+/High — that's the contract of those
+                // pills ("only show me rows backed by real data").
+                let maps = enrichment.get();
+                let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                let band_opt = maps.quality_for(&key).map(|q| q.confidence_band);
+                let launder_opt = maps.quality_for(&key).map(|q| q.launder_suspicion);
+                let band = band_opt.unwrap_or(ConfidenceBand::Unknown);
+                let launder = launder_opt.unwrap_or(0.0);
+
+                // Suspicious filter: hide Unusable + high-launder unless
+                // the user explicitly opted in.
+                if !show_suspicious_active()
+                    && (matches!(band, ConfidenceBand::Unusable) || launder > 0.7)
+                {
+                    return false;
+                }
+                // Quality pill: Any keeps everything; Medium+/High drop
+                // rows whose band doesn't qualify.
+                let qf = quality_filter();
+                if qf == QualityFilter::Any {
+                    true
+                } else if matches!(band, ConfidenceBand::Unknown) {
+                    // Unknown can't satisfy Medium+ or High.
+                    false
+                } else {
+                    qf.keep(band)
+                }
             })
             .collect::<Vec<_>>();
 
@@ -680,6 +776,36 @@ fn AnalyzerTable(
                             }
                         />
                     </ToolbarField>
+                    <ToolbarField label=t_string!(i18n, analyzer_filter_quality_label).to_string()>
+                        <ToolbarPills>
+                            <button
+                                aria-pressed=move || (quality_filter() == QualityFilter::Any).to_string()
+                                on:click=move |_| set_quality_param.set(None)
+                            >
+                                {t!(i18n, analyzer_filter_quality_any)}
+                            </button>
+                            <button
+                                aria-pressed=move || (quality_filter() == QualityFilter::MediumPlus).to_string()
+                                on:click=move |_| set_quality_param.set(Some("medium".to_string()))
+                            >
+                                {t!(i18n, analyzer_filter_quality_medium_plus)}
+                            </button>
+                            <button
+                                aria-pressed=move || (quality_filter() == QualityFilter::HighOnly).to_string()
+                                on:click=move |_| set_quality_param.set(Some("high".to_string()))
+                            >
+                                {t!(i18n, analyzer_filter_quality_high)}
+                            </button>
+                        </ToolbarPills>
+                    </ToolbarField>
+                    <ToolbarField label=t_string!(i18n, analyzer_show_suspicious).to_string()>
+                        <Toggle
+                            checked=Signal::derive(move || show_suspicious_active.get())
+                            set_checked=SignalSetter::map(move |v: bool| set_show_suspicious(v.then_some(true)))
+                            checked_label=Oco::Owned(t_string!(i18n, analyzer_show_suspicious).to_string())
+                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_show_suspicious).to_string())
+                        />
+                    </ToolbarField>
                 </Toolbar>
             })}
 
@@ -825,6 +951,8 @@ fn AnalyzerTable(
                     set_max_purchase_price(None);
                     set_min_buy_price(None);
                     set_last_sold_within(None);
+                    set_quality_param(None);
+                    set_show_suspicious(None);
                 }>
                     {t!(i18n, analyzer_clear_all)}
                 </button>
@@ -938,11 +1066,17 @@ fn AnalyzerTable(
                                         }}
                                     </div>
                                 </div>
-                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
-                                    {t!(i18n, analyzer_col_avg_sale_time)}
+                                <div role="columnheader" class="w-[100px] px-3 py-2 hidden md:block text-center">
+                                    {t!(i18n, analyzer_col_spark)}
+                                </div>
+                                <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:block text-right">
+                                    {t!(i18n, analyzer_col_sales_per_day)}
                                 </div>
                                 <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
                                     {t!(i18n, analyzer_col_last_sold)}
+                                </div>
+                                <div role="columnheader" class="w-[110px] px-3 py-2 text-center">
+                                    {t!(i18n, analyzer_col_quality)}
                                 </div>
                             </div>
                         }.into_any()
@@ -1053,13 +1187,32 @@ fn AnalyzerTable(
                                             </QueryButton>
                                         </Tooltip>
                                     </div>
-                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .avg_sale_duration
-                                            .and_then(|duration| duration.to_std().ok())
-                                            .map(|duration| format_duration_short(duration.as_secs()))
-                                            .unwrap_or_else(|| "---".to_string())}
+                                    <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
+                                        {
+                                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                                            let maps = enrichment.get();
+                                            let pts = maps.sparkline_for(&key).cloned().unwrap_or_default();
+                                            let pct = maps.quality_for(&key)
+                                                .map(|q| {
+                                                    let vwap = q.vwap as f32;
+                                                    if vwap <= 0.0 {
+                                                        0.0
+                                                    } else {
+                                                        (data.inner.cheapest_price as f32 - vwap) / vwap * 100.0
+                                                    }
+                                                })
+                                                .unwrap_or(0.0);
+                                            view! { <Sparkline points=pts pct_change=pct /> }
+                                        }
+                                    </div>
+                                    <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                        {
+                                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                                            enrichment.get()
+                                                .quality_for(&key)
+                                                .map(|q| format!("{:.1}", q.sales_per_day))
+                                                .unwrap_or_else(|| "—".to_string())
+                                        }
                                     </div>
                                     <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
                                         {data.inner
@@ -1075,6 +1228,15 @@ fn AnalyzerTable(
                                                 else { "just now".to_string() }
                                             })
                                             .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string())}
+                                    </div>
+                                    <div role="cell" class="px-3 py-2 w-[110px] flex items-center justify-center">
+                                        {
+                                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                                            enrichment.get()
+                                                .quality_for(&key)
+                                                .map(|q| view! { <ConfidenceBadge band=q.confidence_band sample_size=q.sample_size /> }.into_any())
+                                                .unwrap_or_else(|| ().into_any())
+                                        }
                                     </div>
                                 </div>
                             }
@@ -1131,6 +1293,66 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
     let query = use_query_map();
+
+    // CH enrichment: fetched once the sales resource resolves, in a
+    // single round-trip via the resale_quality + sparklines batch
+    // endpoints. Soft-fails silently — the page still renders Pass-1
+    // results with no chip when CH is unavailable.
+    let sales_for_enrichment = sales.clone();
+    let enrichment = LocalResource::new(move || {
+        let world_name = world();
+        let sales_res = sales_for_enrichment.get();
+        async move {
+            if world_name.is_empty() {
+                return EnrichmentMaps::default();
+            }
+            let Some(Ok(sales)) = sales_res else {
+                return EnrichmentMaps::default();
+            };
+            let mut keys: Vec<(i32, bool)> =
+                sales.sales.iter().map(|s| (s.item_id, s.hq)).collect();
+            keys.sort_unstable();
+            keys.dedup();
+            keys.truncate(ENRICHMENT_BATCH_CAP);
+            if keys.is_empty() {
+                return EnrichmentMaps::default();
+            }
+            let (quality, sparklines) = futures::join!(
+                get_resale_quality(&world_name, keys.clone(), 30),
+                post_sparklines(
+                    &world_name,
+                    SparklinesRequest {
+                        items: keys.clone(),
+                        hours: Some(24),
+                    }
+                ),
+            );
+            let quality_map = quality
+                .ok()
+                .map(|r| {
+                    r.rows
+                        .into_iter()
+                        .map(|row| ((row.item_id, row.hq), row))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let sparkline_map = sparklines
+                .ok()
+                .map(|s| {
+                    s.series
+                        .into_iter()
+                        .map(|row| ((row.item_id, row.hq), row.points))
+                        .collect()
+                })
+                .unwrap_or_default();
+            EnrichmentMaps {
+                quality: quality_map,
+                sparkline: sparkline_map,
+            }
+        }
+    });
+    let enrichment_signal: Signal<EnrichmentMaps> =
+        Signal::derive(move || enrichment.get().unwrap_or_default());
 
     let enabled_regions = move || {
         let map = query();
@@ -1308,6 +1530,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     worlds
                                                     world=world.into()
                                                     filter_outliers=filter_outliers().unwrap_or(false)
+                                                    enrichment=enrichment_signal
                                                 />
                                             },
                                         )

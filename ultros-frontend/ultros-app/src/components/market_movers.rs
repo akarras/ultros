@@ -37,7 +37,15 @@ impl MoverTab {
 }
 
 #[component]
-fn MoverRow(item: MoverItem, world_name: String, index: usize) -> impl IntoView {
+fn MoverRow(
+    item: MoverItem,
+    world_name: String,
+    index: usize,
+    /// When the Units tab is active, the row's lead metric becomes the
+    /// 24h unit volume and the sparkline drops to neutral color — price
+    /// direction is incidental on a volume-sorted list.
+    units_mode: bool,
+) -> impl IntoView {
     let i18n = use_i18n();
     let item_id = item.item_id;
     let name = tracked_data()
@@ -66,6 +74,22 @@ fn MoverRow(item: MoverItem, world_name: String, index: usize) -> impl IntoView 
     // structure once the card background is gone. Keeps the row light.
     let _ = index;
 
+    // In Units mode the right-aligned metric is the volume, with the
+    // small %change moving to the secondary slot.
+    let lead_text = if units_mode {
+        format_volume(item.volume_24h)
+    } else {
+        pct_text.clone()
+    };
+    let lead_class = if units_mode {
+        "text-xs font-mono font-semibold text-[color:var(--color-text)]".to_string()
+    } else {
+        format!("text-xs font-mono font-semibold {pct_class}")
+    };
+    // Sparkline colors track price direction normally; in Units mode the
+    // chart is decorative, so render with a neutral stroke.
+    let spark_pct = if units_mode { 0.0 } else { pct };
+
     view! {
         <a
             href=format!("/item/{}/{}", world_name, item_id)
@@ -80,13 +104,19 @@ fn MoverRow(item: MoverItem, world_name: String, index: usize) -> impl IntoView 
                     <Gil amount=item.price_now as i32 />
                 </div>
             </div>
-            <span class=format!("text-xs font-mono font-semibold {pct_class}")>
-                {pct_text}
+            <span class=lead_class>
+                {lead_text}
             </span>
-            <Sparkline points=item.sparkline pct_change=pct />
-            // Volume hidden on narrow rows — keeps the layout tight.
+            <Sparkline points=item.sparkline pct_change=spark_pct />
+            // Secondary metric: in Units mode show the price %change for
+            // context; in price mode show the volume. Hidden on narrow
+            // rows either way to keep the layout tight.
             <span class="hidden sm:inline text-xs font-mono text-[color:var(--color-text-muted)] min-w-[3rem] text-right">
-                {format_volume(item.volume_24h)}
+                {if units_mode {
+                    pct_text
+                } else {
+                    format_volume(item.volume_24h)
+                }}
             </span>
         </a>
     }
@@ -119,13 +149,14 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
         }
     });
 
-    let tab_btn = move |this: MoverTab, label: AnyView| {
+    let tab_btn = move |this: MoverTab, label: AnyView, tooltip: String| {
         let active = move || tab.get() == this;
         let active_class = "bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
         let inactive_class = "bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
         view! {
             <button
                 type="button"
+                title=tooltip
                 class=move || format!(
                     "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors {}",
                     if active() { active_class } else { inactive_class }
@@ -149,9 +180,21 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
                     </p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
-                    {tab_btn(MoverTab::Rising, t!(i18n, market_movers_rising).into_any())}
-                    {tab_btn(MoverTab::Falling, t!(i18n, market_movers_falling).into_any())}
-                    {tab_btn(MoverTab::Volume, t!(i18n, market_movers_volume).into_any())}
+                    {tab_btn(
+                        MoverTab::Rising,
+                        t!(i18n, market_movers_rising).into_any(),
+                        t_string!(i18n, market_movers_tab_rising_help).to_string(),
+                    )}
+                    {tab_btn(
+                        MoverTab::Falling,
+                        t!(i18n, market_movers_falling).into_any(),
+                        t_string!(i18n, market_movers_tab_falling_help).to_string(),
+                    )}
+                    {tab_btn(
+                        MoverTab::Volume,
+                        t!(i18n, market_movers_units).into_any(),
+                        t_string!(i18n, market_movers_tab_units_help).to_string(),
+                    )}
                 </div>
             </header>
 
@@ -164,6 +207,7 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
             }>
                 {move || {
                     let w = world.get();
+                    let units_mode = tab.get() == MoverTab::Volume;
                     movers.get().map(|maybe| {
                         let world_name = w.unwrap_or_default();
                         // LocalResource here resolves to `Option<MoversResponse>`
@@ -175,7 +219,7 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
                                         .into_iter()
                                         .enumerate()
                                         .map(|(i, it)| view! {
-                                            <MoverRow item=it world_name=world_name.clone() index=i />
+                                            <MoverRow item=it world_name=world_name.clone() index=i units_mode />
                                         })
                                         .collect_view()}
                                 </div>

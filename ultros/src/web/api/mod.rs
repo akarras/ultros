@@ -11,6 +11,7 @@ mod movers;
 pub(crate) mod push;
 pub(crate) mod real_time_data;
 mod recent_sales;
+mod resale_quality;
 mod trends;
 
 pub(crate) use best_deals::get_best_deals;
@@ -20,4 +21,5 @@ pub(crate) use market_heat::get_market_heat;
 pub(crate) use market_pulse::get_market_pulse;
 pub(crate) use movers::{get_movers, post_sparklines};
 pub(crate) use recent_sales::recent_sales;
+pub(crate) use resale_quality::post_resale_quality;
 pub(crate) use trends::get_trends;
