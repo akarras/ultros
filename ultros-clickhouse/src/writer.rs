@@ -125,11 +125,19 @@ impl Writer {
         }
     }
 
-    /// A Writer that swallows every row. Used by tests that construct an
-    /// `AnalyzerService` directly without standing up ClickHouse — the channel
-    /// is created and the receiver immediately dropped so every `send()`
-    /// returns `Err` and silently no-ops.
-    pub fn noop_for_tests() -> Self {
+    /// A Writer that swallows every row without spawning a flush task. Used in
+    /// two cases:
+    ///
+    /// 1. Tests that construct an `AnalyzerService` directly without standing
+    ///    up ClickHouse.
+    /// 2. Production startup when `ClickHouseClient::migrate` fails — wiring a
+    ///    real `spawn`ed writer would log a `ClickHouse flush failed` error
+    ///    every 5 seconds (and trip the sentry-tracing layer into reporting
+    ///    each one as a GlitchTip issue, see issue #5080).
+    ///
+    /// The channel is created and the receiver immediately dropped so every
+    /// `send()` returns `Err` and silently no-ops.
+    pub fn disabled() -> Self {
         let (tx, _rx) = mpsc::unbounded_channel::<SaleRow>();
         Self { tx }
     }

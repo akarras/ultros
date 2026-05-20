@@ -278,17 +278,27 @@ async fn main() -> Result<()> {
     // ClickHouse: analytical store. Migration is idempotent — re-running it on
     // every startup is fine. We log-and-continue on failure because PG is the
     // source of truth and the analyzer's RAM caches keep the snappy tools
-    // alive even if CH is unreachable.
+    // alive even if CH is unreachable. When migrate fails we wire a disabled
+    // writer (silently drops rows) and skip the rollup scheduler — otherwise
+    // the flush task would fire `ClickHouse flush failed` every 5s and the
+    // sentry-tracing layer would report each one as a separate issue (see
+    // GlitchTip #5080, ~1k events from a dev box without CH running).
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
-    if let Err(e) = ch_client.migrate().await {
-        warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
-    }
-    let ch_writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
-
-    // Background scheduler that keeps item_stats_window + item_quality_score
-    // fresh. Runs an immediate seed pass on startup, then on independent
-    // cadences (1d every 15min, 7d hourly, 30d/90d every 6h, quality hourly).
-    ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
+    let ch_writer = match ch_client.migrate().await {
+        Ok(()) => {
+            let writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
+            // Background scheduler that keeps item_stats_window +
+            // item_quality_score fresh. Runs an immediate seed pass on startup,
+            // then on independent cadences (1d every 15min, 7d hourly,
+            // 30d/90d every 6h, quality hourly).
+            ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
+            writer
+        }
+        Err(e) => {
+            warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
+            ultros_clickhouse::writer::Writer::disabled()
+        }
+    };
 
     let analyzer_service = AnalyzerService::start_analyzer(
         db.clone(),

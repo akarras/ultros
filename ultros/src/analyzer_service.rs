@@ -2077,7 +2077,7 @@ mod tests {
             recent_sale_history: Arc::new(recent_sale_history),
             cheapest_items: Arc::new(cheapest_items),
             initiated: Arc::new(AtomicBool::new(false)),
-            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
 
@@ -2123,7 +2123,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: new_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
-            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(new_analyzer_service.try_restore_from_snapshot().await);
@@ -2149,7 +2149,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(true)),
-            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         // Serialize
@@ -2165,7 +2165,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: restore_dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
-            ch_writer: ultros_clickhouse::writer::Writer::noop_for_tests(),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
         assert!(
