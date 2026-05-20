@@ -37,6 +37,11 @@ pub(crate) fn get_static_file(path: &str) -> Option<Vec<u8>> {
 }
 
 pub(crate) async fn get_file(path: &str) -> Result<impl IntoResponse + use<>, WebError> {
+    // Prevent path traversal attacks
+    if path.contains("..") || path.starts_with('/') || path.starts_with('\\') {
+        return Err(WebError::NotFound);
+    }
+
     let mime_type = mime_guess::from_path(path).first_or_text_plain();
     match get_static_file(path) {
         None => Ok(Response::builder()
