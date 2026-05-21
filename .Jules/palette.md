@@ -4,3 +4,6 @@
 ## 2026-05-14 - Added aria-label to max_purchase_price filter button
 **Learning:** Found that the button to remove the `max_purchase_price` filter chip in `analyzer.rs` was missing an `aria-label`, unlike the other filter removal buttons. This is an accessibility issue where screen readers wouldn't announce the purpose of the icon-only button.
 **Action:** Always verify that dynamically generated icon-only buttons (like inside a loop or conditional rendering block) have appropriate `aria-label` attributes.
+## 2026-05-21 - Prevent screen readers from reading decorative icons in buttons
+**Learning:** Found that when buttons have an icon next to visible text, sometimes the icon isn't hidden with `aria_hidden=true`. While this isn't an error, adding `aria_hidden=true` to the icon (since the button already has visible text) makes the screen reader experience smoother by preventing it from reading the decorative icon.
+**Action:** When inspecting buttons with both text and icons, consider adding `aria_hidden=true` to the icon component (if supported, e.g. the `Icon` component in this repo supports it) to avoid redundant or confusing announcements.
