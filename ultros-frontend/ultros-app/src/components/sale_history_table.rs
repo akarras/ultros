@@ -359,7 +359,29 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
 #[component]
 pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let i18n = use_i18n();
-    let sales = Memo::new(move |_| sales.with(|sales| SalesSummaryData::new(sales)));
+    // `SalesSummaryData::new` reads `Utc::now()`, which is non-deterministic
+    // across SSR (server clock at render time) and CSR (client clock at
+    // hydration). For items with sales right at the day/month window edge,
+    // `past_day` / `month` can flip between Some and None across the two
+    // renders, which in turn flips `class:hidden` on the wrapper div below.
+    // Pair that with the matching deferred-cutoff in `ChartWrapper` and the
+    // whole sale-history half of `/item/<world>/<id>` stays structurally
+    // stable through hydration. Effect flips `hydrated` post-render (client
+    // only), then the memo re-runs with the real summary data.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+    let sales = Memo::new(move |_| {
+        if hydrated.get() {
+            sales.with(|sales| SalesSummaryData::new(sales))
+        } else {
+            SalesSummaryData {
+                past_day: None,
+                month: None,
+            }
+        }
+    });
     let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
