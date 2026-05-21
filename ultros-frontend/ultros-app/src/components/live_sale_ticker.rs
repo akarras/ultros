@@ -170,7 +170,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             retrigger.set(true);
                         }
                     >
-                        <Icon icon=i::BiRefreshRegular />
+                        <Icon icon=i::BiRefreshRegular aria_hidden=true />
                         {t!(i18n, refresh)}
                     </button>
                 </div>
