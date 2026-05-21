@@ -616,6 +616,27 @@ pub fn ChartWrapper(
         set_extended_error.set(None);
     });
 
+    // Defer the `Utc::now()`-based date cutoff in `filtered_sales` until after
+    // hydration. SSR computes the cutoff at server-render time; the client
+    // re-runs the same memo during hydration but with a `Utc::now()` that has
+    // advanced by network + render latency (seconds, sometimes more on slow
+    // connections). For items with sales clustered near the 30/7/90-day
+    // boundary this flips:
+    //   - the `is_empty()` branch (text fallback vs `<PriceHistoryChart>`),
+    //   - the chart's internal `rows.is_empty()` branch,
+    // both of which choose structurally different DOM. tachys' walker then
+    // panics at `hydration.rs:163`/`:227` (`internal error: entered
+    // unreachable code`), and the wasm-bindgen-futures executor cascades into
+    // `RefCell already borrowed` — that's the `/item/<world>/<id>` cluster
+    // in GlitchTip (issues 5104, 5095/5096, 5097/5098, 5106, 5108, 5113-5122,
+    // …). Same idiom as #719 (`item-explorer`) and #712 (`home`): an
+    // `Effect`-driven flag that flips post-hydration so SSR and the first
+    // CSR render agree.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
     /* moved into Transition branch to avoid reading resource outside Suspense/Transition */
 
     view! {
@@ -657,8 +678,12 @@ pub fn ChartWrapper(
                         if hq_only() {
                             sales.retain(|s| s.hq);
                         }
+                        // Skip the time-based cutoff during the first (SSR-matching)
+                        // render so the count/shape matches the SSR DOM exactly.
+                        // The effect above flips `hydrated` to true a frame later,
+                        // and this memo re-runs with the real cutoff applied.
                         let days = days_range();
-                        if days > 0 {
+                        if days > 0 && hydrated.get() {
                             let cutoff = (Utc::now() - TimeDelta::days(days as i64)).naive_utc();
                             sales.retain(|s| s.sold_date >= cutoff);
                         }
