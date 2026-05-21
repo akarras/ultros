@@ -1,0 +1,1 @@
+## 2024-05-21 - [Robust UI Value Testing] Learning: Testing frontend UI formatters and logic filters avoids silent UX failures. Action: Always add comprehensive tests for analysis formatters in Leptos/Axum apps since they heavily influence users' view on data.
