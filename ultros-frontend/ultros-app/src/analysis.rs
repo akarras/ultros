@@ -130,3 +130,122 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
         total_sales,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use ultros_api_types::recent_sales::{SaleData, Sales};
+
+    #[test]
+    fn test_format_duration_short() {
+        assert_eq!(format_duration_short(0), "0s");
+        assert_eq!(format_duration_short(45), "45s");
+        assert_eq!(format_duration_short(60), "1m");
+        assert_eq!(format_duration_short(65), "1m 5s");
+        assert_eq!(format_duration_short(3600), "1h");
+        assert_eq!(format_duration_short(3665), "1h 1m");
+        assert_eq!(format_duration_short(86400), "1d");
+        assert_eq!(format_duration_short(90000), "1d 1h");
+        // drops minutes because we only keep 2 units
+        assert_eq!(format_duration_short(90060), "1d 1h");
+    }
+
+    #[test]
+    fn test_roi_badge_class() {
+        assert!(roi_badge_class(49).contains("10%"));
+        assert!(roi_badge_class(50).contains("12%"));
+        assert!(roi_badge_class(100).contains("16%"));
+        assert!(roi_badge_class(200).contains("20%"));
+        assert!(roi_badge_class(500).contains("24%"));
+    }
+
+    #[test]
+    fn test_analyze_sales_empty() {
+        let stats = analyze_sales(&[], false);
+        assert_eq!(stats.total_sales, 0);
+        assert_eq!(stats.avg_price, 0);
+        assert_eq!(stats.daily_sales, 0.0);
+    }
+
+    #[test]
+    fn test_analyze_sales_logic() {
+        let now = Utc::now().naive_utc();
+        let sale1 = Sales {
+            price_per_unit: 100,
+            sale_date: now - Duration::days(1), // ~1 day ago
+        };
+        let sale2 = Sales {
+            price_per_unit: 200,
+            sale_date: now - Duration::days(2), // ~2 days ago
+        };
+        let sale3 = Sales {
+            price_per_unit: 10000,
+            sale_date: now - Duration::days(3), // ~3 days ago (outlier)
+        };
+
+        let data = SaleData {
+            item_id: 1,
+            hq: false,
+            sales: vec![sale1.clone(), sale2.clone(), sale3.clone()],
+        };
+
+        // Without outliers filtering
+        let stats = analyze_sales(&[&data], false);
+        assert_eq!(stats.total_sales, 3);
+        assert_eq!(stats.avg_price, (100 + 200 + 10000) / 3);
+
+        // Oldest date is ~3 days ago. total_sales = 3.
+        // Daily sales should be very close to 1.0 (3 sales / 3 days)
+        // We use an epsilon since there is a tiny delay between `now` and `Utc::now()` inside `analyze_sales`.
+        assert!(
+            (stats.daily_sales - 1.0).abs() < 0.01,
+            "Expected ~1.0 daily sales, got {}",
+            stats.daily_sales
+        );
+
+        // With outliers filtering (less than 4 items -> fallback to no filtering)
+        let stats_few_items = analyze_sales(&[&data], true);
+        assert_eq!(stats_few_items.avg_price, (100 + 200 + 10000) / 3);
+
+        // Let's add more sales to trigger IQR outlier filtering (requires >= 4 items).
+        let sale4 = Sales {
+            price_per_unit: 150,
+            sale_date: now - Duration::days(1) - Duration::hours(12),
+        };
+        let sale5 = Sales {
+            price_per_unit: 180,
+            sale_date: now - Duration::days(2) - Duration::hours(12),
+        };
+        let sale6 = Sales {
+            price_per_unit: 120,
+            sale_date: now - Duration::hours(12),
+        };
+
+        let data2 = SaleData {
+            item_id: 1,
+            hq: false,
+            sales: vec![sale1, sale2, sale3, sale4, sale5, sale6],
+        };
+
+        let stats_filtered = analyze_sales(&[&data2], true);
+        assert_eq!(stats_filtered.total_sales, 6);
+
+        // The prices are: 100, 120, 150, 180, 200, 10000.
+        // Q1 index = 1, Q3 index = 4 (for N=6).
+        // q1 = 120, q3 = 200. IQR = 80.
+        // Lower bound = 120 - 1.5 * 80 = 0.
+        // Upper bound = 200 + 1.5 * 80 = 320.
+        // 10000 is correctly identified as an outlier and filtered out.
+        // The remaining valid prices: 100, 120, 150, 180, 200.
+        // Sum = 750. Average = 750 / 5 = 150.
+        assert_eq!(stats_filtered.avg_price, 150);
+
+        // Oldest date is ~3 days ago. total_sales = 6.
+        assert!(
+            (stats_filtered.daily_sales - 2.0).abs() < 0.01,
+            "Expected ~2.0 daily sales, got {}",
+            stats_filtered.daily_sales
+        );
+    }
+}
