@@ -8,7 +8,7 @@ use sea_orm::ActiveModelTrait;
 use sea_orm::ActiveValue;
 use sea_orm::ColumnTrait;
 use sea_orm::EntityTrait;
-use sea_orm::ModelTrait;
+use sea_orm::LoaderTrait;
 use sea_orm::QueryFilter;
 use sea_orm::Set;
 use tracing::info;
@@ -266,50 +266,39 @@ impl UltrosDb {
         discord_user: u64,
     ) -> Result<DiscordUserRetainerListings> {
         let mut owned_retainers = owned_retainers::Entity::find()
+            .find_also_related(retainer::Entity)
             .filter(owned_retainers::Column::DiscordId.eq(discord_user as i64))
             .all(&self.db)
             .await?;
-        owned_retainers.sort_by_key(|o| o.weight);
-        let retainers: Vec<_> =
-            futures::future::join_all(owned_retainers.into_iter().map(|r| async move {
-                let listings = self.get_retainer_and_listings_for_owned(&r).await;
-                (r, listings)
-            }))
-            .await;
-        let retainers: Result<DiscordUserRetainerListings> = retainers
+        owned_retainers.sort_by_key(|(o, _)| o.weight);
+
+        let mut valid_owned = Vec::with_capacity(owned_retainers.len());
+        let mut retainers = Vec::with_capacity(owned_retainers.len());
+
+        for (owned, retainer) in owned_retainers {
+            let r = retainer.ok_or_else(|| anyhow::Error::msg("Retainer not found"))?;
+            valid_owned.push(owned);
+            retainers.push(r);
+        }
+
+        let listings: Vec<Vec<active_listing::Model>> = retainers
+            .load_many(active_listing::Entity, &self.db)
+            .await?;
+
+        let retainers = valid_owned
             .into_iter()
-            .map(|(o, r)| r.map(|(r, d)| (o, r, d)))
-            .collect();
-        let mut retainers = retainers?;
+            .zip(retainers)
+            .zip(listings)
+            .map(|((o, r), l)| (o, r, l))
+            .collect::<Vec<_>>();
+
+        let mut retainers = retainers;
         retainers.sort_by(|(a, _, _), (b, _, _)| {
             a.character_id
                 .cmp(&b.character_id)
                 .then_with(|| a.weight.cmp(&b.weight))
         });
         Ok(retainers)
-    }
-
-    async fn get_retainer_and_listings_for_owned(
-        &self,
-        owned_retainer: &owned_retainers::Model,
-    ) -> Result<(retainer::Model, Vec<active_listing::Model>)> {
-        let retainer = owned_retainer
-            .find_related(retainer::Entity)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow::Error::msg("Retainer not found"))?;
-        let listings = self.get_listings_for_retainer(&retainer).await?;
-        Ok((retainer, listings))
-    }
-
-    async fn get_listings_for_retainer(
-        &self,
-        retainer: &retainer::Model,
-    ) -> Result<Vec<active_listing::Model>> {
-        Ok(retainer
-            .find_related(active_listing::Entity)
-            .all(&self.db)
-            .await?)
     }
 
     #[instrument]
