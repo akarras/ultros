@@ -66,9 +66,13 @@ fn group_sales_by_level(
         let Some(result) = helper.lookup_selector(selector) else {
             continue;
         };
-        let Some(sold_date) = sale.sold_date.and_local_timezone(chrono::Local).single() else {
-            continue;
-        };
+        // `sold_date` is a naive UTC instant. `and_local_timezone(Local)`
+        // re-interprets it as local time, silently shifting by the viewer's
+        // UTC offset (8h on a Shanghai client, 0h on a UTC server). The
+        // downstream `.with_timezone(&Utc)` then bakes the wrong value into
+        // `SaleRow.ts`, producing SSR/CSR row sets that disagree and tripping
+        // tachys hydration at `hydration.rs:227`.
+        let sold_date = sale.sold_date.and_utc().with_timezone(&chrono::Local);
         groups
             .entry(selector)
             .or_insert_with(|| (result.get_name().to_string(), Vec::new()))
