@@ -180,7 +180,7 @@ impl SalesWindow {
         stack_sizes.sort_unstable();
         let median_stack_size = stack_sizes[count / 2];
 
-        let duration = *date_range.start() - *date_range.end();
+        let duration = *date_range.end() - *date_range.start();
         let avg_duration = duration / count as i32;
         let next_sale_time = [(
             "Y",
@@ -472,5 +472,66 @@ mod tests {
 
         let range = (base_date - Duration::hours(2))..=(base_date - Duration::hours(1));
         assert!(find_date_range(range, &sales).is_none());
+    }
+
+    #[test]
+    fn test_sales_window_try_new() {
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+
+        // Let's create some sales!
+        let mut sale1 = create_sale(base_date - Duration::hours(1));
+        sale1.price_per_item = 100;
+        sale1.quantity = 10;
+        sale1.hq = false;
+
+        let mut sale2 = create_sale(base_date - Duration::hours(2));
+        sale2.price_per_item = 200;
+        sale2.quantity = 5;
+        sale2.hq = true;
+
+        let mut sale3 = create_sale(base_date - Duration::hours(3));
+        sale3.price_per_item = 300;
+        sale3.quantity = 15;
+        sale3.hq = false;
+
+        let mut sale4 = create_sale(base_date - Duration::hours(4));
+        sale4.price_per_item = 400;
+        sale4.quantity = 10;
+        sale4.hq = true;
+
+        let mut sale5 = create_sale(base_date - Duration::hours(5));
+        sale5.price_per_item = 500;
+        sale5.quantity = 20;
+        sale5.hq = false;
+
+        let sales = vec![sale1, sale2, sale3, sale4, sale5];
+
+        let start_range = base_date - Duration::hours(6);
+        let end_range = base_date;
+        let range = start_range..=end_range;
+
+        let window = SalesWindow::try_new(range, &sales).unwrap();
+
+        assert_eq!(
+            window.total_gil,
+            (100 * 10) + (200 * 5) + (300 * 15) + (400 * 10) + (500 * 20)
+        );
+        assert_eq!(
+            window.average_unit_price,
+            (100.0 + 200.0 + 300.0 + 400.0 + 500.0) / 5.0
+        );
+        assert_eq!(window.max_unit_price, 500);
+        assert_eq!(window.min_unit_price, 100);
+        // median of 100, 200, 300, 400, 500 is 300
+        assert_eq!(window.median_unit_price, 300);
+        // median of 5, 10, 10, 15, 20 is 10
+        assert_eq!(window.median_stack_size, 10);
+        // 2 out of 5 are HQ, so 40%
+        assert_eq!(window.hq_percent, 40);
+        // avg_duration is (6 hours) / 5 = 1 hour 12 minutes
+        assert_eq!(window.time_between_sales, Duration::minutes(72));
     }
 }
