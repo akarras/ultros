@@ -513,3 +513,19 @@ fn map_sale_history_to_line(
         .sorted_by_cached_key(|(name, _)| name.clone())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_short_number() {
+        assert_eq!(short_number(0), "0");
+        assert_eq!(short_number(999), "999");
+        assert_eq!(short_number(1000), "1.00K");
+        assert_eq!(short_number(1500), "1.50K");
+        assert_eq!(short_number(999999), "1000.00K");
+        assert_eq!(short_number(1000000), "1.00mil");
+        assert_eq!(short_number(1500000), "1.50mil");
+    }
+}
