@@ -1033,3 +1033,19 @@ mod tests {
         assert!(periods.contains(&Period::Month) || periods.contains(&Period::Year));
     }
 }
+
+#[cfg(test)]
+mod test_formatters {
+    use super::*;
+
+    #[test]
+    fn test_short_number() {
+        assert_eq!(short_number(0), "0");
+        assert_eq!(short_number(999), "999");
+        assert_eq!(short_number(1000), "1.00K");
+        assert_eq!(short_number(1500), "1.50K");
+        assert_eq!(short_number(999_999), "1000.00K");
+        assert_eq!(short_number(1_000_000), "1.00mil");
+        assert_eq!(short_number(1_500_000), "1.50mil");
+    }
+}

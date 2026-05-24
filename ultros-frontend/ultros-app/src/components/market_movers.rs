@@ -236,3 +236,19 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
         </section>
     }
 }
+
+#[cfg(test)]
+mod test_formatters {
+    use super::*;
+
+    #[test]
+    fn test_format_volume() {
+        assert_eq!(format_volume(0), "0");
+        assert_eq!(format_volume(999), "999");
+        assert_eq!(format_volume(1000), "1.0K");
+        assert_eq!(format_volume(1500), "1.5K");
+        assert_eq!(format_volume(999_999), "1000.0K");
+        assert_eq!(format_volume(1_000_000), "1.0M");
+        assert_eq!(format_volume(1_500_000), "1.5M");
+    }
+}
