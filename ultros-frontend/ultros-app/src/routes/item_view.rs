@@ -253,6 +253,36 @@ fn MarketStatsPanel(
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
 
+    // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
+    // after hydration. The chip lives inside an inner `<Suspense>` in
+    // `source_callout`'s recipe branch and reads the resource via `.with()` —
+    // which (same gotcha as #719) does NOT subscribe the wrapping Suspense, so
+    // SSR proceeds with whatever state the resource happens to be in. When SSR
+    // renders the text branch (`{t!(i18n, craftable)}` / `{t!(i18n,
+    // used_in_crafting)}`) but the client-side serialised resource resolves to
+    // `Some(prices)` with `min_cost > 0`, the first CSR render swaps in
+    // `view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }`
+    // — an `<span>` element where the SSR'd DOM has a bare text node. tachys'
+    // walker then hits `failed_to_cast_text_node` at
+    // `tachys-0.2.15/src/hydration.rs:227` (the post-debug-strip `unreachable!()`
+    // — see GlitchTip cluster on `/item/<world>/<id>`: issues 5270/5269/5268/
+    // 5267/5266/…/5234 etc. on releases 51d31a9 and db795c3, plus the
+    // long-running `RuntimeError: unreachable` mirrors 4 and 5147). The
+    // wasm-bindgen-futures executor then cascades into `RefCell already
+    // borrowed` from the same trace.
+    //
+    // Same idiom as #725 (chart), #719 (item-explorer), #712 (home),
+    // #730 (relative-time): an `Effect`-driven `hydrated` flag (effects run
+    // client-only, after first render) so SSR and the initial CSR hydration
+    // render both treat prices as unavailable. Both sides emit the text
+    // branches, shapes match, and a frame later the effect fires, the closure
+    // re-runs with the real price map, and the chip reactively swaps to the
+    // `<span>` form.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
             {move || {
@@ -378,7 +408,14 @@ fn MarketStatsPanel(
                                             <Suspense fallback=move || t_string!(i18n, craftable).to_string()>
                                                 {move || {
                                                     if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
-                                                        if let Some(prices) = cheapest_prices.as_ref() {
+                                                        // Skip the price-aware branch entirely during the
+                                                        // first (SSR-matching) render so SSR and CSR both
+                                                        // pick the same text-only branches below. The effect
+                                                        // above flips `hydrated` to true a frame later and
+                                                        // the closure re-runs with the real price map.
+                                                        if hydrated.get()
+                                                            && let Some(prices) = cheapest_prices.as_ref()
+                                                        {
                                                             prices.read_listings.with(|prices| {
                                                                 let prices = prices.as_ref().and_then(|prices| prices.as_ref().ok());
                                                                 if let Some(prices) = prices {
