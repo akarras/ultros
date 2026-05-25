@@ -126,18 +126,48 @@ mod tests {
     #[test]
     fn test_confidence_band_serialization_deserialization() {
         // Test serialization to lowercase string
-        assert_eq!(serde_json::to_string(&ConfidenceBand::Unknown).unwrap(), "\"unknown\"");
-        assert_eq!(serde_json::to_string(&ConfidenceBand::High).unwrap(), "\"high\"");
-        assert_eq!(serde_json::to_string(&ConfidenceBand::Medium).unwrap(), "\"medium\"");
-        assert_eq!(serde_json::to_string(&ConfidenceBand::Low).unwrap(), "\"low\"");
-        assert_eq!(serde_json::to_string(&ConfidenceBand::Unusable).unwrap(), "\"unusable\"");
+        assert_eq!(
+            serde_json::to_string(&ConfidenceBand::Unknown).unwrap(),
+            "\"unknown\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfidenceBand::High).unwrap(),
+            "\"high\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfidenceBand::Medium).unwrap(),
+            "\"medium\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfidenceBand::Low).unwrap(),
+            "\"low\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConfidenceBand::Unusable).unwrap(),
+            "\"unusable\""
+        );
 
         // Test deserialization from lowercase string
-        assert_eq!(serde_json::from_str::<ConfidenceBand>("\"unknown\"").unwrap(), ConfidenceBand::Unknown);
-        assert_eq!(serde_json::from_str::<ConfidenceBand>("\"high\"").unwrap(), ConfidenceBand::High);
-        assert_eq!(serde_json::from_str::<ConfidenceBand>("\"medium\"").unwrap(), ConfidenceBand::Medium);
-        assert_eq!(serde_json::from_str::<ConfidenceBand>("\"low\"").unwrap(), ConfidenceBand::Low);
-        assert_eq!(serde_json::from_str::<ConfidenceBand>("\"unusable\"").unwrap(), ConfidenceBand::Unusable);
+        assert_eq!(
+            serde_json::from_str::<ConfidenceBand>("\"unknown\"").unwrap(),
+            ConfidenceBand::Unknown
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfidenceBand>("\"high\"").unwrap(),
+            ConfidenceBand::High
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfidenceBand>("\"medium\"").unwrap(),
+            ConfidenceBand::Medium
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfidenceBand>("\"low\"").unwrap(),
+            ConfidenceBand::Low
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfidenceBand>("\"unusable\"").unwrap(),
+            ConfidenceBand::Unusable
+        );
 
         // Test default value
         let default_band: ConfidenceBand = Default::default();
