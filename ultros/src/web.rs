@@ -503,23 +503,17 @@ pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
 ) -> Result<Json<Vec<ListWithPermission>>, ApiError> {
-    let lists = try_join_all(
-        db.get_lists_for_user(user.id as i64)
-            .await?
-            .into_iter()
-            .map(|list| {
-                let db = db.clone();
-                let user_id = user.id as i64;
-                async move {
-                    let permission = db.get_permission(list.id, user_id).await?;
-                    Ok::<_, ApiError>(ListWithPermission {
-                        list: List::try_from(list)?,
-                        permission,
-                    })
-                }
-            }),
-    )
-    .await?;
+    let lists = db
+        .get_lists_for_user(user.id as i64)
+        .await?
+        .into_iter()
+        .map(|(list, permission)| {
+            Ok::<_, ApiError>(ListWithPermission {
+                list: List::try_from(list)?,
+                permission,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(lists))
 }
 

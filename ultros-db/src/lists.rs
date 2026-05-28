@@ -223,38 +223,57 @@ impl UltrosDb {
         Ok(())
     }
 
-    pub async fn get_lists_for_user(&self, discord_user: i64) -> Result<Vec<list::Model>> {
-        // This should probably also include lists shared with the user
+    pub async fn get_lists_for_user(
+        &self,
+        discord_user: i64,
+    ) -> Result<Vec<(list::Model, ListPermission)>> {
         let owned_lists = list::Entity::find()
             .filter(list::Column::Owner.eq(discord_user))
             .all(&self.db)
-            .await?;
+            .await?
+            .into_iter()
+            .map(|l| (l, ListPermission::Owner));
 
-        let shared_lists = list::Entity::find()
-            .inner_join(list_shared_user::Entity)
-            .filter(list_shared_user::Column::UserId.eq(discord_user))
-            .all(&self.db)
-            .await?;
+        let shared_lists: Vec<(list::Model, Option<list_shared_user::Model>)> =
+            list::Entity::find()
+                .inner_join(list_shared_user::Entity)
+                .filter(list_shared_user::Column::UserId.eq(discord_user))
+                .select_also(list_shared_user::Entity)
+                .all(&self.db)
+                .await?;
+        let shared_lists = shared_lists
+            .into_iter()
+            .filter_map(|(l, su)| su.map(|su| (l, ListPermission::from(su.permission))));
 
-        let group_lists = list::Entity::find()
-            .inner_join(list_shared_group::Entity)
-            .join(
-                JoinType::InnerJoin,
-                list_shared_group::Relation::UserGroup.def(),
-            )
-            .join(
-                JoinType::InnerJoin,
-                user_group::Relation::UserGroupMember.def(),
-            )
-            .filter(user_group_member::Column::UserId.eq(discord_user))
-            .all(&self.db)
-            .await?;
+        let group_lists: Vec<(list::Model, Option<list_shared_group::Model>)> =
+            list::Entity::find()
+                .inner_join(list_shared_group::Entity)
+                .join(
+                    JoinType::InnerJoin,
+                    list_shared_group::Relation::UserGroup.def(),
+                )
+                .join(
+                    JoinType::InnerJoin,
+                    user_group::Relation::UserGroupMember.def(),
+                )
+                .filter(user_group_member::Column::UserId.eq(discord_user))
+                .select_also(list_shared_group::Entity)
+                .all(&self.db)
+                .await?;
+        let group_lists = group_lists
+            .into_iter()
+            .filter_map(|(l, sg)| sg.map(|sg| (l, ListPermission::from(sg.permission))));
 
-        let mut all_lists = owned_lists;
-        all_lists.extend(shared_lists);
-        all_lists.extend(group_lists);
-        all_lists.sort_by_key(|l| l.id);
-        all_lists.dedup_by_key(|l| l.id);
+        let mut map = std::collections::HashMap::new();
+        for (l, p) in owned_lists.chain(shared_lists).chain(group_lists) {
+            let entry = map.entry(l.id).or_insert((l.clone(), p));
+            if p > entry.1 {
+                entry.1 = p;
+            }
+        }
+
+        let mut all_lists = map.into_values().collect::<Vec<_>>();
+        all_lists.sort_by_key(|(l, _)| l.id);
 
         Ok(all_lists)
     }
