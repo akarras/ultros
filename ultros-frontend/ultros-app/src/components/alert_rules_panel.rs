@@ -152,10 +152,8 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <For
-                                                each=move || rows.clone()
-                                                key=|a| a.id
-                                                children=move |a: Alert| {
+                                            // ⚡ Bolt Optimization: Using collect_view() instead of <For> to prevent unnecessary cloning of rows inside a conditional block that completely recreates the view.
+                                            {rows.into_iter().map(|a: Alert| {
                                                     // Display strings differ per trigger variant. List-scoped alerts
                                                     // don't carry a single item/world/hq — render those columns with
                                                     // the list id and "—" placeholders so the table stays uniform.
@@ -255,8 +253,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                             </td>
                                                         </tr>
                                                     }
-                                                }
-                                            />
+                                            }).collect_view()}
                                         </tbody>
                                     </table>
                                 </div>
