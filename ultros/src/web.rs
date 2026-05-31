@@ -499,7 +499,6 @@ pub(crate) async fn unclaim_retainer(
     Ok(())
 }
 
-#[allow(clippy::result_large_err)]
 pub(crate) async fn get_lists(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,

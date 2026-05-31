@@ -142,6 +142,16 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_outliers_iqr_in_place_zero_iqr() {
+        // If all items are the same, IQR is 0.
+        // Ensure this doesn't panic and returns correctly.
+        let mut data = vec![5, 5, 5, 5, 5];
+        let filtered = filter_outliers_iqr_in_place(&mut data);
+        assert_eq!(filtered.len(), 5);
+        assert_eq!(filtered[0], 5);
+    }
+
+    #[test]
     fn test_filter_outliers_iqr_in_place_random() {
         let mut rng = Lcg::new(12345);
         for _ in 0..100 {

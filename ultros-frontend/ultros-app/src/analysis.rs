@@ -248,4 +248,39 @@ mod tests {
             stats_filtered.daily_sales
         );
     }
+
+    #[test]
+    fn test_roi_badge_class_edge_cases() {
+        assert!(roi_badge_class(0).contains("10%"));
+        assert!(roi_badge_class(-50).contains("10%"));
+
+        // Just under boundaries
+        assert!(roi_badge_class(49).contains("10%"));
+        assert!(roi_badge_class(99).contains("12%"));
+        assert!(roi_badge_class(199).contains("16%"));
+        assert!(roi_badge_class(499).contains("20%"));
+
+        // Exactly on boundaries
+        assert!(roi_badge_class(50).contains("12%"));
+        assert!(roi_badge_class(100).contains("16%"));
+        assert!(roi_badge_class(200).contains("20%"));
+        assert!(roi_badge_class(500).contains("24%"));
+
+        // High numbers
+        assert!(roi_badge_class(1000).contains("24%"));
+        assert!(roi_badge_class(10000).contains("24%"));
+    }
+
+    #[test]
+    fn test_format_duration_short_edge_cases() {
+        assert_eq!(format_duration_short(1), "1s");
+        assert_eq!(format_duration_short(59), "59s");
+        assert_eq!(format_duration_short(3599), "59m 59s");
+        assert_eq!(format_duration_short(3601), "1h 1s");
+        assert_eq!(format_duration_short(86399), "23h 59m");
+        assert_eq!(format_duration_short(86401), "1d 1s");
+
+        // large number of days
+        assert_eq!(format_duration_short(86400 * 365 + 3600), "365d 1h");
+    }
 }

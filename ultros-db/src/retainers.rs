@@ -168,20 +168,40 @@ impl UltrosDb {
                 map.entry(world_id).or_default().push(item_id);
                 map
             });
-        // execute multiple queries for world item listings at once
-        let results =
-            futures::future::join_all(items_by_world.into_iter().flat_map(|(world, item_ids)| {
-                item_ids.into_iter().map(move |i| async move {
-                    (
-                        (world, i),
-                        self.get_listings_for_world(WorldId(world), ItemId(i)).await,
-                    )
-                })
-            }))
-            .await
-            .into_iter()
-            // Bolt optimization: collect results into a HashMap for O(1) lookup
-            .collect::<std::collections::HashMap<_, _>>();
+        // execute one query per world for all items in that world to avoid N+1 queries
+        let results_by_world = futures::future::join_all(items_by_world.into_iter().map(
+            |(world, item_ids)| async move {
+                let items = item_ids.iter().copied().map(ItemId);
+                let listings = self
+                    .get_listings_for_world_items(WorldId(world), items)
+                    .await;
+                (world, item_ids, listings)
+            },
+        ))
+        .await;
+
+        let mut results: HashMap<(i32, i32), Result<Vec<active_listing::Model>, _>> =
+            HashMap::new();
+        for (world, item_ids, listings_res) in results_by_world {
+            match listings_res {
+                Ok(listings) => {
+                    // pre-populate with empty vectors so items with 0 listings are handled correctly
+                    for item_id in item_ids {
+                        results.insert((world, item_id), Ok(Vec::new()));
+                    }
+                    for listing in listings {
+                        if let Some(Ok(vec)) = results.get_mut(&(world, listing.item_id)) {
+                            vec.push(listing);
+                        }
+                    }
+                }
+                Err(e) => {
+                    for item_id in item_ids {
+                        results.insert((world, item_id), Err(anyhow::anyhow!(e.to_string())));
+                    }
+                }
+            }
+        }
         // now filter the retainer queries down to just listings that beat our retainer's listings
         Ok(retainers
             .into_iter()

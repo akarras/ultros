@@ -113,10 +113,8 @@ pub fn EndpointsPanel() -> impl IntoView {
                     }.into_any(),
                     Ok(rows) => view! {
                         <ul class="divide-y">
-                            <For
-                                each=move || rows.clone()
-                                key=|e| e.id
-                                children=move |e: Endpoint| {
+                            // ⚡ Bolt Optimization: Using collect_view() instead of <For> to prevent unnecessary cloning of rows inside a conditional block that completely recreates the view.
+                            {rows.into_iter().map(|e: Endpoint| {
                                     // Sub-label shows the method, plus enough context for
                                     // Discord channels to identify which server/channel it is.
                                     // Falls back to the raw id for legacy rows that pre-date
@@ -184,8 +182,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                                             </div>
                                         </li>
                                     }
-                                }
-                            />
+                            }).collect_view()}
                         </ul>
                     }.into_any(),
                     Err(e) => view! { <div class="text-red-500">{format!("{e}")}</div> }.into_any(),

@@ -24,6 +24,10 @@
 **Learning:** In `get_retainer_listings_for_discord_user`, the code used `futures::future::join_all` to issue concurrent `.find_related()` queries for retainers and their listings. This still results in N+1 database queries (or $1 + N \times 2$) because it sends independent SELECTs per iteration, even if concurrently.
 **Action:** Always combine `find_also_related` (to fetch parent and 1:1/N:1 child in a single query) and SeaORM's `load_many` (to fetch all 1:N relations for a collection of models in one batched query). This reduces the query pattern to exactly 2 queries regardless of the collection size, drastically cutting database roundtrips.
 
+## 2026-05-29 - Optimize Leptos <For> rendering in conditional blocks
+**Learning:** In Leptos, using `<For>` components inside conditionally rendered blocks (like `match` arms for `Resource` updates) that re-create the entire view adds unnecessary keyed reconciliation overhead. Furthermore, if the block captures an owned `Vec`, providing it to `each=move || vec.clone()` causes unnecessary cloning.
+**Action:** Use `vec.into_iter().map(...).collect_view()` instead of `<For>` when the entire list is recreated on update. This avoids diffing overhead and unnecessary array cloning.
+
 ## 2026-05-13 - Optimize `get_lists_for_user` list fetch
 **Learning:** Found an N+1 query issue masquerading as `get_lists_for_user` in the `web.rs` endpoint. The code loaded `get_lists_for_user` returning just lists, and then iterated over them to call `get_permission` on each, which issued up to 3 queries each.
 **Action:** Always fetch associated data like permissions directly in the same query by using `.select_also` or similar methods on the `Entity` when fetching a collection. Changed `get_lists_for_user` to return `(list::Model, ListPermission)` avoiding the loop of `get_permission` queries.

@@ -980,10 +980,8 @@ fn ActivityFeed(
                             Ok(rows) => {
                                 view! {
                                     <ol class="flex flex-col gap-2">
-                                        <For
-                                            each=move || rows.clone()
-                                            key=|activity| activity.id
-                                            children=move |activity| {
+                                        // ⚡ Bolt Optimization: Using collect_view() instead of <For> to prevent unnecessary cloning of rows inside a conditional block that completely recreates the view.
+                                        {rows.into_iter().map(|activity| {
                                                 view! {
                                                     <li class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
                                                         <div class="text-sm font-semibold text-[color:var(--color-text)]">{activity.message}</div>
@@ -992,8 +990,7 @@ fn ActivityFeed(
                                                         </div>
                                                     </li>
                                                 }
-                                            }
-                                        />
+                                        }).collect_view()}
                                     </ol>
                                 }
                                     .into_any()
