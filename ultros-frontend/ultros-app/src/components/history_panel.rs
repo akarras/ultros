@@ -58,8 +58,8 @@ pub fn HistoryPanel() -> impl IntoView {
                                 </tr>
                             </thead>
                             <tbody>
-                                <For each=move || rows.clone() key=|e| e.id
-                                    children=move |e: AlertEvent| {
+                                // ⚡ Bolt Optimization: Using collect_view() instead of <For> to prevent unnecessary cloning of rows inside a conditional block that completely recreates the view.
+                                {rows.into_iter().map(|e: AlertEvent| {
                                         let item_name = tracked_data().items.get(&ItemId(e.item_id))
                                             .map(|it| it.name.as_str().to_string())
                                             .unwrap_or_else(|| format!("Item {}", e.item_id));
@@ -88,8 +88,7 @@ pub fn HistoryPanel() -> impl IntoView {
                                                 </td>
                                             </tr>
                                         }
-                                    }
-                                />
+                                    }).collect_view()}
                             </tbody>
                         </table>
                     </div>
