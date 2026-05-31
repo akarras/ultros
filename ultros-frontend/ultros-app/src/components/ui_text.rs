@@ -221,20 +221,31 @@ mod tests {
         );
     }
 
-    // use super::UiTextElement;
+    use super::TextSpan;
 
-    // #[test]
-    // fn emphasis() {
-    //     let ui_text_element =
-    //         "copies of <Emphasis>Tales of Adventure: One Dragoon's Journey III</Emphasis>";
-    //     assert_eq!(
-    //         UiTextElement::new(ui_text_element),
-    //         UiTextElement::Elements(vec![
-    //             UiTextElement::Text("copies of "),
-    //             UiTextElement::Emphasis(Box::new(UiTextElement::Text(
-    //                 "Tales of Adventure: One Dragoon's Journey III"
-    //             )))
-    //         ])
-    //     );
-    // }
+    #[test]
+    fn text_span_state_machine() {
+        let text = "Unstyled <UIGlow>F8F8F8</UIGlow>Glowing text<UIGlow>01</UIGlow> Normal <Emphasis>Italic</Emphasis>";
+        let (prev, span, rest) = TextSpan::new(text).unwrap();
+        assert_eq!(prev, "Unstyled ");
+        assert_eq!(span.text, "");
+        assert!(span.glow_color.is_some());
+
+        let (prev2_opt, span2, rest2) = span.next_span(rest).unwrap();
+        let prev2 = prev2_opt.unwrap();
+        assert_eq!(prev2.text, "Glowing text");
+        assert!(prev2.glow_color.is_some());
+
+        assert!(span2.glow_color.is_none());
+        assert_eq!(span2.text, "");
+
+        let (prev3_opt, span3, rest3) = span2.next_span(rest2).unwrap();
+        let prev3 = prev3_opt.unwrap();
+        assert_eq!(prev3.text, " Normal ");
+        assert!(prev3.glow_color.is_none());
+
+        assert_eq!(span3.text, "Italic");
+        assert!(span3.emphasis);
+        assert_eq!(rest3, "");
+    }
 }
