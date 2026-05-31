@@ -61,3 +61,32 @@ pub struct MarketHeatResponse {
     pub world_id: i32,
     pub categories: Vec<CategoryHeat>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_heat_band_from_pct() {
+        // NoData when item_count is 0, regardless of pct
+        assert_eq!(HeatBand::from_pct(10.0, 0), HeatBand::NoData);
+        assert_eq!(HeatBand::from_pct(-10.0, 0), HeatBand::NoData);
+
+        // Hot: pct > 5.0
+        assert_eq!(HeatBand::from_pct(5.1, 1), HeatBand::Hot);
+        assert_eq!(HeatBand::from_pct(10.0, 1), HeatBand::Hot);
+
+        // Warm: 1.0 < pct <= 5.0
+        assert_eq!(HeatBand::from_pct(5.0, 1), HeatBand::Warm);
+        assert_eq!(HeatBand::from_pct(1.1, 1), HeatBand::Warm);
+
+        // Stable: -1.0 < pct <= 1.0
+        assert_eq!(HeatBand::from_pct(1.0, 1), HeatBand::Stable);
+        assert_eq!(HeatBand::from_pct(0.0, 1), HeatBand::Stable);
+        assert_eq!(HeatBand::from_pct(-0.9, 1), HeatBand::Stable);
+
+        // Cool: pct <= -1.0
+        assert_eq!(HeatBand::from_pct(-1.0, 1), HeatBand::Cool);
+        assert_eq!(HeatBand::from_pct(-5.0, 1), HeatBand::Cool);
+    }
+}
