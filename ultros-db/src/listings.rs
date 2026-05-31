@@ -196,6 +196,20 @@ impl UltrosDb {
         Ok(listings)
     }
 
+    pub async fn get_listings_for_world_items(
+        &self,
+        world: WorldId,
+        items: impl Iterator<Item = ItemId>,
+    ) -> Result<Vec<active_listing::Model>> {
+        use active_listing::*;
+        let listings = Entity::find()
+            .filter(Column::ItemId.is_in(items.map(|i| i.0)))
+            .filter(Column::WorldId.eq(world.0))
+            .all(&self.db)
+            .await?;
+        Ok(listings)
+    }
+
     #[instrument(skip(self))]
     pub async fn get_listings_for_items_in_worlds(
         &self,
