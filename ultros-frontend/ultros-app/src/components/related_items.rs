@@ -117,9 +117,28 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
     let (opts_cookie, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
     let on_hand_map = use_context::<OnHandMap>();
 
+    // Defer the resource read until after the first client render so SSR and
+    // the initial CSR hydration both render the skeleton (the same shape as
+    // the Suspense fallback). Same idiom as #740 (cheapest-price), #732
+    // (source-callout), #730 (relative-time), #725 (chart cutoff), #719
+    // (item-explorer): `Resource::with()` does not subscribe-and-suspend the
+    // wrapping `<Suspense>`, so SSR sees the resource as pending and the body
+    // returns `None` while CSR receives the serialised resource and would
+    // immediately emit the populated `<span>`. The structural mismatch trips
+    // tachys' walker at `tachys-0.2.15/src/hydration.rs:227` and cascades
+    // into the `RefCell already borrowed` panic from the
+    // wasm-bindgen-futures executor.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
     view! {
         <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
             {move || {
+                if !hydrated.get() {
+                    return view! { <SingleLineSkeleton /> }.into_any();
+                }
                 cheapest_prices.read_listings.with(|prices| {
                     let prices = prices.as_ref()?.as_ref().ok()?;
                     let opts_value = opts_cookie.get().unwrap_or_default();
@@ -178,8 +197,8 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                                 </span>
                             })}
                         </span>
-                    })
-                })
+                    }.into_any())
+                }).unwrap_or_else(|| ().into_any())
             }}
         </Suspense>
     }
@@ -266,6 +285,18 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let is_target = ItemId(recipe.item_result) == item_id;
     let is_ingredient = IngredientsIter::new(recipe).any(|(i, _)| i == item_id);
 
+    // Defer the inner profit-chip Suspense's resource read until after the
+    // first client render — same idiom as #740 and `RecipePriceEstimate`
+    // above. `Resource::with()` does not subscribe-and-suspend, so SSR
+    // returns `None` (skeleton fallback) while CSR hydration sees the
+    // serialised resource and would otherwise emit the populated profit
+    // `<div>` immediately, tripping tachys' walker at
+    // `tachys-0.2.15/src/hydration.rs:227`.
+    let profit_hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        profit_hydrated.set(true);
+    });
+
     Some(view! {
         <div class="card p-4 sm:p-5 space-y-4 rounded-lg border border-brand-700/30 hover:shadow-lg hover:border-brand-500/50 transition-all min-w-0">
             <div class="flex flex-col gap-3 border-b border-brand-700/30 pb-3 lg:flex-row lg:items-center lg:justify-between">
@@ -316,6 +347,9 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                 // Profitability at a glance
                 <Suspense fallback=move || view! { <SingleLineSkeleton /> }>
                     {move || {
+                        if !profit_hydrated.get() {
+                            return view! { <SingleLineSkeleton /> }.into_any();
+                        }
                         use crate::global_state::cookies::Cookies;
                         use crate::global_state::craft_options::{self, CraftOptions};
                         let cookies = use_context::<Cookies>().unwrap();
@@ -378,8 +412,8 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                         {profit_chip(t_string!(i18n, lq).to_string(), lq_sell.map(|p| p - lq.cost))}
                                     </div>
                                 </div>
-                            })
-                        })
+                            }.into_any())
+                        }).unwrap_or_else(|| ().into_any())
                     }}
                 </Suspense>
             </div>
