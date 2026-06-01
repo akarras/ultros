@@ -21,9 +21,10 @@ fn get_cheapest_listing(
     let mut current_quantity = 0;
     listings
         .into_iter()
-        .take_while(|listings| {
-            current_quantity += listings.quantity;
-            current_quantity <= quantity_needed
+        .take_while(|listing| {
+            let needed_more = current_quantity < quantity_needed;
+            current_quantity += listing.quantity;
+            needed_more
         })
         .collect::<Vec<_>>()
 }
@@ -62,4 +63,113 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn mock_listing(id: i32, price_per_unit: i32, quantity: i32, hq: bool) -> ActiveListing {
+        ActiveListing {
+            id,
+            world_id: 1,
+            item_id: 1,
+            retainer_id: 1,
+            price_per_unit,
+            quantity,
+            hq,
+            timestamp: Utc::now().naive_utc(),
+        }
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_exact_quantity() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 5, false),
+            mock_listing(3, 300, 5, false),
+        ];
+        let result = get_cheapest_listing(listings, 10, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[1].id, 2);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_exceeds_quantity() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 10, false),
+            mock_listing(3, 300, 5, false),
+        ];
+        // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
+        let result = get_cheapest_listing(listings, 12, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[1].id, 2);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_hq_filter() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false), // NQ, skipped
+            mock_listing(2, 200, 5, true),  // HQ, taken
+            mock_listing(3, 300, 5, true),  // HQ, taken
+            mock_listing(4, 400, 5, false), // NQ, skipped
+        ];
+        let result = get_cheapest_listing(listings, 10, Some(true));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 2);
+        assert_eq!(result[1].id, 3);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_nq_filter() {
+        let listings = vec![
+            mock_listing(1, 100, 5, true),  // HQ, skipped
+            mock_listing(2, 200, 5, false), // NQ, taken
+            mock_listing(3, 300, 5, false), // NQ, taken
+            mock_listing(4, 400, 5, true),  // HQ, skipped
+        ];
+        let result = get_cheapest_listing(listings, 10, Some(false));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 2);
+        assert_eq!(result[1].id, 3);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_no_hq_filter() {
+        let listings = vec![
+            mock_listing(1, 200, 5, false), // NQ
+            mock_listing(2, 100, 5, true),  // HQ
+            mock_listing(3, 300, 5, false), // NQ
+            mock_listing(4, 400, 5, true),  // HQ
+        ];
+        // Should pick id=2 then id=1
+        let result = get_cheapest_listing(listings, 10, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 2);
+        assert_eq!(result[1].id, 1);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_empty() {
+        let listings = vec![];
+        let result = get_cheapest_listing(listings, 10, None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_insufficient_quantity() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 2, false),
+        ];
+        // We ask for 10, but only 7 are available. It should return all of them.
+        let result = get_cheapest_listing(listings, 10, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[1].id, 2);
+    }
 }
