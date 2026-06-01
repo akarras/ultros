@@ -6,7 +6,6 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::*,
-        confidence_badge::ConfidenceBadge,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -52,32 +51,57 @@ impl EnrichmentMaps {
 /// stay safely under to leave headroom for serialization overhead.
 const ENRICHMENT_BATCH_CAP: usize = 240;
 
-/// Quality filter mode selectable in the analyzer toolbar.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum QualityFilter {
-    Any,
-    MediumPlus,
-    HighOnly,
+/// Stable URL IDs for optional columns. Required columns (HQ, Item,
+/// Profit, ROI, Buy Price) are not in this list — they always render.
+/// Order here is the canonical render + serialization order.
+const COL_PROFIT_PER_DAY: &str = "profit_per_day";
+const COL_WORLD: &str = "world";
+const COL_DATACENTER: &str = "datacenter";
+const COL_TREND: &str = "trend";
+const COL_SALES_PER_DAY: &str = "sales_per_day";
+const COL_VOLUME_30D: &str = "volume_30d";
+const COL_LAST_SOLD: &str = "last_sold";
+
+const ALL_OPTIONAL_COLS: &[&str] = &[
+    COL_PROFIT_PER_DAY,
+    COL_WORLD,
+    COL_DATACENTER,
+    COL_TREND,
+    COL_SALES_PER_DAY,
+    COL_VOLUME_30D,
+    COL_LAST_SOLD,
+];
+
+/// Default visible set when `?cols=` is absent from the URL. Once the
+/// user explicitly sets the param (even to ""), we respect that exact
+/// set instead of falling back to defaults.
+const DEFAULT_VISIBLE_COLS: &[&str] = &[
+    COL_PROFIT_PER_DAY,
+    COL_WORLD,
+    COL_DATACENTER,
+    COL_TREND,
+    COL_SALES_PER_DAY,
+    COL_VOLUME_30D,
+    COL_LAST_SOLD,
+];
+
+fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
+    match raw {
+        None => DEFAULT_VISIBLE_COLS.iter().copied().collect(),
+        Some(s) => s
+            .split(',')
+            .filter_map(|tok| ALL_OPTIONAL_COLS.iter().find(|c| **c == tok).copied())
+            .collect(),
+    }
 }
 
-impl QualityFilter {
-    fn from_param(s: Option<&str>) -> Self {
-        match s {
-            Some("medium") => QualityFilter::MediumPlus,
-            Some("high") => QualityFilter::HighOnly,
-            _ => QualityFilter::Any,
-        }
-    }
-
-    fn keep(self, band: ConfidenceBand) -> bool {
-        match self {
-            QualityFilter::Any => true,
-            QualityFilter::MediumPlus => {
-                matches!(band, ConfidenceBand::Medium | ConfidenceBand::High)
-            }
-            QualityFilter::HighOnly => matches!(band, ConfidenceBand::High),
-        }
-    }
+fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> String {
+    ALL_OPTIONAL_COLS
+        .iter()
+        .filter(|c| visible.contains(*c))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",")
 }
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -385,10 +409,11 @@ fn AnalyzerTable(
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
     let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
-    let (quality_param, set_quality_param) = query_signal::<String>("quality");
     let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
-    let quality_filter = Memo::new(move |_| QualityFilter::from_param(quality_param().as_deref()));
+    let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
+    let show_columns_picker = RwSignal::new(false);
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -534,36 +559,20 @@ fn AnalyzerTable(
                         .unwrap_or_default()
             })
             .filter(move |data| {
-                // Quality + suspicious filters. Rows without enrichment
-                // (no CH coverage yet, or CH outage) are kept under
-                // QualityFilter::Any but dropped when the user explicitly
-                // narrows to Medium+/High — that's the contract of those
-                // pills ("only show me rows backed by real data").
+                // Suspicious filter: hide Unusable + high-launder unless
+                // the user explicitly opted in via the show-suspicious
+                // toggle. Rows without enrichment (no CH coverage yet, or
+                // CH outage) are kept — Pass-1 sales data is still useful.
+                if show_suspicious_active() {
+                    return true;
+                }
                 let maps = enrichment.get();
                 let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                let band_opt = maps.quality_for(&key).map(|q| q.confidence_band);
-                let launder_opt = maps.quality_for(&key).map(|q| q.launder_suspicion);
-                let band = band_opt.unwrap_or(ConfidenceBand::Unknown);
-                let launder = launder_opt.unwrap_or(0.0);
-
-                // Suspicious filter: hide Unusable + high-launder unless
-                // the user explicitly opted in.
-                if !show_suspicious_active()
-                    && (matches!(band, ConfidenceBand::Unusable) || launder > 0.7)
-                {
-                    return false;
-                }
-                // Quality pill: Any keeps everything; Medium+/High drop
-                // rows whose band doesn't qualify.
-                let qf = quality_filter();
-                if qf == QualityFilter::Any {
-                    true
-                } else if matches!(band, ConfidenceBand::Unknown) {
-                    // Unknown can't satisfy Medium+ or High.
-                    false
-                } else {
-                    qf.keep(band)
-                }
+                let Some(q) = maps.quality_for(&key) else {
+                    return true;
+                };
+                !(matches!(q.confidence_band, ConfidenceBand::Unusable)
+                    || q.launder_suspicion > 0.7)
             })
             .collect::<Vec<_>>();
 
@@ -705,12 +714,76 @@ fn AnalyzerTable(
                 <ToolbarSpacer />
                 <button
                     class="btn-secondary flex items-center gap-2"
+                    on:click=move |_| show_columns_picker.update(|v| *v = !*v)
+                    aria-expanded=move || show_columns_picker.get().to_string()
+                >
+                    <Icon icon=i::FaTableColumnsSolid />
+                    {t!(i18n, analyzer_columns_button)}
+                </button>
+                <button
+                    class="btn-secondary flex items-center gap-2"
                     on:click=move |_| show_more.update(|v| *v = !*v)
                 >
                     <Icon icon=i::FaFilterSolid />
                     {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
                 </button>
             </Toolbar>
+
+            // Columns picker (URL-persisted via ?cols=)
+            {move || show_columns_picker.get().then(|| {
+                let make_toggle = move |col: &'static str| {
+                    move |_| {
+                        let mut set = visible_cols.get_untracked();
+                        if set.contains(col) {
+                            set.remove(col);
+                        } else {
+                            set.insert(col);
+                        }
+                        set_cols_param.set(Some(serialize_visible_cols(&set)));
+                    }
+                };
+                let col_label = move |col: &'static str| -> String {
+                    match col {
+                        c if c == COL_PROFIT_PER_DAY => t_string!(i18n, analyzer_col_profit_per_day).to_string(),
+                        c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
+                        c if c == COL_DATACENTER => t_string!(i18n, analyzer_col_datacenter).to_string(),
+                        c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
+                        c if c == COL_SALES_PER_DAY => t_string!(i18n, analyzer_col_sales_per_day).to_string(),
+                        c if c == COL_VOLUME_30D => t_string!(i18n, analyzer_col_volume_30d).to_string(),
+                        c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
+                        _ => String::new(),
+                    }
+                };
+                view! {
+                    <div class="panel px-4 py-3 rounded-lg flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                        <span class="font-semibold text-[color:var(--brand-fg)]">
+                            {t!(i18n, analyzer_columns_picker_label)}
+                        </span>
+                        {ALL_OPTIONAL_COLS.iter().map(|col| {
+                            let col = *col;
+                            let label = col_label(col);
+                            let on_change = make_toggle(col);
+                            view! {
+                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
+                                    <input
+                                        type="checkbox"
+                                        class="accent-brand-300"
+                                        prop:checked=move || visible_cols().contains(col)
+                                        on:change=on_change
+                                    />
+                                    <span>{label}</span>
+                                </label>
+                            }
+                        }).collect_view()}
+                        <button
+                            class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                            on:click=move |_| set_cols_param.set(None)
+                        >
+                            {t!(i18n, analyzer_columns_picker_reset)}
+                        </button>
+                    </div>
+                }
+            })}
 
             // Secondary filter toolbar (expanded)
             {move || show_more.get().then(|| view! {
@@ -775,28 +848,6 @@ fn AnalyzerTable(
                                 set_last_sold_within(Some(value));
                             }
                         />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_quality_label).to_string()>
-                        <ToolbarPills>
-                            <button
-                                aria-pressed=move || (quality_filter() == QualityFilter::Any).to_string()
-                                on:click=move |_| set_quality_param.set(None)
-                            >
-                                {t!(i18n, analyzer_filter_quality_any)}
-                            </button>
-                            <button
-                                aria-pressed=move || (quality_filter() == QualityFilter::MediumPlus).to_string()
-                                on:click=move |_| set_quality_param.set(Some("medium".to_string()))
-                            >
-                                {t!(i18n, analyzer_filter_quality_medium_plus)}
-                            </button>
-                            <button
-                                aria-pressed=move || (quality_filter() == QualityFilter::HighOnly).to_string()
-                                on:click=move |_| set_quality_param.set(Some("high".to_string()))
-                            >
-                                {t!(i18n, analyzer_filter_quality_high)}
-                            </button>
-                        </ToolbarPills>
                     </ToolbarField>
                     <ToolbarField label=t_string!(i18n, analyzer_show_suspicious).to_string()>
                         <Toggle
@@ -951,7 +1002,6 @@ fn AnalyzerTable(
                     set_max_purchase_price(None);
                     set_min_buy_price(None);
                     set_last_sold_within(None);
-                    set_quality_param(None);
                     set_show_suspicious(None);
                 }>
                     {t!(i18n, analyzer_clear_all)}
@@ -990,22 +1040,24 @@ fn AnalyzerTable(
                                         </div>
                                     </QueryButton>
                                 </div>
-                                <div role="columnheader" class="w-28 px-3 py-2">
-                                    <QueryButton
-                                        class="!text-brand-300 hover:text-brand-200"
-                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                        key="sort"
-                                        value="profit-per-day"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            {t!(i18n, analyzer_col_profit_per_day)}
-                                            {move || {
-                                                (sort_mode() == Some(SortMode::ProfitPerDay))
-                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                            }}
-                                        </div>
-                                    </QueryButton>
-                                </div>
+                                {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
+                                    <div role="columnheader" class="w-28 px-3 py-2">
+                                        <QueryButton
+                                            class="!text-brand-300 hover:text-brand-200"
+                                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                                            key="sort"
+                                            value="profit-per-day"
+                                        >
+                                            <div class="flex items-center gap-2">
+                                                {t!(i18n, analyzer_col_profit_per_day)}
+                                                {move || {
+                                                    (sort_mode() == Some(SortMode::ProfitPerDay))
+                                                        .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
+                                                }}
+                                            </div>
+                                        </QueryButton>
+                                    </div>
+                                })}
                                 <div role="columnheader" class="w-28 px-3 py-2">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
@@ -1026,58 +1078,82 @@ fn AnalyzerTable(
                                 <div role="columnheader" class="w-28 px-3 py-2">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
-                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
-                                    {t!(i18n, analyzer_col_world)}
-                                    <div>
-                                        {move || {
-                                            world_filter()
-                                                .map(|_filter| {
-                                                    view! {
-                                                        <div
-                                                            class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                            on:click=move |_| {
-                                                                set_world_filter(None);
-                                                            }
-                                                        >
-                                                            <Icon icon=icondata::MdiFilterRemove />
-                                                        </div>
-                                                    }
-                                                })
-                                        }}
+                                {move || visible_cols().contains(COL_WORLD).then(|| view! {
+                                    <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
+                                        {t!(i18n, analyzer_col_world)}
+                                        <div>
+                                            {move || {
+                                                world_filter()
+                                                    .map(|_filter| {
+                                                        view! {
+                                                            <div
+                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
+                                                                on:click=move |_| {
+                                                                    set_world_filter(None);
+                                                                }
+                                                            >
+                                                                <Icon icon=icondata::MdiFilterRemove />
+                                                            </div>
+                                                        }
+                                                    })
+                                            }}
+                                        </div>
                                     </div>
-                                </div>
-                                <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
-                                    {t!(i18n, analyzer_col_datacenter)}
-                                    <div>
-                                        {move || {
-                                            datacenter_filter()
-                                                .map(|_filter| {
-                                                    view! {
-                                                        <div
-                                                            class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
-                                                            on:click=move |_| {
-                                                                set_datacenter_filter(None);
-                                                            }
-                                                        >
-                                                            <Icon icon=icondata::MdiFilterRemove />
-                                                        </div>
-                                                    }
-                                                })
-                                        }}
+                                })}
+                                {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
+                                    <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
+                                        {t!(i18n, analyzer_col_datacenter)}
+                                        <div>
+                                            {move || {
+                                                datacenter_filter()
+                                                    .map(|_filter| {
+                                                        view! {
+                                                            <div
+                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
+                                                                on:click=move |_| {
+                                                                    set_datacenter_filter(None);
+                                                                }
+                                                            >
+                                                                <Icon icon=icondata::MdiFilterRemove />
+                                                            </div>
+                                                        }
+                                                    })
+                                            }}
+                                        </div>
                                     </div>
-                                </div>
-                                <div role="columnheader" class="w-[100px] px-3 py-2 hidden md:block text-center">
-                                    {t!(i18n, analyzer_col_spark)}
-                                </div>
-                                <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:block text-right">
-                                    {t!(i18n, analyzer_col_sales_per_day)}
-                                </div>
-                                <div role="columnheader" class="w-28 px-3 py-2 hidden md:block">
-                                    {t!(i18n, analyzer_col_last_sold)}
-                                </div>
-                                <div role="columnheader" class="w-[110px] px-3 py-2 text-center">
-                                    {t!(i18n, analyzer_col_quality)}
-                                </div>
+                                })}
+                                {move || visible_cols().contains(COL_TREND).then(|| view! {
+                                    <div role="columnheader" class="w-[100px] px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                        <span>{t!(i18n, analyzer_col_spark)}</span>
+                                        <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
+                                            {move || world()}
+                                        </span>
+                                    </div>
+                                })}
+                                {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
+                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                        <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
+                                        <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
+                                            {move || world()}
+                                        </span>
+                                    </div>
+                                })}
+                                {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
+                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                        <span>{t!(i18n, analyzer_col_volume_30d)}</span>
+                                        <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
+                                            {move || world()}
+                                        </span>
+                                    </div>
+                                })}
+                                {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
+                                    <div role="columnheader" class="w-28 px-3 py-2 hidden md:flex flex-col leading-tight">
+                                        <span>{t!(i18n, analyzer_col_last_sold)}</span>
+                                        <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
+                                            {move || world()}
+                                        </span>
+                                    </div>
+                                })}
                             </div>
                         }.into_any()
                         each=sorted_data.into()
@@ -1143,9 +1219,11 @@ fn AnalyzerTable(
                                     <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
-                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
-                                        <Gil amount=data.profit_per_day />
-                                    </div>
+                                    {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
+                                        <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                            <Gil amount=data.profit_per_day />
+                                        </div>
+                                    })}
                                     <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <span class={
                                             let data = data_clone.clone();
@@ -1157,87 +1235,108 @@ fn AnalyzerTable(
                                     <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
-                                    <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
-                                        <Tooltip tooltip_text=Signal::derive(move || {
-                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
-                                        })>
-                                            <QueryButton
-                                                key="world"
-                                                value=world
-                                                class="!text-brand-300 hover:text-brand-200"
-                                                active_classes="!text-neutral-300 hover:text-neutral-200"
-                                                remove_queries=&["datacenter"]
-                                            >
-                                                {world}
-                                            </QueryButton>
-                                        </Tooltip>
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
-                                        <Tooltip tooltip_text=Signal::derive(move || {
-                                            t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
-                                        })>
-                                            <QueryButton
-                                                key="datacenter"
-                                                value=datacenter
-                                                class="!text-brand-300 hover:text-brand-200"
-                                                active_classes="!text-neutral-300 hover:text-neutral-200"
-                                                remove_queries=&["world"]
-                                            >
-                                                {datacenter}
-                                            </QueryButton>
-                                        </Tooltip>
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
-                                        {
-                                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                                            let maps = enrichment.get();
-                                            let pts = maps.sparkline_for(&key).cloned().unwrap_or_default();
-                                            let pct = maps.quality_for(&key)
-                                                .map(|q| {
-                                                    let vwap = q.vwap as f32;
-                                                    if vwap <= 0.0 {
-                                                        0.0
-                                                    } else {
-                                                        (data.inner.cheapest_price as f32 - vwap) / vwap * 100.0
-                                                    }
-                                                })
-                                                .unwrap_or(0.0);
-                                            view! { <Sparkline points=pts pct_change=pct /> }
+                                    {move || visible_cols().contains(COL_WORLD).then(|| view! {
+                                        <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
+                                            <Tooltip tooltip_text=Signal::derive(move || {
+                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
+                                            })>
+                                                <QueryButton
+                                                    key="world"
+                                                    value=world
+                                                    class="!text-brand-300 hover:text-brand-200"
+                                                    active_classes="!text-neutral-300 hover:text-neutral-200"
+                                                    remove_queries=&["datacenter"]
+                                                >
+                                                    {world}
+                                                </QueryButton>
+                                            </Tooltip>
+                                        </div>
+                                    })}
+                                    {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
+                                        <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
+                                            <Tooltip tooltip_text=Signal::derive(move || {
+                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
+                                            })>
+                                                <QueryButton
+                                                    key="datacenter"
+                                                    value=datacenter
+                                                    class="!text-brand-300 hover:text-brand-200"
+                                                    active_classes="!text-neutral-300 hover:text-neutral-200"
+                                                    remove_queries=&["world"]
+                                                >
+                                                    {datacenter}
+                                                </QueryButton>
+                                            </Tooltip>
+                                        </div>
+                                    })}
+                                    {
+                                        // Hoist Copy values out so each per-column `move ||` closure
+                                        // can capture them without contending for `data.inner` (Arc, not Copy).
+                                        let row_key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                                        let row_cheapest_price = data.inner.cheapest_price;
+                                        let row_days_since = data.inner.sale_summary.days_since_last_sale;
+                                        view! {
+                                            {move || visible_cols().contains(COL_TREND).then(|| {
+                                                let maps = enrichment.get();
+                                                let pts = maps.sparkline_for(&row_key).cloned().unwrap_or_default();
+                                                let pct = maps.quality_for(&row_key)
+                                                    .map(|q| {
+                                                        let vwap = q.vwap as f32;
+                                                        if vwap <= 0.0 {
+                                                            0.0
+                                                        } else {
+                                                            (row_cheapest_price as f32 - vwap) / vwap * 100.0
+                                                        }
+                                                    })
+                                                    .unwrap_or(0.0);
+                                                view! {
+                                                    <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
+                                                        <Sparkline points=pts pct_change=pct />
+                                                    </div>
+                                                }
+                                            })}
+                                            {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
+                                                let text = enrichment.get()
+                                                    .quality_for(&row_key)
+                                                    .map(|q| format!("{:.1}", q.sales_per_day))
+                                                    .unwrap_or_else(|| "—".to_string());
+                                                view! {
+                                                    <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                                        {text}
+                                                    </div>
+                                                }
+                                            })}
+                                            {move || visible_cols().contains(COL_VOLUME_30D).then(|| {
+                                                let text = enrichment.get()
+                                                    .quality_for(&row_key)
+                                                    .map(|q| q.sample_size.to_string())
+                                                    .unwrap_or_else(|| "—".to_string());
+                                                view! {
+                                                    <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                                        {text}
+                                                    </div>
+                                                }
+                                            })}
+                                            {move || visible_cols().contains(COL_LAST_SOLD).then(|| {
+                                                let last = row_days_since
+                                                    .and_then(|d| d.to_std().ok())
+                                                    .map(|d| {
+                                                        let secs = d.as_secs();
+                                                        let days = secs / 86_400;
+                                                        let hours = (secs % 86_400) / 3_600;
+                                                        if days > 0 { format!("{}d ago", days) }
+                                                        else if hours > 0 { format!("{}h ago", hours) }
+                                                        else { "just now".to_string() }
+                                                    })
+                                                    .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
+                                                view! {
+                                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
+                                                        {last}
+                                                    </div>
+                                                }
+                                            })}
                                         }
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
-                                        {
-                                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                                            enrichment.get()
-                                                .quality_for(&key)
-                                                .map(|q| format!("{:.1}", q.sales_per_day))
-                                                .unwrap_or_else(|| "—".to_string())
-                                        }
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
-                                        {data.inner
-                                            .sale_summary
-                                            .days_since_last_sale
-                                            .and_then(|d| d.to_std().ok())
-                                            .map(|d| {
-                                                let secs = d.as_secs();
-                                                let days = secs / 86_400;
-                                                let hours = (secs % 86_400) / 3_600;
-                                                if days > 0 { format!("{}d ago", days) }
-                                                else if hours > 0 { format!("{}h ago", hours) }
-                                                else { "just now".to_string() }
-                                            })
-                                            .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string())}
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-[110px] flex items-center justify-center">
-                                        {
-                                            let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                                            enrichment.get()
-                                                .quality_for(&key)
-                                                .map(|q| view! { <ConfidenceBadge band=q.confidence_band sample_size=q.sample_size /> }.into_any())
-                                                .unwrap_or_else(|| ().into_any())
-                                        }
-                                    </div>
+                                    }
                                 </div>
                             }
                                 .into_any()
@@ -1323,7 +1422,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     &world_name,
                     SparklinesRequest {
                         items: keys.clone(),
-                        hours: Some(24),
+                        // 7 days (server caps at 168h). 24h was too tight —
+                        // quiet items rendered as empty sparklines because a
+                        // single non-trade hour can sink the polyline.
+                        hours: Some(168),
                     }
                 ),
             );
@@ -1490,15 +1592,23 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
                                 />
                             </div>
-                            <CalculationSummary
-                                title=t_string!(i18n, analyzer_calc_title).to_string()
-                                formula=t_string!(i18n, analyzer_calc_formula).to_string()
-                                details=t_string!(i18n, analyzer_calc_details).to_string()
-                            />
-                            <div class="flex flex-wrap gap-2">
-                                <AssumptionBadge text=t_string!(i18n, analyzer_assumption_cross_region).to_string() />
-                                <AssumptionBadge text=t_string!(i18n, analyzer_assumption_hq_nq).to_string() />
-                            </div>
+                            <details class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)] open:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                <summary class="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[color:var(--brand-fg)] hover:text-[color:var(--color-text)]">
+                                    {t!(i18n, analyzer_calc_title)}
+                                </summary>
+                                <div class="px-3 pb-3 pt-1 flex flex-col gap-2">
+                                    <code class="text-sm text-brand-300 whitespace-normal break-words">
+                                        {t!(i18n, analyzer_calc_formula)}
+                                    </code>
+                                    <p class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">
+                                        {t!(i18n, analyzer_calc_details)}
+                                    </p>
+                                    <div class="flex flex-wrap gap-2 pt-1">
+                                        <AssumptionBadge text=t_string!(i18n, analyzer_assumption_cross_region).to_string() />
+                                        <AssumptionBadge text=t_string!(i18n, analyzer_assumption_hq_nq).to_string() />
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
 
