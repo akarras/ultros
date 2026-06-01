@@ -1688,9 +1688,13 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
         if let Some(world) = current_world() {
             let world = world.name;
             let query_map = query.get_untracked();
+            // `to_query_string()` already includes the leading `?` when the map
+            // is non-empty (and is "" when empty) — don't add another, or the
+            // URL becomes `/flip-finder/World??cols=…`, which parses the query
+            // key as `?cols` and silently drops the column selection on reload.
             let query = query_map.to_query_string();
             nav(
-                &format!("/flip-finder/{world}?{query}"),
+                &format!("/flip-finder/{world}{query}"),
                 NavigateOptions {
                     scroll: false,
                     ..Default::default()
