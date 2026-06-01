@@ -26,3 +26,6 @@
 ## 2026-05-29 - Optimize Leptos <For> rendering in conditional blocks
 **Learning:** In Leptos, using `<For>` components inside conditionally rendered blocks (like `match` arms for `Resource` updates) that re-create the entire view adds unnecessary keyed reconciliation overhead. Furthermore, if the block captures an owned `Vec`, providing it to `each=move || vec.clone()` causes unnecessary cloning.
 **Action:** Use `vec.into_iter().map(...).collect_view()` instead of `<For>` when the entire list is recreated on update. This avoids diffing overhead and unnecessary array cloning.
+## 2025-05-29 - Avoid `Memo::new` for trivial signal gets and equality checks
+**Learning:** Found a component (`Clipboard`) using `Memo::new` to wrap a simple `clipboard_text()` getter, as well as an equality check `clipboard_text() == last_copied_text()` and a boolean branch to pick an icon. Creating reactive `Memo` nodes carries an overhead (tracking dependencies, memory allocation, equality checking). For purely O(1) instantaneous operations, this overhead is much larger than the operation being "memoized".
+**Action:** Replace `Memo::new` and `Signal::derive` with regular closures (`move || ...`) for trivial operations like getter calls, comparisons, and conditional returns. Save `Memo` for when the computation actually takes longer than the reactive system overhead.

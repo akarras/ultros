@@ -9,13 +9,17 @@ use leptos::prelude::*;
 pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView {
     let last_copied_text = use_context::<GlobalLastCopiedText>().unwrap();
     let toasts = use_toast();
-    let clipboard_text = Memo::new(move |_| clipboard_text());
-    let copied = Memo::new(move |_| {
+    // ⚡ Bolt Optimization: Removed `Memo::new` for cheap operations
+    // `clipboard_text` is just a signal get, `copied` is simple string equality,
+    // and `icon` is a cheap branch. Creating reactive `Memo` nodes for these
+    // O(1) derivations carries overhead that exceeds the cost of recomputing them.
+    let get_clipboard_text = move || clipboard_text();
+    let copied = move || {
         last_copied_text.0()
-            .map(|t| clipboard_text() == t)
+            .map(|t| get_clipboard_text() == t)
             .unwrap_or_default()
-    });
-    let icon = Memo::new(move |_| {
+    };
+    let icon = Signal::derive(move || {
         if !copied() {
             i::BsClipboard2Fill
         } else {
@@ -25,7 +29,7 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
 
     let tooltip_text = Signal::derive(move || {
         if !copied() {
-            format!("Copy '{}' to clipboard", clipboard_text())
+            format!("Copy '{}' to clipboard", get_clipboard_text())
         } else {
             "Text copied!".to_string()
         }
@@ -37,9 +41,9 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
             class="clipboard cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
             aria-label=move || {
                 if !copied() {
-                    format!("Copy {} to clipboard", clipboard_text())
+                    format!("Copy {} to clipboard", get_clipboard_text())
                 } else {
-                    format!("Copied {} to clipboard", clipboard_text())
+                    format!("Copied {} to clipboard", get_clipboard_text())
                 }
             }
             on:click=move |e| {
