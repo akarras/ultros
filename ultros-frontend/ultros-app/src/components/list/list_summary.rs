@@ -40,9 +40,10 @@ fn get_cheapest_listing(
                 true
             }
         })
-        .take_while(|listings| {
-            current_quantity += listings.quantity;
-            current_quantity <= quantity_needed
+        .take_while(|listing| {
+            let needed_more = current_quantity < quantity_needed;
+            current_quantity += listing.quantity;
+            needed_more
         })
         .collect::<Vec<_>>()
 }
@@ -303,4 +304,50 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+        use chrono::NaiveDate;
+
+    fn mock_listing(id: i32, price_per_unit: i32, quantity: i32, hq: bool) -> ActiveListing {
+        ActiveListing {
+            id,
+            world_id: 1,
+            item_id: 1,
+            retainer_id: 1,
+            price_per_unit,
+            quantity,
+            hq,
+                timestamp: NaiveDate::from_ymd_opt(2023, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_exact_quantity() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 5, false),
+            mock_listing(3, 300, 5, false),
+        ];
+        let result = get_cheapest_listing(listings, 10, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[1].id, 2);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_exceeds_quantity() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 10, false),
+            mock_listing(3, 300, 5, false),
+        ];
+        // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
+        let result = get_cheapest_listing(listings, 12, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[1].id, 2);
+    }
 }
