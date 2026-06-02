@@ -309,7 +309,7 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
 #[cfg(test)]
 mod tests {
     use super::*;
-        use chrono::NaiveDate;
+    use chrono::NaiveDate;
 
     fn mock_listing(id: i32, price_per_unit: i32, quantity: i32, hq: bool) -> ActiveListing {
         ActiveListing {
@@ -320,7 +320,10 @@ mod tests {
             price_per_unit,
             quantity,
             hq,
-                timestamp: NaiveDate::from_ymd_opt(2023, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap(),
+            timestamp: NaiveDate::from_ymd_opt(2023, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
         }
     }
 
