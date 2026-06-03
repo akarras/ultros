@@ -21,6 +21,10 @@ pub struct MoverItem {
     pub price_now: u32,
     pub pct_change_24h: f32,
     pub volume_24h: u32,
+    /// Total gil that changed hands on this item over the 24h window
+    /// (price × quantity). The gil-denominated "market value" metric — the
+    /// complement to `volume_24h`'s raw unit count.
+    pub gil_volume_24h: u64,
     /// Trailing 24h VWAP series, oldest first. Always 24 elements (gaps =
     /// 0). Frontend's Sparkline component renders this directly.
     pub sparkline: Vec<u32>,

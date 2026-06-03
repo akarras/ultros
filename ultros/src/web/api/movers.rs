@@ -24,7 +24,7 @@ use crate::web::error::WebError;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MoversQuery {
-    /// `rising` (default), `falling`, or `volume`.
+    /// `rising` (default), `falling`, `volume` (unit count), or `gil`.
     direction: Option<String>,
     /// Result count; clamped to [1, 50]. Default 10.
     limit: Option<u32>,
@@ -56,6 +56,7 @@ pub(crate) async fn get_movers(
         "rising" => MoverDirection::Rising,
         "falling" => MoverDirection::Falling,
         "volume" => MoverDirection::Volume,
+        "gil" => MoverDirection::Gil,
         _ => return Err(WebError::BadRequest),
     };
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
@@ -88,6 +89,7 @@ pub(crate) async fn get_movers(
             price_now: r.price_now,
             pct_change_24h: r.pct_change_24h,
             volume_24h: r.volume_24h,
+            gil_volume_24h: r.gil_volume_24h,
             sparkline: spark_by_key
                 .remove(&(r.item_id, r.hq, r.world_id))
                 .unwrap_or_else(|| vec![0; 24]),
