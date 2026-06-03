@@ -182,12 +182,18 @@ pub struct MoverRow {
     pub price_now: u32,
     pub pct_change_24h: f32,
     pub volume_24h: u32,
+    /// Total gil that changed hands on this item in the window
+    /// (`sum(unit_volume * vwap)` over the hourly rollup — an approximation,
+    /// consistent with how `category_heat` computes gil volume). This is the
+    /// gil-denominated "market value" metric, the complement to `volume_24h`.
+    pub gil_volume_24h: u64,
 }
 
 /// Fetch the top N movers for a world.
 ///
 /// `direction` controls ordering: "rising" (pct desc), "falling" (pct asc),
-/// "volume" (raw 24h volume desc). All three return up to `limit` rows.
+/// "volume" (raw 24h unit count desc), "gil" (24h gil volume desc). All
+/// return up to `limit` rows.
 ///
 /// Filtered to items with at least `min_samples_24h` to weed out items
 /// where a single sale would dominate the metric.
@@ -201,6 +207,7 @@ pub async fn top_movers(
         MoverDirection::Rising => "pct_change_24h DESC",
         MoverDirection::Falling => "pct_change_24h ASC",
         MoverDirection::Volume => "volume_24h DESC",
+        MoverDirection::Gil => "gil_volume_24h DESC",
     };
     // argMin/argMax pick the value at the earliest/latest bucket per
     // group — exactly the first vs last VWAP we need for %change. Items
@@ -216,7 +223,8 @@ pub async fn top_movers(
                           - toFloat64(argMin(vwap, bucket)))
                          / toFloat64(argMin(vwap, bucket)) * 100),
                toFloat32(0)) AS pct_change_24h,
-            toUInt32(sum(unit_volume)) AS volume_24h
+            toUInt32(sum(unit_volume)) AS volume_24h,
+            sum(toUInt64(unit_volume) * toUInt64(vwap)) AS gil_volume_24h
         FROM sales_hourly FINAL
         WHERE world_id = toInt32(?)
           AND bucket > now() - INTERVAL 24 HOUR
@@ -246,6 +254,7 @@ pub enum MoverDirection {
     Rising,
     Falling,
     Volume,
+    Gil,
 }
 
 /// One row of the home-page Market Heat band. The frontend buckets
