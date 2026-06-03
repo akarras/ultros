@@ -474,6 +474,30 @@ pub fn JobSetDetail() -> impl IntoView {
     });
     let has_materials = Memo::new(move |_| materials.get().is_some_and(|m| !m.is_empty()));
 
+    // Defer the price-resource-driven materials totals until after the first
+    // client render. The default-zone column reads the shared `CheapestPrices`
+    // `read_listings` resource and the home-world column reads
+    // `home_world_listings`, both via `.with()`/`.get()` — which (same gotcha
+    // as #740/#742) do NOT subscribe-and-suspend the wrapping `<Suspense>`. So
+    // SSR renders the body with the resource pending (`total`/`shard_total`
+    // both `None`, so the `match` arm collapses to `()`), while the first CSR
+    // hydration render sees the serialised/resolved resource and may emit the
+    // extra "with shards" `<div>`. That structural divergence trips tachys'
+    // walker at `tachys-0.2.15/src/hydration.rs:227` (`failed_to_cast_text_node`,
+    // the post-debug-strip `unreachable!()`) and cascades into the
+    // `RefCell already borrowed` panic from the wasm-bindgen-futures executor —
+    // the `/items/jobset/<JOB>/set/<ilvl>` mirror of the cluster #740
+    // (`<CheapestPrice>`) and #742 (`<RelatedItems>`) already fixed. An
+    // `Effect`-driven `hydrated` flag (effects run client-only, after the first
+    // render) makes SSR and the first CSR render both emit the Suspense-fallback
+    // shape, so the trees agree; a frame later the effect fires and the totals
+    // swap in reactively. The sibling `set_total` columns below only render a
+    // structurally-stable `<GilOrDash>`, so they don't need the gate.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
     view! {
         <MetaTitle title=move || t_string!(i18n, job_set_detail_title).to_string().replace("%set%", &set_stem()) />
         <MetaDescription text=move || t_string!(i18n, job_set_detail_desc).to_string().replace("%set%", &set_stem()) />
@@ -595,6 +619,9 @@ pub fn JobSetDetail() -> impl IntoView {
                                     {
                                         let entries_for_total = entries_for_default;
                                         move || {
+                                            if !hydrated.get() {
+                                                return view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }.into_any();
+                                            }
                                             let entries = entries_for_total.clone();
                                             let total = default_zone_listings.and_then(|listings| {
                                                 listings.with(|data| match data {
@@ -634,6 +661,9 @@ pub fn JobSetDetail() -> impl IntoView {
                                     {
                                         let entries_for_total = entries_for_home;
                                         move || {
+                                            if !hydrated.get() {
+                                                return view! { <span class="text-[color:var(--color-text-muted)]">"…"</span> }.into_any();
+                                            }
                                             let entries = entries_for_total.clone();
                                             let total = home_world_listings
                                                 .get()
