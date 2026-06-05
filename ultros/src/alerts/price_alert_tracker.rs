@@ -667,6 +667,81 @@ mod test {
         assert!(rule_matches_listing(&r, &l, now));
     }
 
+    // ---------- list_rule_matches_listing ----------
+
+    fn list_rule(target_price: i64, worlds: &[i32]) -> ListActiveRule {
+        ListActiveRule {
+            alert_id: 1,
+            list_id: 1,
+            item_id: 42,
+            target_price,
+            cooldown_seconds: 3600,
+            last_fired_at: None,
+            world_id_set: worlds.iter().copied().collect(),
+            list_name: "My List".to_string(),
+        }
+    }
+
+    #[test]
+    fn list_rule_matches_when_world_price_and_cooldown_all_pass() {
+        let r = list_rule(100, &[1]);
+        let l = listing(1, 50, false);
+        assert!(list_rule_matches_listing(&r, &l, Utc::now()));
+    }
+
+    #[test]
+    fn list_rule_does_not_match_when_listing_world_not_in_rule_world_set() {
+        let r = list_rule(100, &[1, 2]);
+        let l = listing(999, 50, false);
+        assert!(!list_rule_matches_listing(&r, &l, Utc::now()));
+    }
+
+    #[test]
+    fn list_rule_ignores_hq_status_and_matches_hq_listing() {
+        let r = list_rule(100, &[1]);
+        let l = listing(1, 50, true);
+        assert!(list_rule_matches_listing(&r, &l, Utc::now()));
+    }
+
+    #[test]
+    fn list_rule_ignores_hq_status_and_matches_nq_listing() {
+        let r = list_rule(100, &[1]);
+        let l = listing(1, 50, false);
+        assert!(list_rule_matches_listing(&r, &l, Utc::now()));
+    }
+
+    #[test]
+    fn list_rule_does_not_match_when_listing_price_above_target_price() {
+        let r = list_rule(100, &[1]);
+        let l = listing(1, 101, false);
+        assert!(!list_rule_matches_listing(&r, &l, Utc::now()));
+    }
+
+    #[test]
+    fn list_rule_matches_at_exact_target_price() {
+        let r = list_rule(100, &[1]);
+        let l = listing(1, 100, false);
+        assert!(list_rule_matches_listing(&r, &l, Utc::now()));
+    }
+
+    #[test]
+    fn list_rule_does_not_match_when_within_cooldown_window() {
+        let now = Utc::now();
+        let mut r = list_rule(100, &[1]);
+        r.last_fired_at = Some(now - Duration::seconds(60));
+        let l = listing(1, 50, false);
+        assert!(!list_rule_matches_listing(&r, &l, now));
+    }
+
+    #[test]
+    fn list_rule_matches_after_cooldown_window_passed() {
+        let now = Utc::now();
+        let mut r = list_rule(100, &[1]);
+        r.last_fired_at = Some(now - Duration::seconds(7200));
+        let l = listing(1, 50, false);
+        assert!(list_rule_matches_listing(&r, &l, now));
+    }
+
     // ---------- format_threshold_alert_message ----------
 
     #[test]
@@ -688,5 +763,32 @@ mod test {
         let (title, body) = format_threshold_alert_message("水晶", 100, 50, 60);
         assert!(title.contains("水晶"));
         assert!(body.contains("ultros.app/item/100"));
+    }
+
+    // ---------- format_list_threshold_alert_message ----------
+
+    #[test]
+    fn format_list_message_includes_list_and_item_name_and_matched_price_in_title() {
+        let (title, _) = format_list_threshold_alert_message("Shopping", 10, "Eternity Ring", 36687, 99000, 100000);
+        assert!(title.contains("Shopping"));
+        assert!(title.contains("Eternity Ring"));
+        assert!(title.contains("99000"));
+    }
+
+    #[test]
+    fn format_list_message_body_includes_target_price_and_links() {
+        let (_, body) = format_list_threshold_alert_message("Shopping", 10, "Cordial", 6141, 500, 1000);
+        assert!(body.contains("1000"));
+        assert!(body.contains("ultros.app/item/6141"));
+        assert!(body.contains("ultros.app/list/10"));
+    }
+
+    #[test]
+    fn format_list_message_handles_unicode_names() {
+        let (title, body) = format_list_threshold_alert_message("リスト", 20, "水晶", 100, 50, 60);
+        assert!(title.contains("リスト"));
+        assert!(title.contains("水晶"));
+        assert!(body.contains("ultros.app/item/100"));
+        assert!(body.contains("ultros.app/list/20"));
     }
 }
