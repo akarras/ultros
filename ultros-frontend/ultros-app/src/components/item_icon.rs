@@ -9,11 +9,11 @@ pub fn ItemIcon(
     icon_size: IconSize,
     #[prop(optional)] loading: &'static str,
 ) -> impl IntoView {
-    // ⚡ Bolt Optimization: Memoize map lookups
-    // `valid_search_category` and `item_name` are used in multiple reactive contexts
-    // inside the `view!`. By using `Memo::new`, we only perform the `HashMap` lookup
-    // when `item_id` changes, rather than on every reactive update (like when `failed_item` triggers).
-    let valid_search_category = Memo::new(move |_| {
+    // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive
+    // `valid_search_category` and `item_name` are simple map lookups.
+    // Creating reactive `Memo` nodes for these O(1) derivations carries overhead
+    // that exceeds the cost of recomputing them.
+    let valid_search_category = Signal::derive(move || {
         tracked_data()
             .items
             .get(&ItemId(item_id()))
@@ -21,7 +21,7 @@ pub fn ItemIcon(
             .unwrap_or_default()
     });
 
-    let item_name = Memo::new(move |_| {
+    let item_name = Signal::derive(move || {
         tracked_data()
             .items
             .get(&ItemId(item_id()))
