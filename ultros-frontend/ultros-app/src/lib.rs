@@ -317,8 +317,19 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
     let error_reporting_script = error_reporting_script();
     view! {
         <!DOCTYPE html>
-        // `translate="no"` + `<meta name="google" content="notranslate">` block Chrome's Google Translate from rewriting text nodes into `<font>` wrappers before hydration, which trips `failed_to_cast_text_node` in tachys (panic at `tachys-0.2.11/src/hydration.rs:227`). App has its own locale switcher.
-        <html lang="en" translate="no" data-theme="dark" data-palette="violet">
+        // Chrome's Google Translate rewrites text nodes into `<font>` wrappers
+        // before hydration finishes, which shifts tachys' hydration cursor and
+        // trips `failed_to_cast_text_node` (panic at `hydration.rs:227`), then
+        // cascades into `RefCell already borrowed` in the wasm-bindgen-futures
+        // executor and kills the page. We opt out of translation with the full
+        // Google trifecta: `translate="no"` (W3C standard), `class="notranslate"`
+        // (Google's legacy signal — honored more reliably by older Chrome and the
+        // Translate extension, which under-honor the `translate` attribute), and
+        // `<meta name="google" content="notranslate">` below (suppresses the
+        // page-level translate prompt). The class is repeated on `<body>` because
+        // Translate walks the ancestor chain per text node. App has its own
+        // locale switcher, so we never want the browser translating our markup.
+        <html lang="en" translate="no" class="notranslate" data-theme="dark" data-palette="violet">
             <head>
                 <meta charset="utf-8" />
                 <meta name="google" content="notranslate" />
@@ -374,7 +385,7 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
     "window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', 'G-WYVZLM39M3');"
                 </script>
             </head>
-            <body>
+            <body translate="no" class="notranslate">
                 <App />
             </body>
         </html>
