@@ -161,7 +161,7 @@ where
             if len == 0 {
                 range_sig.set((0, 0));
             } else {
-                let start = (child_start() as usize).min(len - 1);
+                let start = (child_start() as usize).min(len.saturating_sub(1));
                 let end = (start + children_shown() as usize).min(len);
                 range_sig.set((start, end));
             }
