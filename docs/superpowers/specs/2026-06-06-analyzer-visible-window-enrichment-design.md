@@ -110,22 +110,33 @@ parent's `LocalResource` (currently `analyzer.rs:1441-1517`) and the
 `select_enrichment_keys` / `ENRICHMENT_BATCH_CAP` / `SPARKLINE_BATCH_CAP` machinery
 are deleted.
 
+`EnrichmentMaps` (defined at `analyzer.rs:34`) gains a third field so cells can
+tell "still loading" from "fetched, no data":
+
+```rust
+#[derive(Clone, Debug, Default)]
+struct EnrichmentMaps {
+    quality: HashMap<(i32, bool), ResaleQualityRow>,
+    sparkline: HashMap<(i32, bool), Vec<u32>>,
+    settled: std::collections::HashSet<(i32, bool)>, // keys whose fetch completed (data or not)
+}
+```
+
 State held in `AnalyzerTable`:
 
 ```rust
-let enrichment = RwSignal::new(EnrichmentMaps::default()); // accumulates, never replaced
-let requested  = StoredValue::new(HashSet::<(i32, bool)>::new()); // dedupe + loop-breaker
+// Accumulating enrichment (quality + sparkline + settled); grown, never replaced.
+let enrichment = RwSignal::new(EnrichmentMaps::default());
+// Scheduled-set: keys we've already kicked a fetch for. Non-reactive
+// (StoredValue) — it's the dedupe + reactive-loop breaker, not UI state.
+let requested = StoredValue::new(std::collections::HashSet::<(i32, bool)>::new());
 let visible_range = RwSignal::new((0usize, 0usize));
 ```
 
 Wiring:
 
 - Pass `visible_range=visible_range` into `<VirtualScroller .../>`.
-- Debounce the range with leptos-use (`signal_debounced`, ~150 ms) so a fast
-  fling only fetches where scrolling settles. (`leptos-use` is already a
-  workspace dep; `gloo_timers::future::TimeoutFuture` — as used in
-  `search_box.rs` — is the fallback if a manual debounce reads cleaner.)
-- A `pending_keys` memo computes the keys to fetch:
+- The key selection is a **pure free function** (unit-testable without a DOM):
 
 ```rust
 const PREFETCH_MARGIN: usize = 30; // rows above & below the rendered window
@@ -134,7 +145,7 @@ fn visible_keys(
     data: &[(usize, CalculatedProfitData)],
     range: (usize, usize),
     margin: usize,
-    seen: &HashSet<(i32, bool)>,
+    seen: &std::collections::HashSet<(i32, bool)>,
 ) -> Vec<(i32, bool)> {
     let (start, end) = range;
     let lo = start.saturating_sub(margin);
@@ -148,40 +159,61 @@ fn visible_keys(
 }
 ```
 
-`visible_keys` is a **pure free function** so it is unit-testable without a DOM.
-The `pending_keys` memo reads the debounced range + `sorted_data` + `requested`
-and calls it.
-
-- An `Effect` reacts to `pending_keys`: if non-empty, mark them requested
-  (optimistic dedupe), then `spawn_local` a fetch that joins both batch calls and
-  merges into `enrichment`:
+- One `Effect` does selection + debounce + fetch + merge. It reads
+  `visible_range` and `sorted_data` reactively, and `requested` non-reactively
+  (so claiming a key doesn't retrigger the effect). Debounce uses a generation
+  guard + `gloo_timers::future::TimeoutFuture` — the same pattern `search_box.rs`
+  already uses — so a fast fling only fetches where it settles. (Chosen over
+  leptos-use's `signal_debounced`: the gloo-timer pattern is already proven here
+  and adds no new API surface.) Keys are claimed in `requested` *after* the
+  debounce, so superseded generations never claim.
 
 ```rust
+const DEBOUNCE_MS: u32 = 150;
+let gen = StoredValue::new(0u64);
+
 Effect::new(move |_| {
-    let keys = pending_keys.get();
-    if keys.is_empty() { return; }
+    let range = visible_range.get();          // reactive: scroll
+    let keys = sorted_data.with(|data| {      // reactive: sort / filter / enrichment
+        requested.with_value(|seen| visible_keys(data, range, PREFETCH_MARGIN, seen))
+    });
+    if keys.is_empty() {
+        return;
+    }
+    gen.update_value(|g| *g += 1);
+    let my_gen = gen.get_value();
     let world_name = world.get_untracked();
-    requested.update_value(|s| s.extend(keys.iter().copied()));
-    spawn_local(async move {
-        // chunk to <=200 (sparklines) / <=240 (quality); usually 1 chunk
+    leptos::task::spawn_local(async move {
+        TimeoutFuture::new(DEBOUNCE_MS).await;       // debounce
+        if gen.get_value() != my_gen {
+            return; // superseded by a newer range
+        }
+        requested.update_value(|s| s.extend(keys.iter().copied())); // claim post-debounce
+        // chunk to <=200 (sparklines) / <=240 (quality); usually one chunk
         let (quality, sparklines) = futures::join!(
             get_resale_quality(&world_name, keys.clone(), 30),
-            post_sparklines(&world_name, SparklinesRequest { items: keys.clone(), hours: Some(168) }),
+            post_sparklines(
+                &world_name,
+                SparklinesRequest { items: keys.clone(), hours: Some(168) },
+            ),
         );
-        // Merge whatever succeeded into the accumulating map (mirrors the
-        // existing merge at analyzer.rs:1492-1509).
+        // Merge whatever succeeded, and mark every fetched key `settled`
+        // (success OR error) so cells switch loading -> value / "—".
+        // Mirrors the existing merge at analyzer.rs:1492-1509.
         enrichment.update(|m| {
             if let Ok(q) = &quality {
-                m.quality.extend(q.rows.iter().map(|r| ((r.item_id, r.hq), r.clone())));
+                m.quality
+                    .extend(q.rows.iter().map(|r| ((r.item_id, r.hq), r.clone())));
             }
             if let Ok(s) = &sparklines {
-                m.sparkline.extend(s.series.iter().map(|r| ((r.item_id, r.hq), r.points.clone())));
+                m.sparkline
+                    .extend(s.series.iter().map(|r| ((r.item_id, r.hq), r.points.clone())));
             }
+            m.settled.extend(keys.iter().copied());
         });
-        // If a call failed, drop its keys from `requested` so revisiting retries.
-        if quality.is_err() || sparklines.is_err() {
-            requested.update_value(|s| keys.iter().for_each(|k| { s.remove(k); }));
-        }
+        // No per-key retry: keys stay in `requested`, so a CH blip degrades the
+        // rows to "—" (same as today) rather than refetch-looping. A world
+        // change resets everything (see §4).
     });
 });
 ```
@@ -197,11 +229,17 @@ Files/lines: Trend `analyzer.rs:1319`, Sales/day `analyzer.rs:1340`,
 30d Volume `analyzer.rs:1349`.
 
 Today every cell falls back to empty/`—` whether the row is loading or genuinely
-absent. Add an in-flight notion (a key is in `requested` but not yet in
-`enrichment`): render the already-imported `BoxSkeleton` for Trend and a dim
-placeholder for the number columns while in-flight, and `—` only once a fetch has
-completed with no data. This keeps fast scrolling reading as "loading", not
-"no data".
+absent. With the `settled` set, each of the three cells follows one rule (reading
+the already-subscribed `enrichment` signal):
+
+- key in `quality` / `sparkline` map → render the value (current behavior).
+- else if key in `settled` → render `—` (fetched, no CH data).
+- else → render `SingleLineSkeleton` (a thin themed pulse, `skeleton.rs:6`) — the
+  fetch is in flight.
+
+`SingleLineSkeleton` (not `BoxSkeleton`, which is a six-row block sized for a
+panel) is added to the existing `skeleton::{...}` import. This keeps fast
+scrolling reading as "loading", not "no data".
 
 ### 4. Caching / invalidation
 
@@ -217,11 +255,11 @@ completed with no data. This keeps fast scrolling reading as "loading", not
 ```
 scroll → VirtualScroller updates child_start/children_shown
        → visible_range RwSignal set (rendered range)
-       → signal_debounced(150ms)
-       → pending_keys memo = visible_keys(sorted_data, range, MARGIN, requested)
-       → Effect: mark requested, spawn_local fetch (join resale_quality + sparklines)
-       → enrichment.update(merge)
-       → cells re-read enrichment, render values (mounted rows only)
+       → Effect: keys = visible_keys(sorted_data, range, MARGIN, requested)
+       → debounce (gen guard + TimeoutFuture 150ms); latest generation wins
+       → claim keys in `requested`; join get_resale_quality + post_sparklines
+       → enrichment.update(merge data + mark keys settled)
+       → cells re-read enrichment → value / "—" / skeleton (mounted rows only)
 ```
 
 ## Edge cases & wrinkles (handled)
@@ -233,11 +271,14 @@ scroll → VirtualScroller updates child_start/children_shown
   Decision: keep current **hide** semantics; switching to dim/mark would fully
   remove reflow but is out of scope.
 - **Reactive loop** (enrichment update → `sorted_data` recompute, because the
-  suspicious filter reads enrichment → `pending_keys` recompute): the `requested`
-  set breaks it — already-requested keys are filtered out, so it converges after
-  one round per newly-visible set.
-- **Fetch failure:** failed keys are cleared from `requested` so revisiting the
-  rows retries, avoiding a permanent `—`.
+  suspicious filter reads enrichment → the fetch effect re-runs): the `requested`
+  set breaks it — already-claimed keys are filtered out by `visible_keys`, so the
+  recomputed key set is empty and the effect returns. Converges after one round
+  per newly-visible set.
+- **Fetch failure:** on completion (success *or* error) the fetched keys are
+  marked `settled` and kept in `requested`, so the rows render `—` (graceful
+  degradation, same as today's CH-outage behavior) with no refetch loop. A world
+  change clears `settled` + `requested`, allowing a fresh attempt.
 - **Initial mount:** the scroller's range effect runs on mount, setting
   `visible_range` to `(0, ~26)`, which triggers the first fetch of the default
   (top-ROI) view — so the default view fills without a separate eager path.
