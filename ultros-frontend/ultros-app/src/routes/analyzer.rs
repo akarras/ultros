@@ -46,10 +46,15 @@ impl EnrichmentMaps {
     }
 }
 
-/// Cap on the batch size sent to `/api/v1/resale_quality` and
-/// `/api/v1/sparklines`. Both endpoints reject payloads above ~250; we
-/// stay safely under to leave headroom for serialization overhead.
+/// Cap on the batch size sent to `/api/v1/resale_quality`, which rejects
+/// payloads above 250; we stay under to leave headroom for serialization.
 const ENRICHMENT_BATCH_CAP: usize = 240;
+
+/// `/api/v1/sparklines` enforces a tighter cap than `resale_quality` —
+/// it rejects payloads above 200. Because `select_enrichment_keys` returns
+/// rows ROI-ranked, sending the first `SPARKLINE_BATCH_CAP` keys still
+/// covers the most-visible (highest-ROI) rows the table shows first.
+const SPARKLINE_BATCH_CAP: usize = 200;
 
 /// Stable URL IDs for optional columns. Required columns (HQ, Item,
 /// Profit, ROI, Buy Price) are not in this list — they always render.
@@ -1465,12 +1470,18 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             if keys.is_empty() {
                 return EnrichmentMaps::default();
             }
+            // sparklines caps batches at 200 (tighter than resale_quality's
+            // 250); `keys` is ROI-ranked, so the first SPARKLINE_BATCH_CAP are
+            // the most-visible rows. Sending the full 240 here 400s the whole
+            // request and blanks the Trend column on any busy world.
+            let sparkline_keys: Vec<(i32, bool)> =
+                keys.iter().take(SPARKLINE_BATCH_CAP).copied().collect();
             let (quality, sparklines) = futures::join!(
                 get_resale_quality(&world_name, keys.clone(), 30),
                 post_sparklines(
                     &world_name,
                     SparklinesRequest {
-                        items: keys.clone(),
+                        items: sparkline_keys,
                         // 7 days (server caps at 168h). 24h was too tight —
                         // quiet items rendered as empty sparklines because a
                         // single non-trade hour can sink the polyline.
