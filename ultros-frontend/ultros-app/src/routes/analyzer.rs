@@ -2176,10 +2176,12 @@ mod tests {
     fn visible_keys_clamps_at_start_and_end() {
         let data: Vec<(i32, bool)> = (0..10).map(|i| (i, false)).collect();
         let seen = std::collections::HashSet::new();
-        // lo = 2.saturating_sub(5) = 0 ; hi = (4 + 5).min(10) = 9 => slice [0, 9)
-        let keys = visible_keys(&data, (2, 4), 5, &seen, |k| *k);
+        // start clamp: lo = 2.saturating_sub(5) = 0
+        // end clamp: hi = (8 + 5).min(10) = 10 (would be 13 unclamped) => slice [0, 10)
+        let keys = visible_keys(&data, (2, 8), 5, &seen, |k| *k);
+        assert_eq!(keys.len(), 10);
         assert_eq!(keys.first(), Some(&(0, false)));
-        assert_eq!(keys.last(), Some(&(8, false)));
+        assert_eq!(keys.last(), Some(&(9, false)));
     }
 
     #[test]
