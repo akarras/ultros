@@ -11,7 +11,7 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
-        skeleton::BoxSkeleton,
+        skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::*,
@@ -35,6 +35,10 @@ use ultros_api_types::{
 struct EnrichmentMaps {
     quality: HashMap<(i32, bool), ResaleQualityRow>,
     sparkline: HashMap<(i32, bool), Vec<u32>>,
+    /// Keys whose fetch has completed (with OR without data). Lets cells tell
+    /// "still loading" (absent) from "fetched, no CH data" (present, but no
+    /// entry in `quality` / `sparkline`).
+    settled: std::collections::HashSet<(i32, bool)>,
 }
 
 impl EnrichmentMaps {
@@ -44,17 +48,10 @@ impl EnrichmentMaps {
     fn sparkline_for(&self, key: &(i32, bool)) -> Option<&Vec<u32>> {
         self.sparkline.get(key)
     }
+    fn is_settled(&self, key: &(i32, bool)) -> bool {
+        self.settled.contains(key)
+    }
 }
-
-/// Cap on the batch size sent to `/api/v1/resale_quality`, which rejects
-/// payloads above 250; we stay under to leave headroom for serialization.
-const ENRICHMENT_BATCH_CAP: usize = 240;
-
-/// `/api/v1/sparklines` enforces a tighter cap than `resale_quality` —
-/// it rejects payloads above 200. Because `select_enrichment_keys` returns
-/// rows ROI-ranked, sending the first `SPARKLINE_BATCH_CAP` keys still
-/// covers the most-visible (highest-ROI) rows the table shows first.
-const SPARKLINE_BATCH_CAP: usize = 200;
 
 /// Stable URL IDs for optional columns. Required columns (HQ, Item,
 /// Profit, ROI, Buy Price) are not in this list — they always render.
@@ -109,6 +106,7 @@ fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> 
         .join(",")
 }
 use chrono::{Duration, Utc};
+use gloo_timers::future::TimeoutFuture;
 use humantime::{format_duration, parse_duration};
 use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
@@ -366,44 +364,18 @@ impl ProfitTable {
     }
 }
 
-/// Post-tax ROI in integer percent for a profit row, mirroring the analyzer
-/// table's default (ROI) ranking so the enrichment pass requests the same rows
-/// the user sees first.
-fn roi_for_rank(p: &ProfitData) -> i32 {
-    let estimated = (p.estimated_sale_price as f32 * 0.95) as i32;
-    let profit = estimated - p.cheapest_price;
-    if p.cheapest_price > 0 {
-        ((profit as f32 / p.cheapest_price as f32) * 100.0) as i32
-    } else {
-        0
-    }
-}
-
-/// Choose the `(item_id, hq)` keys to send to the ClickHouse enrichment
-/// endpoints (`resale_quality` + `sparklines`), capped at `cap`.
-///
-/// The endpoints reject batches above ~250, but a busy world has thousands of
-/// recently-sold items — so we must enrich a subset, and it has to be the rows
-/// the table actually displays: the top opportunities by ROI (the default
-/// sort). The earlier implementation sorted by `item_id` and kept the lowest
-/// `cap`, which are low-level commodities that never rank as top flips — so
-/// every displayed (high-item_id) row missed the join and rendered "—" in the
-/// Sales/day, 30d Volume, and Trend columns.
-fn select_enrichment_keys(profits: &ProfitTable, cap: usize) -> Vec<(i32, bool)> {
-    let mut ranked: Vec<&Arc<ProfitData>> = profits.0.iter().collect();
-    ranked.sort_by_key(|p| Reverse(roi_for_rank(p)));
-    ranked
-        .into_iter()
-        .take(cap)
-        .map(|p| (p.sale_summary.item_id, p.sale_summary.hq))
-        .collect()
-}
+/// Rows fetched above & below the rendered window, so enrichment lands just
+/// before a row scrolls into view. Keep small enough that
+/// `rendered (~26) + 2 * PREFETCH_MARGIN` stays well under the 200-item
+/// sparklines cap (no chunking needed).
+const PREFETCH_MARGIN: usize = 30;
+/// Debounce window for scroll-driven fetches (ms). Mirrors search_box.rs.
+const DEBOUNCE_MS: u32 = 150;
 
 /// Keys in the `[start - margin, end + margin)` slice of `data`, minus `seen`.
 /// Generic over the row type + a key extractor so it unit-tests with plain
 /// `(i32, bool)` fixtures — no `CalculatedProfitData` / DOM needed. Wired into
 /// the lazy-enrichment effect in `AnalyzerTable`.
-#[allow(dead_code)] // wired into the fetch effect in the same change set
 fn visible_keys<T>(
     data: &[T],
     range: (usize, usize),
@@ -443,10 +415,6 @@ fn AnalyzerTable(
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
     filter_outliers: bool,
-    /// CH-backed per-row enrichment (quality band + sparkline). Empty
-    /// when the enrichment fetch is in flight or failed — the table
-    /// degrades gracefully to Pass-1 rendering.
-    enrichment: Signal<EnrichmentMaps>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let profits = ProfitTable::new(
@@ -511,6 +479,11 @@ fn AnalyzerTable(
             .map(|d| format_duration(d).to_string())
             .unwrap_or("---".to_string())
     });
+
+    // Accumulating CH enrichment (quality + sparkline + settled), grown by the
+    // visible-window fetch effect below; never wholesale-replaced (except on a
+    // world change). Cells + the suspicious filter read it reactively.
+    let enrichment = RwSignal::new(EnrichmentMaps::default());
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
@@ -647,6 +620,83 @@ fn AnalyzerTable(
             .enumerate()
             .collect::<Vec<(usize, CalculatedProfitData)>>()
     });
+
+    // --- Visible-window lazy enrichment -------------------------------------
+    // Dedupe / loop-breaker: keys we've already scheduled a fetch for. Non-
+    // reactive (StoredValue) on purpose — claiming a key must not retrigger the
+    // fetch effect.
+    let requested = StoredValue::new(std::collections::HashSet::<(i32, bool)>::new());
+    // Rendered row range published by the VirtualScroller (see view! below).
+    let visible_range = RwSignal::new((0usize, 0usize));
+    // Generation counter for debounce-with-cancellation (RwSignal, mirroring
+    // components/search_box.rs). `gen` is a reserved keyword in edition 2024.
+    let fetch_id = RwSignal::new(0u64);
+
+    // Reset accumulated enrichment when the world changes. Defense-in-depth: if
+    // the component is updated in place rather than remounted, another world's
+    // data must not leak.
+    Effect::new(move |_| {
+        let _ = world.get(); // subscribe: re-run on world change
+        enrichment.set(EnrichmentMaps::default());
+        requested.update_value(|s| s.clear());
+    });
+
+    // Select the visible-window keys (honoring the active sort/filter via
+    // sorted_data), debounce, fetch both batches, and merge — accumulating.
+    Effect::new(move |_| {
+        let range = visible_range.get(); // reactive: scroll
+        let keys = sorted_data.with(|data| {
+            requested.with_value(|seen| {
+                visible_keys(data, range, PREFETCH_MARGIN, seen, |(_, d)| {
+                    (d.inner.sale_summary.item_id, d.inner.sale_summary.hq)
+                })
+            })
+        });
+        if keys.is_empty() {
+            return;
+        }
+        fetch_id.update(|n| *n += 1);
+        let current_id = fetch_id.get_untracked();
+        let world_name = world.get_untracked();
+        leptos::task::spawn_local(async move {
+            TimeoutFuture::new(DEBOUNCE_MS).await; // debounce
+            if fetch_id.get_untracked() != current_id {
+                return; // superseded by a newer range
+            }
+            // Claim post-debounce so superseded generations never claim.
+            requested.update_value(|s| s.extend(keys.iter().copied()));
+            // window <= ~86 keys << 200 cap -> single batch, no chunking.
+            let (quality, sparklines) = futures::join!(
+                get_resale_quality(&world_name, keys.clone(), 30),
+                post_sparklines(
+                    &world_name,
+                    SparklinesRequest {
+                        items: keys.clone(),
+                        hours: Some(168),
+                    },
+                ),
+            );
+            // Merge whatever succeeded and mark every fetched key settled
+            // (success OR error) so cells switch loading -> value / "—". On a CH
+            // blip the rows degrade to "—" (same as today) — no retry loop; a
+            // world change resets everything.
+            enrichment.update(|m| {
+                if let Ok(q) = &quality {
+                    m.quality
+                        .extend(q.rows.iter().map(|r| ((r.item_id, r.hq), r.clone())));
+                }
+                if let Ok(s) = &sparklines {
+                    m.sparkline.extend(
+                        s.series
+                            .iter()
+                            .map(|r| ((r.item_id, r.hq), r.points.clone())),
+                    );
+                }
+                m.settled.extend(keys.iter().copied());
+            });
+        });
+    });
+
     view! {
         <div class="flex flex-col gap-6">
             // Primary filter toolbar
@@ -1077,6 +1127,7 @@ fn AnalyzerTable(
                         overscan=8
                         header_height=56.0
                         variable_height=false
+                        visible_range=visible_range
                         header=view! {
                             <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[44px] px-2 text-center">
@@ -1339,42 +1390,53 @@ fn AnalyzerTable(
                                         view! {
                                             {move || visible_cols().contains(COL_TREND).then(|| {
                                                 let maps = enrichment.get();
-                                                let pts = maps.sparkline_for(&row_key).cloned().unwrap_or_default();
-                                                let pct = maps.quality_for(&row_key)
-                                                    .map(|q| {
-                                                        let vwap = q.vwap as f32;
-                                                        if vwap <= 0.0 {
-                                                            0.0
-                                                        } else {
-                                                            (row_cheapest_price as f32 - vwap) / vwap * 100.0
-                                                        }
-                                                    })
-                                                    .unwrap_or(0.0);
+                                                let inner = if let Some(pts) = maps.sparkline_for(&row_key) {
+                                                    let pct = maps.quality_for(&row_key)
+                                                        .map(|q| {
+                                                            let vwap = q.vwap as f32;
+                                                            if vwap <= 0.0 {
+                                                                0.0
+                                                            } else {
+                                                                (row_cheapest_price as f32 - vwap) / vwap * 100.0
+                                                            }
+                                                        })
+                                                        .unwrap_or(0.0);
+                                                    view! { <Sparkline points=pts.clone() pct_change=pct /> }.into_any()
+                                                } else if maps.is_settled(&row_key) {
+                                                    // fetched, no series -> empty sparkline (prior behavior)
+                                                    view! { <Sparkline points=Vec::new() pct_change=0.0 /> }.into_any()
+                                                } else {
+                                                    view! { <SingleLineSkeleton /> }.into_any()
+                                                };
                                                 view! {
                                                     <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
-                                                        <Sparkline points=pts pct_change=pct />
+                                                        {inner}
                                                     </div>
                                                 }
                                             })}
                                             {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
-                                                let text = enrichment.get()
-                                                    .quality_for(&row_key)
-                                                    .map(|q| format!("{:.1}", q.sales_per_day))
-                                                    .unwrap_or_else(|| "—".to_string());
+                                                let maps = enrichment.get();
+                                                let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
+                                                    (Some(q), _) => view! { {format!("{:.1}", q.sales_per_day)} }.into_any(),
+                                                    (None, true) => view! { "—" }.into_any(),
+                                                    (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
+                                                };
                                                 view! {
                                                     <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
-                                                        {text}
+                                                        {inner}
                                                     </div>
                                                 }
                                             })}
                                             {move || visible_cols().contains(COL_VOLUME_30D).then(|| {
-                                                let text = enrichment.get()
-                                                    .quality_for(&row_key)
-                                                    .map(|q| q.sample_size.to_string())
-                                                    .unwrap_or_else(|| "—".to_string());
+                                                let maps = enrichment.get();
+                                                let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
+                                                    (Some(q), _) => view! { {q.sample_size.to_string()} }.into_any(),
+                                                    (None, true) => view! { "—" }.into_any(),
+                                                    (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
+                                                };
                                                 view! {
                                                     <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
-                                                        {text}
+                                                        {inner}
                                                     </div>
                                                 }
                                             })}
@@ -1453,91 +1515,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
     let query = use_query_map();
-
-    // CH enrichment: fetched once the sales resource resolves, in a
-    // single round-trip via the resale_quality + sparklines batch
-    // endpoints. Soft-fails silently — the page still renders Pass-1
-    // results with no chip when CH is unavailable.
-    let sales_for_enrichment = sales.clone();
-    let world_cheapest_for_enrichment = world_cheapest_listings.clone();
-    let global_cheapest_for_enrichment = global_cheapest_listings.clone();
-    let enrichment = LocalResource::new(move || {
-        let world_name = world();
-        let sales_res = sales_for_enrichment.get();
-        let world_cheapest_res = world_cheapest_for_enrichment.get();
-        let global_cheapest_res = global_cheapest_for_enrichment.get();
-        let filter_outliers = filter_outliers().unwrap_or(false);
-        async move {
-            if world_name.is_empty() {
-                return EnrichmentMaps::default();
-            }
-            let (Some(Ok(sales)), Some(Ok(world_cheapest)), Some(Ok(global_cheapest))) =
-                (sales_res, world_cheapest_res, global_cheapest_res)
-            else {
-                return EnrichmentMaps::default();
-            };
-            // Enrich the rows the table will actually show — the top
-            // opportunities by ROI (the default sort) — not the 240
-            // numerically-lowest item_ids, which are low-level commodities
-            // that never surface as top flips. Cross-region deals are omitted
-            // from this ranking pass (a default-off power feature); the ROI
-            // order still captures the rows shown by default.
-            let profits = ProfitTable::new(
-                sales,
-                global_cheapest,
-                world_cheapest,
-                Vec::new(),
-                filter_outliers,
-            );
-            let keys = select_enrichment_keys(&profits, ENRICHMENT_BATCH_CAP);
-            if keys.is_empty() {
-                return EnrichmentMaps::default();
-            }
-            // sparklines caps batches at 200 (tighter than resale_quality's
-            // 250); `keys` is ROI-ranked, so the first SPARKLINE_BATCH_CAP are
-            // the most-visible rows. Sending the full 240 here 400s the whole
-            // request and blanks the Trend column on any busy world.
-            let sparkline_keys: Vec<(i32, bool)> =
-                keys.iter().take(SPARKLINE_BATCH_CAP).copied().collect();
-            let (quality, sparklines) = futures::join!(
-                get_resale_quality(&world_name, keys.clone(), 30),
-                post_sparklines(
-                    &world_name,
-                    SparklinesRequest {
-                        items: sparkline_keys,
-                        // 7 days (server caps at 168h). 24h was too tight —
-                        // quiet items rendered as empty sparklines because a
-                        // single non-trade hour can sink the polyline.
-                        hours: Some(168),
-                    }
-                ),
-            );
-            let quality_map = quality
-                .ok()
-                .map(|r| {
-                    r.rows
-                        .into_iter()
-                        .map(|row| ((row.item_id, row.hq), row))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let sparkline_map = sparklines
-                .ok()
-                .map(|s| {
-                    s.series
-                        .into_iter()
-                        .map(|row| ((row.item_id, row.hq), row.points))
-                        .collect()
-                })
-                .unwrap_or_default();
-            EnrichmentMaps {
-                quality: quality_map,
-                sparkline: sparkline_map,
-            }
-        }
-    });
-    let enrichment_signal: Signal<EnrichmentMaps> =
-        Signal::derive(move || enrichment.get().unwrap_or_default());
 
     let enabled_regions = move || {
         let map = query();
@@ -1723,7 +1700,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     worlds
                                                     world=world.into()
                                                     filter_outliers=filter_outliers().unwrap_or(false)
-                                                    enrichment=enrichment_signal
                                                 />
                                             },
                                         )
@@ -2098,67 +2074,6 @@ mod tests {
         let row = &table.0[0];
         assert_eq!(row.sale_summary.median_price, 1000);
         assert_eq!(row.estimated_sale_price, 1000);
-    }
-
-    #[test]
-    fn enrichment_selects_top_roi_rows_not_lowest_item_ids() {
-        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
-        use ultros_api_types::recent_sales::RecentSales;
-
-        // A low-id commodity with no margin, and a high-id flip with a fat
-        // margin. The enrichment pass must pick the high-ROI flip — the rows
-        // the table shows first — not the numerically-lowest item_id. (The old
-        // `sort_unstable() + truncate()` would have picked item 2 instead,
-        // which is exactly why the columns were always blank in prod.)
-        let sales = RecentSales {
-            sales: vec![
-                sales_row(
-                    2,
-                    false,
-                    &[(100, 0), (100, 1), (100, 2), (100, 3), (100, 4), (100, 5)],
-                ),
-                sales_row(
-                    40000,
-                    false,
-                    &[
-                        (10000, 0),
-                        (10000, 1),
-                        (10000, 2),
-                        (10000, 3),
-                        (10000, 4),
-                        (10000, 5),
-                    ],
-                ),
-            ],
-        };
-        let region = CheapestListings {
-            cheapest_listings: vec![
-                CheapestListingItem {
-                    item_id: 2,
-                    hq: false,
-                    cheapest_price: 95,
-                    world_id: 42,
-                },
-                CheapestListingItem {
-                    item_id: 40000,
-                    hq: false,
-                    cheapest_price: 1000,
-                    world_id: 42,
-                },
-            ],
-        };
-        let world = CheapestListings {
-            cheapest_listings: vec![],
-        };
-        let profits = ProfitTable::new(sales, region, world, vec![], false);
-
-        // cap = 1 must yield the high-ROI flip, never the lowest item_id.
-        assert_eq!(select_enrichment_keys(&profits, 1), vec![(40000, false)]);
-        // Under a larger cap, both are present, ordered ROI-desc (flip first).
-        assert_eq!(
-            select_enrichment_keys(&profits, 10),
-            vec![(40000, false), (2, false)]
-        );
     }
 
     #[test]
