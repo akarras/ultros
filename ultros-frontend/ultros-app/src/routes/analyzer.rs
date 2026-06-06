@@ -361,6 +361,39 @@ impl ProfitTable {
     }
 }
 
+/// Post-tax ROI in integer percent for a profit row, mirroring the analyzer
+/// table's default (ROI) ranking so the enrichment pass requests the same rows
+/// the user sees first.
+fn roi_for_rank(p: &ProfitData) -> i32 {
+    let estimated = (p.estimated_sale_price as f32 * 0.95) as i32;
+    let profit = estimated - p.cheapest_price;
+    if p.cheapest_price > 0 {
+        ((profit as f32 / p.cheapest_price as f32) * 100.0) as i32
+    } else {
+        0
+    }
+}
+
+/// Choose the `(item_id, hq)` keys to send to the ClickHouse enrichment
+/// endpoints (`resale_quality` + `sparklines`), capped at `cap`.
+///
+/// The endpoints reject batches above ~250, but a busy world has thousands of
+/// recently-sold items — so we must enrich a subset, and it has to be the rows
+/// the table actually displays: the top opportunities by ROI (the default
+/// sort). The earlier implementation sorted by `item_id` and kept the lowest
+/// `cap`, which are low-level commodities that never rank as top flips — so
+/// every displayed (high-item_id) row missed the join and rendered "—" in the
+/// Sales/day, 30d Volume, and Trend columns.
+fn select_enrichment_keys(profits: &ProfitTable, cap: usize) -> Vec<(i32, bool)> {
+    let mut ranked: Vec<&Arc<ProfitData>> = profits.0.iter().collect();
+    ranked.sort_by_key(|p| Reverse(roi_for_rank(p)));
+    ranked
+        .into_iter()
+        .take(cap)
+        .map(|p| (p.sale_summary.item_id, p.sale_summary.hq))
+        .collect()
+}
+
 #[component]
 fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
     view! {
@@ -1398,21 +1431,37 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     // endpoints. Soft-fails silently — the page still renders Pass-1
     // results with no chip when CH is unavailable.
     let sales_for_enrichment = sales.clone();
+    let world_cheapest_for_enrichment = world_cheapest_listings.clone();
+    let global_cheapest_for_enrichment = global_cheapest_listings.clone();
     let enrichment = LocalResource::new(move || {
         let world_name = world();
         let sales_res = sales_for_enrichment.get();
+        let world_cheapest_res = world_cheapest_for_enrichment.get();
+        let global_cheapest_res = global_cheapest_for_enrichment.get();
+        let filter_outliers = filter_outliers().unwrap_or(false);
         async move {
             if world_name.is_empty() {
                 return EnrichmentMaps::default();
             }
-            let Some(Ok(sales)) = sales_res else {
+            let (Some(Ok(sales)), Some(Ok(world_cheapest)), Some(Ok(global_cheapest))) =
+                (sales_res, world_cheapest_res, global_cheapest_res)
+            else {
                 return EnrichmentMaps::default();
             };
-            let mut keys: Vec<(i32, bool)> =
-                sales.sales.iter().map(|s| (s.item_id, s.hq)).collect();
-            keys.sort_unstable();
-            keys.dedup();
-            keys.truncate(ENRICHMENT_BATCH_CAP);
+            // Enrich the rows the table will actually show — the top
+            // opportunities by ROI (the default sort) — not the 240
+            // numerically-lowest item_ids, which are low-level commodities
+            // that never surface as top flips. Cross-region deals are omitted
+            // from this ranking pass (a default-off power feature); the ROI
+            // order still captures the rows shown by default.
+            let profits = ProfitTable::new(
+                sales,
+                global_cheapest,
+                world_cheapest,
+                Vec::new(),
+                filter_outliers,
+            );
+            let keys = select_enrichment_keys(&profits, ENRICHMENT_BATCH_CAP);
             if keys.is_empty() {
                 return EnrichmentMaps::default();
             }
@@ -2015,5 +2064,66 @@ mod tests {
         let row = &table.0[0];
         assert_eq!(row.sale_summary.median_price, 1000);
         assert_eq!(row.estimated_sale_price, 1000);
+    }
+
+    #[test]
+    fn enrichment_selects_top_roi_rows_not_lowest_item_ids() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        // A low-id commodity with no margin, and a high-id flip with a fat
+        // margin. The enrichment pass must pick the high-ROI flip — the rows
+        // the table shows first — not the numerically-lowest item_id. (The old
+        // `sort_unstable() + truncate()` would have picked item 2 instead,
+        // which is exactly why the columns were always blank in prod.)
+        let sales = RecentSales {
+            sales: vec![
+                sales_row(
+                    2,
+                    false,
+                    &[(100, 0), (100, 1), (100, 2), (100, 3), (100, 4), (100, 5)],
+                ),
+                sales_row(
+                    40000,
+                    false,
+                    &[
+                        (10000, 0),
+                        (10000, 1),
+                        (10000, 2),
+                        (10000, 3),
+                        (10000, 4),
+                        (10000, 5),
+                    ],
+                ),
+            ],
+        };
+        let region = CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 2,
+                    hq: false,
+                    cheapest_price: 95,
+                    world_id: 42,
+                },
+                CheapestListingItem {
+                    item_id: 40000,
+                    hq: false,
+                    cheapest_price: 1000,
+                    world_id: 42,
+                },
+            ],
+        };
+        let world = CheapestListings {
+            cheapest_listings: vec![],
+        };
+        let profits = ProfitTable::new(sales, region, world, vec![], false);
+
+        // cap = 1 must yield the high-ROI flip, never the lowest item_id.
+        assert_eq!(select_enrichment_keys(&profits, 1), vec![(40000, false)]);
+        // Under a larger cap, both are present, ordered ROI-desc (flip first).
+        assert_eq!(
+            select_enrichment_keys(&profits, 10),
+            vec![(40000, false), (2, false)]
+        );
     }
 }
