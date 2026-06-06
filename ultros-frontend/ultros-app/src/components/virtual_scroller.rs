@@ -65,6 +65,11 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional)] variable_height: bool,
     #[prop(optional, into)] scroll_to_index: Option<Signal<Option<usize>>>,
     #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
+    /// Optional writeback of the rendered row range `(start, end)` (end
+    /// exclusive, includes overscan). Lets a parent fetch data only for
+    /// rows in view. When omitted, no extra work is done.
+    #[prop(optional, into)]
+    visible_range: Option<RwSignal<(usize, usize)>>,
 ) -> impl IntoView
 where
     D: Fn(T) -> V + 'static + Clone + Send,
@@ -146,6 +151,22 @@ where
     let children_shown = Memo::new(move |_| {
         ((effective_viewport / avg_row_height()).ceil() as u32).max(1) + render_ahead
     });
+
+    // Publish the rendered row range to an optional parent signal. `child_start`
+    // and `children_shown` already account for overscan and match the slice used
+    // by `virtual_children` below.
+    if let Some(range_sig) = visible_range {
+        Effect::new(move |_| {
+            let len = children_len();
+            if len == 0 {
+                range_sig.set((0, 0));
+            } else {
+                let start = (child_start() as usize).min(len - 1);
+                let end = (start + children_shown() as usize).min(len);
+                range_sig.set((start, end));
+            }
+        });
+    }
 
     // Scroll target into view when requested (moved after layout signals are defined)
     if let Some(scroll_sig) = scroll_to_index {
