@@ -141,11 +141,15 @@ Wiring:
 ```rust
 const PREFETCH_MARGIN: usize = 30; // rows above & below the rendered window
 
-fn visible_keys(
-    data: &[(usize, CalculatedProfitData)],
+/// Keys in the [start-margin, end+margin) slice of `data`, minus `seen`.
+/// Generic over the row type + key extractor so it unit-tests with plain
+/// `(i32, bool)` fixtures — no `CalculatedProfitData` / DOM needed.
+fn visible_keys<T>(
+    data: &[T],
     range: (usize, usize),
     margin: usize,
     seen: &std::collections::HashSet<(i32, bool)>,
+    key_of: impl Fn(&T) -> (i32, bool),
 ) -> Vec<(i32, bool)> {
     let (start, end) = range;
     let lo = start.saturating_sub(margin);
@@ -153,7 +157,7 @@ fn visible_keys(
     data.get(lo..hi)
         .unwrap_or(&[])
         .iter()
-        .map(|(_, d)| (d.inner.sale_summary.item_id, d.inner.sale_summary.hq))
+        .map(key_of)
         .filter(|k| !seen.contains(k))
         .collect()
 }
@@ -170,26 +174,33 @@ fn visible_keys(
 
 ```rust
 const DEBOUNCE_MS: u32 = 150;
-let gen = StoredValue::new(0u64);
+// Generation counter for debounce-with-cancellation, mirroring the proven
+// pattern in components/search_box.rs. (`gen` is a reserved keyword in Rust
+// edition 2024, so this is named `fetch_id`.)
+let fetch_id = RwSignal::new(0u64);
 
 Effect::new(move |_| {
     let range = visible_range.get();          // reactive: scroll
     let keys = sorted_data.with(|data| {      // reactive: sort / filter / enrichment
-        requested.with_value(|seen| visible_keys(data, range, PREFETCH_MARGIN, seen))
+        requested.with_value(|seen| {
+            visible_keys(data, range, PREFETCH_MARGIN, seen, |(_, d)| {
+                (d.inner.sale_summary.item_id, d.inner.sale_summary.hq)
+            })
+        })
     });
     if keys.is_empty() {
         return;
     }
-    gen.update_value(|g| *g += 1);
-    let my_gen = gen.get_value();
+    fetch_id.update(|n| *n += 1);
+    let current_id = fetch_id.get_untracked();
     let world_name = world.get_untracked();
     leptos::task::spawn_local(async move {
         TimeoutFuture::new(DEBOUNCE_MS).await;       // debounce
-        if gen.get_value() != my_gen {
+        if fetch_id.get_untracked() != current_id {
             return; // superseded by a newer range
         }
         requested.update_value(|s| s.extend(keys.iter().copied())); // claim post-debounce
-        // chunk to <=200 (sparklines) / <=240 (quality); usually one chunk
+        // window <= ~86 keys << 200 cap -> single batch (see PREFETCH_MARGIN note)
         let (quality, sparklines) = futures::join!(
             get_resale_quality(&world_name, keys.clone(), 30),
             post_sparklines(
@@ -218,8 +229,9 @@ Effect::new(move |_| {
 });
 ```
 
-Defensive chunking keeps each request under the caps even with a tall viewport +
-margin; in practice ~26 + 2×30 ≈ 86 keys → one chunk.
+The window is ~26 + 2×30 ≈ 86 keys — comfortably under the 200 / 250 caps — so
+keys are sent in a single batch (no chunking). If `PREFETCH_MARGIN` or the
+viewport ever grows enough to approach ~150 keys, add chunking to ≤200 / ≤240.
 
 Fixed params preserved from today: `window_days = 30`, sparkline `hours = 168`.
 
