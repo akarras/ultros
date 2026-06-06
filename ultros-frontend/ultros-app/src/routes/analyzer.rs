@@ -399,6 +399,29 @@ fn select_enrichment_keys(profits: &ProfitTable, cap: usize) -> Vec<(i32, bool)>
         .collect()
 }
 
+/// Keys in the `[start - margin, end + margin)` slice of `data`, minus `seen`.
+/// Generic over the row type + a key extractor so it unit-tests with plain
+/// `(i32, bool)` fixtures — no `CalculatedProfitData` / DOM needed. Wired into
+/// the lazy-enrichment effect in `AnalyzerTable`.
+#[allow(dead_code)] // wired into the fetch effect in the same change set
+fn visible_keys<T>(
+    data: &[T],
+    range: (usize, usize),
+    margin: usize,
+    seen: &std::collections::HashSet<(i32, bool)>,
+    key_of: impl Fn(&T) -> (i32, bool),
+) -> Vec<(i32, bool)> {
+    let (start, end) = range;
+    let lo = start.saturating_sub(margin);
+    let hi = (end + margin).min(data.len());
+    data.get(lo..hi)
+        .unwrap_or(&[])
+        .iter()
+        .map(key_of)
+        .filter(|k| !seen.contains(k))
+        .collect()
+}
+
 #[component]
 fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
     view! {
@@ -2136,5 +2159,55 @@ mod tests {
             select_enrichment_keys(&profits, 10),
             vec![(40000, false), (2, false)]
         );
+    }
+
+    #[test]
+    fn visible_keys_includes_window_and_margin() {
+        let data: Vec<(i32, bool)> = (0..100).map(|i| (i, false)).collect();
+        let seen = std::collections::HashSet::new();
+        // rendered rows [40, 50), margin 5 => slice [35, 55)
+        let keys = visible_keys(&data, (40, 50), 5, &seen, |k| *k);
+        assert_eq!(keys.len(), 20);
+        assert_eq!(keys.first(), Some(&(35, false)));
+        assert_eq!(keys.last(), Some(&(54, false)));
+    }
+
+    #[test]
+    fn visible_keys_clamps_at_start_and_end() {
+        let data: Vec<(i32, bool)> = (0..10).map(|i| (i, false)).collect();
+        let seen = std::collections::HashSet::new();
+        // lo = 2.saturating_sub(5) = 0 ; hi = (4 + 5).min(10) = 9 => slice [0, 9)
+        let keys = visible_keys(&data, (2, 4), 5, &seen, |k| *k);
+        assert_eq!(keys.first(), Some(&(0, false)));
+        assert_eq!(keys.last(), Some(&(8, false)));
+    }
+
+    #[test]
+    fn visible_keys_excludes_already_seen() {
+        let data: Vec<(i32, bool)> = (0..10).map(|i| (i, false)).collect();
+        let mut seen = std::collections::HashSet::new();
+        seen.insert((3, false));
+        seen.insert((5, false));
+        let keys = visible_keys(&data, (0, 10), 0, &seen, |k| *k);
+        assert_eq!(keys.len(), 8);
+        assert!(!keys.contains(&(3, false)));
+        assert!(!keys.contains(&(5, false)));
+    }
+
+    #[test]
+    fn visible_keys_empty_data_yields_empty() {
+        let data: Vec<(i32, bool)> = Vec::new();
+        let seen = std::collections::HashSet::new();
+        let keys = visible_keys(&data, (0, 0), 30, &seen, |k| *k);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn visible_keys_out_of_range_yields_empty() {
+        let data: Vec<(i32, bool)> = (0..5).map(|i| (i, false)).collect();
+        let seen = std::collections::HashSet::new();
+        // lo = 95, hi = (110 + 5).min(5) = 5 => get(95..5) is an invalid range => &[]
+        let keys = visible_keys(&data, (100, 110), 5, &seen, |k| *k);
+        assert!(keys.is_empty());
     }
 }
