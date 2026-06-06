@@ -21,7 +21,8 @@ pub fn Welcome() -> impl IntoView {
     let price_region = result_to_selector_read(price_region);
     let set_price_region = selector_to_setter_signal(set_price_region);
 
-    let has_homeworld = Memo::new(move |_| homeworld.with(|w| w.is_some()));
+    // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive to remove reactive allocation overhead
+    let has_homeworld = Signal::derive(move || homeworld.with(|w| w.is_some()));
 
     view! {
         <div class="main-content p-6">
