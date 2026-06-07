@@ -639,6 +639,11 @@ fn AnalyzerTable(
         let _ = world.get(); // subscribe: re-run on world change
         enrichment.set(EnrichmentMaps::default());
         requested.update_value(|s| s.clear());
+        // Invalidate any in-flight fetch from the previous world: bumping the
+        // generation makes it bail at the guard below before it claims keys,
+        // so a stale batch can't repopulate `requested` (which would strand
+        // those rows on the skeleton) or merge another world's data.
+        fetch_id.update(|n| *n += 1);
     });
 
     // Select the visible-window keys (honoring the active sort/filter via
@@ -660,11 +665,20 @@ fn AnalyzerTable(
         let world_name = world.get_untracked();
         leptos::task::spawn_local(async move {
             TimeoutFuture::new(DEBOUNCE_MS).await; // debounce
-            if fetch_id.get_untracked() != current_id {
-                return; // superseded by a newer range
+            // Past this await the component can be disposed (user navigated away
+            // / changed world), which disposes these signals. Every access here
+            // uses a `try_*` variant so touching a disposed signal returns
+            // quietly instead of panicking (RustWasmPanic / "unreachable").
+            if fetch_id.try_get_untracked() != Some(current_id) {
+                return; // superseded by a newer range, or component disposed
             }
             // Claim post-debounce so superseded generations never claim.
-            requested.update_value(|s| s.extend(keys.iter().copied()));
+            if requested
+                .try_update_value(|s| s.extend(keys.iter().copied()))
+                .is_none()
+            {
+                return; // component disposed
+            }
             // window <= ~86 keys << 200 cap -> single batch, no chunking.
             let (quality, sparklines) = futures::join!(
                 get_resale_quality(&world_name, keys.clone(), 30),
@@ -676,11 +690,20 @@ fn AnalyzerTable(
                     },
                 ),
             );
+            // The join above awaits the network, so the world may have changed
+            // (or the component been disposed) while this batch was in flight.
+            // Don't merge one world's enrichment into another's map (the
+            // world-change reset already cleared `requested`, so the new world
+            // refetches these keys). A disposed `world` signal yields None here,
+            // which also bails.
+            if world.try_get_untracked().as_deref() != Some(world_name.as_str()) {
+                return;
+            }
             // Merge whatever succeeded and mark every fetched key settled
             // (success OR error) so cells switch loading -> value / "—". On a CH
             // blip the rows degrade to "—" (same as today) — no retry loop; a
             // world change resets everything.
-            enrichment.update(|m| {
+            let _ = enrichment.try_update(|m| {
                 if let Ok(q) = &quality {
                     m.quality
                         .extend(q.rows.iter().map(|r| ((r.item_id, r.hq), r.clone())));
