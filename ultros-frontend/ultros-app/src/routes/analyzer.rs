@@ -1151,6 +1151,10 @@ fn AnalyzerTable(
                         header_height=56.0
                         variable_height=false
                         visible_range=visible_range
+                        // Lazy enrichment removes suspicious rows asynchronously as
+                        // the user scrolls; without this the row-count change would
+                        // snap the list back to the top mid-scroll.
+                        preserve_scroll_position=true
                         header=view! {
                             <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[44px] px-2 text-center">

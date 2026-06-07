@@ -70,6 +70,14 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     /// rows in view. When omitted, no extra work is done.
     #[prop(optional, into)]
     visible_range: Option<RwSignal<(usize, usize)>>,
+    /// When `true`, a change in row count does NOT force the list back to the
+    /// top. Use for lists whose length changes asynchronously after the user has
+    /// scrolled (e.g. the analyzer's lazy enrichment dropping a suspicious row):
+    /// a hard scroll-to-top there yanks the viewport away mid-scroll. Defaults
+    /// to `false`, preserving the reset-to-top behavior consumers like the
+    /// search box rely on when a fresh dataset is loaded.
+    #[prop(optional)]
+    preserve_scroll_position: bool,
 ) -> impl IntoView
 where
     D: Fn(T) -> V + 'static + Clone + Send,
@@ -100,8 +108,16 @@ where
         fenwick.update(|f| {
             f.reset(len);
         });
-        // reset scroll so new dataset renders from top (e.g., search changes)
-        set_scroll_offset(0);
+        // reset scroll so new dataset renders from top (e.g., search changes),
+        // unless the consumer opts to keep its position. Forcing 0 on every
+        // length change yanks the viewport to the top when the count changes for
+        // a reason other than a fresh dataset — e.g. an async filter (analyzer
+        // enrichment) dropping a row mid-scroll. Keeping `scroll_offset` leaves
+        // it synced to the unchanged DOM scrollTop; a drastic shrink self-heals
+        // via the browser's own scrollTop clamp + scroll event.
+        if !preserve_scroll_position {
+            set_scroll_offset(0);
+        }
     });
 
     // dataset reset handled by length change effect
