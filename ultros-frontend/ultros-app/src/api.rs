@@ -588,6 +588,39 @@ where
     }
 }
 
+/// Classify an internal-API response (HTTP status + body) into our
+/// [`AppResult`]. Split out of the SSR fetch helpers so the status check can't
+/// be skipped again — and so it's unit-testable without a live server.
+///
+/// * **Success status** — the body is the JSON-encoded `T`. (A handful of
+///   endpoints answer `200` with a [`JsonErrorWrapper`] instead; [`deserialize`]
+///   already unwraps those into the matching [`AppError`].)
+/// * **Non-success status** — the body is *never* a `T`. It's either the API's
+///   structured [`JsonErrorWrapper`] or a plain-text message — most commonly the
+///   analyzer's `503 "Still warming up with data, unable to serve requests."`
+///   during its post-deploy warm-up. Feeding that body to `serde_json` produces
+///   a misleading `expected value at line 1 column 1` error reported at error
+///   level — the noise behind GlitchTip issue 2218. We map the status
+///   explicitly instead, mirroring the server side (`ultros/src/web/error.rs`).
+#[cfg(feature = "ssr")]
+fn parse_internal_api_response<T>(status: reqwest::StatusCode, body: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    if status.is_success() {
+        return deserialize(body);
+    }
+    // Preserve the API's structured error when it sent one...
+    if let Ok(JsonErrorWrapper::ApiError(api)) = serde_json::from_str::<JsonErrorWrapper>(body) {
+        return Err(AppError::ApiError(api));
+    }
+    // ...otherwise fall back to the plain-text body (e.g. the analyzer warm-up
+    // message). This is an error *response*, not malformed JSON.
+    Err(AppError::ApiError(
+        ultros_api_types::result::ApiError::Message(body.trim().to_string()),
+    ))
+}
+
 #[cfg(not(feature = "ssr"))]
 #[instrument(skip())]
 pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
@@ -656,7 +689,7 @@ where
         new_map.insert(name, value);
     }
     let request = client.delete(&path).headers(new_map).build()?;
-    let json = client
+    let response = client
         .execute(request)
         .await
         .instrument(tracing::trace_span!("HTTP FETCH"))
@@ -664,10 +697,10 @@ where
         .map_err(|e| {
             error!("Response {e}. {path}");
             e
-        })?
-        .text()
-        .await?;
-    deserialize(&json)
+        })?;
+    let status = response.status();
+    let json = response.text().await?;
+    parse_internal_api_response(status, &json)
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -740,17 +773,30 @@ where
         new_map.insert(name, value);
     }
     let request = client.get(&path).headers(new_map).build()?;
-    let json = client
+    let response = client
         .execute(request)
         .await
         .instrument(tracing::trace_span!("HTTP FETCH"))
         .into_inner()
         .inspect_err(|e| {
             error!(error = ?e, path, "Error doing leptos fetch");
-        })?
-        .text()
-        .await?;
-    deserialize(&json).inspect_err(|e| error!(error = ?e, path, json, "Error deserializing text"))
+        })?;
+    let status = response.status();
+    let json = response.text().await?;
+    parse_internal_api_response(status, &json).inspect_err(|e| {
+        // Only a *successful* response that fails to parse is a real bug worth
+        // error-level reporting (GlitchTip). A non-success status is an
+        // expected error response — notably the analyzer's transient 503
+        // warm-up right after a deploy (issue 2218) — so log those quietly to
+        // match the server side (`ultros/src/web/error.rs`).
+        if status.is_success() {
+            error!(error = ?e, path, json, "Error deserializing text");
+        } else if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            tracing::debug!(error = ?e, %status, path, "Internal API warming up");
+        } else {
+            tracing::warn!(error = ?e, %status, path, "Internal API error response");
+        }
+    })
 }
 
 #[cfg(not(feature = "ssr"))]
@@ -857,4 +903,65 @@ where
 {
     // This really only will be called by clients- I think.
     unreachable!("patch_api should only be called on clients? I think...")
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod ssr_response_tests {
+    use super::parse_internal_api_response;
+    use crate::error::AppError;
+    use reqwest::StatusCode;
+    use ultros_api_types::result::{ApiError, JsonErrorWrapper};
+
+    /// Regression for GlitchTip issue 2218. The analyzer answers
+    /// `503 + "Still warming up with data, unable to serve requests."` (plain
+    /// text) during its post-deploy warm-up. The SSR fetch helper used to feed
+    /// that body straight into `serde_json`, producing a misleading
+    /// `AppError::Json("expected value at line 1 column 1")` logged at error
+    /// level. A non-success status must yield a real API error and must never
+    /// be classified as a JSON-deserialize failure.
+    #[test]
+    fn warmup_503_plaintext_is_not_a_json_error() {
+        let body = "Analyzer Error: Still warming up with data, unable to serve requests.";
+        let err = parse_internal_api_response::<i32>(StatusCode::SERVICE_UNAVAILABLE, body)
+            .expect_err("a 503 body must not parse as a value");
+        assert!(
+            !matches!(err, AppError::Json(_)),
+            "503 warm-up body must not be treated as malformed JSON, got {err:?}",
+        );
+        match err {
+            AppError::ApiError(ApiError::Message(msg)) => {
+                assert!(
+                    msg.contains("warming up"),
+                    "message should carry the body: {msg}"
+                );
+            }
+            other => panic!("expected ApiError::Message, got {other:?}"),
+        }
+    }
+
+    /// A structured error body (the API's `JsonErrorWrapper`) on a non-success
+    /// status must round-trip to the matching typed error, not a generic string.
+    #[test]
+    fn structured_error_body_is_preserved() {
+        let body = serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotFound)).unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::NOT_FOUND, &body)
+            .expect_err("a 404 must be an error");
+        assert_eq!(err, AppError::ApiError(ApiError::NotFound));
+    }
+
+    /// The happy path still deserializes the body into `T` on a 2xx.
+    #[test]
+    fn success_body_deserializes_value() {
+        let value = parse_internal_api_response::<i32>(StatusCode::OK, "42").unwrap();
+        assert_eq!(value, 42);
+    }
+
+    /// A 2xx whose body fails to deserialize is the one case that *is* a real
+    /// bug — it must still surface as an error (so the caller error-logs it).
+    #[test]
+    fn success_body_with_garbage_is_an_error() {
+        let err = parse_internal_api_response::<i32>(StatusCode::OK, "not json")
+            .expect_err("garbage on a 200 is an error");
+        assert!(matches!(err, AppError::Json(_)), "got {err:?}");
+    }
 }
