@@ -52,6 +52,8 @@
     "cheapest_found": "最安値",
     "no_listings": "出品なし",
     "recent_average": "直近の平均",
+    "real_price": "実勢価格",
+    "real_price_basis": "{{used}}/{{total}} 件 · {{excluded}} 件除外",
     "no_data": "データなし",
     "based_on_sales": "{{count}}件の販売に基づく",
     "sells_per_minute": "1分あたり約{{count}}回販売",
