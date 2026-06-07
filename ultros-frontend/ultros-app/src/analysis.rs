@@ -132,6 +132,8 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
 }
 
 /// One quality's robust price estimate plus the sample accounting behind it.
+// Consumed by the item-view Real Price card in a later commit; allow dead_code until then.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RealPriceEstimate {
     /// The launder-resistant price.
@@ -145,12 +147,14 @@ pub struct RealPriceEstimate {
 }
 
 /// NQ and HQ estimates, computed independently (never blended).
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RealPriceBreakdown {
     pub nq: Option<RealPriceEstimate>,
     pub hq: Option<RealPriceEstimate>,
 }
 
+#[allow(dead_code)]
 impl RealPriceBreakdown {
     /// Headline quality = whichever has more sales; NQ wins an exact tie.
     pub fn primary(&self) -> Option<(bool, RealPriceEstimate)> {
@@ -181,7 +185,9 @@ impl RealPriceBreakdown {
 }
 
 /// Median of a slice, sorting it in place. Uses the upper-middle element for even
-/// lengths, matching the page's existing median convention. Caller guarantees non-empty.
+/// lengths, matching the upper-middle pick used by `item_view` / `sale_history_table`.
+/// Caller guarantees non-empty.
+#[allow(dead_code)]
 fn median_in_place(prices: &mut [i32]) -> i32 {
     prices.sort_unstable();
     prices[prices.len() / 2]
@@ -190,6 +196,7 @@ fn median_in_place(prices: &mut [i32]) -> i32 {
 /// Robust price for a single quality from `(price, qty)` samples.
 /// Vendor guard (drop qty==1 sales priced > 100x vendor), then IQR-filtered mean,
 /// with a median fallback for fewer than 4 surviving samples.
+#[allow(dead_code)]
 fn estimate_quality(
     samples: &[(i32, i32)],
     vendor_price: Option<i32>,
@@ -246,6 +253,7 @@ fn estimate_quality(
 /// `samples`: `(price_per_item, quantity, hq)` for each recent sale.
 /// `vendor_price`: the item's NPC vendor unit price (xiv-gen `price_mid`) if it is
 /// vendor-sold, else `None` — used as an absolute anchor against laundering.
+#[allow(dead_code)]
 pub fn real_price(samples: &[(i32, i32, bool)], vendor_price: Option<i32>) -> RealPriceBreakdown {
     let nq: Vec<(i32, i32)> = samples
         .iter()
