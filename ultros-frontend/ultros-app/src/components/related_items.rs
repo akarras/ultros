@@ -765,7 +765,8 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let i18n = use_i18n();
     let db = tracked_data();
-    let item = Memo::new(move |_| db.items.get(&ItemId(item_id())));
+    // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive for O(1) ops
+    let item = Signal::derive(move || db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
     let related_items_data = Memo::new(move |_| {
         item()

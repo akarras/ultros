@@ -514,8 +514,9 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             .collect::<Vec<_>>()
     });
 
-    let items_len = Memo::new(move |_| sorted_items.with(|i| i.len()));
-    let pages = Memo::new(move |_| Pages::new(items_len(), 50));
+    // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive for O(1) ops
+    let items_len = Signal::derive(move || sorted_items.with(|i| i.len()));
+    let pages = Signal::derive(move || Pages::new(items_len(), 50));
 
     let filtered_items = Memo::new(move |_| {
         let page = pages
