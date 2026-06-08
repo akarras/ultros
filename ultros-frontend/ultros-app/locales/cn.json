@@ -52,6 +52,8 @@
     "cheapest_found": "最低价",
     "no_listings": "暂无在售",
     "recent_average": "近期均价",
+    "real_price": "真实价格",
+    "real_price_basis": "{{used}}/{{total}} 笔 · 已过滤 {{excluded}} 笔",
     "no_data": "暂无数据",
     "based_on_sales": "基于 {{count}} 条销售记录",
     "sells_per_minute": "约每分钟售出 {{count}} 次",

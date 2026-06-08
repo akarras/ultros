@@ -325,6 +325,20 @@ fn MarketStatsPanel(
                                 prices.sort_unstable();
                                 Some(prices[prices.len() / 2])
                             };
+                            let vendor_price = tracked_data()
+                                .items
+                                .get(&ItemId(item_id()))
+                                .map(|item| item.price_mid as i32)
+                                .filter(|p| *p > 0);
+                            let real = crate::analysis::real_price(
+                                &recent_sales
+                                    .iter()
+                                    .map(|s| (s.price_per_item, s.quantity, s.hq))
+                                    .collect::<Vec<_>>(),
+                                vendor_price,
+                            );
+                            let real_primary = real.primary();
+                            let real_secondary = real.secondary();
                             let sales_cadence = if recent_sales.len() > 1 {
                                 let newest = recent_sales.first().unwrap().sold_date;
                                 let oldest = recent_sales.last().unwrap().sold_date;
@@ -568,13 +582,59 @@ fn MarketStatsPanel(
                                         </a>
 
                                         <a href="#history" class="rounded-lg border border-[color:var(--color-outline)] hover:border-blue-300/60 transition-colors p-2 sm:p-3 min-h-24">
-                                            <div class="text-xs font-bold uppercase text-blue-300 mb-1">{t!(i18n, recent_average)}</div>
+                                            <div class="text-xs font-bold uppercase text-blue-300 mb-1 flex items-center gap-1">
+                                                {t!(i18n, real_price)}
+                                                {real_primary
+                                                    .map(|(is_hq, _)| {
+                                                        if is_hq {
+                                                            view! { <span class="text-[10px] text-[color:var(--color-text-muted)]">{t!(i18n, hq)}</span> }.into_any()
+                                                        } else {
+                                                            view! { <span class="text-[10px] text-[color:var(--color-text-muted)]">{t!(i18n, nq)}</span> }.into_any()
+                                                        }
+                                                    })
+                                                    .unwrap_or_else(|| ().into_any())}
+                                            </div>
                                             <div class="text-xl sm:text-2xl font-bold leading-none">
+                                                {match real_primary {
+                                                    Some((_, est)) => view! { <Gil amount=est.value /> }.into_any(),
+                                                    None => view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any(),
+                                                }}
+                                            </div>
+                                            {match real_secondary {
+                                                Some((is_hq, est)) => {
+                                                    let tag = if is_hq {
+                                                        view! { <span class="font-semibold">{t!(i18n, hq)}</span> }.into_any()
+                                                    } else {
+                                                        view! { <span class="font-semibold">{t!(i18n, nq)}</span> }.into_any()
+                                                    };
+                                                    view! {
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
+                                                            {tag}
+                                                            <Gil amount=est.value />
+                                                        </div>
+                                                    }
+                                                    .into_any()
+                                                }
+                                                None => ().into_any(),
+                                            }}
+                                            {match real_primary {
+                                                Some((_, est)) => {
+                                                    view! {
+                                                        <div class="text-[10px] text-[color:var(--color-text-muted)] mt-1">
+                                                            {t!(i18n, real_price_basis, used = est.used, total = est.total, excluded = est.excluded)}
+                                                        </div>
+                                                    }
+                                                    .into_any()
+                                                }
+                                                None => ().into_any(),
+                                            }}
+                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
+                                                {t!(i18n, recent_average)}
+                                                " "
                                                 {avg_price
                                                     .map(|price| view! { <Gil amount=price /> }.into_any())
-                                                    .unwrap_or_else(|| view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any())}
-                                            </div>
-                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
+                                                    .unwrap_or_else(|| view! { <span>{t!(i18n, no_data)}</span> }.into_any())}
+                                                " · "
                                                 {t!(i18n, median_label)}
                                                 " "
                                                 {median_price

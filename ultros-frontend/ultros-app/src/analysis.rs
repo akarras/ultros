@@ -131,6 +131,139 @@ pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesSt
     }
 }
 
+/// One quality's robust price estimate plus the sample accounting behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RealPriceEstimate {
+    /// The launder-resistant price.
+    pub value: i32,
+    /// Number of sales the value was computed from.
+    pub used: usize,
+    /// Total sales for this quality before any filtering.
+    pub total: usize,
+    /// `total - used`: sales dropped by the vendor guard and/or IQR filter.
+    pub excluded: usize,
+}
+
+/// NQ and HQ estimates, computed independently (never blended).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RealPriceBreakdown {
+    pub nq: Option<RealPriceEstimate>,
+    pub hq: Option<RealPriceEstimate>,
+}
+
+impl RealPriceBreakdown {
+    /// Headline quality = whichever has more sales; NQ wins an exact tie.
+    pub fn primary(&self) -> Option<(bool, RealPriceEstimate)> {
+        match (self.nq, self.hq) {
+            (Some(nq), Some(hq)) => {
+                if hq.total > nq.total {
+                    Some((true, hq))
+                } else {
+                    Some((false, nq))
+                }
+            }
+            (Some(nq), None) => Some((false, nq)),
+            (None, Some(hq)) => Some((true, hq)),
+            (None, None) => None,
+        }
+    }
+
+    /// The non-headline quality, shown only when it has >= 4 sales.
+    pub fn secondary(&self) -> Option<(bool, RealPriceEstimate)> {
+        let primary_is_hq = self.primary()?.0;
+        let (is_hq, candidate) = if primary_is_hq {
+            (false, self.nq)
+        } else {
+            (true, self.hq)
+        };
+        candidate.filter(|e| e.total >= 4).map(|e| (is_hq, e))
+    }
+}
+
+/// Median of a slice, sorting it in place. Uses the upper-middle element for even
+/// lengths, matching the upper-middle pick used by `item_view` / `sale_history_table`.
+/// Caller guarantees non-empty.
+fn median_in_place(prices: &mut [i32]) -> i32 {
+    prices.sort_unstable();
+    prices[prices.len() / 2]
+}
+
+/// Robust price for a single quality from `(price, qty)` samples.
+/// Vendor guard (drop qty==1 sales priced > 100x vendor), then IQR-filtered mean,
+/// with a median fallback for fewer than 4 surviving samples.
+fn estimate_quality(
+    samples: &[(i32, i32)],
+    vendor_price: Option<i32>,
+) -> Option<RealPriceEstimate> {
+    let total = samples.len();
+    if total == 0 {
+        return None;
+    }
+
+    let vendor_cap = vendor_price.filter(|v| *v > 0).map(|v| v as i64 * 100);
+    let mut prices: Vec<i32> = samples
+        .iter()
+        .filter(|&&(price, qty)| match vendor_cap {
+            Some(cap) => !(qty == 1 && price as i64 > cap),
+            None => true,
+        })
+        .map(|&(price, _)| price)
+        .collect();
+
+    // If the guard removed everything, fall back to the median of all raw prices so we
+    // still show something rather than "No data".
+    if prices.is_empty() {
+        let mut all: Vec<i32> = samples.iter().map(|&(p, _)| p).collect();
+        let used = all.len();
+        let value = median_in_place(&mut all);
+        return Some(RealPriceEstimate {
+            value,
+            used,
+            total,
+            excluded: total - used,
+        });
+    }
+
+    let (value, used) = if prices.len() < 4 {
+        let used = prices.len();
+        (median_in_place(&mut prices), used)
+    } else {
+        let filtered = filter_outliers_iqr_in_place(&mut prices);
+        let used = filtered.len();
+        let mean = (filtered.iter().map(|&p| p as i64).sum::<i64>() / used as i64) as i32;
+        (mean, used)
+    };
+
+    Some(RealPriceEstimate {
+        value,
+        used,
+        total,
+        excluded: total - used,
+    })
+}
+
+/// Compute the launder-resistant Real Price from the item page's recent sales.
+///
+/// `samples`: `(price_per_item, quantity, hq)` for each recent sale.
+/// `vendor_price`: the item's NPC vendor unit price (xiv-gen `price_mid`) if it is
+/// vendor-sold, else `None` — used as an absolute anchor against laundering.
+pub fn real_price(samples: &[(i32, i32, bool)], vendor_price: Option<i32>) -> RealPriceBreakdown {
+    let nq: Vec<(i32, i32)> = samples
+        .iter()
+        .filter(|&&(_, _, hq)| !hq)
+        .map(|&(p, q, _)| (p, q))
+        .collect();
+    let hq: Vec<(i32, i32)> = samples
+        .iter()
+        .filter(|&&(_, _, hq)| hq)
+        .map(|&(p, q, _)| (p, q))
+        .collect();
+    RealPriceBreakdown {
+        nq: estimate_quality(&nq, vendor_price),
+        hq: estimate_quality(&hq, vendor_price),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +415,118 @@ mod tests {
 
         // large number of days
         assert_eq!(format_duration_short(86400 * 365 + 3600), "365d 1h");
+    }
+}
+
+#[cfg(test)]
+mod real_price_tests {
+    use super::*;
+
+    /// Build NQ-only samples from (price, qty) pairs.
+    fn nq(pairs: &[(i32, i32)]) -> Vec<(i32, i32, bool)> {
+        pairs.iter().map(|&(p, q)| (p, q, false)).collect()
+    }
+
+    #[test]
+    fn headline_case_one_huge_outlier() {
+        // 199 sales @ 16_000 + one 75M launder sale (qty 1), non-vendor item.
+        let mut s = vec![(16_000i32, 1i32, false); 199];
+        s.push((75_000_000, 1, false));
+        let r = real_price(&s, None);
+        let (is_hq, est) = r.primary().expect("primary present");
+        assert!(!is_hq);
+        assert_eq!(est.value, 16_000);
+        assert_eq!(est.total, 200);
+        assert_eq!(est.used, 199);
+        assert_eq!(est.excluded, 1);
+    }
+
+    #[test]
+    fn vendor_guard_catches_majority_launder() {
+        // vendor price 100 -> cap 10_000. Three qty-1 launder sales dominate, so the
+        // quartiles shift and IQR alone would NOT remove them; the vendor anchor does.
+        let s = vec![
+            (49_000, 1, false),
+            (50_000, 1, false),
+            (51_000, 1, false),
+            (100, 1, false),
+            (110, 1, false),
+        ];
+        let r = real_price(&s, Some(100));
+        let (_, est) = r.primary().expect("primary present");
+        assert_eq!(est.total, 5);
+        assert_eq!(est.used, 2); // only the two legit sales remain
+        assert_eq!(est.excluded, 3);
+        assert_eq!(est.value, 110); // median of [100, 110]
+    }
+
+    #[test]
+    fn vendor_guard_ignores_non_qty1() {
+        // Same overpriced price but qty 2 -> NOT removed by the guard (guard is qty==1 only).
+        let s = vec![
+            (100, 1, false),
+            (105, 1, false),
+            (110, 1, false),
+            (120, 1, false),
+            (50_000, 2, false),
+        ];
+        let r = real_price(&s, Some(100));
+        let (_, est) = r.primary().expect("primary present");
+        assert_eq!(est.total, 5);
+        assert_eq!(est.used, 4);
+        assert!(est.value >= 100 && est.value <= 120);
+    }
+
+    #[test]
+    fn small_sample_uses_median_not_mean() {
+        // n=3 (<4): median resists the launder; the mean would be ~25M.
+        let s = nq(&[(16_000, 1), (16_000, 1), (75_000_000, 1)]);
+        let (_, est) = real_price(&s, None).primary().expect("primary present");
+        assert_eq!(est.value, 16_000);
+        assert_eq!(est.used, 3);
+        assert_eq!(est.total, 3);
+        assert_eq!(est.excluded, 0);
+    }
+
+    #[test]
+    fn all_equal_excludes_nothing() {
+        let s = nq(&[(16_000, 1); 10]);
+        let (_, est) = real_price(&s, None).primary().expect("primary present");
+        assert_eq!(est.value, 16_000);
+        assert_eq!(est.used, 10);
+        assert_eq!(est.excluded, 0);
+    }
+
+    #[test]
+    fn hq_and_nq_computed_independently() {
+        // NQ ~16k with more sales (primary), HQ ~50k (secondary). Never averaged.
+        let mut s = vec![(16_000i32, 1i32, false); 6];
+        s.extend(vec![(50_000, 1, true); 5]);
+        let r = real_price(&s, None);
+        let (p_is_hq, p) = r.primary().expect("primary present");
+        assert!(!p_is_hq);
+        assert_eq!(p.value, 16_000);
+        let (s_is_hq, sec) = r.secondary().expect("secondary present");
+        assert!(s_is_hq);
+        assert_eq!(sec.value, 50_000);
+        assert_ne!(p.value, 33_000); // not a blended NQ+HQ mean
+    }
+
+    #[test]
+    fn secondary_below_threshold_is_hidden() {
+        // HQ has only 3 sales (<4) -> omitted from secondary(), but still in the breakdown.
+        let mut s = vec![(16_000i32, 1i32, false); 6];
+        s.extend(vec![(50_000, 1, true); 3]);
+        let r = real_price(&s, None);
+        assert!(r.secondary().is_none());
+        assert!(r.hq.is_some());
+    }
+
+    #[test]
+    fn empty_is_none() {
+        let r = real_price(&[], None);
+        assert!(r.primary().is_none());
+        assert!(r.nq.is_none());
+        assert!(r.hq.is_none());
     }
 }

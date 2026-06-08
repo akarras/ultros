@@ -52,6 +52,8 @@
     "cheapest_found": "최저가",
     "no_listings": "판매 없음",
     "recent_average": "최근 평균",
+    "real_price": "실거래가",
+    "real_price_basis": "{{used}}/{{total}}건 · {{excluded}}건 제외",
     "no_data": "데이터 없음",
     "based_on_sales": "판매 {{count}}건 기준",
     "sells_per_minute": "분당 약 {{count}}회 판매",

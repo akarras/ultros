@@ -52,6 +52,8 @@
     "cheapest_found": "Günstigstes Angebot",
     "no_listings": "Keine Angebote",
     "recent_average": "Letzter Durchschnitt",
+    "real_price": "Realer Preis",
+    "real_price_basis": "{{used}}/{{total}} Verkäufe · {{excluded}} gefiltert",
     "no_data": "Keine Daten",
     "based_on_sales": "Basierend auf {{count}} Verkäufen",
     "sells_per_minute": "Verkauft sich ~{{count}}× pro Minute",
