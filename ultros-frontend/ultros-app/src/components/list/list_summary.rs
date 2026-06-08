@@ -353,4 +353,92 @@ mod tests {
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
     }
+
+    #[test]
+    fn test_calculate_list_totals() {
+        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+        use ultros_api_types::world_helper::WorldHelper;
+
+        let world_data: WorldHelper = WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Aether".into(),
+                    region_id: 1,
+                    worlds: vec![
+                        World {
+                            id: 100,
+                            name: "Adamantoise".into(),
+                            datacenter_id: 10,
+                        },
+                        World {
+                            id: 101,
+                            name: "Cactuar".into(),
+                            datacenter_id: 10,
+                        },
+                    ],
+                }],
+            }],
+        }
+        .into();
+
+        let item1 = ListItem {
+            id: 1,
+            list_id: 1,
+            item_id: 1,
+            quantity: Some(5),
+            acquired: Some(0),
+            hq: None,
+            target_price: None,
+        };
+        let listings1 = vec![mock_listing(1, 100, 5, false)]; // world_id=1, total 500
+
+        let item2 = ListItem {
+            id: 2,
+            list_id: 1,
+            item_id: 2,
+            quantity: Some(10),
+            acquired: Some(2), // 8 needed
+            hq: None,
+            target_price: None,
+        };
+        // Needs 8.
+        let mut listing2_a = mock_listing(2, 200, 5, false);
+        listing2_a.world_id = 100; // Adamantoise
+        let mut listing2_b = mock_listing(3, 300, 5, false);
+        listing2_b.world_id = 101; // Cactuar
+
+        let (total, world_prices) = calculate_list_totals(
+            vec![(item1, listings1), (item2, vec![listing2_a, listing2_b])],
+            &world_data,
+            "Unknown",
+        );
+
+        // Grand total:
+        // Item 1: 5 * 100 = 500
+        // Item 2: Needs 8. Gets 5 @ 200 = 1000. Gets 5 @ 300 = 1500.
+        // Total = 500 + 2500 = 3000.
+        assert_eq!(total, 3000);
+
+        // Verify World Prices
+        // world_id=1 is Unknown (not in sample_world_data)
+        assert_eq!(world_prices.get(&1).unwrap().total_price, 500);
+        assert_eq!(world_prices.get(&1).unwrap().datacenter_name, "Unknown");
+        assert_eq!(world_prices.get(&1).unwrap().world_name, "Unknown");
+        assert_eq!(world_prices.get(&1).unwrap().datacenter_id, 0);
+
+        // world_id=100 (Adamantoise, Aether)
+        assert_eq!(world_prices.get(&100).unwrap().total_price, 1000);
+        assert_eq!(world_prices.get(&100).unwrap().datacenter_name, "Aether");
+        assert_eq!(world_prices.get(&100).unwrap().world_name, "Adamantoise");
+        assert_eq!(world_prices.get(&100).unwrap().datacenter_id, 10);
+
+        // world_id=101 (Cactuar, Aether)
+        assert_eq!(world_prices.get(&101).unwrap().total_price, 1500);
+        assert_eq!(world_prices.get(&101).unwrap().datacenter_name, "Aether");
+        assert_eq!(world_prices.get(&101).unwrap().world_name, "Cactuar");
+        assert_eq!(world_prices.get(&101).unwrap().datacenter_id, 10);
+    }
 }
