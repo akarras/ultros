@@ -132,4 +132,14 @@ mod tests {
             vec![ts(50), ts(100)]
         );
     }
+
+    #[test]
+    fn unknown_worlds_are_dropped() {
+        // world_id 999 isn't in the fixture; it must vanish rather than
+        // panic or leak into another series.
+        let sales = vec![sale(100, 1, 1, ts(0)), sale(200, 1, 999, ts(10))];
+        let series = group_sales_by_scope(&world_helper(), &sales);
+        assert_eq!(names(&series), vec!["Gilgamesh"]);
+        assert_eq!(series[0].points.len(), 1);
+    }
 }
