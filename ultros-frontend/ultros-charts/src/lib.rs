@@ -1,3 +1,4 @@
+pub mod charts;
 pub mod data;
 pub mod scale;
 pub mod scene;
