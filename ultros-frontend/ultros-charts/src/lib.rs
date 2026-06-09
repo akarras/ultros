@@ -5,6 +5,11 @@ pub mod scene;
 pub mod svg;
 pub mod theme;
 
+#[cfg(feature = "image")]
+mod icon;
+#[cfg(feature = "image")]
+pub use icon::item_icon_data_uri;
+
 #[cfg(test)]
 pub(crate) mod test_util;
 
