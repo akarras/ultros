@@ -85,7 +85,7 @@ const HOUR: i64 = 3_600;
 const DAY: i64 = 86_400;
 
 /// Candidate tick steps, smallest first.
-const TIME_STEPS: [i64; 15] = [
+const TIME_STEPS: [i64; 16] = [
     MINUTE,
     5 * MINUTE,
     15 * MINUTE,
@@ -96,6 +96,7 @@ const TIME_STEPS: [i64; 15] = [
     12 * HOUR,
     DAY,
     2 * DAY,
+    3 * DAY,
     7 * DAY,
     14 * DAY,
     30 * DAY,

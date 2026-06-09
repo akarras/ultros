@@ -58,6 +58,29 @@ impl Default for PriceChartOptions {
     }
 }
 
+/// Trim a segment to the horizontal band `[y_top, y_bottom]`, preserving
+/// slope — used to keep the trendline inside the price lane.
+fn clip_segment_to_band(
+    (x1, y1): (f32, f32),
+    (x2, y2): (f32, f32),
+    y_top: f32,
+    y_bottom: f32,
+) -> Option<((f32, f32), (f32, f32))> {
+    if y1 == y2 {
+        return (y1 >= y_top && y1 <= y_bottom).then_some(((x1, y1), (x2, y2)));
+    }
+    let t_for = |y: f32| (y - y1) / (y2 - y1);
+    let (ta, tb) = (t_for(y_top), t_for(y_bottom));
+    let (t_min, t_max) = if ta < tb { (ta, tb) } else { (tb, ta) };
+    let t0 = t_min.max(0.0);
+    let t1 = t_max.min(1.0);
+    if t0 >= t1 {
+        return None;
+    }
+    let point_at = |t: f32| (x1 + t * (x2 - x1), y1 + t * (y2 - y1));
+    Some((point_at(t0), point_at(t1)))
+}
+
 pub fn build_price_history_scene(
     world_helper: &WorldHelper,
     sales: &[SaleHistory],
@@ -179,11 +202,16 @@ pub fn build_price_history_scene(
             for bucket in &volumes {
                 let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
                 let x = time.scale(center);
+                let left = (x - bar_width / 2.0).max(plot_left);
+                let right = (x + bar_width / 2.0).min(plot_right);
+                if right <= left {
+                    continue;
+                }
                 let top = volume.scale(bucket.quantity as f64);
                 scene.nodes.push(Node::Rect {
-                    x: x - bar_width / 2.0,
+                    x: left,
                     y: top,
-                    width: bar_width,
+                    width: right - left,
                     height: (plot_bottom - top).max(1.0),
                     rx: 1.0,
                     fill: theme.volume.with_alpha(0.7),
@@ -257,17 +285,23 @@ pub fn build_price_history_scene(
         if let Some((slope, intercept)) = least_squares(&points) {
             let x1 = first_ts.and_utc().timestamp() as f64;
             let x2 = last_ts.and_utc().timestamp() as f64;
-            scene.nodes.push(Node::Line {
-                x1: time.scale(first_ts),
-                y1: price.scale(intercept + slope * x1),
-                x2: time.scale(last_ts),
-                y2: price.scale(intercept + slope * x2),
-                stroke: Stroke {
-                    color: theme.trend.with_alpha(0.8),
-                    width: 1.5,
-                    dash: Some((6.0, 4.0)),
-                },
-            });
+            let start = (time.scale(first_ts), price.scale(intercept + slope * x1));
+            let end = (time.scale(last_ts), price.scale(intercept + slope * x2));
+            if let Some(((x1, y1), (x2, y2))) =
+                clip_segment_to_band(start, end, plot_top, price_bottom)
+            {
+                scene.nodes.push(Node::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke: Stroke {
+                        color: theme.trend.with_alpha(0.8),
+                        width: 1.5,
+                        dash: Some((6.0, 4.0)),
+                    },
+                });
+            }
         }
     }
 
@@ -387,5 +421,36 @@ mod tests {
             matches!(n, Node::Text { content, .. } if content == "No recent sales")
         });
         assert!(has_no_data_text);
+    }
+
+    #[test]
+    fn clip_keeps_inside_segments_and_trims_crossings() {
+        // Fully inside: unchanged
+        assert_eq!(
+            clip_segment_to_band((0.0, 5.0), (10.0, 6.0), 0.0, 10.0),
+            Some(((0.0, 5.0), (10.0, 6.0)))
+        );
+        // Crosses the bottom: trimmed at y=10, slope preserved
+        let ((ax, ay), (bx, by)) =
+            clip_segment_to_band((0.0, 0.0), (10.0, 20.0), 0.0, 10.0).unwrap();
+        assert_eq!((ax, ay), (0.0, 0.0));
+        assert_eq!((bx, by), (5.0, 10.0));
+        // Entirely outside: dropped
+        assert_eq!(clip_segment_to_band((0.0, 20.0), (10.0, 30.0), 0.0, 10.0), None);
+    }
+
+    #[test]
+    fn volume_bars_stay_inside_plot_bounds() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_sales(),
+            &PriceChartOptions::default(),
+        );
+        for node in &scene.nodes {
+            if let Node::Rect { x, width, .. } = node {
+                assert!(*x >= 68.0 - 0.01, "bar starts left of plot: {x}");
+                assert!(x + width <= 960.0 - 16.0 + 0.01, "bar ends right of plot");
+            }
+        }
     }
 }
