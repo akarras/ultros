@@ -3,6 +3,10 @@
 //! The server rasterizes this with resvg, so stick to plain SVG 1.1 that
 //! usvg supports: no CSS classes, no `rgba()` colors (use `*-opacity`
 //! attributes), `xlink:href` for images.
+//!
+//! **Attribute escaping:** attribute values (`font_family`, `Image::href`) are
+//! not escaped — callers must supply attribute-safe values (today they're
+//! internal constants / data URIs).
 
 use std::fmt::Write;
 
@@ -264,5 +268,19 @@ mod tests {
         assert!(svg.contains(r#"text-anchor="middle""#));
         assert!(svg.contains(r#"font-weight="bold""#));
         assert!(svg.contains(r#"xlink:href="data:image/png;base64,AAAA""#));
+    }
+
+    #[test]
+    fn empty_scene_is_well_formed() {
+        let scene = Scene {
+            width: 10.0,
+            height: 10.0,
+            background: None,
+            font_family: "sans-serif".to_string(),
+            nodes: Vec::new(),
+        };
+        let svg = scene_to_svg(&scene);
+        assert!(svg.starts_with("<svg "));
+        assert!(svg.ends_with("</svg>"));
     }
 }

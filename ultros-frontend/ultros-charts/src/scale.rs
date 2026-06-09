@@ -211,4 +211,20 @@ mod tests {
         let scale = TimeScale::new(t, t, (0.0, 100.0));
         assert_eq!(scale.scale(t), 50.0);
     }
+
+    #[test]
+    fn linear_ticks_align_for_offset_domains() {
+        let s = LinearScale::new((150.0, 950.0), (0.0, 1.0));
+        assert_eq!(s.ticks(5), vec![200.0, 400.0, 600.0, 800.0]);
+    }
+
+    #[test]
+    fn time_ticks_use_day_steps_for_month_spans() {
+        let start = ts(1_700_000_000);
+        let end = ts(1_700_000_000 + 30 * 86_400);
+        let ticks = TimeScale::new(start, end, (0.0, 100.0)).ticks(6);
+        assert!(!ticks.is_empty() && ticks.len() <= 7);
+        // Day-scale steps label as %m-%d: no time-of-day component
+        assert!(ticks.iter().all(|t| !t.label.contains(':')));
+    }
 }
