@@ -1,7 +1,11 @@
+pub mod data;
 pub mod scale;
 pub mod scene;
 pub mod svg;
 pub mod theme;
+
+#[cfg(test)]
+pub(crate) mod test_util;
 
 #[cfg(feature = "image")]
 use image::EncodableLayout;
