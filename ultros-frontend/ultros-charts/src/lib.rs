@@ -1,3 +1,6 @@
+pub mod scene;
+pub mod theme;
+
 #[cfg(feature = "image")]
 use image::EncodableLayout;
 // use std::arch::is_aarch64_feature_detected;
