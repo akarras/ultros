@@ -1,3 +1,4 @@
+pub mod scale;
 pub mod scene;
 pub mod svg;
 pub mod theme;
