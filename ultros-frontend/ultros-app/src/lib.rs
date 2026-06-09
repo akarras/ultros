@@ -138,6 +138,9 @@ fn error_reporting_script() -> Option<String> {
         .unwrap_or_else(|_| "https://browser.sentry-cdn.com/10.52.0/bundle.min.js".to_string());
     let config = serde_json::to_string(&config).expect("Sentry config should serialize");
     let sdk_url = serde_json::to_string(&sdk_url).expect("SDK URL should serialize");
+    // The beforeSend noise filter, injected verbatim via the {filter_js}
+    // placeholder below. Lives in its own file so Node can unit-test it.
+    let filter_js = include_str!("error_filter.js");
 
     Some(format!(
         r#"(function(){{
@@ -161,106 +164,19 @@ fn error_reporting_script() -> Option<String> {
         }});
     }};
 
-    // Patterns for unactionable noise we drop in beforeSend. Three
-    // independent categories, each with its own narrow predicate:
-    //
-    // 1. WASM bundle fetch aborts from the Sentry SDK's global
-    //    unhandledrejection handler — users navigating away during the
-    //    streaming compile, ad blockers, corporate proxies. GlitchTip
-    //    issues #21 (~880 events), #2374, #2404.
-    // 2. A "Cannot read properties of undefined (reading 'document')"
-    //    TypeError thrown by an injected third-party script (Tencent QQ
-    //    Browser / UC / WeChat in-app WebViews on frozen Chrome 112).
-    //    Filename in the stack frame is the page URL so each affected
-    //    route becomes its own GlitchTip issue — hundreds of duplicates.
-    //    GlitchTip issues #1, #7, #313, #770, #1047, #2776–#2812.
-    // 3. tachys hydration `unreachable!()` panics at
-    //    /tachys-*/src/hydration.rs:* triggered by the same population
-    //    when the injected auto-translation overlay wraps text nodes in
-    //    <font> elements before Leptos hydrates. We match on the exact
-    //    crates.io path AND a fingerprint of the injecting browser
-    //    (Chinese console breadcrumb `检测页面稳定` or frozen
-    //    Chrome 112.0.0 UA) so legit hydration mismatches on current
-    //    browsers still reach GlitchTip. Issues #678, #707, #770, #1307,
-    //    #2277, #2775.
-    var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
-    var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
-    var ULTROS_INJECTOR_BREADCRUMB = "检测页面稳定";
-
-    function isUltrosWasmFetchAbort(event) {{
-        try {{
-            var ex = event && event.exception && event.exception.values && event.exception.values[0];
-            if (!ex) return false;
-
-            // "WebAssembly compilation aborted: ..." — always network/abort.
-            if (ex.type === "TypeError" && typeof ex.value === "string"
-                && ex.value.indexOf("WebAssembly compilation aborted") === 0) {{
-                return true;
-            }}
-
-            // "TypeError: Failed to fetch" originating from the wasm-bindgen
-            // glue loading /pkg/<hash>/ultros.{{js,wasm}}.
-            if (ex.type === "TypeError" && ex.value === "Failed to fetch") {{
-                var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
-                for (var i = 0; i < frames.length; i++) {{
-                    var fname = frames[i] && frames[i].filename;
-                    if (typeof fname === "string" && ULTROS_PKG_BUNDLE_RE.test(fname)) {{
-                        return true;
-                    }}
-                }}
-            }}
-        }} catch (_) {{ /* be defensive — never let the filter throw */ }}
-        return false;
-    }}
-
-    function isInjectedDocumentTypeError(event) {{
-        try {{
-            var ex = event && event.exception && event.exception.values && event.exception.values[0];
-            if (!ex) return false;
-            if (ex.type !== "TypeError") return false;
-            if (ex.value !== "Cannot read properties of undefined (reading 'document')") return false;
-            var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
-            if (frames.length !== 1) return false;
-            return frames[0] && frames[0].function === "HTMLDocument.c";
-        }} catch (_) {{ /* never let the filter throw */ }}
-        return false;
-    }}
-
-    function isInjectedTachysHydrationPanic(event) {{
-        try {{
-            var ctx = event && event.contexts && event.contexts.rust_panic;
-            var loc = ctx && ctx.location;
-            if (typeof loc !== "string") return false;
-            if (loc.indexOf("/usr/local/cargo/registry/src/index.crates.io-") !== 0) return false;
-            if (!ULTROS_TACHYS_HYDRATION_RE.test(loc)) return false;
-
-            // Second prong: only suppress when the third-party DOM
-            // mutation fingerprint is present. Either a breadcrumb from
-            // the page-stability detector, or the frozen Chrome 112 UA
-            // shared by the affected WebView population.
-            var crumbs = (event.breadcrumbs && event.breadcrumbs.values) || event.breadcrumbs || [];
-            if (Array.isArray(crumbs)) {{
-                for (var i = 0; i < crumbs.length; i++) {{
-                    var msg = crumbs[i] && crumbs[i].message;
-                    if (typeof msg === "string" && msg.indexOf(ULTROS_INJECTOR_BREADCRUMB) !== -1) {{
-                        return true;
-                    }}
-                }}
-            }}
-            var tags = event.tags || {{}};
-            if (tags.browser === "Chrome 112.0.0") {{
-                return true;
-            }}
-        }} catch (_) {{ /* never let the filter throw */ }}
-        return false;
-    }}
+    // Unactionable-noise filter. Defines window.__ultrosShouldDropEvent,
+    // which classifies WASM/bundle fetch aborts, injected-WebView document
+    // TypeErrors, injected-translation tachys hydration panics, and empty
+    // promise rejections. Extracted to error_filter.js so it can be unit
+    // tested with Node (see integration/error-filter.test.cjs); injected
+    // here verbatim. Its single braces are safe because it arrives as a
+    // format! argument value, not part of the format string literal.
+{filter_js}
 
     var existingBeforeSend = config && config.beforeSend;
     config = config || {{}};
     config.beforeSend = function(event, hint) {{
-        if (isUltrosWasmFetchAbort(event)
-            || isInjectedDocumentTypeError(event)
-            || isInjectedTachysHydrationPanic(event)) {{
+        if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
             return null;
         }}
         if (typeof existingBeforeSend === "function") {{
@@ -627,5 +543,41 @@ fn SentryRouteTag() -> impl IntoView {
             let path = location.pathname.get();
             set_sentry_tag("route", &path);
         });
+    }
+}
+
+#[cfg(test)]
+mod error_filter_wiring {
+    /// The beforeSend noise filter is maintained in error_filter.js and
+    /// pulled into the reporting script via `include_str!`. The JS logic is
+    /// exercised by `integration/error-filter.test.cjs`; this test guards the
+    /// Rust↔JS contract — that the file is still compiled in and still carries
+    /// each predicate's load-bearing token. If someone deletes one of these,
+    /// the corresponding GlitchTip flood silently returns.
+    const FILTER_JS: &str = include_str!("error_filter.js");
+
+    #[test]
+    fn filter_defines_the_drop_predicate_called_by_before_send() {
+        assert!(
+            FILTER_JS.contains("window.__ultrosShouldDropEvent ="),
+            "error_filter.js must define the predicate beforeSend invokes",
+        );
+    }
+
+    #[test]
+    fn filter_keeps_each_noise_category_signal() {
+        // Category 1: bundle fetch aborts, incl. the dynamic-import variant.
+        assert!(FILTER_JS.contains("Failed to fetch dynamically imported module"));
+        assert!(FILTER_JS.contains("WebAssembly compilation aborted"));
+        // Category 2: injected-WebView document TypeError.
+        assert!(FILTER_JS.contains("HTMLDocument.c"));
+        // Category 3: frozen-Chrome-112 translate-overlay hydration panic.
+        // Must read the live UA (the browser tag is server-derived and absent
+        // in beforeSend), so the navigator read is the load-bearing part.
+        assert!(FILTER_JS.contains("ULTROS_FROZEN_CHROME_RE"));
+        assert!(FILTER_JS.contains("navigator.userAgent"));
+        assert!(FILTER_JS.contains("hydration.rs"));
+        // Category 4: empty promise rejections.
+        assert!(FILTER_JS.contains("Non-Error promise rejection captured with value: undefined"));
     }
 }
