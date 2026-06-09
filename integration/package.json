@@ -17,7 +17,8 @@
     "test:list-card-edit": "node ./list-card-edit.cjs",
     "test:list-view-rename": "node ./list-view-rename.cjs",
     "test:list-bulk-edit": "node ./list-bulk-edit.cjs",
-    "test:dashboard": "node ./dashboard.cjs"
+    "test:dashboard": "node ./dashboard.cjs",
+    "test:error-filter": "node --test ./error-filter.test.cjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
