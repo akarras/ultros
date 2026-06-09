@@ -1,4 +1,5 @@
 pub mod scene;
+pub mod svg;
 pub mod theme;
 
 #[cfg(feature = "image")]
