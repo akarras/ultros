@@ -510,7 +510,7 @@ mod tests {
         // bottom margin.
         for y in [y1, y2] {
             assert!(
-                y >= 12.0 && y <= 540.0 - 32.0,
+                (12.0..=540.0 - 32.0).contains(&y),
                 "trendline endpoint y={y} escaped"
             );
         }
