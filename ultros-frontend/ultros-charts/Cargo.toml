@@ -8,6 +8,7 @@ license = "MIT"
 
 [features]
 image = ["dep:ultros-xiv-icons", "dep:image", "dep:base64"]
+leptos = ["dep:leptos"]
 
 [dependencies]
 ultros-api-types = { path = "../../ultros-api-types" }
@@ -16,7 +17,9 @@ itertools.workspace = true
 ultros-xiv-icons = { path = "../ultros-xiv-icons", optional = true }
 image = { workspace = true, optional = true }
 base64 = { version = "0.22", optional = true }
+leptos = { workspace = true, optional = true }
 
 [dev-dependencies]
 resvg = "0.47.0"
 image = { workspace = true }
+leptos = { workspace = true, features = ["ssr"] }

@@ -537,6 +537,8 @@
     "chart_range_30d": "30日",
     "chart_range_all": "すべて",
     "chart_aria_label": "{from} から {to} までの {n} 件の販売を示す散布図",
+    "sparkline_hours_ago": "{n}時間前",
+    "sparkline_now": "現在",
     "retainers_edit_title": "リテイナーを編集",
     "retainers_title": "リテイナー",
     "retainers_unassigned": "未割り当て",
