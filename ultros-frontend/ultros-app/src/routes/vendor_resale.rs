@@ -661,7 +661,7 @@ fn VendorResaleTable(
 pub fn VendorWorldView() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
-    let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
+    let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
 
     // We fetch sales for better estimation, even though we are comparing to vendor prices
     let sales = ArcResource::new(
