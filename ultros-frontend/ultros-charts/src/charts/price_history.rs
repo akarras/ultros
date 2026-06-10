@@ -7,15 +7,15 @@ use std::borrow::Cow;
 
 use chrono::TimeDelta;
 use itertools::Itertools;
-use ultros_api_types::world_helper::WorldHelper;
 use ultros_api_types::SaleHistory;
+use ultros_api_types::world_helper::WorldHelper;
 
 use crate::data::buckets::{bucket_seconds, volume_buckets, vwap_buckets};
 use crate::data::grouping::group_sales_by_scope;
 use crate::data::outliers::filter_outliers;
 use crate::data::stats::vwap;
 use crate::data::trend::least_squares;
-use crate::scale::{short_number, LinearScale, TimeScale};
+use crate::scale::{LinearScale, TimeScale, short_number};
 use crate::scene::{Node, Scene, Stroke, TextAnchor};
 use crate::theme::Theme;
 
@@ -135,7 +135,10 @@ pub fn build_price_history_scene(
     let plot_height = plot_bottom - plot_top;
     let (volume_top, price_bottom) = if options.show_volume {
         let volume_height = plot_height * 0.22;
-        (plot_bottom - volume_height, plot_bottom - volume_height - 10.0)
+        (
+            plot_bottom - volume_height,
+            plot_bottom - volume_height - 10.0,
+        )
     } else {
         (plot_bottom, plot_bottom)
     };
@@ -196,8 +199,8 @@ pub fn build_price_history_scene(
         let volumes = volume_buckets(&sales, bucket_secs);
         if let Some(max_volume) = volumes.iter().map(|v| v.quantity).max() {
             let volume = LinearScale::new((0.0, max_volume as f64), (plot_bottom, volume_top));
-            let bucket_px = time.scale(first_ts + TimeDelta::seconds(bucket_secs))
-                - time.scale(first_ts);
+            let bucket_px =
+                time.scale(first_ts + TimeDelta::seconds(bucket_secs)) - time.scale(first_ts);
             let bar_width = (bucket_px * 0.8).max(1.0);
             for bucket in &volumes {
                 let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
@@ -371,7 +374,14 @@ mod tests {
     fn two_world_sales() -> Vec<SaleHistory> {
         // 20 sales over ~10 days alternating between two worlds of one DC
         (0..20)
-            .map(|i| sale(1_000 + i * 10, 2, 1 + (i % 2), ts(1_700_000_000 + i as i64 * 43_200)))
+            .map(|i| {
+                sale(
+                    1_000 + i * 10,
+                    2,
+                    1 + (i % 2),
+                    ts(1_700_000_000 + i as i64 * 43_200),
+                )
+            })
             .collect()
     }
 
@@ -417,9 +427,10 @@ mod tests {
     #[test]
     fn empty_sales_renders_no_data_card() {
         let scene = build_price_history_scene(&world_helper(), &[], &PriceChartOptions::default());
-        let has_no_data_text = scene.nodes.iter().any(|n| {
-            matches!(n, Node::Text { content, .. } if content == "No recent sales")
-        });
+        let has_no_data_text = scene
+            .nodes
+            .iter()
+            .any(|n| matches!(n, Node::Text { content, .. } if content == "No recent sales"));
         assert!(has_no_data_text);
     }
 
@@ -436,7 +447,10 @@ mod tests {
         assert_eq!((ax, ay), (0.0, 0.0));
         assert_eq!((bx, by), (5.0, 10.0));
         // Entirely outside: dropped
-        assert_eq!(clip_segment_to_band((0.0, 20.0), (10.0, 30.0), 0.0, 10.0), None);
+        assert_eq!(
+            clip_segment_to_band((0.0, 20.0), (10.0, 30.0), 0.0, 10.0),
+            None
+        );
     }
 
     #[test]
@@ -495,7 +509,10 @@ mod tests {
         // Just assert the broad invariant: inside the drawing area, above the
         // bottom margin.
         for y in [y1, y2] {
-            assert!(y >= 12.0 && y <= 540.0 - 32.0, "trendline endpoint y={y} escaped");
+            assert!(
+                y >= 12.0 && y <= 540.0 - 32.0,
+                "trendline endpoint y={y} escaped"
+            );
         }
     }
 }

@@ -104,8 +104,16 @@ mod tests {
     fn vwap_buckets_weight_by_quantity() {
         // 100×1 and 200×3 in the same day bucket → VWAP 175, vertex at midday
         let points = vec![
-            SalePoint { ts: ts(0), price: 100, quantity: 1 },
-            SalePoint { ts: ts(3_600), price: 200, quantity: 3 },
+            SalePoint {
+                ts: ts(0),
+                price: 100,
+                quantity: 1,
+            },
+            SalePoint {
+                ts: ts(3_600),
+                price: 200,
+                quantity: 3,
+            },
         ];
         let buckets = vwap_buckets(&points, 86_400);
         assert_eq!(buckets.len(), 1);

@@ -2,10 +2,10 @@
 //! Run: cargo run -p ultros-charts --example price_history
 
 use chrono::DateTime;
+use ultros_api_types::SaleHistory;
 use ultros_api_types::world::{Datacenter, Region, World, WorldData};
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_api_types::SaleHistory;
-use ultros_charts::charts::price_history::{build_price_history_scene, PriceChartOptions};
+use ultros_charts::charts::price_history::{PriceChartOptions, build_price_history_scene};
 use ultros_charts::svg::scene_to_svg;
 
 fn lcg(state: &mut u32) -> i32 {
@@ -23,8 +23,16 @@ fn main() {
                 name: "Aether".to_string(),
                 region_id: 1,
                 worlds: vec![
-                    World { id: 1, name: "Gilgamesh".to_string(), datacenter_id: 1 },
-                    World { id: 2, name: "Adamantoise".to_string(), datacenter_id: 1 },
+                    World {
+                        id: 1,
+                        name: "Gilgamesh".to_string(),
+                        datacenter_id: 1,
+                    },
+                    World {
+                        id: 2,
+                        name: "Adamantoise".to_string(),
+                        datacenter_id: 1,
+                    },
                 ],
             }],
         }],

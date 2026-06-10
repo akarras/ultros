@@ -1,10 +1,14 @@
 /// Volume-weighted average price; `None` on empty input or zero total quantity.
 pub fn vwap(prices_and_quantities: &[(i32, i32)]) -> Option<i32> {
-    let (num, den) = prices_and_quantities
-        .iter()
-        .fold((0i64, 0i64), |(n, d), (price, quantity)| {
-            (n + (*price as i64) * (*quantity as i64), d + (*quantity as i64))
-        });
+    let (num, den) =
+        prices_and_quantities
+            .iter()
+            .fold((0i64, 0i64), |(n, d), (price, quantity)| {
+                (
+                    n + (*price as i64) * (*quantity as i64),
+                    d + (*quantity as i64),
+                )
+            });
     if den == 0 {
         return None;
     }

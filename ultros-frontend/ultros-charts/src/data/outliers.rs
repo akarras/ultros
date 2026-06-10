@@ -52,7 +52,9 @@ mod tests {
 
     #[test]
     fn extreme_prices_are_filtered() {
-        let mut sales: Vec<_> = (0..20).map(|i| sale(1000 + i, 1, 1, ts(i as i64))).collect();
+        let mut sales: Vec<_> = (0..20)
+            .map(|i| sale(1000 + i, 1, 1, ts(i as i64)))
+            .collect();
         sales.push(sale(1_000_000, 1, 1, ts(21)));
         let filtered = filter_outliers(&sales);
         assert_eq!(filtered.len(), 20);

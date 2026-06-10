@@ -163,7 +163,9 @@ mod tests {
     use chrono::NaiveDateTime;
 
     fn ts(secs: i64) -> NaiveDateTime {
-        chrono::DateTime::from_timestamp(secs, 0).unwrap().naive_utc()
+        chrono::DateTime::from_timestamp(secs, 0)
+            .unwrap()
+            .naive_utc()
     }
 
     #[test]
@@ -199,7 +201,11 @@ mod tests {
 
     #[test]
     fn time_ticks_pick_sensible_steps() {
-        let scale = TimeScale::new(ts(1_700_000_000), ts(1_700_000_000 + 2 * 3600), (0.0, 100.0));
+        let scale = TimeScale::new(
+            ts(1_700_000_000),
+            ts(1_700_000_000 + 2 * 3600),
+            (0.0, 100.0),
+        );
         let ticks = scale.ticks(6);
         assert!(!ticks.is_empty() && ticks.len() <= 6);
         // Sub-day spans label as %H:%M

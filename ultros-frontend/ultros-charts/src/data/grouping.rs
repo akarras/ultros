@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 use chrono::NaiveDateTime;
 use itertools::Itertools;
-use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 use ultros_api_types::SaleHistory;
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SalePoint {

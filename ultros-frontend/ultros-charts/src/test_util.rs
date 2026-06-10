@@ -1,12 +1,14 @@
 //! Shared fixtures for unit tests: a synthetic world tree and SaleHistory rows.
 
 use chrono::NaiveDateTime;
+use ultros_api_types::SaleHistory;
 use ultros_api_types::world::{Datacenter, Region, World, WorldData};
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_api_types::SaleHistory;
 
 pub(crate) fn ts(secs: i64) -> NaiveDateTime {
-    chrono::DateTime::from_timestamp(secs, 0).unwrap().naive_utc()
+    chrono::DateTime::from_timestamp(secs, 0)
+        .unwrap()
+        .naive_utc()
 }
 
 pub(crate) fn sale(price: i32, quantity: i32, world_id: i32, sold: NaiveDateTime) -> SaleHistory {
