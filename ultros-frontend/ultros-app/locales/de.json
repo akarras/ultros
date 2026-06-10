@@ -537,6 +537,8 @@
     "chart_range_30d": "30T",
     "chart_range_all": "Alle",
     "chart_aria_label": "Streudiagramm mit {n} Verkäufen zwischen {from} und {to}",
+    "sparkline_hours_ago": "vor {n} Std.",
+    "sparkline_now": "jetzt",
     "retainers_edit_title": "Gehilfen bearbeiten",
     "retainers_title": "Gehilfen",
     "retainers_unassigned": "Nicht zugewiesen",

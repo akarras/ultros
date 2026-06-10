@@ -537,6 +537,8 @@
     "chart_range_30d": "30j",
     "chart_range_all": "Tout",
     "chart_aria_label": "Nuage de points de {n} ventes entre {from} et {to}",
+    "sparkline_hours_ago": "il y a {n} h",
+    "sparkline_now": "maintenant",
     "retainers_edit_title": "Modifier les servants",
     "retainers_title": "Servants",
     "retainers_unassigned": "Non assigné",

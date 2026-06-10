@@ -537,6 +537,8 @@
     "chart_range_30d": "30天",
     "chart_range_all": "全部",
     "chart_aria_label": "{from} 到 {to} 之间 {n} 笔销售的散点图",
+    "sparkline_hours_ago": "{n}小时前",
+    "sparkline_now": "现在",
     "retainers_edit_title": "编辑雇员",
     "retainers_title": "雇员",
     "retainers_unassigned": "未分配",
