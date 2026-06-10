@@ -158,10 +158,7 @@ fn ColorByControl(
 /// Crosshair + per-series dots at the hovered bucket. Lives INSIDE the
 /// chart's `<svg>` so it shares the viewBox coordinate space.
 #[component]
-fn HoverLayer(
-    model: Memo<PriceChartModel>,
-    hover_index: RwSignal<Option<usize>>,
-) -> impl IntoView {
+fn HoverLayer(model: Memo<PriceChartModel>, hover_index: RwSignal<Option<usize>>) -> impl IntoView {
     move || {
         hover_index.get().and_then(|i| {
             model.with(|m| {

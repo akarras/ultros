@@ -239,7 +239,11 @@ mod tests {
 
     #[test]
     fn tick_labels_shift_with_offset_but_positions_do_not() {
-        let scale = TimeScale::new(ts(1_700_000_000), ts(1_700_000_000 + 2 * 3600), (0.0, 100.0));
+        let scale = TimeScale::new(
+            ts(1_700_000_000),
+            ts(1_700_000_000 + 2 * 3600),
+            (0.0, 100.0),
+        );
         let utc = scale.ticks(6, 0);
         let shifted = scale.ticks(6, 60);
         assert_eq!(utc.len(), shifted.len());

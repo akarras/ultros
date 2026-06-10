@@ -64,8 +64,7 @@ pub fn Sparkline(
             return;
         }
         let x_css = evt.client_x() - rect.left();
-        let index =
-            model.with_value(|m| m.nearest_index((x_css / rect.width()) as f32 * m.width));
+        let index = model.with_value(|m| m.nearest_index((x_css / rect.width()) as f32 * m.width));
         hover.set(index);
     };
 

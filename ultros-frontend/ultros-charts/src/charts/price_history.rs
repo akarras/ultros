@@ -375,7 +375,9 @@ pub fn build_price_history_chart(
         for point in &buckets {
             // key by bucket START so it aligns with the volume buckets
             let key = point.ts.and_utc().timestamp() - bucket_secs / 2;
-            hover_map.entry(key).or_insert_with(|| vec![None; series.len()])[index] =
+            hover_map
+                .entry(key)
+                .or_insert_with(|| vec![None; series.len()])[index] =
                 Some((price.scale(point.vwap), point.vwap));
         }
         let line: Vec<(f32, f32)> = buckets
@@ -709,13 +711,7 @@ mod tests {
             assert!(!bucket.label.is_empty());
         }
         // sorted by x
-        assert!(
-            model
-                .hover
-                .buckets
-                .windows(2)
-                .all(|w| w[0].x <= w[1].x)
-        );
+        assert!(model.hover.buckets.windows(2).all(|w| w[0].x <= w[1].x));
         let stats = model.stats.expect("stats for non-empty sales");
         assert_eq!(stats.n, 20);
         assert!(stats.min <= stats.max);
@@ -751,8 +747,11 @@ mod tests {
 
     #[test]
     fn scene_function_delegates_to_the_model() {
-        let scene =
-            build_price_history_scene(&world_helper(), &two_world_sales(), &PriceChartOptions::default());
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_sales(),
+            &PriceChartOptions::default(),
+        );
         let model = build_price_history_chart(
             &world_helper(),
             &two_world_sales(),
@@ -831,18 +830,24 @@ mod tests {
                 bucket.series_values.iter().any(|v| v.is_some()),
                 "no orphan hover buckets"
             );
-            assert!(bucket.volume > 0, "aligned volume for every populated bucket");
+            assert!(
+                bucket.volume > 0,
+                "aligned volume for every populated bucket"
+            );
         }
     }
 
     #[test]
     fn empty_sales_yield_empty_model_with_no_data_scene() {
-        let model =
-            build_price_history_chart(&world_helper(), &[], &PriceChartOptions::default());
+        let model = build_price_history_chart(&world_helper(), &[], &PriceChartOptions::default());
         assert!(model.hover.buckets.is_empty());
         assert!(model.stats.is_none());
-        assert!(model.scene.nodes.iter().any(
-            |n| matches!(n, Node::Text { content, .. } if content == "No recent sales")
-        ));
+        assert!(
+            model
+                .scene
+                .nodes
+                .iter()
+                .any(|n| matches!(n, Node::Text { content, .. } if content == "No recent sales"))
+        );
     }
 }

@@ -257,18 +257,29 @@ mod tests {
     #[test]
     fn available_levels_follow_the_viewed_scope() {
         let h = world_helper();
-        assert_eq!(available_group_levels(&h, "Gilgamesh"), vec![GroupLevel::World]);
+        assert_eq!(
+            available_group_levels(&h, "Gilgamesh"),
+            vec![GroupLevel::World]
+        );
         assert_eq!(
             available_group_levels(&h, "Aether"),
             vec![GroupLevel::Datacenter, GroupLevel::World]
         );
         assert_eq!(
             available_group_levels(&h, "North-America"),
-            vec![GroupLevel::Region, GroupLevel::Datacenter, GroupLevel::World]
+            vec![
+                GroupLevel::Region,
+                GroupLevel::Datacenter,
+                GroupLevel::World
+            ]
         );
         assert_eq!(
             available_group_levels(&h, "Not A Scope"),
-            vec![GroupLevel::Region, GroupLevel::Datacenter, GroupLevel::World]
+            vec![
+                GroupLevel::Region,
+                GroupLevel::Datacenter,
+                GroupLevel::World
+            ]
         );
     }
 }

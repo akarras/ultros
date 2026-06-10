@@ -127,9 +127,21 @@ mod tests {
     #[test]
     fn volume_buckets_sum_quantities() {
         let points = [
-            SalePoint { ts: ts(0), price: 100, quantity: 2 },
-            SalePoint { ts: ts(60), price: 100, quantity: 3 },
-            SalePoint { ts: ts(86_400), price: 100, quantity: 5 },
+            SalePoint {
+                ts: ts(0),
+                price: 100,
+                quantity: 2,
+            },
+            SalePoint {
+                ts: ts(60),
+                price: 100,
+                quantity: 3,
+            },
+            SalePoint {
+                ts: ts(86_400),
+                price: 100,
+                quantity: 5,
+            },
         ];
         let buckets = volume_buckets_from_points(points.iter(), 86_400);
         assert_eq!(buckets.len(), 2);

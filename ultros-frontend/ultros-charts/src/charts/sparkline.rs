@@ -108,9 +108,18 @@ mod tests {
     #[test]
     fn trend_color_follows_pct_change() {
         use crate::scene::Color;
-        assert_eq!(build_sparkline(&[1, 2], 5.0, 80.0, 24.0).color, Color::hex("#34d399"));
-        assert_eq!(build_sparkline(&[1, 2], -5.0, 80.0, 24.0).color, Color::hex("#f87171"));
-        assert_eq!(build_sparkline(&[1, 2], 0.0, 80.0, 24.0).color, Color::hex("#94a3b8"));
+        assert_eq!(
+            build_sparkline(&[1, 2], 5.0, 80.0, 24.0).color,
+            Color::hex("#34d399")
+        );
+        assert_eq!(
+            build_sparkline(&[1, 2], -5.0, 80.0, 24.0).color,
+            Color::hex("#f87171")
+        );
+        assert_eq!(
+            build_sparkline(&[1, 2], 0.0, 80.0, 24.0).color,
+            Color::hex("#94a3b8")
+        );
     }
 
     #[test]
@@ -120,6 +129,9 @@ mod tests {
         assert_eq!(m.nearest_index(15.0), Some(0));
         assert_eq!(m.nearest_index(25.0), Some(1));
         assert_eq!(m.nearest_index(999.0), Some(2));
-        assert_eq!(build_sparkline(&[], 0.0, 80.0, 24.0).nearest_index(10.0), None);
+        assert_eq!(
+            build_sparkline(&[], 0.0, 80.0, 24.0).nearest_index(10.0),
+            None
+        );
     }
 }

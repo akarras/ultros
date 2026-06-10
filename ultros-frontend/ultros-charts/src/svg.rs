@@ -61,7 +61,10 @@ pub(crate) fn area_path_d(points: &[(f32, f32)], baseline_y: f32) -> Option<Stri
     }
     let first_x = points[0].0;
     let last_x = points[points.len() - 1].0;
-    let _ = write!(d, "L{last_x:.1} {baseline_y:.1}L{first_x:.1} {baseline_y:.1}Z");
+    let _ = write!(
+        d,
+        "L{last_x:.1} {baseline_y:.1}L{first_x:.1} {baseline_y:.1}Z"
+    );
     Some(d)
 }
 
