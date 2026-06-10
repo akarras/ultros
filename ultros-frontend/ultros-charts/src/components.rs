@@ -77,6 +77,7 @@ fn node_view(node: &Node) -> AnyView {
                 stroke=color_attr(&stroke.color)
                 stroke-width=px(stroke.width)
                 stroke-linecap="round"
+                stroke-linejoin="round"
                 stroke-dasharray=dash_attr(stroke)
             />
         }

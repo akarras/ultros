@@ -320,30 +320,30 @@ pub fn build_price_history_chart(
     let span_days = (last_ts - first_ts).num_days();
     let bucket_secs = bucket_seconds(options.days_range, span_days);
     let volumes = volume_buckets_from_points(all_points(), bucket_secs);
-    if options.show_volume {
-        if let Some(max_volume) = volumes.iter().map(|v| v.quantity).max() {
-            let volume = LinearScale::new((0.0, max_volume as f64), (plot_bottom, volume_top));
-            let bucket_px =
-                time.scale(first_ts + TimeDelta::seconds(bucket_secs)) - time.scale(first_ts);
-            let bar_width = (bucket_px * 0.8).max(1.0);
-            for bucket in &volumes {
-                let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
-                let x = time.scale(center);
-                let left = (x - bar_width / 2.0).max(plot_left);
-                let right = (x + bar_width / 2.0).min(plot_right);
-                if right <= left {
-                    continue;
-                }
-                let top = volume.scale(bucket.quantity as f64);
-                scene.nodes.push(Node::Rect {
-                    x: left,
-                    y: top,
-                    width: right - left,
-                    height: (plot_bottom - top).max(1.0),
-                    rx: 1.0,
-                    fill: theme.volume.with_alpha(0.7),
-                });
+    if options.show_volume
+        && let Some(max_volume) = volumes.iter().map(|v| v.quantity).max()
+    {
+        let volume = LinearScale::new((0.0, max_volume as f64), (plot_bottom, volume_top));
+        let bucket_px =
+            time.scale(first_ts + TimeDelta::seconds(bucket_secs)) - time.scale(first_ts);
+        let bar_width = (bucket_px * 0.8).max(1.0);
+        for bucket in &volumes {
+            let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
+            let x = time.scale(center);
+            let left = (x - bar_width / 2.0).max(plot_left);
+            let right = (x + bar_width / 2.0).min(plot_right);
+            if right <= left {
+                continue;
             }
+            let top = volume.scale(bucket.quantity as f64);
+            scene.nodes.push(Node::Rect {
+                x: left,
+                y: top,
+                width: right - left,
+                height: (plot_bottom - top).max(1.0),
+                rx: 1.0,
+                fill: theme.volume.with_alpha(0.7),
+            });
         }
     }
 
