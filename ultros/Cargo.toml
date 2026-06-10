@@ -65,7 +65,6 @@ tokio-stream = { version = "0.1.18", features = ["sync"] }
 ultros-charts = { path = "../ultros-frontend/ultros-charts", features = [
     "image",
 ] }
-plotters-svg = { version = "0.3.7", features = ["bitmap_encoder"] }
 resvg = "0.47.0"
 image.workspace = true
 isocountry = "0.3.2"

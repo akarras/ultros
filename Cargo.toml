@@ -45,7 +45,6 @@ leptos-use = { version = "0.18.3", features = [] }
 chrono = "0.4.44"
 itertools = "0.14.0"
 image = "0.25.10"
-plotters = "0.3.7"
 sea-orm = { version = "^1.1.20", features = [
     "sqlx-postgres",
     "runtime-tokio-rustls",
@@ -122,7 +121,6 @@ web-push = { version = "0.11.0", default-features = false }
 #leptos_reactive = {path = "../leptos/leptos_reactive"}
 #leptos_axum = {path = "../leptos/integrations/axum"}
 #leptos_router = {path = "../leptos/router"}
-pathfinder_simd = { git = "https://github.com/servo/pathfinder.git" } # needed on ARM Mac until pathfinder_simd has new release
 
 [profile.release]
 # Optimized for size — used by the WASM client bundle (where bytes-on-the-wire matter).

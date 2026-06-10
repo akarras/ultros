@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use super::{WebState, error::WebError};
 use anyhow::{Result, anyhow};
@@ -8,7 +8,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use hyper::header;
-use plotters_svg::SVGBackend;
 use resvg::{
     tiny_skia,
     usvg::{self, Options},
@@ -17,7 +16,8 @@ use ultros_api_types::{
     SaleHistory,
     world_helper::{AnyResult, WorldHelper},
 };
-use ultros_charts::ChartOptions;
+use ultros_charts::charts::price_history::{PriceChartOptions, build_price_history_scene};
+use ultros_charts::svg::scene_to_svg;
 use ultros_db::UltrosDb;
 use xiv_gen::{Item, ItemId};
 
@@ -34,41 +34,23 @@ pub(crate) async fn generate_image(
         .into_iter()
         .map(SaleHistory::from)
         .collect();
-    const SIZE: (u32, u32) = (1920 / 2, 1080 / 2);
-    let buffer = {
-        let mut buffer = String::new();
-        // let mut image = RgbImage::new(size.0, size.1);
+    let scene = build_price_history_scene(
+        world_helper,
+        &sales,
+        &PriceChartOptions {
+            remove_outliers: true,
+            title: Some(format!("{} - Sale History", item.name)),
+            icon_data_uri: ultros_charts::item_icon_data_uri(item.key_id.0),
+            ..Default::default()
+        },
+    );
+    svg_to_png(&scene_to_svg(&scene))
+}
 
-        let backend = SVGBackend::with_string(&mut buffer, SIZE);
-        if let Err(e) = ultros_charts::draw_sale_history_scatter_plot(
-            Rc::new(RefCell::new(backend)),
-            world_helper,
-            &sales,
-            ChartOptions {
-                remove_outliers: true,
-                icon_item_id: item.key_id.0,
-                draw_icon: true,
-                // hex 202124
-                background_rgb: Some((0x20, 0x21, 0x24)),
-                ..Default::default()
-            },
-        ) {
-            Err(anyhow!("can't draw scatter plot {e}"))?
-        }
-
-        buffer
-    };
-
-    let mut opt = Options {
-        resources_dir: std::fs::canonicalize(&buffer)
-            .ok()
-            // Get file's absolute directory.
-            .and_then(|p| p.parent().map(|p| p.to_path_buf())),
-        ..Default::default()
-    };
+fn svg_to_png(svg: &str) -> Result<Vec<u8>> {
+    let mut opt = Options::default();
     opt.fontdb_mut().load_system_fonts();
-
-    let tree = usvg::Tree::from_str(&buffer, &opt)?;
+    let tree = usvg::Tree::from_str(svg, &opt)?;
     let pixmap_size = tree.size().to_int_size();
     let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
         .ok_or(anyhow!("failed to make pixmap"))?;
@@ -94,4 +76,62 @@ pub(crate) async fn item_card(
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, mime_type.as_ref())
         .body(Body::new(http_body_util::Full::from(bytes)))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::svg_to_png;
+    use chrono::DateTime;
+    use ultros_api_types::SaleHistory;
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+    use ultros_charts::charts::price_history::{PriceChartOptions, build_price_history_scene};
+    use ultros_charts::svg::scene_to_svg;
+
+    #[test]
+    fn renders_a_decodable_png() {
+        let helper = WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "Test".to_string(),
+                datacenters: vec![Datacenter {
+                    id: 1,
+                    name: "DC".to_string(),
+                    region_id: 1,
+                    worlds: vec![World {
+                        id: 1,
+                        name: "World".to_string(),
+                        datacenter_id: 1,
+                    }],
+                }],
+            }],
+        });
+        let sales: Vec<SaleHistory> = (0..30)
+            .map(|i| SaleHistory {
+                id: i,
+                quantity: 1,
+                price_per_item: 1_000 + i * 13,
+                buying_character_id: 0,
+                hq: false,
+                sold_item_id: 1,
+                sold_date: DateTime::from_timestamp(1_750_000_000 + i as i64 * 7_200, 0)
+                    .unwrap()
+                    .naive_utc(),
+                world_id: 1,
+                buyer_name: None,
+            })
+            .collect();
+        let scene = build_price_history_scene(
+            &helper,
+            &sales,
+            &PriceChartOptions {
+                title: Some("Smoke Test - Sale History".to_string()),
+                remove_outliers: true,
+                ..Default::default()
+            },
+        );
+        let png = svg_to_png(&scene_to_svg(&scene)).expect("png");
+        let decoded = image::load_from_memory(&png).expect("decodable png");
+        assert_eq!((decoded.width(), decoded.height()), (960, 540));
+    }
 }
