@@ -741,7 +741,7 @@ pub fn VendorWorldView() -> impl IntoView {
                                             <VendorResaleTable
                                                 sales=s
                                                 world_cheapest_listings=w
-                                                world=world.into()
+                                                world=world
                                             />
                                         },
                                     )

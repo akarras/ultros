@@ -1721,7 +1721,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     world_cheapest_listings=w
                                                     cross_region
                                                     worlds
-                                                    world=world.into()
+                                                    world=world
                                                     filter_outliers=filter_outliers().unwrap_or(false)
                                                 />
                                             },
