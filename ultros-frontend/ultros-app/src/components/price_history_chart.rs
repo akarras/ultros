@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use leptos_use::{UseElementBoundingReturn, use_element_bounding};
+use leptos_use::{UseElementSizeReturn, use_element_size};
 use ultros_api_types::SaleHistory;
 use ultros_charts::charts::price_history::{
     ChartStats, PriceChartModel, PriceChartOptions, build_price_history_chart,
@@ -312,12 +312,13 @@ pub fn PriceHistoryChart(
     // renders at natural size instead of scaling down. Unmeasured (SSR and
     // first client render) falls back to 960, and leptos-use only updates
     // the signal post-mount — hydration-safe for the same reason as above.
+    // use_element_size is ResizeObserver-only (no scroll listener), so page
+    // scroll does not trigger model rebuilds.
     let container = NodeRef::<leptos::html::Div>::new();
-    let UseElementBoundingReturn {
-        left: container_left,
+    let UseElementSizeReturn {
         width: container_width,
         ..
-    } = use_element_bounding(container);
+    } = use_element_size(container);
 
     let helper_for_options = helper.clone();
     let color_by_options =
@@ -332,15 +333,22 @@ pub fn PriceHistoryChart(
         }
     });
 
+    // Quantise measured width to 16 px steps so resize-dragging doesn't
+    // rebuild the full multi-thousand-node scene on every pixel change.
+    // Memo's PartialEq deduplicates sub-step changes automatically.
+    let chart_width = Memo::new(move |_| {
+        let measured = container_width.get() as f32;
+        if measured > 0.0 {
+            ((measured / 16.0).round() * 16.0).clamp(320.0, 1600.0)
+        } else {
+            960.0
+        }
+    });
+
     let helper_for_model = helper.clone();
     let model = Memo::new(move |_| {
         let sales = sales.get();
-        let measured = container_width.get() as f32;
-        let width = if measured > 0.0 {
-            measured.clamp(320.0, 1600.0)
-        } else {
-            960.0
-        };
+        let width = chart_width.get();
         let height = (width * 0.56).clamp(300.0, 540.0);
         build_price_history_chart(
             &helper_for_model,
@@ -367,15 +375,29 @@ pub fn PriceHistoryChart(
     let stats = Signal::derive(move || model.with(|m| m.stats.clone()));
     let hover_index = RwSignal::new(None::<usize>);
 
+    // Clear stale hover state whenever the model is rebuilt (e.g. after a
+    // window resize snaps to a new quantised width or the data changes).
+    Effect::new(move |_| {
+        model.track();
+        hover_index.set(None);
+    });
+
     let on_pointer_move = move |evt: web_sys::PointerEvent| {
-        let width = container_width.get_untracked();
-        if width <= 0.0 {
+        use web_sys::wasm_bindgen::JsCast;
+        let Some(target) = evt
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        else {
+            return;
+        };
+        let rect = target.get_bounding_client_rect();
+        if rect.width() <= 0.0 {
             return;
         }
-        let x_css = evt.client_x() as f64 - container_left.get_untracked();
+        let x_css = evt.client_x() - rect.left();
         let index = model.with_untracked(|m| {
             m.hover
-                .nearest_index((x_css / width) as f32 * m.scene.width)
+                .nearest_index((x_css / rect.width()) as f32 * m.scene.width)
         });
         hover_index.set(index);
     };

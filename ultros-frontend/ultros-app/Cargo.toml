@@ -29,6 +29,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "HtmlElement",
     "HtmlDocument",
     "Document",
+    "DomRect",
     "Element",
     "PointerEvent",
     "WebSocket",
