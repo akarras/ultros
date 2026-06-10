@@ -7,15 +7,16 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-image = ["dep:ultros-xiv-icons", "dep:image"]
+image = ["dep:ultros-xiv-icons", "dep:image", "dep:base64"]
 
 [dependencies]
-plotters = "0.3"
-xiv-gen-db = {path = "../../xiv-gen-db"}
-xiv-gen.workspace = true
-ultros-api-types = {path = "../../ultros-api-types"}
-ultros-xiv-icons = {path = "../ultros-xiv-icons", optional=true}
-chrono = {workspace = true}
+ultros-api-types = { path = "../../ultros-api-types" }
+chrono = { workspace = true }
 itertools.workspace = true
-anyhow.workspace = true
-image = {workspace = true, optional = true}
+ultros-xiv-icons = { path = "../ultros-xiv-icons", optional = true }
+image = { workspace = true, optional = true }
+base64 = { version = "0.22", optional = true }
+
+[dev-dependencies]
+resvg = "0.47.0"
+image = { workspace = true }
