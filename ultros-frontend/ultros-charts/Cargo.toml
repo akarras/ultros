@@ -16,3 +16,7 @@ itertools.workspace = true
 ultros-xiv-icons = { path = "../ultros-xiv-icons", optional = true }
 image = { workspace = true, optional = true }
 base64 = { version = "0.22", optional = true }
+
+[dev-dependencies]
+resvg = "0.47.0"
+image = { workspace = true }
