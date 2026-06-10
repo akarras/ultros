@@ -1497,7 +1497,7 @@ fn AnalyzerTable(
 pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
-    let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
+    let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
     let sales = ArcResource::new(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
@@ -1721,7 +1721,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     world_cheapest_listings=w
                                                     cross_region
                                                     worlds
-                                                    world=world.into()
+                                                    world=world
                                                     filter_outliers=filter_outliers().unwrap_or(false)
                                                 />
                                             },

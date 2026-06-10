@@ -33,3 +33,7 @@
 ## 2025-05-30 - Avoid Memo::new for trivial map lookups and struct accesses in Leptos components
 **Learning:** Found multiple components (`RelatedItems`, `VirtualScroller`, `ItemExplorer`) where `Memo::new` was used for completely O(1) operations. In `RelatedItems` we wrapped a HashMap `.get()`. `Memo` creates a new reactive node, tracks dependencies, allocates memory for the value, and does equality checks on every update. For extremely cheap O(1) operations, the reactive system overhead is significantly higher than the operation itself.
 **Action:** Replace `Memo::new` with `Signal::derive` (or raw `move ||`) for cheap map lookups, struct field accesses, and trivial mathematical operations in Leptos. Save `Memo` for when the operation actually involves heavy allocations, sorting, iterating large collections, or expensive formatting.
+
+## 2025-06-10 - Replace Memo::new with Signal::derive for O(1) unwrap_or_default calls
+**Learning:** Found multiple instances where `Memo::new` was used for completely O(1) operations like `.unwrap_or_default()` and `.is_empty()` after `with()` on signals. Creating a `Memo` adds reactivity overhead including tracking dependencies, allocating memory, and checking equality. This is inefficient for trivial operations.
+**Action:** Always prefer `Signal::derive` (or simple closures) for trivial instantaneous operations such as unwrap, `is_empty`, and `.clone()` lookups. Only use `Memo::new` for more expensive operations such as iterating over lists or computing sorts.

@@ -215,7 +215,7 @@ pub fn JobItems() -> impl IntoView {
     let params = use_params_map();
     let data = tracked_data();
     let (non_market, set_non_market) = query_signal::<bool>("show-non-market");
-    let market_only = Memo::new(move |_| !non_market().unwrap_or_default());
+    let market_only = Signal::derive(move || !non_market().unwrap_or_default());
     let set_market_only =
         SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
     let items = Memo::new(move |_| {

@@ -382,8 +382,8 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
             }
         }
     });
-    let day_sales = Memo::new(move |_| sales.with(|s| s.past_day.clone()).unwrap_or_default());
-    let month_sales = Memo::new(move |_| sales.with(|s| s.month.clone()).unwrap_or_default());
+    let day_sales = Signal::derive(move || sales.with(|s| s.past_day.clone()).unwrap_or_default());
+    let month_sales = Signal::derive(move || sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
         <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
             <h3 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, sale_history_insights_title)}</h3>
