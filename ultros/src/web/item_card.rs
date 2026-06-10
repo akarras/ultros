@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::{WebState, error::WebError};
 use anyhow::{Result, anyhow};
@@ -47,9 +47,22 @@ pub(crate) async fn generate_image(
     svg_to_png(&scene_to_svg(&scene))
 }
 
+fn font_db() -> Arc<usvg::fontdb::Database> {
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut db = usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            Arc::new(db)
+        })
+        .clone()
+}
+
 fn svg_to_png(svg: &str) -> Result<Vec<u8>> {
-    let mut opt = Options::default();
-    opt.fontdb_mut().load_system_fonts();
+    let opt = Options {
+        fontdb: font_db(),
+        ..Default::default()
+    };
     let tree = usvg::Tree::from_str(svg, &opt)?;
     let pixmap_size = tree.size().to_int_size();
     let mut pixmap = tiny_skia::Pixmap::new(pixmap_size.width(), pixmap_size.height())
