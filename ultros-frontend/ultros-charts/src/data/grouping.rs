@@ -240,6 +240,21 @@ mod tests {
     }
 
     #[test]
+    fn scope_grouping_equals_explicit_level_at_the_auto_level() {
+        let h = world_helper();
+        let scenarios = [
+            vec![sale(100, 1, 1, ts(0)), sale(200, 1, 2, ts(10))], // one DC
+            vec![sale(100, 1, 1, ts(0)), sale(200, 1, 3, ts(10))], // one region
+            vec![sale(100, 1, 1, ts(0)), sale(200, 1, 4, ts(10))], // two regions
+        ];
+        for sales in scenarios {
+            let auto = group_sales_by_scope(&h, &sales);
+            let explicit = group_sales_by_level(&h, &sales, auto_group_level(&h, &sales));
+            assert_eq!(auto, explicit);
+        }
+    }
+
+    #[test]
     fn available_levels_follow_the_viewed_scope() {
         let h = world_helper();
         assert_eq!(available_group_levels(&h, "Gilgamesh"), vec![GroupLevel::World]);

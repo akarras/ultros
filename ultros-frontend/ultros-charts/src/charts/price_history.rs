@@ -815,6 +815,27 @@ mod tests {
     }
 
     #[test]
+    fn hover_volume_corresponds_to_bucket_sales() {
+        let model = build_price_history_chart(
+            &world_helper(),
+            &two_world_sales(),
+            &PriceChartOptions::default(),
+        );
+        // Every hover bucket was created from at least one VWAP point, and the
+        // volume lane keys by the same bucket start — so each bucket with any
+        // series value must carry that bucket's quantity sum.
+        let total: i64 = model.hover.buckets.iter().map(|b| b.volume).sum();
+        assert_eq!(total, 40, "20 sales x quantity 2 all land in hover buckets");
+        for bucket in &model.hover.buckets {
+            assert!(
+                bucket.series_values.iter().any(|v| v.is_some()),
+                "no orphan hover buckets"
+            );
+            assert!(bucket.volume > 0, "aligned volume for every populated bucket");
+        }
+    }
+
+    #[test]
     fn empty_sales_yield_empty_model_with_no_data_scene() {
         let model =
             build_price_history_chart(&world_helper(), &[], &PriceChartOptions::default());
