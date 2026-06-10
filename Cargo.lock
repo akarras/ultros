@@ -9822,6 +9822,7 @@ dependencies = [
  "chrono",
  "image",
  "itertools",
+ "leptos",
  "resvg",
  "ultros-api-types",
  "ultros-xiv-icons",
