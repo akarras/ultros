@@ -34,4 +34,9 @@ mod tests {
         let uri = encode_png_data_uri(&webp).unwrap();
         assert!(uri.starts_with("data:image/png;base64,"));
     }
+
+    #[test]
+    fn malformed_input_returns_none() {
+        assert!(encode_png_data_uri(b"not a webp").is_none());
+    }
 }

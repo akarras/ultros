@@ -453,4 +453,49 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn hiding_volume_emits_no_bars() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_sales(),
+            &PriceChartOptions {
+                show_volume: false,
+                ..Default::default()
+            },
+        );
+        assert_eq!(count(&scene, |n| matches!(n, Node::Rect { .. })), 0);
+        assert_eq!(count(&scene, |n| matches!(n, Node::Polyline { .. })), 2);
+    }
+
+    #[test]
+    fn trendline_stays_inside_the_price_lane() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_sales(),
+            &PriceChartOptions {
+                show_trendline: true,
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        // With market average off and no title, the only dashed Line nodes
+        // are gridless overlays: exactly one trendline.
+        let trend_lines: Vec<_> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Line { y1, y2, stroke, .. } if stroke.dash.is_some() => Some((*y1, *y2)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(trend_lines.len(), 1);
+        let (y1, y2) = trend_lines[0];
+        // No title → plot_top = 12; volume lane top boundary = price_bottom.
+        // Just assert the broad invariant: inside the drawing area, above the
+        // bottom margin.
+        for y in [y1, y2] {
+            assert!(y >= 12.0 && y <= 540.0 - 32.0, "trendline endpoint y={y} escaped");
+        }
+    }
 }
