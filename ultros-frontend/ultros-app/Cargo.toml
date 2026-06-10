@@ -65,8 +65,7 @@ js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 tracing = "0.1"
 serde_json = { workspace = true }
-ultros-charts = { path = "../ultros-charts" }
-leptos-chartistry = "0.2.3"
+ultros-charts = { path = "../ultros-charts", features = ["leptos"] }
 icondata.workspace = true
 gloo-timers = { version = "0.4.0", features = ["futures"] }
 cfg-if.workspace = true
