@@ -1,7 +1,7 @@
 //! Numeric and time axes: domain→pixel mapping, "nice" tick generation,
 //! and the K/mil number formatting shared with the web UI.
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, TimeDelta};
 
 /// Format an integer gil value as `1.50K` / `2.30mil`, matching the web UI.
 pub fn short_number(value: i32) -> String {
@@ -120,9 +120,10 @@ impl TimeScale {
         self.range.0 + t as f32 * (self.range.1 - self.range.0)
     }
 
-    /// At most `target` ticks aligned to step boundaries, labelled with a
-    /// format that matches the step size.
-    pub fn ticks(&self, target: usize) -> Vec<TimeTick> {
+    /// At most `target` ticks aligned to step boundaries. `label_offset_minutes`
+    /// shifts the LABEL text only (viewer-local display); tick positions stay
+    /// UTC-aligned so SSR and client geometry agree.
+    pub fn ticks(&self, target: usize, label_offset_minutes: i32) -> Vec<TimeTick> {
         let span = self.end - self.start;
         let step = TIME_STEPS
             .iter()
@@ -146,9 +147,10 @@ impl TimeScale {
         while tick <= self.end {
             if let Some(ts) = chrono::DateTime::from_timestamp(tick, 0) {
                 let ts = ts.naive_utc();
+                let display = ts + TimeDelta::minutes(label_offset_minutes as i64);
                 out.push(TimeTick {
                     ts,
-                    label: ts.format(format).to_string(),
+                    label: display.format(format).to_string(),
                 });
             }
             tick += step;
@@ -206,7 +208,7 @@ mod tests {
             ts(1_700_000_000 + 2 * 3600),
             (0.0, 100.0),
         );
-        let ticks = scale.ticks(6);
+        let ticks = scale.ticks(6, 0);
         assert!(!ticks.is_empty() && ticks.len() <= 6);
         // Sub-day spans label as %H:%M
         assert!(ticks[0].label.contains(':'));
@@ -229,9 +231,19 @@ mod tests {
     fn time_ticks_use_day_steps_for_month_spans() {
         let start = ts(1_700_000_000);
         let end = ts(1_700_000_000 + 30 * 86_400);
-        let ticks = TimeScale::new(start, end, (0.0, 100.0)).ticks(6);
+        let ticks = TimeScale::new(start, end, (0.0, 100.0)).ticks(6, 0);
         assert!(!ticks.is_empty() && ticks.len() <= 7);
         // Day-scale steps label as %m-%d: no time-of-day component
         assert!(ticks.iter().all(|t| !t.label.contains(':')));
+    }
+
+    #[test]
+    fn tick_labels_shift_with_offset_but_positions_do_not() {
+        let scale = TimeScale::new(ts(1_700_000_000), ts(1_700_000_000 + 2 * 3600), (0.0, 100.0));
+        let utc = scale.ticks(6, 0);
+        let shifted = scale.ticks(6, 60);
+        assert_eq!(utc.len(), shifted.len());
+        assert_eq!(utc[0].ts, shifted[0].ts);
+        assert_ne!(utc[0].label, shifted[0].label);
     }
 }
