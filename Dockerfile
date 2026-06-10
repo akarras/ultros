@@ -93,7 +93,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LEPTOS_ENVIRONMENT="production" \
     LEPTOS_SITE_ADDR="0.0.0.0:8080" \
     LEPTOS_SITE_ROOT="site"
-# Minimal runtime deps: TLS roots, freetype + fontconfig for plotters/resvg rendering.
+# Minimal runtime deps: TLS roots, freetype + fontconfig for resvg rendering.
 # No `apt upgrade` — keeps builds reproducible against the pinned base image.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -108,7 +108,7 @@ WORKDIR /app
 COPY --from=builder /app/target/server-release/ultros /app/ultros
 COPY --from=builder /app/target/site /app/site
 COPY --from=builder /app/Cargo.toml /app/Cargo.toml
-# Fonts used by plotters/resvg at runtime. Same files are also in /app/site for
+# Fonts used by resvg at runtime. Same files are also in /app/site for
 # the client; keeping the system install lets fontconfig find them server-side.
 RUN mkdir -p /usr/local/share/fonts
 COPY --from=builder /app/ultros/static/*.ttf /usr/local/share/fonts/
