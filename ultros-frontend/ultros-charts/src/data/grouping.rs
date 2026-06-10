@@ -4,7 +4,7 @@
 //! server's local timezone, which is UTC in prod anyway; keeping UTC makes
 //! output deterministic across environments).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use chrono::NaiveDateTime;
 use itertools::Itertools;
@@ -26,9 +26,83 @@ pub struct Series {
     pub points: Vec<SalePoint>,
 }
 
-/// All sales on one datacenter → one series per world; one region → per
-/// datacenter; otherwise per region. Series sort by name for stable colors.
-pub fn group_sales_by_scope(world_helper: &WorldHelper, sales: &[SaleHistory]) -> Vec<Series> {
+/// Which level of the world hierarchy to roll sales up to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupLevel {
+    Region,
+    Datacenter,
+    World,
+}
+
+impl GroupLevel {
+    /// Stable identifier (list keys / debugging); user-facing names come
+    /// from the app's i18n layer.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Region => "Region",
+            Self::Datacenter => "Datacenter",
+            Self::World => "World",
+        }
+    }
+}
+
+/// Group sales at an explicit hierarchy level. Sales whose world id isn't in
+/// the helper are dropped. Series sort by name; points by timestamp.
+pub fn group_sales_by_level(
+    world_helper: &WorldHelper,
+    sales: &[SaleHistory],
+    level: GroupLevel,
+) -> Vec<Series> {
+    let mut groups = BTreeMap::<AnySelector, Series>::new();
+    for sale in sales {
+        let Some(world) = world_helper
+            .lookup_selector(AnySelector::World(sale.world_id))
+            .and_then(|r| r.as_world())
+        else {
+            continue;
+        };
+        let selector = match level {
+            GroupLevel::World => AnySelector::World(world.id),
+            GroupLevel::Datacenter => AnySelector::Datacenter(world.datacenter_id),
+            GroupLevel::Region => {
+                let Some(datacenter) = world_helper
+                    .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                    .and_then(|r| r.as_datacenter())
+                else {
+                    continue;
+                };
+                AnySelector::Region(datacenter.region_id)
+            }
+        };
+        let Some(result) = world_helper.lookup_selector(selector) else {
+            continue;
+        };
+        groups
+            .entry(selector)
+            .or_insert_with(|| Series {
+                name: result.get_name().to_string(),
+                points: Vec::new(),
+            })
+            .points
+            .push(SalePoint {
+                ts: sale.sold_date,
+                price: sale.price_per_item,
+                quantity: sale.quantity,
+            });
+    }
+    let mut series: Vec<Series> = groups
+        .into_values()
+        .sorted_by_cached_key(|series| series.name.clone())
+        .collect();
+    for series in &mut series {
+        series.points.sort_by_key(|p| p.ts);
+    }
+    series
+}
+
+/// The narrowest level that still yields multiple groups — the old
+/// `group_sales_by_scope` cascade.
+pub fn auto_group_level(world_helper: &WorldHelper, sales: &[SaleHistory]) -> GroupLevel {
     let world_ids: HashSet<_> = sales
         .iter()
         .map(|s| AnySelector::World(s.world_id))
@@ -51,45 +125,36 @@ pub fn group_sales_by_scope(world_helper: &WorldHelper, sales: &[SaleHistory]) -
                 .map(|dc| AnySelector::Region(dc.region_id))
         })
         .collect();
-    let selectors = if datacenters.len() == 1 {
-        world_ids
-    } else if regions.len() == 1 {
-        datacenters
+    if datacenters.len() <= 1 {
+        GroupLevel::World
+    } else if regions.len() <= 1 {
+        GroupLevel::Datacenter
     } else {
-        regions
-    };
-    selectors
-        .into_iter()
-        .flat_map(|selector| series_for(world_helper, selector, sales))
-        .sorted_by_cached_key(|series| series.name.clone())
-        .collect()
+        GroupLevel::Region
+    }
 }
 
-fn series_for(
-    world_helper: &WorldHelper,
-    selector: AnySelector,
-    sales: &[SaleHistory],
-) -> Option<Series> {
-    let result = world_helper.lookup_selector(selector)?;
-    let mut points: Vec<SalePoint> = sales
-        .iter()
-        .filter(|sale| {
-            world_helper
-                .lookup_selector(AnySelector::World(sale.world_id))
-                .map(|world| world.is_in(&result))
-                .unwrap_or_default()
-        })
-        .map(|sale| SalePoint {
-            ts: sale.sold_date,
-            price: sale.price_per_item,
-            quantity: sale.quantity,
-        })
-        .collect();
-    points.sort_by_key(|p| p.ts);
-    Some(Series {
-        name: result.get_name().to_string(),
-        points,
-    })
+/// Which grouping levels make sense for the scope page being viewed —
+/// ported from the web UI (a world page only offers World; a DC page offers
+/// DC + World; a region page or unknown scope offers everything).
+pub fn available_group_levels(world_helper: &WorldHelper, scope_name: &str) -> Vec<GroupLevel> {
+    match world_helper.lookup_world_by_name(scope_name) {
+        Some(result) if result.as_world().is_some() => vec![GroupLevel::World],
+        Some(result) if result.as_datacenter().is_some() => {
+            vec![GroupLevel::Datacenter, GroupLevel::World]
+        }
+        _ => vec![
+            GroupLevel::Region,
+            GroupLevel::Datacenter,
+            GroupLevel::World,
+        ],
+    }
+}
+
+/// Auto-picked grouping (the PNG path): the narrowest level that still
+/// yields multiple groups.
+pub fn group_sales_by_scope(world_helper: &WorldHelper, sales: &[SaleHistory]) -> Vec<Series> {
+    group_sales_by_level(world_helper, sales, auto_group_level(world_helper, sales))
 }
 
 #[cfg(test)]
@@ -141,5 +206,54 @@ mod tests {
         let series = group_sales_by_scope(&world_helper(), &sales);
         assert_eq!(names(&series), vec!["Gilgamesh"]);
         assert_eq!(series[0].points.len(), 1);
+    }
+
+    #[test]
+    fn explicit_level_overrides_auto() {
+        // Sales on one DC would auto-group by world; force datacenter level.
+        let sales = vec![sale(100, 1, 1, ts(0)), sale(200, 1, 2, ts(10))];
+        let series = group_sales_by_level(&world_helper(), &sales, GroupLevel::Datacenter);
+        assert_eq!(names(&series), vec!["Aether"]);
+        assert_eq!(series[0].points.len(), 2);
+        let series = group_sales_by_level(&world_helper(), &sales, GroupLevel::Region);
+        assert_eq!(names(&series), vec!["North-America"]);
+    }
+
+    #[test]
+    fn auto_level_matches_scope_cascade() {
+        let h = world_helper();
+        // one DC → world level
+        assert_eq!(
+            auto_group_level(&h, &[sale(1, 1, 1, ts(0)), sale(1, 1, 2, ts(0))]),
+            GroupLevel::World
+        );
+        // two DCs, one region → datacenter level
+        assert_eq!(
+            auto_group_level(&h, &[sale(1, 1, 1, ts(0)), sale(1, 1, 3, ts(0))]),
+            GroupLevel::Datacenter
+        );
+        // two regions → region level
+        assert_eq!(
+            auto_group_level(&h, &[sale(1, 1, 1, ts(0)), sale(1, 1, 4, ts(0))]),
+            GroupLevel::Region
+        );
+    }
+
+    #[test]
+    fn available_levels_follow_the_viewed_scope() {
+        let h = world_helper();
+        assert_eq!(available_group_levels(&h, "Gilgamesh"), vec![GroupLevel::World]);
+        assert_eq!(
+            available_group_levels(&h, "Aether"),
+            vec![GroupLevel::Datacenter, GroupLevel::World]
+        );
+        assert_eq!(
+            available_group_levels(&h, "North-America"),
+            vec![GroupLevel::Region, GroupLevel::Datacenter, GroupLevel::World]
+        );
+        assert_eq!(
+            available_group_levels(&h, "Not A Scope"),
+            vec![GroupLevel::Region, GroupLevel::Datacenter, GroupLevel::World]
+        );
     }
 }
