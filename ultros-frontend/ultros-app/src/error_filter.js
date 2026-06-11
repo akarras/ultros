@@ -28,13 +28,23 @@
 //      Browser / UC / WeChat in-app WebViews on frozen Chrome 112).
 //      GlitchTip issues #1, #7, #313, #770, #1047, #2776–#2812.
 //   3. tachys hydration `unreachable!()` panics at
-//      /tachys-*/src/hydration.rs:* triggered by the same population
-//      when an injected auto-translation overlay wraps text nodes in
-//      <font> elements before Leptos hydrates. Matched on the exact
-//      crates.io path AND a fingerprint of the injecting browser so
-//      legit hydration mismatches on current browsers still reach
-//      GlitchTip. Issues #678, #707, #770, #1307, #2277, #2775, #4951,
-//      #4905.
+//      /tachys-*/src/hydration.rs:* triggered when an injected
+//      auto-translation overlay wraps text nodes in <font> elements
+//      before Leptos hydrates (see shell() in lib.rs for the full
+//      chain). Three event shapes share this one root: the handled
+//      `internal error: entered unreachable code` panic (tachys path in
+//      contexts.rust_panic), its `RefCell already borrowed` cascade in
+//      the wasm-bindgen-futures executor (a js-sys path — matched via a
+//      tachys hydration breadcrumb instead), and the unhandled
+//      `RuntimeError: unreachable` that reaches window.onerror with no
+//      rust_panic context at all. Suppressed only when an injecting
+//      fingerprint is present: a <font> element in the live DOM (which
+//      Ultros never emits, so it is necessarily translation-injected —
+//      this catches the modern-Chrome CN population that ignores the
+//      notranslate trifecta), the page-stability breadcrumb, or the
+//      frozen Chrome 112 WebView UA. Genuine hydration mismatches on a
+//      clean page have no <font> and still reach GlitchTip. Issues #678,
+//      #707, #770, #1307, #2277, #2775, #3005, #4905, #4911, #6406.
 //   4. "Non-Error promise rejection captured with value: undefined"
 //      (and the null variant) — Sentry's synthetic wrapper for a promise
 //      rejected with no reason. Zero diagnostic value (no message, no
@@ -128,23 +138,74 @@
     return false;
   }
 
+  function breadcrumbList(event) {
+    // The Sentry SDK passes in-flight breadcrumbs as a bare array; the
+    // server/envelope shape nests them under `.values`. Handle both.
+    return (
+      (event && event.breadcrumbs && event.breadcrumbs.values) ||
+      (event && event.breadcrumbs) ||
+      []
+    );
+  }
+
+  // Is this event the tachys hydration panic, in any of its three shapes?
+  function isTachysHydrationPanicEvent(event) {
+    // (a) The handled root panic carries the tachys path in rust_panic.
+    var ctx = event && event.contexts && event.contexts.rust_panic;
+    var loc = ctx && ctx.location;
+    if (
+      typeof loc === "string" &&
+      loc.indexOf("/usr/local/cargo/registry/src/index.crates.io-") === 0 &&
+      ULTROS_TACHYS_HYDRATION_RE.test(loc)
+    ) {
+      return true;
+    }
+    // (b) The `RefCell already borrowed` cascade reports with a js-sys
+    //     executor location, and the unhandled `RuntimeError: unreachable`
+    //     (window.onerror) has no rust_panic context at all — but both still
+    //     carry the original `panicked at .../tachys-*/src/hydration.rs:`
+    //     console breadcrumb that kicked off the cascade.
+    var crumbs = breadcrumbList(event);
+    if (Array.isArray(crumbs)) {
+      for (var i = 0; i < crumbs.length; i++) {
+        var msg = crumbs[i] && crumbs[i].message;
+        if (typeof msg === "string" && ULTROS_TACHYS_HYDRATION_RE.test(msg)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Ultros never emits <font>: no `view!` produces it and item text is
+  // escaped to text nodes, not elements. So any <font> in the live document
+  // was injected by a translation overlay rewriting text nodes — the exact
+  // mutation that shifts tachys' hydration cursor (see shell() in lib.rs).
+  // This catches the modern, self-updating Chrome population (CN data-center
+  // users reading the English UI) that ignores the notranslate trifecta and
+  // so is missed by the frozen-Chrome-112 UA check. Ads and the
+  // funding-choices consent dialog render in iframes, which
+  // getElementsByTagName does not traverse, so they cannot match.
+  function hasInjectedTranslationFont() {
+    try {
+      var doc = typeof window !== "undefined" && window.document;
+      if (!doc || typeof doc.getElementsByTagName !== "function") return false;
+      var fonts = doc.getElementsByTagName("font");
+      return !!fonts && fonts.length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function isInjectedTachysHydrationPanic(event) {
     try {
-      var ctx = event && event.contexts && event.contexts.rust_panic;
-      var loc = ctx && ctx.location;
-      if (typeof loc !== "string") return false;
-      if (loc.indexOf("/usr/local/cargo/registry/src/index.crates.io-") !== 0)
-        return false;
-      if (!ULTROS_TACHYS_HYDRATION_RE.test(loc)) return false;
+      if (!isTachysHydrationPanicEvent(event)) return false;
 
-      // Second prong: only suppress when the third-party DOM mutation
-      // fingerprint is present. Either a breadcrumb from the page-stability
-      // detector, or the frozen Chrome 112 UA shared by the affected
-      // WebView population.
-      var crumbs =
-        (event.breadcrumbs && event.breadcrumbs.values) ||
-        event.breadcrumbs ||
-        [];
+      // Only suppress when an injecting-population fingerprint is present, so
+      // a genuine hydration mismatch on a clean page still reaches GlitchTip.
+
+      // Page-stability detector breadcrumb (the injected overlay's own log).
+      var crumbs = breadcrumbList(event);
       if (Array.isArray(crumbs)) {
         for (var i = 0; i < crumbs.length; i++) {
           var msg = crumbs[i] && crumbs[i].message;
@@ -156,16 +217,17 @@
           }
         }
       }
-      // Server-derived tag, kept for any ingestion path that pre-populates
-      // it — but it is normally ABSENT during client-side beforeSend...
+
+      // Injected <font> in the live DOM — the precise translation mutation,
+      // independent of which tool or browser injected it.
+      if (hasInjectedTranslationFont()) return true;
+
+      // Frozen Chrome 112 in-app WebView population. The server-derived
+      // `browser` tag is normally ABSENT during client-side beforeSend, so
+      // the live navigator UA is the signal that actually fires here.
       var tags = event.tags || {};
-      if (tags.browser === "Chrome 112.0.0") {
-        return true;
-      }
-      // ...so the live navigator UA is the signal that actually fires here.
-      if (ULTROS_FROZEN_CHROME_RE.test(userAgent())) {
-        return true;
-      }
+      if (tags.browser === "Chrome 112.0.0") return true;
+      if (ULTROS_FROZEN_CHROME_RE.test(userAgent())) return true;
     } catch (_) {
       /* never let the filter throw */
     }
