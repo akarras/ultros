@@ -26,9 +26,13 @@ const FILTER_PATH = path.join(
 );
 const SRC = fs.readFileSync(FILTER_PATH, "utf8");
 
-// Load the filter with a given UA and return its `shouldDrop` predicate.
-function loadFilter(userAgent) {
+// Load the filter with a given UA (and optional fake document) and return
+// its `shouldDrop` predicate. The font-injection fingerprint reads
+// `window.document.getElementsByTagName("font")`, so cases that exercise it
+// pass a fake document; omitting it mirrors a browser with no <font> nodes.
+function loadFilter(userAgent, documentObj) {
   const win = {};
+  if (documentObj !== undefined) win.document = documentObj;
   // eslint-disable-next-line no-new-func
   const factory = new Function("window", "navigator", SRC);
   factory(win, { userAgent: userAgent || "" });
@@ -38,6 +42,16 @@ function loadFilter(userAgent) {
     "error_filter.js must define window.__ultrosShouldDropEvent",
   );
   return win.__ultrosShouldDropEvent;
+}
+
+// A minimal document stand-in whose getElementsByTagName("font") reports
+// `fontCount` injected <font> nodes (any other tag reports zero).
+function fakeDocument(fontCount) {
+  return {
+    getElementsByTagName(tag) {
+      return { length: tag === "font" ? fontCount : 0 };
+    },
+  };
 }
 
 // Real Chrome/112 WebView UA from GlitchTip issue #707's request payload.
@@ -52,6 +66,20 @@ const CURRENT_CHROME =
 const HYDRATION_LOC =
   "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
   "tachys-0.2.15/src/hydration.rs:227:9";
+
+// Where the secondary `RefCell already borrowed` cascade panics — the
+// wasm-bindgen-futures executor, NOT a tachys path. Such events are only
+// recognized as the hydration flood via the tachys hydration breadcrumb.
+const JS_SYS_SINGLETHREAD_LOC =
+  "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
+  "js-sys-0.3.99/src/futures/task/singlethread.rs:142:37";
+
+// The console breadcrumb every shape of the flood carries: the original
+// hydration panic that kicked off the cascade.
+const TACHYS_PANIC_BREADCRUMB = {
+  category: "console",
+  message: "panicked at " + HYDRATION_LOC + ":\ninternal error: entered unreachable code",
+};
 
 function rustPanic(location, extra) {
   return Object.assign(
@@ -95,11 +123,88 @@ const cases = [
     expectDrop: true,
   },
   {
-    name: "hydration panic on a CURRENT browser is preserved (real bugs still reach GlitchTip)",
+    name: "hydration panic on a CURRENT browser with NO injected <font> is preserved (real bugs still reach GlitchTip)",
     ua: CURRENT_CHROME,
+    document: fakeDocument(0),
     event: rustPanic(HYDRATION_LOC, {
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     }),
+    expectDrop: false,
+  },
+  // The modern-Chrome CN-translation population that ignores the notranslate
+  // trifecta: a current browser, but the live DOM has translation-injected
+  // <font> wrappers. This is the #3005/#4911/#6406 flood PR #760 still missed.
+  {
+    name: "tachys hydration panic on a current browser WITH injected <font> (translation overlay) is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(7),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  // The secondary cascade: `RefCell already borrowed` panics in the js-sys
+  // executor (not a tachys path), so it is recognized only via the tachys
+  // hydration breadcrumb. With injected <font> present it is the flood.
+  {
+    name: "RefCell-already-borrowed cascade (js-sys location) with tachys breadcrumb + injected <font> is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(4),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: {
+        values: [
+          { category: "console", message: "app run!" },
+          TACHYS_PANIC_BREADCRUMB,
+          {
+            category: "console",
+            message: "panicked at " + JS_SYS_SINGLETHREAD_LOC + ":\nRefCell already borrowed",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Same cascade shape but on a CLEAN (untranslated) page — a genuine
+  // hydration mismatch. No injected <font>, so it must still report.
+  {
+    name: "RefCell-already-borrowed cascade from a genuine (untranslated) hydration mismatch is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(0),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }, TACHYS_PANIC_BREADCRUMB] },
+    },
+    expectDrop: false,
+  },
+  // The unhandled wasm trap that reaches window.onerror: type RuntimeError,
+  // no rust_panic context at all — recognized via the tachys breadcrumb.
+  {
+    name: "unhandled RuntimeError unreachable (window.onerror, no rust_panic) with tachys breadcrumb + injected <font> is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(1),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [TACHYS_PANIC_BREADCRUMB] },
+    },
+    expectDrop: true,
+  },
+  // A non-hydration RuntimeError with injected <font> present must NOT be
+  // swept up: the font fingerprint only suppresses tachys hydration panics.
+  {
+    name: "a non-hydration RuntimeError is preserved even when <font> is present",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(5),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "table index is out of bounds" }] },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
     expectDrop: false,
   },
 
@@ -294,7 +399,7 @@ const cases = [
 
 for (const c of cases) {
   test(c.name, () => {
-    const shouldDrop = loadFilter(c.ua);
+    const shouldDrop = loadFilter(c.ua, c.document);
     const dropped = shouldDrop(c.event) === true;
     assert.strictEqual(
       dropped,

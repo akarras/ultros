@@ -577,6 +577,11 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("ULTROS_FROZEN_CHROME_RE"));
         assert!(FILTER_JS.contains("navigator.userAgent"));
         assert!(FILTER_JS.contains("hydration.rs"));
+        // Category 3 (modern-Chrome translation population): the injected
+        // <font> DOM fingerprint that catches the flood the frozen-112 UA
+        // misses. Removing it silently re-opens the #3005/#4911/#6406 flood.
+        assert!(FILTER_JS.contains("hasInjectedTranslationFont"));
+        assert!(FILTER_JS.contains("getElementsByTagName"));
         // Category 4: empty promise rejections.
         assert!(FILTER_JS.contains("Non-Error promise rejection captured with value: undefined"));
     }
