@@ -12,6 +12,7 @@ pub(crate) mod static_files;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
@@ -33,6 +34,7 @@ use tower::ServiceBuilder;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, warn};
 use ultros_api_types::list::{
@@ -1585,7 +1587,19 @@ pub(crate) async fn start_web(state: WebState) {
                     // don't compress images
                     .and(NotForContentType::IMAGES),
             ),
-        );
+        )
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ));
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
