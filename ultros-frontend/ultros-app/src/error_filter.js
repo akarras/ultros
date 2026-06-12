@@ -37,14 +37,19 @@
 //      the wasm-bindgen-futures executor (a js-sys path — matched via a
 //      tachys hydration breadcrumb instead), and the unhandled
 //      `RuntimeError: unreachable` that reaches window.onerror with no
-//      rust_panic context at all. Suppressed only when an injecting
-//      fingerprint is present: a <font> element in the live DOM (which
-//      Ultros never emits, so it is necessarily translation-injected —
-//      this catches the modern-Chrome CN population that ignores the
-//      notranslate trifecta), the page-stability breadcrumb, or the
-//      frozen Chrome 112 WebView UA. Genuine hydration mismatches on a
-//      clean page have no <font> and still reach GlitchTip. Issues #678,
-//      #707, #770, #1307, #2277, #2775, #3005, #4905, #4911, #6406.
+//      rust_panic context at all. Suppressed only when an injecting /
+//      stale-population fingerprint is present: a <font> element in the
+//      live DOM (which Ultros never emits, so it is necessarily
+//      translation-injected), the full-page-translation class on <html>
+//      (translated-ltr / translated-rtl, added by Google / Chrome
+//      translate regardless of wrapper element or Chrome version), the
+//      page-stability breadcrumb, or an implausibly stale Chrome major
+//      (<= 124 — stuck in-app WebViews and version-pinned crawler fleets,
+//      never self-updating real users; spans the 108/111/112/120 flood).
+//      Genuine hydration mismatches on a clean, current browser have none
+//      of these and still reach GlitchTip. Issues #4, #678, #707, #770,
+//      #1307, #2277, #2775, #3005, #4905, #4911, #6406, #6456 and the
+//      per-URL #65xx /item/<world>/<id> cluster.
 //   4. "Non-Error promise rejection captured with value: undefined"
 //      (and the null variant) — Sentry's synthetic wrapper for a promise
 //      rejected with no reason. Zero diagnostic value (no message, no
@@ -54,12 +59,21 @@
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
   var ULTROS_INJECTOR_BREADCRUMB = "检测页面稳定";
-  // The frozen-Chrome-112 in-app WebView population (Tencent QQ / UC /
-  // WeChat) that injects the translation + page-stability overlays. Chrome
-  // 112 shipped April 2023; any live, self-updating browser is many majors
-  // past it, so matching the 112 UA targets the stuck WebViews without
-  // catching real users on current browsers.
-  var ULTROS_FROZEN_CHROME_RE = /\bChrome\/112\./;
+  // The stale-Chrome population behind the hydration flood: stuck in-app
+  // WebViews (Tencent QQ / UC / WeChat, frozen near Chrome 112) and
+  // version-pinned crawler fleets, none of them self-updating real users.
+  // Chrome ships ~10 majors/year; current Chrome in mid-2026 is ~138, so any
+  // major at or below this is well over a year stale. The observed flood spans
+  // Chrome 108/111/112/120 (GlitchTip #4, #6456, #5918/#5919, #4936, #224/
+  // #5392 and the per-URL /item/<world>/<id> #65xx cluster) — all comfortably
+  // below — while real users sit at 130+. PR #764 only matched the single
+  // version `Chrome/112.`, so 108/111/120 leaked through. This is consulted
+  // ONLY for a recognized tachys hydration panic, so a genuine clean-page
+  // mismatch on a current browser still reaches GlitchTip.
+  var ULTROS_STALE_CHROME_MAX_MAJOR = 124;
+  // Chrome major from a UA string ("…Chrome/120.0.0.0…") or a GlitchTip
+  // `browser` tag ("Chrome 120.0.0"). Returns 0 when not Chrome/unknown.
+  var ULTROS_CHROME_MAJOR_RE = /\bChrome[/ ](\d+)\./;
 
   // Live User-Agent. Read from `navigator` because the `browser`/`os` tags
   // shown in GlitchTip are derived SERVER-SIDE from the request UA header
@@ -70,6 +84,19 @@
     } catch (_) {
       return "";
     }
+  }
+
+  function chromeMajor(str) {
+    try {
+      var m = ULTROS_CHROME_MAJOR_RE.exec(str || "");
+      return m ? parseInt(m[1], 10) : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function isStaleChromeMajor(major) {
+    return major > 0 && major <= ULTROS_STALE_CHROME_MAX_MAJOR;
   }
 
   function firstException(event) {
@@ -197,6 +224,31 @@
     }
   }
 
+  // Google / Chrome built-in full-page translation tags <html> with
+  // class="translated-ltr" (or "translated-rtl") when it rewrites the page.
+  // That marker is added regardless of Chrome version OR the wrapper element
+  // used, so it catches the translation population whose injector leaves no
+  // <font> the snapshot above can see. Matched exactly (classList.contains, not
+  // a substring scan) so the SSR-emitted "notranslate" class — which contains
+  // the substring "translate" — is never mistaken for an active translation.
+  function hasTranslatedHtmlClass() {
+    try {
+      var el =
+        typeof window !== "undefined" &&
+        window.document &&
+        window.document.documentElement;
+      if (!el || !el.classList || typeof el.classList.contains !== "function") {
+        return false;
+      }
+      return (
+        el.classList.contains("translated-ltr") ||
+        el.classList.contains("translated-rtl")
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function isInjectedTachysHydrationPanic(event) {
     try {
       if (!isTachysHydrationPanicEvent(event)) return false;
@@ -222,12 +274,18 @@
       // independent of which tool or browser injected it.
       if (hasInjectedTranslationFont()) return true;
 
-      // Frozen Chrome 112 in-app WebView population. The server-derived
-      // `browser` tag is normally ABSENT during client-side beforeSend, so
-      // the live navigator UA is the signal that actually fires here.
+      // Full-page translation class on <html> — the same translation overlay,
+      // detected independently of the wrapper element (catches the current-
+      // browser translation population whose injector leaves no <font>).
+      if (hasTranslatedHtmlClass()) return true;
+
+      // Stale, version-pinned Chrome population (stuck in-app WebViews and
+      // crawler fleets). The live navigator UA is the signal that actually
+      // fires client-side; the server-derived `browser` tag is normally ABSENT
+      // during beforeSend, but parse it too for the server/envelope shape.
       var tags = event.tags || {};
-      if (tags.browser === "Chrome 112.0.0") return true;
-      if (ULTROS_FROZEN_CHROME_RE.test(userAgent())) return true;
+      if (isStaleChromeMajor(chromeMajor(tags.browser))) return true;
+      if (isStaleChromeMajor(chromeMajor(userAgent()))) return true;
     } catch (_) {
       /* never let the filter throw */
     }

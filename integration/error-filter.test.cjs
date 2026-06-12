@@ -54,6 +54,41 @@ function fakeDocument(fontCount) {
   };
 }
 
+// A richer document stand-in exposing both the injected <font> count and the
+// <html> class list, so the translation-class fingerprint (html.translated-ltr
+// / html.translated-rtl) can be exercised. `htmlClass` is the space-separated
+// className on <html>.
+function fakeDocumentEx(opts) {
+  const o = opts || {};
+  const fontCount = o.fontCount || 0;
+  const htmlClass = o.htmlClass || "";
+  const classes = htmlClass ? htmlClass.split(/\s+/) : [];
+  return {
+    getElementsByTagName(tag) {
+      return { length: tag === "font" ? fontCount : 0 };
+    },
+    documentElement: {
+      className: htmlClass,
+      classList: {
+        contains(c) {
+          return classes.indexOf(c) !== -1;
+        },
+      },
+    },
+  };
+}
+
+// A stale, version-pinned Chrome UA (e.g. 108/111/112/120) — the stuck in-app
+// WebView / version-pinned crawler population behind the flood.
+function staleChromeUA(major) {
+  return (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/" +
+    major +
+    ".0.0.0 Safari/537.36"
+  );
+}
+
 // Real Chrome/112 WebView UA from GlitchTip issue #707's request payload.
 const FROZEN_CHROME_112 =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -205,6 +240,118 @@ const cases = [
       exception: { values: [{ type: "RuntimeError", value: "table index is out of bounds" }] },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
+    expectDrop: false,
+  },
+
+  // ── Category 3b: the stale-Chrome / crawler flood with NO visible <font> ──
+  // The dominant backlog (GlitchTip #4 ≈1059, #6456 ≈40, plus the #5918/#5919
+  // BLU, #4936 MCH, #224/#5392 VPR clusters and the per-URL /item/<world>/<id>
+  // #65xx flood). A clean modern browser hydrates these exact URLs fine, the
+  // SSR already ships the notranslate trifecta, and the population is uniformly
+  // a stale, version-pinned Chrome (108/111/112/120) on data-center IPs whose
+  // pre-hydration DOM mutation leaves no <font> the filter can see. PR #764's
+  // single-version `Chrome/112.` check missed 108/111/120, so they leaked.
+  {
+    name: "stale Chrome 111 tachys hydration panic (no font, no translate class) is dropped",
+    ua: staleChromeUA(111),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  {
+    name: "stale Chrome 108 unhandled RuntimeError unreachable (window.onerror) via tachys breadcrumb is dropped",
+    ua: staleChromeUA(108),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [TACHYS_PANIC_BREADCRUMB] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "stale Chrome 120 RefCell cascade (js-sys loc) via tachys breadcrumb, no font, is dropped",
+    ua: staleChromeUA(120),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: {
+        values: [
+          { category: "console", message: "app run!" },
+          TACHYS_PANIC_BREADCRUMB,
+          {
+            category: "console",
+            message:
+              "panicked at " + JS_SYS_SINGLETHREAD_LOC + ":\nRefCell already borrowed",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Guard: a current, self-updating browser must NOT be swept up by the stale
+  // check just because it hit a clean-page hydration mismatch — those are the
+  // genuine bugs the filter exists to preserve.
+  {
+    name: "stale check does not drop a CURRENT-Chrome clean-page hydration panic (no font, no translate class)",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: false,
+  },
+  // Guard: the stale-Chrome drop is gated behind hydration-panic recognition,
+  // so a stale-Chrome NON-hydration error still reports.
+  {
+    name: "stale Chrome non-hydration RuntimeError is preserved",
+    ua: staleChromeUA(108),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [{ type: "RuntimeError", value: "table index is out of bounds" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+
+  // ── Category 3c: full-page translate class on <html>, injector-agnostic ──
+  // Google / Chrome built-in full-page translation adds class="translated-ltr"
+  // (or "translated-rtl") to <html> regardless of Chrome version or the wrapper
+  // element it uses, so it catches the current-browser translation population
+  // even when no <font> is visible at beforeSend.
+  {
+    name: "current Chrome hydration panic with html.translated-ltr (no font) is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0, htmlClass: "notranslate translated-ltr" }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  {
+    name: "current Chrome hydration panic with html.translated-rtl (no font) is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0, htmlClass: "translated-rtl" }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  // Guard: the SSR-emitted "notranslate" class contains the substring
+  // "translate" but must NOT be mistaken for an active translation.
+  {
+    name: "current Chrome hydration panic with only the SSR notranslate class is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0, htmlClass: "notranslate" }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
     expectDrop: false,
   },
 
