@@ -355,6 +355,84 @@ const cases = [
     expectDrop: false,
   },
 
+  // ── Category 3d: breadcrumb-INDEPENDENT recognition of the cascade ──
+  // The cascade shapes (`RefCell already borrowed` in the js-sys executor, and
+  // the unhandled `RuntimeError: unreachable` at window.onerror) were only ever
+  // recognized via the tachys hydration *breadcrumb*. But at real client-side
+  // beforeSend that breadcrumb is NOT in the array the SDK hands the filter —
+  // only the explicitly-set `contexts.rust_panic` survives. Proof from prod
+  // (release e59476b): on a single stale-Chrome (<=124) page-load the root
+  // `internal error` panic — recognized via its tachys rust_panic location —
+  // was dropped, yet the SAME load's `RefCell already borrowed` cascade leaked
+  // (GlitchTip #6661 Chrome 106, #4908 Chrome 104, with no paired internal-error
+  // issue). Same load => same UA => same fingerprint, so the only difference is
+  // recognition: the breadcrumb prong does not fire at beforeSend. These cases
+  // model that reality (no tachys breadcrumb present) and require recognition
+  // from event-level signals that ARE reliably present: the js-sys executor
+  // rust_panic location, and the exact RuntimeError "unreachable" value.
+  {
+    name: "stale Chrome RefCell cascade (js-sys loc, NO tachys breadcrumb) is dropped",
+    ua: staleChromeUA(106),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "stale Chrome onerror RuntimeError unreachable (NO tachys breadcrumb) is dropped",
+    ua: staleChromeUA(106),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "RefCell cascade (js-sys loc) with injected <font>, NO tachys breadcrumb, is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(3),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  // Guard: the breadcrumb-independent recognition must NOT over-suppress a
+  // genuine cascade on a clean, current browser (no font, no translate class,
+  // no stale UA) — those are the real hydration bugs the filter must preserve.
+  {
+    name: "RefCell cascade (js-sys loc) on a current clean browser with no fingerprint is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "onerror RuntimeError unreachable on a current clean browser with no fingerprint is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+
   // ── Category 1: WASM/bundle fetch aborts ──
   {
     name: 'TypeError "Failed to fetch dynamically imported module" of the pkg bundle is dropped',
