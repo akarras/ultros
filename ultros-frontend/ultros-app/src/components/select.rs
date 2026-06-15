@@ -36,15 +36,25 @@ where
         ArcSignal::derive(move || false)
     };
 
-    let labels =
-        Memo::new(move |_| items.with(|i| i.iter().map(as_label).enumerate().collect::<Vec<_>>()));
+    let labels = Memo::new(move |_| {
+        items.with(|i| {
+            i.iter()
+                .map(as_label)
+                .enumerate()
+                .map(|(idx, label)| {
+                    let lower = label.to_lowercase();
+                    (idx, label, lower)
+                })
+                .collect::<Vec<_>>()
+        })
+    });
     let search_results = Memo::new(move |_| {
         current_input.with(|input| {
             let input_lower = input.to_lowercase();
             labels.with(|s| {
                 s.iter()
-                    .filter_map(|(i, label)| {
-                        if label.to_lowercase().contains(&input_lower) {
+                    .filter_map(|(i, label, lower)| {
+                        if lower.contains(&input_lower) {
                             Some((*i, label.clone()))
                         } else {
                             None
@@ -57,7 +67,7 @@ where
     let final_result = Memo::new(move |_| {
         let search_results = search_results();
         if search_results.is_empty() {
-            labels()
+            labels().into_iter().map(|(i, l, _)| (i, l)).collect()
         } else {
             search_results
         }
