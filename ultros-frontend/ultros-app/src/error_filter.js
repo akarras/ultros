@@ -58,6 +58,14 @@
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
+  // The wasm-bindgen-futures single-threaded executor. When the tachys
+  // hydration panic unwinds through a running future poll, re-entering the
+  // executor trips `RefCell already borrowed` HERE — the documented cascade of
+  // the hydration panic (see shell() in lib.rs). `__ultrosReportRustPanic` sets
+  // this exact path in contexts.rust_panic, so — unlike the tachys console
+  // breadcrumb — it is reliably present on the event at client-side beforeSend.
+  var ULTROS_JSSYS_EXECUTOR_RE =
+    /\/js-sys-[\d.]+\/src\/futures\/task\/singlethread\.rs:/;
   var ULTROS_INJECTOR_BREADCRUMB = "检测页面稳定";
   // The stale-Chrome population behind the hydration flood: stuck in-app
   // WebViews (Tencent QQ / UC / WeChat, frozen near Chrome 112) and
@@ -175,23 +183,52 @@
     );
   }
 
-  // Is this event the tachys hydration panic, in any of its three shapes?
+  // Is this event the tachys hydration panic, in any of its shapes? One
+  // page-load emits up to three Sentry events from this single root:
+  //   - the handled `internal error: entered unreachable code` panic, whose
+  //     contexts.rust_panic points at the tachys hydration path;
+  //   - its `RefCell already borrowed` cascade, whose contexts.rust_panic
+  //     points at the js-sys wasm-bindgen-futures executor;
+  //   - the unhandled `RuntimeError: unreachable` wasm trap that reaches
+  //     window.onerror with NO rust_panic context at all.
+  //
+  // Recognition must lean on signals reliably present at client-side
+  // beforeSend. The `panicked at .../tachys-*/hydration.rs:` console breadcrumb
+  // that the stored GlitchTip payload shows is NOT in the breadcrumb array the
+  // SDK passes to beforeSend, so the breadcrumb scan (prong b) misfires there.
+  // Proof from prod release e59476b: on a single stale-Chrome (<=124) load the
+  // root panic was dropped (recognized via its tachys rust_panic location) yet
+  // the SAME load's RefCell cascade leaked (GlitchTip #6661/#4908 with no paired
+  // internal-error issue) — same UA, same fingerprint, so only recognition
+  // differed. Prongs (a) and (c) below therefore key off event-level fields
+  // (rust_panic.location, exception type/value); prong (b) stays as a best-
+  // effort fallback for paths where the breadcrumb IS attached.
   function isTachysHydrationPanicEvent(event) {
-    // (a) The handled root panic carries the tachys path in rust_panic.
+    // (a) The root panic and its RefCell cascade both carry an explicit
+    //     contexts.rust_panic location (set by __ultrosReportRustPanic): the
+    //     tachys hydration path, or the js-sys futures executor it cascades to.
     var ctx = event && event.contexts && event.contexts.rust_panic;
     var loc = ctx && ctx.location;
     if (
       typeof loc === "string" &&
       loc.indexOf("/usr/local/cargo/registry/src/index.crates.io-") === 0 &&
-      ULTROS_TACHYS_HYDRATION_RE.test(loc)
+      (ULTROS_TACHYS_HYDRATION_RE.test(loc) ||
+        ULTROS_JSSYS_EXECUTOR_RE.test(loc))
     ) {
       return true;
     }
-    // (b) The `RefCell already borrowed` cascade reports with a js-sys
-    //     executor location, and the unhandled `RuntimeError: unreachable`
-    //     (window.onerror) has no rust_panic context at all — but both still
-    //     carry the original `panicked at .../tachys-*/src/hydration.rs:`
-    //     console breadcrumb that kicked off the cascade.
+    // (c) The unhandled wasm trap at window.onerror has no rust_panic context;
+    //     its only event-level signal is the exact RuntimeError "unreachable"
+    //     value. (A genuine wasm `unreachable` on a clean current browser still
+    //     reports — this is gated behind the injecting-population fingerprint in
+    //     isInjectedTachysHydrationPanic.) Matched exactly so other RuntimeError
+    //     values, e.g. "table index is out of bounds", are untouched.
+    var ex = firstException(event);
+    if (ex && ex.type === "RuntimeError" && ex.value === "unreachable") {
+      return true;
+    }
+    // (b) Best-effort fallback: the original tachys hydration panic console
+    //     breadcrumb, when the SDK path does attach it.
     var crumbs = breadcrumbList(event);
     if (Array.isArray(crumbs)) {
       for (var i = 0; i < crumbs.length; i++) {
