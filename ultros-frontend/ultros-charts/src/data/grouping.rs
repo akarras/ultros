@@ -220,6 +220,26 @@ mod tests {
     }
 
     #[test]
+    fn explicit_level_groups_multiple_worlds_into_one_datacenter() {
+        let h = world_helper();
+        // Gilgamesh and Adamantoise are both in Aether DC
+        let sales = vec![sale(100, 1, 1, ts(0)), sale(200, 1, 2, ts(10))];
+        let series = group_sales_by_level(&h, &sales, GroupLevel::Datacenter);
+        assert_eq!(names(&series), vec!["Aether"]);
+        assert_eq!(series[0].points.len(), 2);
+    }
+
+    #[test]
+    fn explicit_level_groups_multiple_datacenters_into_one_region() {
+        let h = world_helper();
+        // Gilgamesh (Aether) and Behemoth (Primal) are both in North-America region
+        let sales = vec![sale(100, 1, 1, ts(0)), sale(200, 1, 3, ts(10))];
+        let series = group_sales_by_level(&h, &sales, GroupLevel::Region);
+        assert_eq!(names(&series), vec!["North-America"]);
+        assert_eq!(series[0].points.len(), 2);
+    }
+
+    #[test]
     fn auto_level_matches_scope_cascade() {
         let h = world_helper();
         // one DC → world level
