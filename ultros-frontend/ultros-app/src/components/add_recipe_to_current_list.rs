@@ -24,11 +24,15 @@ pub fn AddRecipeToCurrentListModal(
     let recipes = &data.recipes;
     let items = &data.items;
 
-    // Pre-calculate recipe data for search (item, recipe)
+    // Pre-calculate recipe data for search (item, recipe, lowercase_name)
     let recipe_list = StoredValue::new(
         recipes
             .values()
-            .filter_map(|r| items.get(&ItemId(r.item_result)).map(|i| (i, r)))
+            .filter_map(|r| {
+                items
+                    .get(&ItemId(r.item_result))
+                    .map(|i| (i, r, i.name.to_lowercase()))
+            })
             .collect::<Vec<_>>(),
     );
 
@@ -40,9 +44,9 @@ pub fn AddRecipeToCurrentListModal(
             let s_lower = s.to_lowercase();
             let mut results = recipe_list.with_value(|list| {
                 list.iter()
-                    .filter(|(i, _)| i.name.to_lowercase().contains(&s_lower))
+                    .filter(|(_, _, lower)| lower.contains(&s_lower))
                     .take(50)
-                    .cloned()
+                    .map(|(i, r, _)| (*i, *r))
                     .collect::<Vec<(&Item, &Recipe)>>()
             });
             // Sort by level descending
