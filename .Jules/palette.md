@@ -7,3 +7,6 @@
 ## 2026-05-21 - Prevent screen readers from reading decorative icons in buttons
 **Learning:** Found that when buttons have an icon next to visible text, sometimes the icon isn't hidden with `aria_hidden=true`. While this isn't an error, adding `aria_hidden=true` to the icon (since the button already has visible text) makes the screen reader experience smoother by preventing it from reading the decorative icon.
 **Action:** When inspecting buttons with both text and icons, consider adding `aria_hidden=true` to the icon component (if supported, e.g. the `Icon` component in this repo supports it) to avoid redundant or confusing announcements.
+## 2026-06-17 - Toast Accessibility
+**Learning:** Found that toast close buttons were missing keyboard focus indicators making them hard to use with keyboard navigation.
+**Action:** Always add focus-visible ring styles (e.g., `focus-visible:ring-[var(--brand-ring)]`) to interactive elements like close buttons.
