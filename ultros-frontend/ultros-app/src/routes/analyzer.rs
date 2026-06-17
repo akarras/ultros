@@ -1300,7 +1300,6 @@ fn AnalyzerTable(
                             data.profit,
                         )
                         view=move |(index, data): (usize, CalculatedProfitData)| {
-                            let data_clone = data.clone();
                             let world = worlds
                                 .lookup_selector(AnySelector::World(data.inner.cheapest_world_id));
                             let datacenter = world
@@ -1360,10 +1359,7 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
-                                        <span class={
-                                            let data = data_clone.clone();
-                                            move || roi_badge_class(data.return_on_investment)
-                                        }>
+                                        <span class={roi_badge_class(data.return_on_investment)}>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>
