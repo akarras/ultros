@@ -160,6 +160,17 @@ fn error_reporting_script() -> Option<String> {
             if (location) {{
                 scope.setContext("rust_panic", {{ location: location }});
             }}
+            // Group by the Rust panic site, not the JS stack. This reporter
+            // is defined in INLINE page script, so the stack frame Sentry
+            // captures for it has the PAGE URL as its filename (e.g.
+            // /item/Siren/12412). Default grouping keys off that frame, so a
+            // single recurring panic — most of our volume is the external
+            // translation-overlay hydration flood, see shell() — fragments
+            // into one count=1 issue PER URL (hundreds of them). A stable
+            // fingerprint keyed on the panic location collapses them into one
+            // issue per site, while genuinely distinct panics (different
+            // location) still split out and stay individually actionable.
+            scope.setFingerprint(["rust-wasm-panic", location || message || "unknown"]);
             Sentry.captureException(error);
         }});
     }};
