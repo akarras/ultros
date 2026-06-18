@@ -142,13 +142,13 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                     <table class="w-full text-sm">
                                         <thead>
                                             <tr>
-                                                <th class="text-left p-1">{t!(i18n, item)}</th>
-                                                <th class="text-left p-1">{t!(i18n, alert_rules_col_threshold)}</th>
-                                                <th class="text-left p-1">{t!(i18n, world)}</th>
-                                                <th class="text-left p-1">{t!(i18n, hq)}</th>
-                                                <th class="text-left p-1">{t!(i18n, endpoints_heading)}</th>
-                                                <th class="text-left p-1">{t!(i18n, status_label)}</th>
-                                                <th class="text-left p-1">{t!(i18n, actions)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, item)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, alert_rules_col_threshold)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, world)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, hq)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, endpoints_heading)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, status_label)}</th>
+                                                <th scope="col" class="text-left p-1">{t!(i18n, actions)}</th>
                                             </tr>
                                         </thead>
                                         <tbody>

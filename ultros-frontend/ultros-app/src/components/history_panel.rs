@@ -50,11 +50,11 @@ pub fn HistoryPanel() -> impl IntoView {
                         <table class="w-full text-sm">
                             <thead>
                                 <tr>
-                                    <th class="text-left p-1">{t!(i18n, col_time)}</th>
-                                    <th class="text-left p-1">{t!(i18n, item)}</th>
-                                    <th class="text-left p-1">{t!(i18n, history_col_matched_price)}</th>
-                                    <th class="text-left p-1">{t!(i18n, history_col_delivered)}</th>
-                                    <th class="text-left p-1">{t!(i18n, actions)}</th>
+                                    <th scope="col" class="text-left p-1">{t!(i18n, col_time)}</th>
+                                    <th scope="col" class="text-left p-1">{t!(i18n, item)}</th>
+                                    <th scope="col" class="text-left p-1">{t!(i18n, history_col_matched_price)}</th>
+                                    <th scope="col" class="text-left p-1">{t!(i18n, history_col_delivered)}</th>
+                                    <th scope="col" class="text-left p-1">{t!(i18n, actions)}</th>
                                 </tr>
                             </thead>
                             <tbody>
