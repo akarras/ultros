@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
+use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_chartistry::*;
 use ultros_api_types::SaleHistory;
 use ultros_api_types::world_helper::AnySelector;
+use web_sys::PointerEvent;
+use web_sys::wasm_bindgen::JsCast;
 
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
@@ -30,6 +33,13 @@ impl ColorBy {
             Self::World => "World",
         }
     }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum TimelineDrag {
+    Start,
+    End,
+    New { anchor_ts: i64 },
 }
 
 /// Roll sales up by a chosen world hierarchy level for colouring the scatter points.
@@ -178,17 +188,12 @@ struct QuantityBucket {
 }
 
 /// Pick a bucket size (in seconds) for the quantity histogram based on the
-/// active days window. `days_range == 0` means "all" — fall back to the data span.
-fn quantity_bucket_seconds(days_range: i32, data_span_days: i64) -> i64 {
+/// visible data span.
+fn quantity_bucket_seconds(data_span_days: i64) -> i64 {
     const HOUR: i64 = 3_600;
     const DAY: i64 = 86_400;
     const WEEK: i64 = DAY * 7;
-    let effective_days = if days_range > 0 {
-        days_range as i64
-    } else {
-        data_span_days.max(1)
-    };
-    match effective_days {
+    match data_span_days.max(1) {
         ..=2 => HOUR,
         3..=10 => 6 * HOUR,
         11..=45 => DAY,
@@ -221,16 +226,97 @@ fn bucket_quantities(sales: &[SaleHistory], bucket_secs: i64) -> Vec<QuantityBuc
         .collect()
 }
 
+fn sales_time_domain(sales: &[SaleHistory]) -> Option<(i64, i64)> {
+    let min_ts = sales
+        .iter()
+        .map(|s| s.sold_date.and_utc().timestamp())
+        .min()?;
+    let max_ts = sales
+        .iter()
+        .map(|s| s.sold_date.and_utc().timestamp())
+        .max()?;
+    Some((min_ts, max_ts))
+}
+
+fn normalize_time_range(a: i64, b: i64, domain: (i64, i64)) -> (i64, i64) {
+    let (domain_start, domain_end) = domain;
+    if domain_start >= domain_end {
+        return (domain_start, domain_end);
+    }
+
+    let mut start = a.min(b).clamp(domain_start, domain_end);
+    let mut end = a.max(b).clamp(domain_start, domain_end);
+    let min_span = ((domain_end - domain_start) / 200).max(1);
+
+    if end - start < min_span {
+        let center = start + ((end - start) / 2);
+        start = (center - (min_span / 2)).clamp(domain_start, domain_end - min_span);
+        end = (start + min_span).clamp(domain_start + min_span, domain_end);
+    }
+
+    (start, end)
+}
+
+fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
+    let span = domain.1 - domain.0;
+    if span <= 0 {
+        return 0.0;
+    }
+    (((ts - domain.0) as f64 / span as f64) * 100.0).clamp(0.0, 100.0)
+}
+
+fn format_timeline_ts(ts: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+fn timeline_quantity_buckets(
+    sales: &[SaleHistory],
+    domain: (i64, i64),
+    bucket_count: usize,
+) -> Vec<f64> {
+    if sales.is_empty() || bucket_count == 0 {
+        return Vec::new();
+    }
+
+    let span = (domain.1 - domain.0).max(1) as f64;
+    let mut buckets = vec![0.0; bucket_count];
+    for sale in sales {
+        let ts = sale.sold_date.and_utc().timestamp();
+        let offset = ((ts - domain.0) as f64 / span).clamp(0.0, 1.0);
+        let index = ((offset * bucket_count as f64).floor() as usize).min(bucket_count - 1);
+        buckets[index] += sale.quantity.max(0) as f64;
+    }
+    buckets
+}
+
+fn timestamp_from_pointer(
+    track_ref: NodeRef<Div>,
+    event: &PointerEvent,
+    domain: (i64, i64),
+) -> Option<i64> {
+    let node = track_ref.get()?;
+    let rect = node.get_bounding_client_rect();
+    let width = rect.width();
+    if width <= 0.0 {
+        return None;
+    }
+
+    let x = (event.client_x() - rect.left()).clamp(0.0, width);
+    let pct = x / width;
+    Some(domain.0 + ((domain.1 - domain.0) as f64 * pct).round() as i64)
+}
+
 /// Choose tick `Period`s for the X axis based on the selected window. Chartistry
 /// will pick the densest period that still fits the available width, so we pass
 /// a small set bracketing the expected scale rather than a single period.
-fn x_axis_periods(days_range: i32, data_span_days: i64) -> Vec<Period> {
-    let effective_days = if days_range > 0 {
-        days_range as i64
-    } else {
-        data_span_days.max(1)
-    };
-    match effective_days {
+fn x_axis_periods(data_span_days: i64) -> Vec<Period> {
+    match data_span_days.max(1) {
         ..=2 => vec![Period::Hour, Period::Day],
         3..=10 => vec![Period::Day, Period::Hour],
         11..=45 => vec![Period::Day, Period::Month],
@@ -289,6 +375,215 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
     }
 }
 
+#[component]
+fn TimelineSlicer(
+    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
+    #[prop(into)] available_domain: Signal<Option<(i64, i64)>>,
+    #[prop(into)] selected_domain: Signal<Option<(i64, i64)>>,
+    #[prop(into)] selected_range: Signal<Option<(i64, i64)>>,
+    set_selected_range: WriteSignal<Option<(i64, i64)>>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let track_ref = NodeRef::<Div>::new();
+    let (dragging, set_dragging) = signal::<Option<TimelineDrag>>(None);
+
+    let buckets = Memo::new(move |_| {
+        let Some(domain) = available_domain.get() else {
+            return Vec::new();
+        };
+        timeline_quantity_buckets(&sales.get(), domain, 64)
+    });
+    let bucket_items =
+        Memo::new(move |_| buckets.get().into_iter().enumerate().collect::<Vec<_>>());
+
+    let selected_style = move || {
+        let Some(domain) = available_domain.get() else {
+            return "left: 0%; width: 0%;".to_string();
+        };
+        let (start, end) = selected_domain.get().unwrap_or(domain);
+        let start_pct = percent_for_ts(start, domain);
+        let end_pct = percent_for_ts(end, domain);
+        format!(
+            "left: {:.4}%; width: {:.4}%;",
+            start_pct,
+            (end_pct - start_pct).max(0.35)
+        )
+    };
+    let start_handle_style = move || {
+        let Some(domain) = available_domain.get() else {
+            return "left: 0%;".to_string();
+        };
+        let (start, _) = selected_domain.get().unwrap_or(domain);
+        format!("left: {:.4}%;", percent_for_ts(start, domain))
+    };
+    let end_handle_style = move || {
+        let Some(domain) = available_domain.get() else {
+            return "left: 100%;".to_string();
+        };
+        let (_, end) = selected_domain.get().unwrap_or(domain);
+        format!("left: {:.4}%;", percent_for_ts(end, domain))
+    };
+    let range_label = move || {
+        selected_domain
+            .get()
+            .map(|(start, end)| {
+                format!(
+                    "{} - {}",
+                    format_timeline_ts(start),
+                    format_timeline_ts(end)
+                )
+            })
+            .unwrap_or_default()
+    };
+
+    let update_drag = move |event: &PointerEvent| {
+        let Some(mode) = dragging.get() else {
+            return;
+        };
+        let Some(domain) = available_domain.get() else {
+            return;
+        };
+        let Some(ts) = timestamp_from_pointer(track_ref, event, domain) else {
+            return;
+        };
+        let current = selected_domain.get().unwrap_or(domain);
+        let next = match mode {
+            TimelineDrag::Start => normalize_time_range(ts, current.1, domain),
+            TimelineDrag::End => normalize_time_range(current.0, ts, domain),
+            TimelineDrag::New { anchor_ts } => normalize_time_range(anchor_ts, ts, domain),
+        };
+        set_selected_range.set(Some(next));
+    };
+
+    let capture_pointer = move |event: &PointerEvent| {
+        if let Some(target) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = target.set_pointer_capture(event.pointer_id());
+        }
+    };
+
+    let release_pointer = move |event: &PointerEvent| {
+        if let Some(target) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = target.release_pointer_capture(event.pointer_id());
+        }
+    };
+
+    view! {
+        <Show when=move || available_domain.get().is_some()>
+            <div class="rounded-md border border-[color:var(--color-outline)]/80 bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] px-3 py-2">
+                <div class="mb-2 flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="text-xs font-semibold uppercase text-[color:var(--color-text-muted)]">
+                            {t!(i18n, chart_timeline_label)}
+                        </div>
+                        <div class="truncate text-xs tabular-nums text-[color:var(--color-text)]/75">
+                            {range_label}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        class="shrink-0 rounded-md border border-[color:var(--color-outline)] px-2.5 py-1 text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
+                        disabled=move || selected_range.get().is_none()
+                        on:click=move |_| set_selected_range.set(None)
+                    >
+                        {t!(i18n, chart_timeline_full_range)}
+                    </button>
+                </div>
+                <div
+                    node_ref=track_ref
+                    role="slider"
+                    aria-label=move || t_string!(i18n, chart_timeline_track_label).to_string()
+                    class="relative h-14 cursor-crosshair overflow-hidden rounded-md border border-[color:var(--color-outline)]/70 bg-[color:color-mix(in_srgb,_var(--color-background)_72%,_black)]"
+                    style="touch-action: none; user-select: none;"
+                    on:pointerdown=move |event: PointerEvent| {
+                        if event.button() != 0 {
+                            return;
+                        }
+                        let Some(domain) = available_domain.get() else {
+                            return;
+                        };
+                        let Some(ts) = timestamp_from_pointer(track_ref, &event, domain) else {
+                            return;
+                        };
+                        event.prevent_default();
+                        capture_pointer(&event);
+                        set_dragging.set(Some(TimelineDrag::New { anchor_ts: ts }));
+                        set_selected_range.set(Some(normalize_time_range(ts, ts, domain)));
+                    }
+                    on:pointermove=move |event: PointerEvent| {
+                        event.prevent_default();
+                        update_drag(&event);
+                    }
+                    on:pointerup=move |event: PointerEvent| {
+                        release_pointer(&event);
+                        set_dragging.set(None);
+                    }
+                    on:pointercancel=move |event: PointerEvent| {
+                        release_pointer(&event);
+                        set_dragging.set(None);
+                    }
+                >
+                    <div class="pointer-events-none absolute inset-x-2 bottom-2 top-3 flex items-end gap-px">
+                        <For
+                            each=move || bucket_items.get()
+                            key=|(index, _)| *index
+                            children=move |(_, value)| {
+                                let height = buckets.with(|all| {
+                                    let max = all.iter().copied().fold(0.0, f64::max);
+                                    if max <= 0.0 {
+                                        8.0
+                                    } else {
+                                        ((value / max) * 100.0).clamp(8.0, 100.0)
+                                    }
+                                });
+                                view! {
+                                    <div class="flex-1 rounded-t-sm bg-emerald-400/45" style=format!("height: {:.3}%;", height) />
+                                }
+                            }
+                        />
+                    </div>
+                    <div class="pointer-events-none absolute inset-y-0 bg-brand-400/15 ring-1 ring-inset ring-brand-300/45" style=selected_style></div>
+                    <button
+                        type="button"
+                        aria-label=move || t_string!(i18n, chart_timeline_start_handle).to_string()
+                        class="absolute top-1/2 h-12 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-brand-200/70 bg-brand-400/80 shadow-[0_0_16px_rgba(147,197,253,0.28)]"
+                        style=start_handle_style
+                        on:pointerdown=move |event: PointerEvent| {
+                            if event.button() != 0 {
+                                return;
+                            }
+                            event.prevent_default();
+                            event.stop_propagation();
+                            capture_pointer(&event);
+                            set_dragging.set(Some(TimelineDrag::Start));
+                        }
+                    ></button>
+                    <button
+                        type="button"
+                        aria-label=move || t_string!(i18n, chart_timeline_end_handle).to_string()
+                        class="absolute top-1/2 h-12 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-brand-200/70 bg-brand-400/80 shadow-[0_0_16px_rgba(147,197,253,0.28)]"
+                        style=end_handle_style
+                        on:pointerdown=move |event: PointerEvent| {
+                            if event.button() != 0 {
+                                return;
+                            }
+                            event.prevent_default();
+                            event.stop_propagation();
+                            capture_pointer(&event);
+                            set_dragging.set(Some(TimelineDrag::End));
+                        }
+                    ></button>
+                </div>
+            </div>
+        </Show>
+    }
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 #[component]
@@ -296,10 +591,6 @@ pub fn PriceHistoryChart(
     #[prop(into)] sales: Signal<Vec<SaleHistory>>,
     #[prop(into)] filter_outliers: Signal<bool>,
     #[prop(into)] scope_name: Signal<String>,
-    /// Selected days window from the parent (7 / 30 / 90 / 0 for All).
-    /// Used to size quantity buckets and pick X-axis tick periods.
-    #[prop(into)]
-    days_range: Signal<i32>,
 ) -> impl IntoView {
     // Implementation uses leptos-chartistry 0.2 for axes/overlays. Sales stay in
     // one dense series because sparse category series produce misleading tooltip
@@ -312,10 +603,11 @@ pub fn PriceHistoryChart(
     let (show_market_average, set_show_market_average) = signal(true);
     let (show_trend, set_show_trend) = signal(false);
     let (show_quantity, set_show_quantity) = signal(false);
-    let (color_by, set_color_by) = signal(ColorBy::World);
+    let (color_by, set_color_by) = signal(ColorBy::Region);
+    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
 
     // Optional IQR outlier filter applied to the incoming (pre-filtered) sales.
-    let filtered = Memo::new(move |_| {
+    let available_sales = Memo::new(move |_| {
         let base = sales.get();
         if !filter_outliers.get() {
             return base;
@@ -350,13 +642,46 @@ pub fn PriceHistoryChart(
         if options.contains(&selected) {
             selected
         } else {
-            *options.last().unwrap_or(&ColorBy::World)
+            *options.first().unwrap_or(&ColorBy::World)
         }
+    });
+
+    let available_domain = Memo::new(move |_| sales_time_domain(&available_sales.get()));
+    let last_available_domain = RwSignal::new(None::<(i64, i64)>);
+    Effect::new(move |_| {
+        let next_domain = available_domain.get();
+        if next_domain != last_available_domain.get_untracked() {
+            set_selected_range.set(None);
+            last_available_domain.set(next_domain);
+        }
+    });
+
+    let selected_domain = Memo::new(move |_| {
+        let domain = available_domain.get()?;
+        Some(
+            selected_range
+                .get()
+                .map(|(start, end)| normalize_time_range(start, end, domain))
+                .unwrap_or(domain),
+        )
+    });
+
+    let visible_sales = Memo::new(move |_| {
+        let data = available_sales.get();
+        let Some((start, end)) = selected_domain.get() else {
+            return data;
+        };
+        data.into_iter()
+            .filter(|sale| {
+                let ts = sale.sold_date.and_utc().timestamp();
+                ts >= start && ts <= end
+            })
+            .collect::<Vec<_>>()
     });
 
     // Stats computed from the sales currently visible in the chart.
     let stats = Memo::new(move |_| {
-        let data = filtered.get();
+        let data = visible_sales.get();
         if data.is_empty() {
             return None;
         }
@@ -381,7 +706,7 @@ pub fn PriceHistoryChart(
     // Series names come from group_sales_by_locale; order is stable (sorted).
     let helper_clone = helper.clone();
     let chart_data = Memo::new(move |_| {
-        let data = filtered.get();
+        let data = visible_sales.get();
         let groups = group_sales_by_level(&helper_clone, &data, effective_color_by.get());
         if groups.is_empty() || data.is_empty() {
             return (vec![], vec![]);
@@ -457,7 +782,7 @@ pub fn PriceHistoryChart(
     // Bucketed quantity data. Per-sale bars produce zero-width slivers when sales
     // cluster, so we aggregate into time buckets sized to the visible window.
     let quantity_data = Memo::new(move |_| {
-        let data = filtered.get();
+        let data = visible_sales.get();
         if data.is_empty() {
             return (Vec::<QuantityBucket>::new(), 86_400i64);
         }
@@ -472,13 +797,13 @@ pub fn PriceHistoryChart(
             .max()
             .unwrap_or(0);
         let span_days = ((max_ts - min_ts) / 86_400).max(0);
-        let bucket_secs = quantity_bucket_seconds(days_range.get(), span_days);
+        let bucket_secs = quantity_bucket_seconds(span_days);
         (bucket_quantities(&data, bucket_secs), bucket_secs)
     });
 
     // X-axis tick periods sized to the visible window.
     let x_periods = Memo::new(move |_| {
-        let data = filtered.get();
+        let data = visible_sales.get();
         let span_days = if data.is_empty() {
             0
         } else {
@@ -494,7 +819,7 @@ pub fn PriceHistoryChart(
                 .unwrap_or(0);
             (max_ts - min_ts) / 86_400
         };
-        x_axis_periods(days_range.get(), span_days)
+        x_axis_periods(span_days)
     });
 
     view! {
@@ -518,15 +843,26 @@ pub fn PriceHistoryChart(
                 />
             </div>
             <ColorByControl options=color_by_options selected=effective_color_by set_selected=set_color_by />
+            <TimelineSlicer
+                sales=available_sales
+                available_domain=available_domain
+                selected_domain=selected_domain
+                selected_range=selected_range
+                set_selected_range=set_selected_range
+            />
             <div
                 role="img"
                 aria-label=move || {
                     let n = stats.get().map(|s| s.n).unwrap_or(0);
+                    let (from, to) = selected_domain
+                        .get()
+                        .map(|(from, to)| (format_timeline_ts(from), format_timeline_ts(to)))
+                        .unwrap_or_default();
                     t_string!(i18n, chart_aria_label)
                         .to_string()
                         .replace("{n}", &n.to_string())
-                        .replace("{from}", "")
-                        .replace("{to}", "")
+                        .replace("{from}", &from)
+                        .replace("{to}", &to)
                 }
                 class="price-history-chart w-full overflow-visible"
             >
@@ -698,7 +1034,7 @@ pub fn PriceHistoryChart(
                                     }.into_any()
                                 })}
                                 <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[color:var(--color-text-muted)]">
-                                    {series_names.iter().enumerate().map(|(index, name)| {
+                                    {series_names.iter().enumerate().take(10).map(|(index, name)| {
                                         let colour = CATEGORY_PALETTE[index % CATEGORY_PALETTE.len()];
                                         view! {
                                             <span class="inline-flex items-center gap-1.5">
@@ -710,6 +1046,17 @@ pub fn PriceHistoryChart(
                                             </span>
                                         }
                                     }).collect_view()}
+                                    {(series_names.len() > 10).then(|| {
+                                        let hidden = series_names.len() - 10;
+                                        let more = t_string!(i18n, chart_legend_more)
+                                            .to_string()
+                                            .replace("{n}", &hidden.to_string());
+                                        view! {
+                                            <span class="inline-flex items-center gap-1.5 text-[color:var(--color-text-muted)]/85">
+                                                {more}
+                                            </span>
+                                        }
+                                    })}
                                     {show_market_average.get().then(|| view! {
                                         <span class="inline-flex items-center gap-1.5">
                                             <span class="h-0.5 w-5 bg-[#facc15]"></span>
@@ -987,15 +1334,11 @@ mod tests {
     }
 
     #[test]
-    fn bucket_seconds_scales_with_window() {
-        // 7d window → 6h buckets (~28 bars max)
-        assert_eq!(quantity_bucket_seconds(7, 7), 6 * 3_600);
-        // 30d window → daily
-        assert_eq!(quantity_bucket_seconds(30, 30), 86_400);
-        // 90d window → still daily
-        assert_eq!(quantity_bucket_seconds(90, 90), 86_400);
-        // "All" with multi-year span → weekly
-        assert_eq!(quantity_bucket_seconds(0, 365), 86_400 * 7);
+    fn bucket_seconds_scales_with_visible_span() {
+        assert_eq!(quantity_bucket_seconds(7), 6 * 3_600);
+        assert_eq!(quantity_bucket_seconds(30), 86_400);
+        assert_eq!(quantity_bucket_seconds(90), 86_400);
+        assert_eq!(quantity_bucket_seconds(365), 86_400 * 7);
     }
 
     #[test]
@@ -1023,14 +1366,26 @@ mod tests {
 
     #[test]
     fn x_axis_periods_for_short_window_includes_day_or_hour() {
-        let periods = x_axis_periods(7, 7);
+        let periods = x_axis_periods(7);
         assert!(periods.contains(&Period::Day) || periods.contains(&Period::Hour));
     }
 
     #[test]
     fn x_axis_periods_for_all_falls_back_to_month_year() {
-        let periods = x_axis_periods(0, 500);
+        let periods = x_axis_periods(500);
         assert!(periods.contains(&Period::Month) || periods.contains(&Period::Year));
+    }
+
+    #[test]
+    fn normalize_time_range_orders_and_clamps() {
+        assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
+    }
+
+    #[test]
+    fn timeline_quantity_buckets_sums_quantities() {
+        let sales = vec![sale(100, 1000, 3, 0), sale(100, 1000, 7, 100)];
+        let buckets = timeline_quantity_buckets(&sales, (0, 100), 2);
+        assert_eq!(buckets, vec![3.0, 7.0]);
     }
 }
 

@@ -16,7 +16,6 @@ use crate::global_state::home_world::{get_price_zone, locale_preferred_region, u
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
-use chrono::{TimeDelta, Utc};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
@@ -687,7 +686,6 @@ pub fn ChartWrapper(
     let i18n = crate::i18n::use_i18n();
     let (hq_only, set_hq_only) = signal(false);
     let (filter_outliers, set_filter_outliers) = signal(true);
-    let (days_range, set_days_range) = signal(30i32); // 0 = All
 
     // Per-item analyzer stats (ClickHouse-backed). LocalResource = client-
     // only — the badge isn't part of SSR output, so we avoid a hydration
@@ -711,27 +709,6 @@ pub fn ChartWrapper(
         let _ = world.get();
         set_extended_sales.set(None);
         set_extended_error.set(None);
-    });
-
-    // Defer the `Utc::now()`-based date cutoff in `filtered_sales` until after
-    // hydration. SSR computes the cutoff at server-render time; the client
-    // re-runs the same memo during hydration but with a `Utc::now()` that has
-    // advanced by network + render latency (seconds, sometimes more on slow
-    // connections). For items with sales clustered near the 30/7/90-day
-    // boundary this flips:
-    //   - the `is_empty()` branch (text fallback vs `<PriceHistoryChart>`),
-    //   - the chart's internal `rows.is_empty()` branch,
-    // both of which choose structurally different DOM. tachys' walker then
-    // panics at `hydration.rs:163`/`:227` (`internal error: entered
-    // unreachable code`), and the wasm-bindgen-futures executor cascades into
-    // `RefCell already borrowed` — that's the `/item/<world>/<id>` cluster
-    // in GlitchTip (issues 5104, 5095/5096, 5097/5098, 5106, 5108, 5113-5122,
-    // …). Same idiom as #719 (`item-explorer`) and #712 (`home`): an
-    // `Effect`-driven flag that flips post-hydration so SSR and the first
-    // CSR render agree.
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
     });
 
     /* moved into Transition branch to avoid reading resource outside Suspense/Transition */
@@ -775,15 +752,6 @@ pub fn ChartWrapper(
                         if hq_only() {
                             sales.retain(|s| s.hq);
                         }
-                        // Skip the time-based cutoff during the first (SSR-matching)
-                        // render so the count/shape matches the SSR DOM exactly.
-                        // The effect above flips `hydrated` to true a frame later,
-                        // and this memo re-runs with the real cutoff applied.
-                        let days = days_range();
-                        if days > 0 && hydrated.get() {
-                            let cutoff = (Utc::now() - TimeDelta::days(days as i64)).naive_utc();
-                            sales.retain(|s| s.sold_date >= cutoff);
-                        }
                         sales
                     });
 
@@ -816,44 +784,6 @@ pub fn ChartWrapper(
                                         </p>
                                     </div>
                                     <div class="flex flex-wrap items-center justify-end gap-2">
-                                        <div class="inline-flex rounded-md overflow-hidden border border-[color:var(--color-outline)]">
-                                            <button
-                                                class=move || [
-                                                    "px-3 py-1.5 text-sm transition-colors",
-                                                    if days_range() == 7 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
-                                                ].join(" ")
-                                                on:click=move |_| set_days_range(7)
-                                            >
-                                                {t!(i18n, chart_range_7d)}
-                                            </button>
-                                            <button
-                                                class=move || [
-                                                    "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
-                                                    if days_range() == 30 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
-                                                ].join(" ")
-                                                on:click=move |_| set_days_range(30)
-                                            >
-                                                {t!(i18n, chart_range_30d)}
-                                            </button>
-                                            <button
-                                                class=move || [
-                                                    "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
-                                                    if days_range() == 90 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
-                                                ].join(" ")
-                                                on:click=move |_| set_days_range(90)
-                                            >
-                                                {t!(i18n, chart_range_90d)}
-                                            </button>
-                                            <button
-                                                class=move || [
-                                                    "px-3 py-1.5 text-sm transition-colors border-l border-[color:var(--color-outline)]",
-                                                    if days_range() == 0 { "text-brand-100 font-semibold" } else { "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" },
-                                                ].join(" ")
-                                                on:click=move |_| set_days_range(0)
-                                            >
-                                                {t!(i18n, chart_range_all)}
-                                            </button>
-                                        </div>
                                         <Toggle
                                             checked=hq_only
                                             set_checked=set_hq_only
@@ -941,7 +871,7 @@ pub fn ChartWrapper(
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world days_range=days_range />
+                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world />
                                         }.into_any()
                                     }
                                 }}
