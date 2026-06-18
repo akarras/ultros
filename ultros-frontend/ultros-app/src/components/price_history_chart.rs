@@ -1,3 +1,4 @@
+use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_use::{UseElementSizeReturn, use_element_size};
 use ultros_api_types::SaleHistory;
@@ -8,12 +9,110 @@ use ultros_charts::components::{color_attr, scene_view};
 use ultros_charts::data::grouping::{GroupLevel, available_group_levels};
 use ultros_charts::scale::short_number;
 use ultros_charts::theme::Theme;
+use web_sys::PointerEvent;
+use web_sys::wasm_bindgen::JsCast;
 
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
 
 fn px(v: f32) -> String {
     format!("{v:.1}")
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum TimelineDrag {
+    Start,
+    End,
+    New { anchor_ts: i64 },
+}
+
+fn sales_time_domain(sales: &[SaleHistory]) -> Option<(i64, i64)> {
+    let min_ts = sales
+        .iter()
+        .map(|sale| sale.sold_date.and_utc().timestamp())
+        .min()?;
+    let max_ts = sales
+        .iter()
+        .map(|sale| sale.sold_date.and_utc().timestamp())
+        .max()?;
+    Some((min_ts, max_ts))
+}
+
+fn normalize_time_range(a: i64, b: i64, domain: (i64, i64)) -> (i64, i64) {
+    let (domain_start, domain_end) = domain;
+    if domain_start >= domain_end {
+        return (domain_start, domain_end);
+    }
+
+    let mut start = a.min(b).clamp(domain_start, domain_end);
+    let mut end = a.max(b).clamp(domain_start, domain_end);
+    let min_span = ((domain_end - domain_start) / 200).max(1);
+
+    if end - start < min_span {
+        let center = start + ((end - start) / 2);
+        start = (center - (min_span / 2)).clamp(domain_start, domain_end - min_span);
+        end = (start + min_span).clamp(domain_start + min_span, domain_end);
+    }
+
+    (start, end)
+}
+
+fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
+    let span = domain.1 - domain.0;
+    if span <= 0 {
+        return 0.0;
+    }
+    (((ts - domain.0) as f64 / span as f64) * 100.0).clamp(0.0, 100.0)
+}
+
+fn format_timeline_ts(ts: i64, utc_offset_minutes: i32) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+        .map(|dt| {
+            (dt + chrono::TimeDelta::minutes(utc_offset_minutes as i64))
+                .format("%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+fn timeline_quantity_buckets(
+    sales: &[SaleHistory],
+    domain: (i64, i64),
+    bucket_count: usize,
+) -> Vec<f64> {
+    if sales.is_empty() || bucket_count == 0 {
+        return Vec::new();
+    }
+
+    let span = (domain.1 - domain.0).max(1) as f64;
+    let mut buckets = vec![0.0; bucket_count];
+    for sale in sales {
+        let ts = sale.sold_date.and_utc().timestamp();
+        if ts < domain.0 || ts > domain.1 {
+            continue;
+        }
+        let offset = ((ts - domain.0) as f64 / span).clamp(0.0, 1.0);
+        let index = ((offset * bucket_count as f64).floor() as usize).min(bucket_count - 1);
+        buckets[index] += sale.quantity.max(0) as f64;
+    }
+    buckets
+}
+
+fn timestamp_from_pointer(
+    track_ref: NodeRef<Div>,
+    event: &PointerEvent,
+    domain: (i64, i64),
+) -> Option<i64> {
+    let node = track_ref.get()?;
+    let rect = node.get_bounding_client_rect();
+    let width = rect.width();
+    if width <= 0.0 {
+        return None;
+    }
+
+    let x = (event.client_x() - rect.left()).clamp(0.0, width);
+    let pct = x / width;
+    Some(domain.0 + ((domain.1 - domain.0) as f64 * pct).round() as i64)
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -62,6 +161,262 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
                         .into_any()
                 })
         }}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn sale(quantity: i32, ts: i64) -> SaleHistory {
+        SaleHistory {
+            id: 0,
+            quantity,
+            price_per_item: 1000,
+            buying_character_id: 0,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: chrono::Utc.timestamp_opt(ts, 0).unwrap().naive_utc(),
+            world_id: 1,
+            buyer_name: None,
+        }
+    }
+
+    #[test]
+    fn sales_time_domain_uses_all_available_sales() {
+        let sales = vec![sale(1, 200), sale(1, 100), sale(1, 300)];
+        assert_eq!(sales_time_domain(&sales), Some((100, 300)));
+    }
+
+    #[test]
+    fn normalize_time_range_orders_and_clamps() {
+        assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
+    }
+
+    #[test]
+    fn timeline_quantity_buckets_sums_quantities() {
+        let sales = vec![sale(3, 0), sale(7, 100)];
+        let buckets = timeline_quantity_buckets(&sales, (0, 100), 2);
+        assert_eq!(buckets, vec![3.0, 7.0]);
+    }
+}
+
+#[component]
+fn TimelineSlicer(
+    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
+    #[prop(into)] available_domain: Signal<Option<(i64, i64)>>,
+    #[prop(into)] selected_domain: Signal<Option<(i64, i64)>>,
+    #[prop(into)] selected_range: Signal<Option<(i64, i64)>>,
+    #[prop(into)] utc_offset_minutes: Signal<i32>,
+    set_selected_range: WriteSignal<Option<(i64, i64)>>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let track_ref = NodeRef::<Div>::new();
+    let (dragging, set_dragging) = signal::<Option<TimelineDrag>>(None);
+
+    let buckets = Memo::new(move |_| {
+        let Some(domain) = available_domain.get() else {
+            return Vec::new();
+        };
+        timeline_quantity_buckets(&sales.get(), domain, 64)
+    });
+    let bucket_items =
+        Memo::new(move |_| buckets.get().into_iter().enumerate().collect::<Vec<_>>());
+
+    let selected_style = move || {
+        let Some(domain) = available_domain.get() else {
+            return "left: 0%; width: 0%;".to_string();
+        };
+        let (start, end) = selected_domain.get().unwrap_or(domain);
+        let start_pct = percent_for_ts(start, domain);
+        let end_pct = percent_for_ts(end, domain);
+        format!(
+            "left: {:.4}%; width: {:.4}%;",
+            start_pct,
+            (end_pct - start_pct).max(0.35)
+        )
+    };
+    let start_handle_style = move || {
+        let Some(domain) = available_domain.get() else {
+            return "left: 0%;".to_string();
+        };
+        let (start, _) = selected_domain.get().unwrap_or(domain);
+        format!("left: {:.4}%;", percent_for_ts(start, domain))
+    };
+    let end_handle_style = move || {
+        let Some(domain) = available_domain.get() else {
+            return "left: 100%;".to_string();
+        };
+        let (_, end) = selected_domain.get().unwrap_or(domain);
+        format!("left: {:.4}%;", percent_for_ts(end, domain))
+    };
+    let range_label = move || {
+        selected_domain
+            .get()
+            .map(|(start, end)| {
+                let offset = utc_offset_minutes.get();
+                format!(
+                    "{} - {}",
+                    format_timeline_ts(start, offset),
+                    format_timeline_ts(end, offset)
+                )
+            })
+            .unwrap_or_default()
+    };
+
+    let update_drag = move |event: &PointerEvent| {
+        let Some(mode) = dragging.get() else {
+            return;
+        };
+        let Some(domain) = available_domain.get() else {
+            return;
+        };
+        let Some(ts) = timestamp_from_pointer(track_ref, event, domain) else {
+            return;
+        };
+        let current = selected_domain.get().unwrap_or(domain);
+        let next = match mode {
+            TimelineDrag::Start => normalize_time_range(ts, current.1, domain),
+            TimelineDrag::End => normalize_time_range(current.0, ts, domain),
+            TimelineDrag::New { anchor_ts } => normalize_time_range(anchor_ts, ts, domain),
+        };
+        set_selected_range.set(Some(next));
+    };
+
+    let capture_pointer = move |event: &PointerEvent| {
+        if let Some(target) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = target.set_pointer_capture(event.pointer_id());
+        }
+    };
+    let release_pointer = move |event: &PointerEvent| {
+        if let Some(target) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = target.release_pointer_capture(event.pointer_id());
+        }
+    };
+
+    view! {
+        <Show when=move || available_domain.get().is_some()>
+            <div class="rounded-md border border-[color:var(--color-outline)]/80 bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] px-3 py-2">
+                <div class="mb-2 flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="text-xs font-semibold uppercase text-[color:var(--color-text-muted)]">
+                            {t!(i18n, chart_timeline_label)}
+                        </div>
+                        <div class="truncate text-xs tabular-nums text-[color:var(--color-text)]/75">
+                            {range_label}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        class="shrink-0 rounded-md border border-[color:var(--color-outline)] px-2.5 py-1 text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
+                        disabled=move || selected_range.get().is_none()
+                        on:click=move |_| set_selected_range.set(None)
+                    >
+                        {t!(i18n, chart_timeline_full_range)}
+                    </button>
+                </div>
+                <div
+                    node_ref=track_ref
+                    role="group"
+                    aria-label=move || t_string!(i18n, chart_timeline_track_label).to_string()
+                    class="relative h-14 cursor-crosshair overflow-hidden rounded-md border border-[color:var(--color-outline)]/70 bg-[color:color-mix(in_srgb,_var(--color-background)_72%,_black)]"
+                    style="touch-action: none; user-select: none;"
+                    on:pointerdown=move |event: PointerEvent| {
+                        if event.button() != 0 {
+                            return;
+                        }
+                        let Some(domain) = available_domain.get() else {
+                            return;
+                        };
+                        let Some(ts) = timestamp_from_pointer(track_ref, &event, domain) else {
+                            return;
+                        };
+                        event.prevent_default();
+                        capture_pointer(&event);
+                        set_dragging.set(Some(TimelineDrag::New { anchor_ts: ts }));
+                        set_selected_range.set(Some(normalize_time_range(ts, ts, domain)));
+                    }
+                    on:pointermove=move |event: PointerEvent| {
+                        event.prevent_default();
+                        update_drag(&event);
+                    }
+                    on:pointerup=move |event: PointerEvent| {
+                        release_pointer(&event);
+                        set_dragging.set(None);
+                    }
+                    on:pointercancel=move |event: PointerEvent| {
+                        release_pointer(&event);
+                        set_dragging.set(None);
+                    }
+                >
+                    <div class="pointer-events-none absolute inset-x-2 bottom-2 top-3 flex items-end gap-px">
+                        <For
+                            each=move || bucket_items.get()
+                            key=|(index, _)| *index
+                            children=move |(_, value)| {
+                                let height = move || {
+                                    let max_value = buckets
+                                        .with(|values| values.iter().copied().fold(0.0, f64::max));
+                                    if max_value <= 0.0 {
+                                        "height: 0%;".to_string()
+                                    } else {
+                                        let pct = (value / max_value * 100.0).clamp(6.0, 100.0);
+                                        format!("height: {pct:.2}%;")
+                                    }
+                                };
+                                view! {
+                                    <span
+                                        class="min-w-0 flex-1 rounded-t-sm bg-emerald-500/55"
+                                        style=height
+                                    ></span>
+                                }
+                            }
+                        />
+                    </div>
+                    <div
+                        class="pointer-events-none absolute inset-y-0 rounded-sm bg-brand-500/18 ring-1 ring-brand-300/35"
+                        style=selected_style
+                    ></div>
+                    <button
+                        type="button"
+                        aria-label=move || t_string!(i18n, chart_timeline_start_handle).to_string()
+                        class="absolute top-1/2 h-8 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-brand-200 bg-brand-500 shadow-sm shadow-black/30"
+                        style=start_handle_style
+                        on:pointerdown=move |event: PointerEvent| {
+                            if event.button() != 0 {
+                                return;
+                            }
+                            event.stop_propagation();
+                            event.prevent_default();
+                            capture_pointer(&event);
+                            set_dragging.set(Some(TimelineDrag::Start));
+                        }
+                    ></button>
+                    <button
+                        type="button"
+                        aria-label=move || t_string!(i18n, chart_timeline_end_handle).to_string()
+                        class="absolute top-1/2 h-8 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-brand-200 bg-brand-500 shadow-sm shadow-black/30"
+                        style=end_handle_style
+                        on:pointerdown=move |event: PointerEvent| {
+                            if event.button() != 0 {
+                                return;
+                            }
+                            event.stop_propagation();
+                            event.prevent_default();
+                            capture_pointer(&event);
+                            set_dragging.set(Some(TimelineDrag::End));
+                        }
+                    ></button>
+                </div>
+            </div>
+        </Show>
     }
 }
 
@@ -281,9 +636,6 @@ pub fn PriceHistoryChart(
     #[prop(into)] sales: Signal<Vec<SaleHistory>>,
     #[prop(into)] filter_outliers: Signal<bool>,
     #[prop(into)] scope_name: Signal<String>,
-    /// Selected days window from the parent (7 / 30 / 90 / 0 for All).
-    #[prop(into)]
-    days_range: Signal<i32>,
 ) -> impl IntoView {
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
@@ -291,7 +643,8 @@ pub fn PriceHistoryChart(
     let (show_market_average, set_show_market_average) = signal(true);
     let (show_trend, set_show_trend) = signal(false);
     let (show_quantity, set_show_quantity) = signal(false);
-    let (color_by, set_color_by) = signal(GroupLevel::World);
+    let (color_by, set_color_by) = signal(GroupLevel::Region);
+    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
     // Series the user hid by clicking legend chips. Stored as a sorted Vec so
     // the model memo's PartialEq sees a stable value.
     let hidden_series = RwSignal::new(Vec::<String>::new());
@@ -311,7 +664,7 @@ pub fn PriceHistoryChart(
     // the signal post-mount — hydration-safe for the same reason as above.
     // use_element_size is ResizeObserver-only (no scroll listener), so page
     // scroll does not trigger model rebuilds.
-    let container = NodeRef::<leptos::html::Div>::new();
+    let container = NodeRef::<Div>::new();
     let UseElementSizeReturn {
         width: container_width,
         ..
@@ -326,8 +679,38 @@ pub fn PriceHistoryChart(
         if options.contains(&selected) {
             selected
         } else {
-            *options.last().unwrap_or(&GroupLevel::World)
+            *options.first().unwrap_or(&GroupLevel::World)
         }
+    });
+
+    let available_domain = Memo::new(move |_| sales_time_domain(&sales.get()));
+    let last_available_domain = RwSignal::new(None::<(i64, i64)>);
+    Effect::new(move |_| {
+        let next_domain = available_domain.get();
+        if next_domain != last_available_domain.get_untracked() {
+            last_available_domain.set(next_domain);
+            set_selected_range.set(None);
+        }
+    });
+    let selected_domain = Memo::new(move |_| {
+        let domain = available_domain.get()?;
+        selected_range
+            .get()
+            .map(|(start, end)| normalize_time_range(start, end, domain))
+            .or(Some(domain))
+    });
+    let visible_sales = Memo::new(move |_| {
+        let sales = sales.get();
+        let Some((start, end)) = selected_domain.get() else {
+            return sales;
+        };
+        sales
+            .into_iter()
+            .filter(|sale| {
+                let ts = sale.sold_date.and_utc().timestamp();
+                ts >= start && ts <= end
+            })
+            .collect::<Vec<_>>()
     });
 
     // Quantise measured width to 16 px steps so resize-dragging doesn't
@@ -344,7 +727,7 @@ pub fn PriceHistoryChart(
 
     let helper_for_model = helper.clone();
     let model = Memo::new(move |_| {
-        let sales = sales.get();
+        let sales = visible_sales.get();
         let width = chart_width.get();
         let height = (width * 0.56).clamp(300.0, 540.0);
         build_price_history_chart(
@@ -360,7 +743,7 @@ pub fn PriceHistoryChart(
                 show_legend: false,
                 title: None,
                 icon_data_uri: None,
-                days_range: Some(days_range.get()),
+                days_range: None,
                 group_level: Some(effective_color_by.get()),
                 utc_offset_minutes: utc_offset.get(),
                 hidden_series: hidden_series.get(),
@@ -420,16 +803,43 @@ pub fn PriceHistoryChart(
                 />
             </div>
             <ColorByControl options=color_by_options selected=effective_color_by set_selected=set_color_by />
+            <TimelineSlicer
+                sales=sales
+                available_domain=available_domain
+                selected_domain=selected_domain
+                selected_range=selected_range
+                utc_offset_minutes=utc_offset
+                set_selected_range=set_selected_range
+            />
             <div
                 role="img"
                 aria-label=move || {
                     let n = stats.get().map(|s| s.n).unwrap_or(0);
-                    let (from, to) = model.with(|m| {
-                        (
-                            m.hover.buckets.first().map(|b| b.label.clone()).unwrap_or_default(),
-                            m.hover.buckets.last().map(|b| b.label.clone()).unwrap_or_default(),
-                        )
-                    });
+                    let (from, to) = selected_domain
+                        .get()
+                        .map(|(start, end)| {
+                            let offset = utc_offset.get();
+                            (
+                                format_timeline_ts(start, offset),
+                                format_timeline_ts(end, offset),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            model.with(|m| {
+                                (
+                                    m.hover
+                                        .buckets
+                                        .first()
+                                        .map(|b| b.label.clone())
+                                        .unwrap_or_default(),
+                                    m.hover
+                                        .buckets
+                                        .last()
+                                        .map(|b| b.label.clone())
+                                        .unwrap_or_default(),
+                                )
+                            })
+                        });
                     t_string!(i18n, chart_aria_label)
                         .to_string()
                         .replace("{n}", &n.to_string())
@@ -476,6 +886,7 @@ pub fn PriceHistoryChart(
                                 {m
                                     .series
                                     .iter()
+                                    .take(10)
                                     .map(|info| {
                                         let name = info.name.clone();
                                         let toggle_name = info.name.clone();
@@ -517,6 +928,17 @@ pub fn PriceHistoryChart(
                                         }
                                     })
                                     .collect_view()}
+                                {(m.series.len() > 10).then(|| {
+                                    let hidden = m.series.len() - 10;
+                                    let more = t_string!(i18n, chart_legend_more)
+                                        .to_string()
+                                        .replace("{n}", &hidden.to_string());
+                                    view! {
+                                        <span class="inline-flex items-center gap-1.5 text-[color:var(--color-text-muted)]/85">
+                                            {more}
+                                        </span>
+                                    }
+                                })}
                                 {show_market_average
                                     .get()
                                     .then(|| {
