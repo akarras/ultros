@@ -571,12 +571,25 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("WebAssembly compilation aborted"));
         // Category 2: injected-WebView document TypeError.
         assert!(FILTER_JS.contains("HTMLDocument.c"));
-        // Category 3: frozen-Chrome-112 translate-overlay hydration panic.
-        // Must read the live UA (the browser tag is server-derived and absent
-        // in beforeSend), so the navigator read is the load-bearing part.
-        assert!(FILTER_JS.contains("ULTROS_FROZEN_CHROME_RE"));
+        // Category 3: hydration-panic flood, gated behind an injecting-
+        // population fingerprint. The stale-Chrome check must read the live UA
+        // (the browser tag is server-derived and absent in beforeSend), so the
+        // navigator read is the load-bearing part.
+        assert!(FILTER_JS.contains("isStaleChromeMajor"));
         assert!(FILTER_JS.contains("navigator.userAgent"));
         assert!(FILTER_JS.contains("hydration.rs"));
+        // The cascade shapes are recognized WITHOUT the tachys breadcrumb (it
+        // is not in the array the SDK hands beforeSend): the `RefCell already
+        // borrowed` cascade via the js-sys futures-executor rust_panic location,
+        // and the unhandled wasm trap via the exact RuntimeError "unreachable"
+        // value. Deleting either silently re-opens the #6661/#4908/#6570 flood.
+        assert!(FILTER_JS.contains("ULTROS_JSSYS_EXECUTOR_RE"));
+        assert!(FILTER_JS.contains("\"unreachable\""));
+        // Category 3 (modern-Chrome translation population): the injected
+        // <font> DOM fingerprint that catches the flood the stale-UA check
+        // misses. Removing it silently re-opens the #3005/#4911/#6406 flood.
+        assert!(FILTER_JS.contains("hasInjectedTranslationFont"));
+        assert!(FILTER_JS.contains("getElementsByTagName"));
         // Category 4: empty promise rejections.
         assert!(FILTER_JS.contains("Non-Error promise rejection captured with value: undefined"));
     }

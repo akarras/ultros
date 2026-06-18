@@ -192,6 +192,20 @@ async fn init_db(
     Ok(())
 }
 
+/// Whether Glitchtip/Sentry error reporting should be suppressed for this
+/// process based on the configured environment.
+///
+/// We deliberately *never* ship events from a `development` environment to the
+/// shared production Glitchtip: a local dev box that has `GLITCHTIP_DSN` set
+/// would otherwise pollute prod with cold-start noise (see the init site in
+/// `main`). This is an allow-list-shaped check — only the exact `development`
+/// value is suppressed, so production (`production`) and any unset/other value
+/// still report, which fails safe if `GLITCHTIP_ENVIRONMENT` is ever
+/// misconfigured on the real deployment.
+fn error_reporting_disabled(environment: Option<&str>) -> bool {
+    environment == Some("development")
+}
+
 // Bolt: Switched to multi-threaded runtime for better performance on multi-core systems
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -211,26 +225,40 @@ async fn main() -> Result<()> {
     // local dev runs without it. The guard must be held for the duration of
     // main() so the background transport can flush on shutdown.
     //
+    // We also skip init entirely when GLITCHTIP_ENVIRONMENT=development, even if
+    // GLITCHTIP_DSN is set. A local dev box that has the DSN configured (e.g.
+    // copied from the prod .env) would otherwise flood the *shared production*
+    // Glitchtip with cold-start noise: sqlx "Connection pool timed out" errors
+    // surfaced through the sentry-tracing layer below, which showed up in prod
+    // as GlitchTip #2214/#2215/#2216/#2217 (hundreds of events from `Bahamut`).
+    // The comment above already documents the intent — "local dev runs without
+    // it" — so enforce it by environment, not just by whether a DSN happens to
+    // be present.
+    //
     // GLITCHTIP_TRACES_SAMPLE_RATE controls performance/transaction sampling:
     // 0.0 disables (default — matches prior behavior), 1.0 sends every request.
     // Glitchtip 4.x and Sentry both accept transaction envelopes.
-    let _sentry_guard = std::env::var("GLITCHTIP_DSN").ok().map(|dsn| {
-        let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0);
-        sentry::init((
-            dsn,
-            sentry::ClientOptions {
-                release: sentry::release_name!(),
-                environment: std::env::var("GLITCHTIP_ENVIRONMENT").ok().map(Into::into),
-                traces_sample_rate,
-                attach_stacktrace: true,
-                send_default_pii: false,
-                ..Default::default()
-            },
-        ))
-    });
+    let environment = std::env::var("GLITCHTIP_ENVIRONMENT").ok();
+    let _sentry_guard = std::env::var("GLITCHTIP_DSN")
+        .ok()
+        .filter(|_| !error_reporting_disabled(environment.as_deref()))
+        .map(|dsn| {
+            let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0);
+            sentry::init((
+                dsn,
+                sentry::ClientOptions {
+                    release: sentry::release_name!(),
+                    environment: environment.clone().map(Into::into),
+                    traces_sample_rate,
+                    attach_stacktrace: true,
+                    send_default_pii: false,
+                    ..Default::default()
+                },
+            ))
+        });
 
     // Create the db before we proceed
     let filter: EnvFilter =
@@ -413,4 +441,27 @@ async fn main() -> Result<()> {
     token.cancel();
     info!("Exiting");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::error_reporting_disabled;
+
+    #[test]
+    fn development_environment_suppresses_reporting() {
+        // A dev box (GLITCHTIP_ENVIRONMENT=development) must never reach the
+        // shared production Glitchtip, even with GLITCHTIP_DSN set. Regression
+        // guard for the #2214-#2217 cold-start pool-timeout flood.
+        assert!(error_reporting_disabled(Some("development")));
+    }
+
+    #[test]
+    fn production_and_other_environments_still_report() {
+        // Fail safe: anything that isn't exactly "development" reports, so a
+        // misconfigured / unset GLITCHTIP_ENVIRONMENT on the real deploy never
+        // silently drops production errors.
+        assert!(!error_reporting_disabled(Some("production")));
+        assert!(!error_reporting_disabled(Some("staging")));
+        assert!(!error_reporting_disabled(None));
+    }
 }

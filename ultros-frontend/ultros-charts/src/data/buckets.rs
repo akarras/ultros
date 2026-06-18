@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 
 use chrono::NaiveDateTime;
-use ultros_api_types::SaleHistory;
 
 use crate::data::grouping::SalePoint;
 
@@ -65,15 +64,19 @@ pub struct VolumeBucket {
     pub quantity: i64,
 }
 
-/// Total quantity sold per bucket across all series.
-pub fn volume_buckets(sales: &[SaleHistory], bucket_secs: i64) -> Vec<VolumeBucket> {
-    if bucket_secs <= 0 || sales.is_empty() {
+/// Total quantity per bucket over grouped sale points (the chart feeds the
+/// visible series' points here so hidden series don't count).
+pub fn volume_buckets_from_points<'a>(
+    points: impl Iterator<Item = &'a SalePoint>,
+    bucket_secs: i64,
+) -> Vec<VolumeBucket> {
+    if bucket_secs <= 0 {
         return Vec::new();
     }
     let mut sums: BTreeMap<i64, i64> = BTreeMap::new();
-    for sale in sales {
-        let bucket = sale.sold_date.and_utc().timestamp().div_euclid(bucket_secs) * bucket_secs;
-        *sums.entry(bucket).or_default() += sale.quantity as i64;
+    for point in points {
+        let bucket = point.ts.and_utc().timestamp().div_euclid(bucket_secs) * bucket_secs;
+        *sums.entry(bucket).or_default() += point.quantity as i64;
     }
     sums.into_iter()
         .filter_map(|(bucket, quantity)| {
@@ -89,7 +92,7 @@ pub fn volume_buckets(sales: &[SaleHistory], bucket_secs: i64) -> Vec<VolumeBuck
 mod tests {
     use super::*;
     use crate::data::grouping::SalePoint;
-    use crate::test_util::{sale, ts};
+    use crate::test_util::ts;
 
     #[test]
     fn bucket_seconds_scales_with_window() {
@@ -123,12 +126,24 @@ mod tests {
 
     #[test]
     fn volume_buckets_sum_quantities() {
-        let sales = vec![
-            sale(100, 2, 1, ts(0)),
-            sale(100, 3, 1, ts(60)),
-            sale(100, 5, 1, ts(86_400)),
+        let points = [
+            SalePoint {
+                ts: ts(0),
+                price: 100,
+                quantity: 2,
+            },
+            SalePoint {
+                ts: ts(60),
+                price: 100,
+                quantity: 3,
+            },
+            SalePoint {
+                ts: ts(86_400),
+                price: 100,
+                quantity: 5,
+            },
         ];
-        let buckets = volume_buckets(&sales, 86_400);
+        let buckets = volume_buckets_from_points(points.iter(), 86_400);
         assert_eq!(buckets.len(), 2);
         assert_eq!(buckets[0].quantity, 5);
         assert_eq!(buckets[1].quantity, 5);

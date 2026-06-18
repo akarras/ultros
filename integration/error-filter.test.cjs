@@ -26,9 +26,13 @@ const FILTER_PATH = path.join(
 );
 const SRC = fs.readFileSync(FILTER_PATH, "utf8");
 
-// Load the filter with a given UA and return its `shouldDrop` predicate.
-function loadFilter(userAgent) {
+// Load the filter with a given UA (and optional fake document) and return
+// its `shouldDrop` predicate. The font-injection fingerprint reads
+// `window.document.getElementsByTagName("font")`, so cases that exercise it
+// pass a fake document; omitting it mirrors a browser with no <font> nodes.
+function loadFilter(userAgent, documentObj) {
   const win = {};
+  if (documentObj !== undefined) win.document = documentObj;
   // eslint-disable-next-line no-new-func
   const factory = new Function("window", "navigator", SRC);
   factory(win, { userAgent: userAgent || "" });
@@ -38,6 +42,51 @@ function loadFilter(userAgent) {
     "error_filter.js must define window.__ultrosShouldDropEvent",
   );
   return win.__ultrosShouldDropEvent;
+}
+
+// A minimal document stand-in whose getElementsByTagName("font") reports
+// `fontCount` injected <font> nodes (any other tag reports zero).
+function fakeDocument(fontCount) {
+  return {
+    getElementsByTagName(tag) {
+      return { length: tag === "font" ? fontCount : 0 };
+    },
+  };
+}
+
+// A richer document stand-in exposing both the injected <font> count and the
+// <html> class list, so the translation-class fingerprint (html.translated-ltr
+// / html.translated-rtl) can be exercised. `htmlClass` is the space-separated
+// className on <html>.
+function fakeDocumentEx(opts) {
+  const o = opts || {};
+  const fontCount = o.fontCount || 0;
+  const htmlClass = o.htmlClass || "";
+  const classes = htmlClass ? htmlClass.split(/\s+/) : [];
+  return {
+    getElementsByTagName(tag) {
+      return { length: tag === "font" ? fontCount : 0 };
+    },
+    documentElement: {
+      className: htmlClass,
+      classList: {
+        contains(c) {
+          return classes.indexOf(c) !== -1;
+        },
+      },
+    },
+  };
+}
+
+// A stale, version-pinned Chrome UA (e.g. 108/111/112/120) — the stuck in-app
+// WebView / version-pinned crawler population behind the flood.
+function staleChromeUA(major) {
+  return (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/" +
+    major +
+    ".0.0.0 Safari/537.36"
+  );
 }
 
 // Real Chrome/112 WebView UA from GlitchTip issue #707's request payload.
@@ -52,6 +101,20 @@ const CURRENT_CHROME =
 const HYDRATION_LOC =
   "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
   "tachys-0.2.15/src/hydration.rs:227:9";
+
+// Where the secondary `RefCell already borrowed` cascade panics — the
+// wasm-bindgen-futures executor, NOT a tachys path. Such events are only
+// recognized as the hydration flood via the tachys hydration breadcrumb.
+const JS_SYS_SINGLETHREAD_LOC =
+  "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
+  "js-sys-0.3.99/src/futures/task/singlethread.rs:142:37";
+
+// The console breadcrumb every shape of the flood carries: the original
+// hydration panic that kicked off the cascade.
+const TACHYS_PANIC_BREADCRUMB = {
+  category: "console",
+  message: "panicked at " + HYDRATION_LOC + ":\ninternal error: entered unreachable code",
+};
 
 function rustPanic(location, extra) {
   return Object.assign(
@@ -95,11 +158,278 @@ const cases = [
     expectDrop: true,
   },
   {
-    name: "hydration panic on a CURRENT browser is preserved (real bugs still reach GlitchTip)",
+    name: "hydration panic on a CURRENT browser with NO injected <font> is preserved (real bugs still reach GlitchTip)",
     ua: CURRENT_CHROME,
+    document: fakeDocument(0),
     event: rustPanic(HYDRATION_LOC, {
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     }),
+    expectDrop: false,
+  },
+  // The modern-Chrome CN-translation population that ignores the notranslate
+  // trifecta: a current browser, but the live DOM has translation-injected
+  // <font> wrappers. This is the #3005/#4911/#6406 flood PR #760 still missed.
+  {
+    name: "tachys hydration panic on a current browser WITH injected <font> (translation overlay) is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(7),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  // The secondary cascade: `RefCell already borrowed` panics in the js-sys
+  // executor (not a tachys path), so it is recognized only via the tachys
+  // hydration breadcrumb. With injected <font> present it is the flood.
+  {
+    name: "RefCell-already-borrowed cascade (js-sys location) with tachys breadcrumb + injected <font> is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(4),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: {
+        values: [
+          { category: "console", message: "app run!" },
+          TACHYS_PANIC_BREADCRUMB,
+          {
+            category: "console",
+            message: "panicked at " + JS_SYS_SINGLETHREAD_LOC + ":\nRefCell already borrowed",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Same cascade shape but on a CLEAN (untranslated) page — a genuine
+  // hydration mismatch. No injected <font>, so it must still report.
+  {
+    name: "RefCell-already-borrowed cascade from a genuine (untranslated) hydration mismatch is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(0),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }, TACHYS_PANIC_BREADCRUMB] },
+    },
+    expectDrop: false,
+  },
+  // The unhandled wasm trap that reaches window.onerror: type RuntimeError,
+  // no rust_panic context at all — recognized via the tachys breadcrumb.
+  {
+    name: "unhandled RuntimeError unreachable (window.onerror, no rust_panic) with tachys breadcrumb + injected <font> is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(1),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [TACHYS_PANIC_BREADCRUMB] },
+    },
+    expectDrop: true,
+  },
+  // A non-hydration RuntimeError with injected <font> present must NOT be
+  // swept up: the font fingerprint only suppresses tachys hydration panics.
+  {
+    name: "a non-hydration RuntimeError is preserved even when <font> is present",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(5),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "table index is out of bounds" }] },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+
+  // ── Category 3b: the stale-Chrome / crawler flood with NO visible <font> ──
+  // The dominant backlog (GlitchTip #4 ≈1059, #6456 ≈40, plus the #5918/#5919
+  // BLU, #4936 MCH, #224/#5392 VPR clusters and the per-URL /item/<world>/<id>
+  // #65xx flood). A clean modern browser hydrates these exact URLs fine, the
+  // SSR already ships the notranslate trifecta, and the population is uniformly
+  // a stale, version-pinned Chrome (108/111/112/120) on data-center IPs whose
+  // pre-hydration DOM mutation leaves no <font> the filter can see. PR #764's
+  // single-version `Chrome/112.` check missed 108/111/120, so they leaked.
+  {
+    name: "stale Chrome 111 tachys hydration panic (no font, no translate class) is dropped",
+    ua: staleChromeUA(111),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  {
+    name: "stale Chrome 108 unhandled RuntimeError unreachable (window.onerror) via tachys breadcrumb is dropped",
+    ua: staleChromeUA(108),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [TACHYS_PANIC_BREADCRUMB] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "stale Chrome 120 RefCell cascade (js-sys loc) via tachys breadcrumb, no font, is dropped",
+    ua: staleChromeUA(120),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: {
+        values: [
+          { category: "console", message: "app run!" },
+          TACHYS_PANIC_BREADCRUMB,
+          {
+            category: "console",
+            message:
+              "panicked at " + JS_SYS_SINGLETHREAD_LOC + ":\nRefCell already borrowed",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Guard: a current, self-updating browser must NOT be swept up by the stale
+  // check just because it hit a clean-page hydration mismatch — those are the
+  // genuine bugs the filter exists to preserve.
+  {
+    name: "stale check does not drop a CURRENT-Chrome clean-page hydration panic (no font, no translate class)",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: false,
+  },
+  // Guard: the stale-Chrome drop is gated behind hydration-panic recognition,
+  // so a stale-Chrome NON-hydration error still reports.
+  {
+    name: "stale Chrome non-hydration RuntimeError is preserved",
+    ua: staleChromeUA(108),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [{ type: "RuntimeError", value: "table index is out of bounds" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+
+  // ── Category 3c: full-page translate class on <html>, injector-agnostic ──
+  // Google / Chrome built-in full-page translation adds class="translated-ltr"
+  // (or "translated-rtl") to <html> regardless of Chrome version or the wrapper
+  // element it uses, so it catches the current-browser translation population
+  // even when no <font> is visible at beforeSend.
+  {
+    name: "current Chrome hydration panic with html.translated-ltr (no font) is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0, htmlClass: "notranslate translated-ltr" }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  {
+    name: "current Chrome hydration panic with html.translated-rtl (no font) is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0, htmlClass: "translated-rtl" }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: true,
+  },
+  // Guard: the SSR-emitted "notranslate" class contains the substring
+  // "translate" but must NOT be mistaken for an active translation.
+  {
+    name: "current Chrome hydration panic with only the SSR notranslate class is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0, htmlClass: "notranslate" }),
+    event: rustPanic(HYDRATION_LOC, {
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    }),
+    expectDrop: false,
+  },
+
+  // ── Category 3d: breadcrumb-INDEPENDENT recognition of the cascade ──
+  // The cascade shapes (`RefCell already borrowed` in the js-sys executor, and
+  // the unhandled `RuntimeError: unreachable` at window.onerror) were only ever
+  // recognized via the tachys hydration *breadcrumb*. But at real client-side
+  // beforeSend that breadcrumb is NOT in the array the SDK hands the filter —
+  // only the explicitly-set `contexts.rust_panic` survives. Proof from prod
+  // (release e59476b): on a single stale-Chrome (<=124) page-load the root
+  // `internal error` panic — recognized via its tachys rust_panic location —
+  // was dropped, yet the SAME load's `RefCell already borrowed` cascade leaked
+  // (GlitchTip #6661 Chrome 106, #4908 Chrome 104, with no paired internal-error
+  // issue). Same load => same UA => same fingerprint, so the only difference is
+  // recognition: the breadcrumb prong does not fire at beforeSend. These cases
+  // model that reality (no tachys breadcrumb present) and require recognition
+  // from event-level signals that ARE reliably present: the js-sys executor
+  // rust_panic location, and the exact RuntimeError "unreachable" value.
+  {
+    name: "stale Chrome RefCell cascade (js-sys loc, NO tachys breadcrumb) is dropped",
+    ua: staleChromeUA(106),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "stale Chrome onerror RuntimeError unreachable (NO tachys breadcrumb) is dropped",
+    ua: staleChromeUA(106),
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "RefCell cascade (js-sys loc) with injected <font>, NO tachys breadcrumb, is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocument(3),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  // Guard: the breadcrumb-independent recognition must NOT over-suppress a
+  // genuine cascade on a clean, current browser (no font, no translate class,
+  // no stale UA) — those are the real hydration bugs the filter must preserve.
+  {
+    name: "RefCell cascade (js-sys loc) on a current clean browser with no fingerprint is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "onerror RuntimeError unreachable on a current clean browser with no fingerprint is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: { values: [{ type: "RuntimeError", value: "unreachable" }] },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
     expectDrop: false,
   },
 
@@ -294,7 +624,7 @@ const cases = [
 
 for (const c of cases) {
   test(c.name, () => {
-    const shouldDrop = loadFilter(c.ua);
+    const shouldDrop = loadFilter(c.ua, c.document);
     const dropped = shouldDrop(c.event) === true;
     assert.strictEqual(
       dropped,

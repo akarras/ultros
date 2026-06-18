@@ -57,21 +57,18 @@ pub fn format_duration_short(secs: u64) -> String {
 
 /// Tailwind class string for the ROI badge in analyzer tables. Tints the badge with the
 /// brand-ring color, proportional to ROI %.
-pub fn roi_badge_class(roi: i32) -> String {
-    let tint = if roi >= 500 {
-        "24%"
+pub fn roi_badge_class(roi: i32) -> &'static str {
+    if roi >= 500 {
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_24%,transparent)]"
     } else if roi >= 200 {
-        "20%"
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_20%,transparent)]"
     } else if roi >= 100 {
-        "16%"
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)]"
     } else if roi >= 50 {
-        "12%"
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
     } else {
-        "10%"
-    };
-    format!(
-        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-    )
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+    }
 }
 
 pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesStats {

@@ -32,7 +32,7 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
     && cargo binstall -y \
         cargo-chef \
         cargo-leptos@0.3 \
-        wasm-bindgen-cli@0.2.122
+        wasm-bindgen-cli@0.2.125
 WORKDIR /app
 
 # ---- Recipe: extract dependency graph for cache-friendly rebuilds ------------

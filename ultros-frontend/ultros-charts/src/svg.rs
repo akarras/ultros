@@ -38,7 +38,7 @@ fn push_stroke(out: &mut String, s: &Stroke) {
     }
 }
 
-fn points_attr(points: &[(f32, f32)]) -> String {
+pub(crate) fn points_attr(points: &[(f32, f32)]) -> String {
     let mut out = String::with_capacity(points.len() * 12);
     for (i, (x, y)) in points.iter().enumerate() {
         if i > 0 {
@@ -47,6 +47,25 @@ fn points_attr(points: &[(f32, f32)]) -> String {
         let _ = write!(out, "{x:.1},{y:.1}");
     }
     out
+}
+
+/// Path data for a filled area: the polyline plus a closing run along the
+/// baseline. `None` for fewer than 2 points.
+pub(crate) fn area_path_d(points: &[(f32, f32)], baseline_y: f32) -> Option<String> {
+    if points.len() < 2 {
+        return None;
+    }
+    let mut d = String::new();
+    for (i, (x, y)) in points.iter().enumerate() {
+        let _ = write!(d, "{}{x:.1} {y:.1}", if i == 0 { "M" } else { "L" });
+    }
+    let first_x = points[0].0;
+    let last_x = points[points.len() - 1].0;
+    let _ = write!(
+        d,
+        "L{last_x:.1} {baseline_y:.1}L{first_x:.1} {baseline_y:.1}Z"
+    );
+    Some(d)
 }
 
 fn escape_text(text: &str) -> String {
@@ -121,19 +140,9 @@ pub fn scene_to_svg(scene: &Scene) -> String {
                 baseline_y,
                 fill,
             } => {
-                if points.len() < 2 {
+                let Some(d) = area_path_d(points, *baseline_y) else {
                     continue;
-                }
-                let mut d = String::new();
-                for (i, (x, y)) in points.iter().enumerate() {
-                    let _ = write!(d, "{}{x:.1} {y:.1}", if i == 0 { "M" } else { "L" });
-                }
-                let first_x = points[0].0;
-                let last_x = points[points.len() - 1].0;
-                let _ = write!(
-                    d,
-                    "L{last_x:.1} {baseline_y:.1}L{first_x:.1} {baseline_y:.1}Z"
-                );
+                };
                 let _ = write!(out, r#"<path d="{d}""#);
                 push_fill(&mut out, fill);
                 out.push_str("/>");

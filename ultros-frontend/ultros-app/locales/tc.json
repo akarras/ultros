@@ -537,6 +537,8 @@
     "chart_range_30d": "30天",
     "chart_range_all": "全部",
     "chart_aria_label": "{from} 到 {to} 之間 {n} 筆銷售的散點圖",
+    "sparkline_hours_ago": "{n}小時前",
+    "sparkline_now": "現在",
     "retainers_edit_title": "編輯雇員",
     "retainers_title": "雇員",
     "retainers_unassigned": "未指派",

@@ -537,6 +537,8 @@
     "chart_range_30d": "30일",
     "chart_range_all": "전체",
     "chart_aria_label": "{from}부터 {to}까지의 {n}건 판매를 보여 주는 산점도",
+    "sparkline_hours_ago": "{n}시간 전",
+    "sparkline_now": "지금",
     "retainers_edit_title": "친구상인 편집",
     "retainers_title": "친구상인",
     "retainers_unassigned": "미지정",
