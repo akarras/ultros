@@ -1599,18 +1599,6 @@ pub(crate) async fn start_web(state: WebState) {
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-        ))
-        .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static("default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:;"),
-        ))
-        .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::REFERRER_POLICY,
-            HeaderValue::from_static("strict-origin-when-cross-origin"),
-        ))
-        .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::X_XSS_PROTECTION,
-            HeaderValue::from_static("1; mode=block"),
         ));
 
     // run our app with hyper
