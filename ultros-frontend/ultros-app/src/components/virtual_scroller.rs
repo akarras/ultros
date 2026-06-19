@@ -314,48 +314,49 @@ where
                     <For
                         each=virtual_children
                         key=move |(_, t): &(usize, T)| key(t)
-                        children=move |(idx, child)| {
-                            let row = NodeRef::<leptos::html::Div>::new();
-                            let height_deltas = height_deltas;
-                            let fenwick = fenwick;
-                            if variable_height {
-                                Effect::new(move |_| {
-                                    if let Some(el) = row.get() {
-                                        let measured = el.offset_height() as f64;
-                                        let delta = measured - row_height;
-                                        height_deltas.update_value(|v| {
-                                            if idx < v.len() {
-                                                let old = v[idx];
-                                                if (old - delta).abs() > 0.5 {
-                                                    v[idx] = delta;
-                                                    // O(log n) update instead of rebuilding prefix sums
-                                                    fenwick.update(|f| f.add(idx, delta - old));
+                        children={
+                            let row_class = if variable_height {
+                                "content-auto contain-layout will-change-transform"
+                            } else {
+                                "content-visible contain-layout will-change-transform overflow-hidden"
+                            };
+                            let row_style = if variable_height {
+                                String::new()
+                            } else {
+                                format!("height: {}px;", row_height.round() as u32)
+                            };
+
+                            move |(idx, child)| {
+                                let row = NodeRef::<leptos::html::Div>::new();
+                                let height_deltas = height_deltas;
+                                let fenwick = fenwick;
+                                if variable_height {
+                                    Effect::new(move |_| {
+                                        if let Some(el) = row.get() {
+                                            let measured = el.offset_height() as f64;
+                                            let delta = measured - row_height;
+                                            height_deltas.update_value(|v| {
+                                                if idx < v.len() {
+                                                    let old = v[idx];
+                                                    if (old - delta).abs() > 0.5 {
+                                                        v[idx] = delta;
+                                                        // O(log n) update instead of rebuilding prefix sums
+                                                        fenwick.update(|f| f.add(idx, delta - old));
+                                                    }
                                                 }
-                                            }
-                                        });
-                                    }
-                                });
-                            }
-                            view! {
-                                <div
-                                    node_ref=row
-                                    class=move || {
-                                        if variable_height {
-                                            "content-auto contain-layout will-change-transform".to_string()
-                                        } else {
-                                            "content-visible contain-layout will-change-transform overflow-hidden".to_string()
+                                            });
                                         }
-                                    }
-                                    style=move || {
-                                        if variable_height {
-                                            String::new()
-                                        } else {
-                                            format!("height: {}px;", row_height.round() as u32)
-                                        }
-                                    }
-                                >
-                                    {view(child)}
-                                </div>
+                                    });
+                                }
+                                view! {
+                                    <div
+                                        node_ref=row
+                                        class=row_class
+                                        style=row_style.clone()
+                                    >
+                                        {view(child)}
+                                    </div>
+                                }
                             }
                         }
                     />
