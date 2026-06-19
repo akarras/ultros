@@ -603,6 +603,203 @@ const cases = [
     expectDrop: false,
   },
 
+  // ── Category 1 (cont.): streaming WASM compile failures of our bundle ──
+  // A non-OK HTTP response for the .wasm (a stale chunk 404 in the seconds
+  // after a deploy) surfaces as a compile TypeError; a truncated download
+  // surfaces as a CompileError. Both are network / deploy-race noise, never an
+  // actionable code bug. GlitchTip #6755, #6762, #6763, #6764, #6766, #6767.
+  {
+    name: "WASM compile TypeError 'HTTP status code is not ok' (stale chunk after deploy) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value:
+              "Failed to execute 'compile' on 'WebAssembly': HTTP status code is not ok",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "WASM CompileError 'extends past end of the module' (truncated download) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "CompileError",
+            value:
+              'WebAssembly.instantiateStreaming(): section (code 10, "Code") ' +
+              "extends past end of the module (length 10426626, remaining bytes " +
+              "10359267) @+126488",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Guard: a CompileError that is NOT a truncation (e.g. a genuinely corrupt
+  // build we shipped) must still report — that is a real bug worth seeing.
+  {
+    name: "a non-truncation WASM CompileError is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "CompileError",
+            value:
+              "WebAssembly.compile(): function body must end with END opcode @+1234",
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+
+  // ── Category 5: stripped leptos streaming-hydration bootstrap ──
+  // The SSR shell ALWAYS emits window.__RESOLVED_RESOURCES / __INCOMPLETE_CHUNKS
+  // / __PENDING_RESOURCES / __SERIALIZED_ERRORS (verified in the served HTML of
+  // the failing /item/<world>/<id> URLs), and they are read only by leptos's
+  // generated wasm-bindgen static accessors, never by app code. So a
+  // "ReferenceError: <name> is not defined" can only mean a proxy stripped or
+  // truncated the streamed bootstrap before the wasm hydrated — the same
+  // translation-proxy population behind the tachys flood. GlitchTip #6620,
+  // #6667, #6760, #6761.
+  {
+    name: "ReferenceError __RESOLVED_RESOURCES not defined from the pkg accessor is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "ReferenceError",
+            value: "__RESOLVED_RESOURCES is not defined",
+            stacktrace: {
+              frames: [
+                { filename: "/pkg/a2d6028/ultros.js", function: "c" },
+                {
+                  filename: "/pkg/a2d6028/ultros.js",
+                  function:
+                    "__wbg_static_accessor___RESOLVED_RESOURCES_64c55267f5301918",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "ReferenceError __INCOMPLETE_CHUNKS not defined from the pkg accessor is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "ReferenceError",
+            value: "__INCOMPLETE_CHUNKS is not defined",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/pkg/a2d6028/ultros.js",
+                  function:
+                    "__wbg_static_accessor___INCOMPLETE_CHUNKS_69295e643f835e34",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "ReferenceError __PENDING_RESOURCES not defined (accessor fn, no pkg filename) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "ReferenceError",
+            value: "__PENDING_RESOURCES is not defined",
+            stacktrace: {
+              frames: [
+                { function: "__wbg_static_accessor___PENDING_RESOURCES_abc123" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "ReferenceError __SERIALIZED_ERRORS not defined with NO frames falls back to value match and is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "ReferenceError",
+            value: "__SERIALIZED_ERRORS is not defined",
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // Guard: a same-named global thrown from a THIRD-PARTY (non-pkg) script must
+  // NOT be swept up — the bundle scoping keeps it narrow.
+  {
+    name: "ReferenceError __RESOLVED_RESOURCES from a third-party (non-pkg) frame is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "ReferenceError",
+            value: "__RESOLVED_RESOURCES is not defined",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "https://cdn.example.com/widget.js",
+                  function: "init",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // Guard: an ordinary application ReferenceError from our own bundle must
+  // always report — only the leptos hydration globals are matched.
+  {
+    name: "a genuine application ReferenceError from the pkg bundle is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "ReferenceError",
+            value: "someAppHelper is not defined",
+            stacktrace: {
+              frames: [{ filename: "/pkg/a2d6028/ultros.js", function: "c" }],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+
   // ── Genuine application errors must always survive ──
   {
     name: "a genuine application Error is preserved",

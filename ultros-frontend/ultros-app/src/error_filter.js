@@ -15,14 +15,18 @@
 //
 // We drop several independent categories of unactionable noise:
 //
-//   1. WASM bundle fetch aborts — users navigating away during the
-//      streaming compile, ad blockers, corporate proxies. Two shapes:
-//      a bare "TypeError: Failed to fetch" from the wasm-bindgen glue,
-//      and the ESM-entry "Failed to fetch dynamically imported module:
-//      <pkg-url>" thrown when the module preload/import() of our own
-//      bundle aborts. GlitchTip issues #21, #2374, #2404, and the
-//      count=1 flood of #62xx "Failed to fetch dynamically imported
-//      module: .../pkg/<hash>/ultros.js".
+//   1. WASM bundle fetch / compile failures — users navigating away during
+//      the streaming compile, ad blockers, corporate proxies, and stale
+//      chunks 404ing in the seconds after a deploy. Shapes: a bare
+//      "TypeError: Failed to fetch" from the wasm-bindgen glue; the
+//      ESM-entry "Failed to fetch dynamically imported module: <pkg-url>"
+//      thrown when the module preload/import() of our own bundle aborts;
+//      "WebAssembly compilation aborted"; "TypeError: Failed to execute
+//      'compile' on 'WebAssembly': HTTP status code is not ok" (the .wasm
+//      came back non-OK); and "CompileError: ... extends past end of the
+//      module" (a truncated download). GlitchTip issues #21, #2374, #2404,
+//      #6755, #6762–#6767, and the count=1 flood of #62xx "Failed to fetch
+//      dynamically imported module: .../pkg/<hash>/ultros.js".
 //   2. A "Cannot read properties of undefined (reading 'document')"
 //      TypeError thrown by an injected third-party script (Tencent QQ
 //      Browser / UC / WeChat in-app WebViews on frozen Chrome 112).
@@ -55,9 +59,28 @@
 //      rejected with no reason. Zero diagnostic value (no message, no
 //      stack), overwhelmingly third-party (gtag / funding-choices / ads)
 //      or aborted fetches. The count=1 flood of #62xx "UnhandledRejection".
+//   5. "ReferenceError: __RESOLVED_RESOURCES is not defined" (and the
+//      __INCOMPLETE_CHUNKS / __PENDING_RESOURCES / __SERIALIZED_ERRORS
+//      variants) — leptos's streaming-hydration bootstrap globals, which the
+//      SSR shell ALWAYS emits and only leptos's generated wasm-bindgen static
+//      accessors ever read. "not defined" means a proxy/crawler stripped or
+//      truncated the streamed bootstrap before the wasm hydrated — the same
+//      translation-proxy population behind category 3. GlitchTip issues
+//      #6620, #6667, #6760, #6761.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
+  // Leptos's streaming-hydration bootstrap globals. The SSR shell ALWAYS emits
+  // `window.__RESOLVED_RESOURCES = []` plus `__INCOMPLETE_CHUNKS` /
+  // `__PENDING_RESOURCES` / `__SERIALIZED_ERRORS` (verified in the served HTML
+  // of the failing /item/<world>/<id> URLs — see shell() in lib.rs), and they
+  // are read ONLY by leptos's generated wasm-bindgen static accessors, never by
+  // app code. So a "ReferenceError: <name> is not defined" for one of them can
+  // only mean a proxy/crawler stripped or truncated the streamed bootstrap
+  // before the wasm hydrated — the same translation-proxy population behind the
+  // tachys flood. Anchored ^…$ so it matches the bare global name only.
+  var ULTROS_HYDRATION_BOOTSTRAP_REFERR_RE =
+    /^__(?:RESOLVED_RESOURCES|INCOMPLETE_CHUNKS|PENDING_RESOURCES|SERIALIZED_ERRORS) is not defined$/;
   // The wasm-bindgen-futures single-threaded executor. When the tachys
   // hydration panic unwinds through a running future poll, re-entering the
   // executor trips `RefCell already borrowed` HERE — the documented cascade of
@@ -153,6 +176,78 @@
       }
     } catch (_) {
       /* be defensive — never let the filter throw */
+    }
+    return false;
+  }
+
+  // Category 1 (cont.): the streaming COMPILE of our wasm bundle failing. Two
+  // shapes, both network / deploy-race noise rather than an actionable bug:
+  //   - a non-OK HTTP response for the .wasm — a stale chunk 404 in the seconds
+  //     after a deploy — surfaces as `TypeError: Failed to execute 'compile' on
+  //     'WebAssembly': HTTP status code is not ok`;
+  //   - a truncated / aborted download surfaces as `CompileError:
+  //     WebAssembly.instantiateStreaming(): section (...) extends past end of
+  //     the module (...)`.
+  // The CompileError match is scoped to the truncation signature so a genuinely
+  // corrupt build (e.g. a bad opcode) still reports — that would be an
+  // all-users flood worth seeing, not these count=1 blips. GlitchTip #6755,
+  // #6762, #6763, #6764, #6766, #6767.
+  function isUltrosWasmCompileFailure(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || typeof ex.value !== "string") return false;
+      if (
+        ex.type === "TypeError" &&
+        ex.value.indexOf(
+          "Failed to execute 'compile' on 'WebAssembly': HTTP status code is not ok",
+        ) === 0
+      ) {
+        return true;
+      }
+      if (
+        ex.type === "CompileError" &&
+        ex.value.indexOf("extends past end of the module") !== -1
+      ) {
+        return true;
+      }
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
+  // Category 5: a hydration accessor reading a leptos bootstrap global that the
+  // page never defined (see ULTROS_HYDRATION_BOOTSTRAP_REFERR_RE). Scoped to our
+  // own bundle so a same-named global thrown by some third-party script could
+  // never be swept up: when stack frames are present, require one from the pkg
+  // bundle or a `__wbg_static_accessor` frame; absent any frames the value alone
+  // — a leptos-internal name no app code references — is already definitive.
+  function isStrippedHydrationBootstrap(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || ex.type !== "ReferenceError" || typeof ex.value !== "string") {
+        return false;
+      }
+      if (!ULTROS_HYDRATION_BOOTSTRAP_REFERR_RE.test(ex.value)) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      if (frames.length === 0) return true;
+      for (var i = 0; i < frames.length; i++) {
+        var f = frames[i] || {};
+        if (
+          typeof f.filename === "string" &&
+          ULTROS_PKG_BUNDLE_RE.test(f.filename)
+        ) {
+          return true;
+        }
+        if (
+          typeof f.function === "string" &&
+          f.function.indexOf("__wbg_static_accessor") === 0
+        ) {
+          return true;
+        }
+      }
+    } catch (_) {
+      /* never let the filter throw */
     }
     return false;
   }
@@ -353,6 +448,8 @@
   window.__ultrosShouldDropEvent = function (event) {
     return (
       isUltrosWasmFetchAbort(event) ||
+      isUltrosWasmCompileFailure(event) ||
+      isStrippedHydrationBootstrap(event) ||
       isInjectedDocumentTypeError(event) ||
       isInjectedTachysHydrationPanic(event) ||
       isEmptyPromiseRejection(event)
