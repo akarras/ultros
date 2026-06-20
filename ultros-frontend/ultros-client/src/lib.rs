@@ -331,9 +331,10 @@ pub fn hydrate() {
         // Use the SSR-injected bootstrap when available; only fall back to
         // network requests if it's missing (e.g. stale cached HTML).
         let bootstrap = read_bootstrap();
-        let (worlds, region, current_user) = if let Some(b) = bootstrap {
-            let _ = populate_xiv_gen_data().await;
+        let (xiv_data, worlds, region, current_user) = if let Some(b) = bootstrap {
+            let xiv_data = populate_xiv_gen_data().await;
             (
+                xiv_data,
                 Ok(Arc::new(WorldHelper::from(b.world_data))),
                 b.region,
                 Some(b.current_user),
@@ -347,7 +348,7 @@ pub fn hydrate() {
             // the SSR DOM (rendered with the server's view of auth state)
             // and the client view tree (auth state still loading) diverge
             // and tachys hydration panics at hydration.rs:163.
-            let (_, ((worlds, region), current_user)) = join(
+            let (xiv_data, ((worlds, region), current_user)) = join(
                 populate_xiv_gen_data(),
                 join(
                     join(get_world_data(), get_region()),
@@ -355,8 +356,33 @@ pub fn hydrate() {
                 ),
             )
             .await;
-            (worlds, region, Some(current_user))
+            (xiv_data, worlds, region, Some(current_user))
         };
+
+        // The entire client view tree reads game data through
+        // `xiv_gen_db::data()` (via `tracked_data()`, used across ~37 route and
+        // component files). If the `.rkyv` data archive failed to populate —
+        // an ad blocker or corporate proxy dropping the binary fetch, a flaky
+        // network, or a crawler like Baiduspider that won't fetch it — then
+        // `data()` panics with "XIV data not initialized" the instant we
+        // hydrate (xiv-gen-db/src/lib.rs), taking down the page and firing a
+        // WASM panic to GlitchTip (issue #6765). The SSR HTML was rendered
+        // server-side with the embedded data, so it already shows the correct
+        // page; hydrating with no client data could only panic — or, worse,
+        // silently diverge into a hydration mismatch. Leave the static SSR
+        // content in place instead. Navigation still works as full page loads,
+        // each re-rendered server-side with real data.
+        if let Err(e) = xiv_data {
+            error!(
+                "XIV game data failed to load; leaving server-rendered content un-hydrated: {e}"
+            );
+            // Resolve the boot-progress indicator, which waits on this event
+            // and would otherwise show a "taking longer than expected" error
+            // once its watchdog fires — the SSR page is the final state here.
+            dispatch_boot_event("ultros:hydrated");
+            return;
+        }
+
         info!("hydrating body");
         let world_data = match worlds {
             Ok(worlds) => LocalWorldData(Ok(worlds)),
