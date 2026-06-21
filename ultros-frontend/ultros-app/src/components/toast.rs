@@ -28,20 +28,16 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
         ToastLevel::Error => i::BsExclamationCircle,
     };
 
-    let exit_class = move || {
-        if is_exiting() {
-            "animate-out slide-out-to-right fade-out duration-300"
-        } else {
-            ""
-        }
-    };
-
     let message = toast.message.clone();
     let id = toast.id;
 
     view! {
         <div
-            class=move || format!("{} {} {}", base_class, color_class, exit_class())
+            class=format!("{} {}", base_class, color_class)
+            class=("animate-out", move || is_exiting())
+            class=("slide-out-to-right", move || is_exiting())
+            class=("fade-out", move || is_exiting())
+            class=("duration-300", move || is_exiting())
             role="alert"
         >
             <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
