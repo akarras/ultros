@@ -284,7 +284,9 @@ async fn send_webpush(
     let req = reqwest::Request::try_from(http_req)
         .map_err(|e| anyhow!("push request convert failed: {e}"))?;
 
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?
         .execute(req)
         .await
         .map_err(|e| anyhow!("push send failed: {e}"))?;
@@ -339,7 +341,9 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
         }],
         "allowed_mentions": { "parse": [] },
     });
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?
         .post(url)
         .json(&payload)
         .send()
