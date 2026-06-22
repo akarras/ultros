@@ -299,6 +299,51 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_sales_zero_iqr() {
+        use ultros_api_types::recent_sales::Sales;
+        let now = Utc::now().naive_utc();
+        let sales_list = vec![
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(1),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(2),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(3),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(4),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(5),
+            },
+        ];
+
+        let data = SaleData {
+            item_id: 1,
+            hq: false,
+            sales: sales_list,
+        };
+
+        // IQR of [100, 100, 100, 100, 100] is 0
+        // analyze_sales should handle this without dropping all items.
+        let stats = analyze_sales(&[&data], true);
+
+        // 5 total sales
+        assert_eq!(stats.total_sales, 5);
+        // Average should be exactly 100
+        assert_eq!(stats.avg_price, 100);
+        // Ensure daily sales calculation doesn't panic and returns a sensible number (5 sales over ~5 days = ~1.0)
+        assert!((stats.daily_sales - 1.0).abs() < 0.1);
+    }
+
+    #[test]
     fn test_analyze_sales_logic() {
         let now = Utc::now().naive_utc();
         let sale1 = Sales {
