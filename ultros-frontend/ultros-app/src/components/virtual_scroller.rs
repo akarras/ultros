@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::{cell::RefCell, rc::Rc};
 use web_sys::wasm_bindgen::JsCast;
 use web_sys::wasm_bindgen::closure::Closure;
-use web_sys::{HtmlDivElement, window};
+use web_sys::{HtmlDivElement, ResizeObserver, window};
 
 struct Fenwick {
     n: usize,
@@ -319,20 +319,51 @@ where
                             let height_deltas = height_deltas;
                             let fenwick = fenwick;
                             if variable_height {
+                                let resize_observer =
+                                    StoredValue::new_local(
+                                        None::<(ResizeObserver, Closure<dyn FnMut()>)>,
+                                    );
+                                on_cleanup(move || {
+                                    resize_observer.update_value(|handle| {
+                                        if let Some((observer, _callback)) = handle.take() {
+                                            observer.disconnect();
+                                        }
+                                    });
+                                });
+
                                 Effect::new(move |_| {
                                     if let Some(el) = row.get() {
-                                        let measured = el.offset_height() as f64;
-                                        let delta = measured - row_height;
-                                        height_deltas.update_value(|v| {
-                                            if idx < v.len() {
-                                                let old = v[idx];
-                                                if (old - delta).abs() > 0.5 {
-                                                    v[idx] = delta;
-                                                    // O(log n) update instead of rebuilding prefix sums
-                                                    fenwick.update(|f| f.add(idx, delta - old));
+                                        let measure_height = move |measured: f64| {
+                                            let delta = measured - row_height;
+                                            height_deltas.update_value(|v| {
+                                                if idx < v.len() {
+                                                    let old = v[idx];
+                                                    if (old - delta).abs() > 0.5 {
+                                                        v[idx] = delta;
+                                                        // O(log n) update instead of rebuilding prefix sums
+                                                        fenwick.update(|f| f.add(idx, delta - old));
+                                                    }
                                                 }
+                                            });
+                                        };
+
+                                        measure_height(el.offset_height() as f64);
+
+                                        if resize_observer.with_value(|observer| observer.is_none())
+                                        {
+                                            let observed_el = el.clone();
+                                            let callback = Closure::wrap(Box::new(move || {
+                                                measure_height(observed_el.offset_height() as f64);
+                                            })
+                                                as Box<dyn FnMut()>);
+
+                                            if let Ok(observer) =
+                                                ResizeObserver::new(callback.as_ref().unchecked_ref())
+                                            {
+                                                observer.observe(&el);
+                                                resize_observer.set_value(Some((observer, callback)));
                                             }
-                                        });
+                                        }
                                     }
                                 });
                             }

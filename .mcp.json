@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "glitchtip": {
+      "command": "node",
+      "args": ["C:/Users/chw11/code/mcp-glitchtip/build/index.js"],
+      "env": {
+        "GLITCHTIP_BASE_URL": "https://glitchtip.ultros.app",
+        "GLITCHTIP_ORGANIZATION": "ultros",
+        "GLITCHTIP_TOKEN": "ff6ef1334b48f0be269db033cbf642b651ce986bf31359c2373699cee93536f6"
+      }
+    }
+  }
+}
