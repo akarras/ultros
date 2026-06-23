@@ -463,7 +463,7 @@ fn FCCraftingAnalyzerTable(
                     row_height=60.0
                     overscan=8
                     header_height=64.0
-                    variable_height=false
+                    variable_height=true
                      header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>
@@ -507,10 +507,10 @@ fn FCCraftingAnalyzerTable(
                         let data_clone = data.clone();
                         let item_id = ItemId(data.sequence.result_item);
                         let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
-                         let classes = if (index % 2) == 0 {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+                        let classes = if (index % 2) == 0 {
+                            "flex flex-row items-start flex-nowrap min-h-[60px] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                         } else {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+                            "flex flex-row items-start flex-nowrap min-h-[60px] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                         };
                          let sales_tooltip = format!(
                             "Based on {} sales over {:.1} days",
@@ -537,15 +537,20 @@ fn FCCraftingAnalyzerTable(
                         view! {
                             <div class=classes role="row-group">
                                 <div role="cell" class="px-4 py-2 flex flex-row w-84 shrink-0 items-center gap-2">
-                                     <a
-                                        class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id.0)
-                                    >
-                                        <div class="shrink-0">
+                                    <div class="flex flex-row items-center gap-2 min-w-0 w-full">
+                                        <a
+                                            class="shrink-0 hover:text-brand-300 transition-colors"
+                                            href=format!("/item/{}/{}", world(), item_id.0)
+                                        >
                                             <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                        </div>
-                                        <div class="flex flex-col truncate">
-                                            <span>{item}</span>
+                                        </a>
+                                        <div class="flex flex-col min-w-0">
+                                            <a
+                                                class="truncate hover:text-brand-300 transition-colors"
+                                                href=format!("/item/{}/{}", world(), item_id.0)
+                                            >
+                                                {item}
+                                            </a>
                                             <ResultBreakdownDisclosure title=t_string!(i18n, fc_crafting_disclosure_material_breakdown).to_string()>
                                                 <div class="flex flex-col gap-1">
                                                     {material_rows.into_iter().map(|(name, qty, unit_cost)| view! {
@@ -557,7 +562,7 @@ fn FCCraftingAnalyzerTable(
                                                 </div>
                                             </ResultBreakdownDisclosure>
                                         </div>
-                                    </a>
+                                    </div>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
                                     <Gil amount=data.profit />

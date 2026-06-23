@@ -18,7 +18,8 @@
 #   ANALYZER_READY_TIMEOUT  default 180       (seconds to wait for analyzer)
 #   DEVICE         desktop | mobile | both (default both)
 #   SKIP_BUILD     1 to skip `cargo leptos build` before serve
-#   LEPTOS_FEATURES extra leptos-bin-features (space-separated)
+#   LEPTOS_FEATURES extra leptos-bin-features (space-separated). Set to an
+#                  explicit empty string to override metadata bin-features.
 #
 # Exit code is the npm test exit code (0 on success).
 
@@ -33,6 +34,10 @@ READY_TIMEOUT="${READY_TIMEOUT:-300}"
 ANALYZER_READY_PATH="${ANALYZER_READY_PATH-/api/v1/cheapest/North-America}"
 ANALYZER_READY_TIMEOUT="${ANALYZER_READY_TIMEOUT:-180}"
 DEVICE="${DEVICE:-both}"
+bin_feature_args=()
+if [ "${LEPTOS_FEATURES+x}" = "x" ]; then
+    bin_feature_args=(--bin-features "$LEPTOS_FEATURES")
+fi
 
 log() { printf '[e2e] %s\n' "$*" >&2; }
 
@@ -95,11 +100,7 @@ else
 
     if [ "${SKIP_BUILD:-0}" != "1" ]; then
         log "cargo leptos build (set SKIP_BUILD=1 to skip)"
-        if [ -n "${LEPTOS_FEATURES:-}" ]; then
-            cargo leptos build --bin-features "$LEPTOS_FEATURES"
-        else
-            cargo leptos build
-        fi
+        cargo leptos build "${bin_feature_args[@]}"
     fi
 
     set -m
@@ -107,7 +108,7 @@ else
         HOSTNAME="$BASE_URL" \
         LEPTOS_SITE_ADDR="127.0.0.1:$port" \
         cargo leptos serve \
-        ${LEPTOS_FEATURES:+--bin-features "$LEPTOS_FEATURES"} \
+        "${bin_feature_args[@]}" \
         >/tmp/ultros-e2e-server.log 2>&1 &
     server_pid=$!
     set +m
@@ -155,6 +156,15 @@ else
     log "running npm run $test_script in integration/ against $BASE_URL"
     # `|| test_exit=$?` captures the npm exit code without triggering set -e.
     ( cd integration && BASE_URL="$BASE_URL" npm run "$test_script" ) || test_exit=$?
+fi
+
+if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then
+    log "running FC crafting material-breakdown E2E"
+    fc_crafting_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:fc-crafting-breakdown ) || fc_crafting_exit=$?
+    if [ "$fc_crafting_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$fc_crafting_exit"
+    fi
 fi
 
 # If we built with test-auth, also exercise the login flow even when the
