@@ -87,7 +87,9 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             // ⚡ Bolt Optimization: Filter duplicates and truncate in-place
                             // to avoid allocating a new VecDeque and cloning items on every websocket event.
                             let mut seen = std::collections::HashSet::new();
-                            sales.retain(|sale| seen.len() < 8 && seen.insert((sale.item_id, sale.hq)));
+                            sales.retain(|sale| {
+                                seen.len() < 8 && seen.insert((sale.item_id, sale.hq))
+                            });
                         });
                     }
                     ServerClient::Stale { .. } => retrigger.set(true),
