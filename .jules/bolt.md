@@ -4,3 +4,6 @@
 ## 2024-10-27 - Remove Reactive closures for static props
 **Learning:** Leptos creates a reactive Effect for `move ||` closures even if the dependencies are static. For lists (like VirtualScroller), computing static styling outside the loop and passing it prevents unnecessary effect allocation per row.
 **Action:** Hoist static class/style generation out of the `children={ move |(idx, item)|` closure to avoid per-row closures/format calls.
+## 2024-07-16 - Replacing Vec clone/re-collect with retain in-place in Leptos
+**Learning:** In a hot path like WebSocket event parsing (which occurs frequently), converting slices to new iterators using `.cloned().collect()` creates garbage memory. Replacing it with `retain` where possible combined with short circuit conditions like `seen.len() < MAX` directly truncates the collection naturally while filtering. Furthermore, replacing `Memo::new()` with `Signal::derive` in leptos is a deoptimization for operations that clone/allocate on the heap because `Signal::derive` re-executes on every read, thus discarding caching benefits.
+**Action:** When seeing `Vec` reallocations with Iterators, look for in-place modifications using `make_contiguous`, `retain`, `drain`, or `truncate`. Also, do not blindly change `Memo` to `Signal::derive` if the inner function executes heap allocations.
