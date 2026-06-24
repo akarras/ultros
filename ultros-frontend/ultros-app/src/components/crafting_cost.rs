@@ -319,6 +319,122 @@ mod tests {
         CheapestListingsMap::from(listings)
     }
 
+    // --- `compute_ingredient_cost` unit tests ---
+
+    struct MockOnHand {
+        available: Cell<i32>,
+        consumed: Cell<i32>,
+    }
+    impl MockOnHand {
+        fn new(qty: i32) -> Self {
+            Self {
+                available: Cell::new(qty),
+                consumed: Cell::new(0),
+            }
+        }
+    }
+    impl OnHand for MockOnHand {
+        fn available(&self, _item: ItemId) -> i32 {
+            self.available.get()
+        }
+        fn consume(&self, _item: ItemId, qty: i32) {
+            self.consumed.set(self.consumed.get() + qty);
+            self.available.set(self.available.get() - qty);
+        }
+    }
+
+    #[test]
+    fn compute_ingredient_cost_no_on_hand() {
+        let prices = one_listing(100, false, 50, 1);
+        let on_hand = MockOnHand::new(0);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+        };
+
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+
+        assert_eq!(line.used_from_on_hand, 0);
+        assert_eq!(line.used_from_market, 10);
+        assert_eq!(line.unit_price, 50);
+        assert_eq!(on_hand.consumed.get(), 0);
+    }
+
+    #[test]
+    fn compute_ingredient_cost_partial_on_hand() {
+        let prices = one_listing(100, false, 50, 1);
+        let on_hand = MockOnHand::new(4);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+        };
+
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+
+        assert_eq!(line.used_from_on_hand, 4);
+        assert_eq!(line.used_from_market, 6);
+        assert_eq!(line.unit_price, 50);
+        assert_eq!(on_hand.consumed.get(), 4);
+    }
+
+    #[test]
+    fn compute_ingredient_cost_full_on_hand() {
+        let prices = one_listing(100, false, 50, 1);
+        let on_hand = MockOnHand::new(20);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+        };
+
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+
+        assert_eq!(line.used_from_on_hand, 10);
+        assert_eq!(line.used_from_market, 0);
+        assert_eq!(line.unit_price, 50);
+        assert_eq!(on_hand.consumed.get(), 10);
+        assert_eq!(on_hand.available.get(), 10); // Check that remaining amount is correct
+    }
+
+    #[test]
+    fn compute_ingredient_cost_hq_fallback() {
+        // Require HQ, but only LQ is available
+        let prices = one_listing(100, false, 50, 1);
+        let on_hand = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: true,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+        };
+
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+
+        assert_eq!(line.unit_price, 50); // Falls back to LQ
+    }
+
+    #[test]
+    fn compute_ingredient_cost_hq_preference() {
+        // Both HQ and LQ available, require_hq = true should pick HQ price
+        let prices = two_listings((100, false, 30), (100, true, 80), 1);
+        let on_hand = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: true,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &on_hand,
+        };
+
+        let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
+
+        assert_eq!(line.unit_price, 80); // Picks HQ
+    }
+
     fn two_listings(
         a: (i32, bool, i32),
         b: (i32, bool, i32),
