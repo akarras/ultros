@@ -45,3 +45,51 @@ fn pct_delta(today: u64, yesterday: u64) -> Option<f32> {
         Some(((today as f64 - yesterday as f64) / yesterday as f64 * 100.0) as f32)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pct_delta_increase() {
+        assert_eq!(pct_delta(150, 100), Some(50.0));
+    }
+
+    #[test]
+    fn test_pct_delta_decrease() {
+        assert_eq!(pct_delta(50, 100), Some(-50.0));
+    }
+
+    #[test]
+    fn test_pct_delta_zero_yesterday() {
+        assert_eq!(pct_delta(100, 0), None);
+    }
+
+    #[test]
+    fn test_pct_delta_zero_today() {
+        assert_eq!(pct_delta(0, 100), Some(-100.0));
+    }
+
+    #[test]
+    fn test_pct_delta_no_change() {
+        assert_eq!(pct_delta(100, 100), Some(0.0));
+    }
+
+    #[test]
+    fn test_market_pulse_dto_deltas() {
+        let dto = MarketPulseDto {
+            world_id: 1,
+            sales_today: 120,
+            sales_yesterday: 100,
+            gil_volume_today: 90,
+            gil_volume_yesterday: 100,
+            unit_volume_today: 0,
+            unit_volume_yesterday: 0,
+            active_listings: 100,
+        };
+
+        assert_eq!(dto.sales_delta_pct(), Some(20.0));
+        assert_eq!(dto.gil_volume_delta_pct(), Some(-10.0));
+        assert_eq!(dto.unit_volume_delta_pct(), None);
+    }
+}
