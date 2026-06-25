@@ -667,7 +667,7 @@ where
 
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = CLIENT.get_or_init(|| {
-        reqwest::ClientBuilder::new()
+        reqwest::ClientBuilder::new().timeout(std::time::Duration::from_secs(10))
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .build()
             .unwrap()
@@ -752,7 +752,7 @@ where
 
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = CLIENT.get_or_init(|| {
-        reqwest::ClientBuilder::new()
+        reqwest::ClientBuilder::new().timeout(std::time::Duration::from_secs(10))
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .build()
             .unwrap()
