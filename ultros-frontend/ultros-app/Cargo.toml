@@ -32,6 +32,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "DomRect",
     "Element",
     "PointerEvent",
+    "ResizeObserver",
     "WebSocket",
     "MessageEvent",
     "CloseEvent",
