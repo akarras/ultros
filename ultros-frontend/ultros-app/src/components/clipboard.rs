@@ -50,11 +50,27 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                 e.prevent_default();
                 #[cfg(all(feature = "hydrate"))]
                 {
+                    use leptos::task::spawn_local;
+                    use wasm_bindgen_futures::JsFuture;
                     if let Some(window) = web_sys::window() {
                         let navigator = window.navigator();
                         let clipboard = navigator.clipboard();
                         let text = clipboard_text.get_untracked();
-                        let _ = clipboard.write_text(&text);
+                        // `write_text` returns a Promise that REJECTS when the browser
+                        // blocks the write (e.g. Firefox revokes transient user
+                        // activation when an ad iframe holds focus, or the document is
+                        // not focused). Dropping that Promise leaks the rejection as an
+                        // unhandled promise rejection, which our error reporter flags as
+                        // an error (GlitchTip #5767). Await it so the rejection is
+                        // consumed — a blocked copy is best-effort and unrecoverable.
+                        let promise = clipboard.write_text(&text);
+                        spawn_local(async move {
+                            if JsFuture::from(promise).await.is_err() {
+                                leptos::logging::warn!(
+                                    "clipboard write_text was blocked by the browser"
+                                );
+                            }
+                        });
                         last_copied_text.0.set(Some(text));
                         if let Some(toasts) = toasts {
                             toasts.success("Copied to clipboard!");
