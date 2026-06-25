@@ -51,8 +51,19 @@ pub(crate) fn copy_invite_url(
     let url = invite_url(invite_id);
     #[cfg(feature = "hydrate")]
     if let Some(window) = web_sys::window() {
+        use leptos::task::spawn_local;
+        use wasm_bindgen_futures::JsFuture;
         let clipboard = window.navigator().clipboard();
-        let _ = clipboard.write_text(&url);
+        // `write_text` returns a Promise that rejects when the browser blocks the
+        // write. Dropping it leaks an unhandled promise rejection that our error
+        // reporter flags as an error (see GlitchTip #5767). Await it so a blocked
+        // best-effort copy is consumed instead of reported.
+        let promise = clipboard.write_text(&url);
+        spawn_local(async move {
+            if JsFuture::from(promise).await.is_err() {
+                leptos::logging::warn!("clipboard write_text was blocked by the browser");
+            }
+        });
     }
     if let Some(last_copied) = last_copied {
         last_copied.0.set(Some(url));
