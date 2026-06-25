@@ -970,7 +970,10 @@ async fn character_search(
     //     let world_name = world.get_name();
     //     builder = builder.server(Server::from_str(world_name)?);
     // }
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
     let search_results = builder.send_async(&client).await?;
 
     let characters = search_results
