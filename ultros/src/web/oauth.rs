@@ -420,7 +420,8 @@ impl DiscordAuthConfig {
                 RevocationUrl::new("https://discord.com/api/oauth2/token/revoke".to_string())
                     .expect("Failed to parse revoke URL"),
             );
-        let http_client = oauth2::reqwest::ClientBuilder::new().timeout(std::time::Duration::from_secs(10))
+        let http_client = oauth2::reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(10))
             .redirect(oauth2::reqwest::redirect::Policy::none())
             .build()
             .expect("Failed to build oauth2 reqwest client");

@@ -399,7 +399,10 @@ async fn main() -> Result<()> {
     ));
 
     let character_verification = CharacterVerifierService {
-        client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap(),
+        client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap(),
         db: db.clone(),
         world_cache: world_cache.clone(),
     };

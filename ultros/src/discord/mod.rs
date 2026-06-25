@@ -121,7 +121,10 @@ pub(crate) async fn start_discord(
                 ));
                 Ok(Data {
                     db,
-                    lodestone_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap(),
+                    lodestone_client: reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                        .unwrap(),
                     event_senders,
                     analyzer_service,
                     world_cache,
