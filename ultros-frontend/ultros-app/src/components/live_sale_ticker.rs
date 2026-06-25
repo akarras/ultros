@@ -80,16 +80,16 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     hq: sale.hq,
                                 });
                             }
-                            use itertools::Itertools;
                             sales
                                 .make_contiguous()
                                 .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-                            *sales = sales
-                                .iter()
-                                .unique_by(|sale| (sale.item_id, sale.hq))
-                                .take(8)
-                                .cloned()
-                                .collect();
+
+                            // ⚡ Bolt Optimization: Filter duplicates and truncate in-place
+                            // to avoid allocating a new VecDeque and cloning items on every websocket event.
+                            let mut seen = std::collections::HashSet::new();
+                            sales.retain(|sale| {
+                                seen.len() < 8 && seen.insert((sale.item_id, sale.hq))
+                            });
                         });
                     }
                     ServerClient::Stale { .. } => retrigger.set(true),
