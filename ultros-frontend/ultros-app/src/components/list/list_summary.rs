@@ -44,8 +44,8 @@ fn get_cheapest_listing(
                 && let Some(world_helper) = world_helper
                 && let Some(AnyResult::World(world)) =
                     world_helper.lookup_selector(AnySelector::World(listing.world_id))
-                && let Some(AnyResult::Datacenter(dc)) = world_helper
-                    .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                && let Some(AnyResult::Datacenter(dc)) =
+                    world_helper.lookup_selector(AnySelector::Datacenter(world.datacenter_id))
                 && excluded_datacenters.iter().any(|&name| name == dc.name)
             {
                 return false;
