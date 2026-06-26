@@ -1,4 +1,0 @@
-error: no such command: `leptos`
-
-help: view all installed commands with `cargo --list`
-help: find a package to install `leptos` with `cargo search cargo-leptos`

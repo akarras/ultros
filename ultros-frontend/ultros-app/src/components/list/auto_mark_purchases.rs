@@ -90,25 +90,107 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
     }
 }
 
+fn apply_purchase_to_list(
+    permission: ListPermission,
+    items: &mut [(ListItem, Vec<ActiveListing>)],
+    item_id: i32,
+) -> Vec<ListItem> {
+    if permission < ListPermission::Write {
+        return vec![];
+    }
+    let mut updated_items = Vec::new();
+    for (item, _) in items.iter_mut() {
+        if item.item_id == item_id {
+            let q = item.quantity.unwrap_or(1);
+            let current = item.acquired.unwrap_or(0);
+            if current < q {
+                item.acquired = Some(current + 1);
+                updated_items.push(item.clone());
+                break;
+            }
+        }
+    }
+    updated_items
+}
+
 fn mark_item_purchased(list_view: Resource<ListViewResult>, item_id: i32) {
     list_view.update(|data: &mut Option<ListViewResult>| {
         if let Some(Ok((list, items))) = data {
-            if list.permission < ListPermission::Write {
-                return;
-            }
-            for (item, _) in items.iter_mut() {
-                if item.item_id == item_id {
-                    let q = item.quantity.unwrap_or(1);
-                    let current = item.acquired.unwrap_or(0);
-                    if current < q {
-                        item.acquired = Some(current + 1);
-                        let item_clone = item.clone();
-                        leptos::task::spawn_local(async move {
-                            let _ = edit_list_item(item_clone).await;
-                        });
-                    }
-                }
+            let updated = apply_purchase_to_list(list.permission, items, item_id);
+            for item in updated {
+                leptos::task::spawn_local(async move {
+                    let _ = edit_list_item(item).await;
+                });
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_purchase_increment() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 1,
+                quantity: Some(5),
+                acquired: Some(0),
+                ..Default::default()
+            },
+            vec![],
+        )];
+        let updated = apply_purchase_to_list(ListPermission::Write, &mut items, 1);
+        assert_eq!(updated.len(), 1);
+        assert_eq!(items[0].0.acquired, Some(1));
+    }
+
+    #[test]
+    fn test_apply_purchase_no_exceed() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 1,
+                quantity: Some(1),
+                acquired: Some(1),
+                ..Default::default()
+            },
+            vec![],
+        )];
+        let updated = apply_purchase_to_list(ListPermission::Write, &mut items, 1);
+        assert_eq!(updated.len(), 0);
+        assert_eq!(items[0].0.acquired, Some(1));
+    }
+
+    #[test]
+    fn test_apply_purchase_ignore_mismatch() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 1,
+                quantity: Some(5),
+                acquired: Some(0),
+                ..Default::default()
+            },
+            vec![],
+        )];
+        let updated = apply_purchase_to_list(ListPermission::Write, &mut items, 2);
+        assert_eq!(updated.len(), 0);
+        assert_eq!(items[0].0.acquired, Some(0));
+    }
+
+    #[test]
+    fn test_apply_purchase_respect_read_only() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 1,
+                quantity: Some(5),
+                acquired: Some(0),
+                ..Default::default()
+            },
+            vec![],
+        )];
+        let updated = apply_purchase_to_list(ListPermission::Read, &mut items, 1);
+        assert_eq!(updated.len(), 0);
+        assert_eq!(items[0].0.acquired, Some(0));
+    }
 }

@@ -9,12 +9,20 @@ fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
     quantity: i32,
     hq: Option<bool>,
+    excluded_worlds: &[i32],
 ) -> Vec<ActiveListing> {
-    // Optimization: Filter out unwanted quality types *before* sorting.
-    // This significantly reduces the N in O(N log N) sorting time when filtering by HQ/NQ.
-    if let Some(hq) = hq {
-        listings.retain(|listing| listing.hq == hq);
-    }
+    // Optimization: Filter out unwanted listings *before* sorting.
+    // This significantly reduces the N in O(N log N) sorting time.
+    listings.retain(|listing| {
+        if listing.is_excluded(excluded_worlds) {
+            return false;
+        }
+        if let Some(hq) = hq {
+            listing.hq == hq
+        } else {
+            true
+        }
+    });
     listings.sort_by_key(|listing| listing.price_per_unit);
 
     let quantity_needed = quantity;
@@ -30,9 +38,14 @@ fn get_cheapest_listing(
 }
 
 #[component]
-pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>) -> impl IntoView {
+pub fn PriceViewer(
+    quantity: i32,
+    hq: Option<bool>,
+    listings: Vec<ActiveListing>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
+) -> impl IntoView {
     let i18n = use_i18n();
-    let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
+    let cheapest_listings = get_cheapest_listing(listings, quantity, hq, excluded_worlds);
     view! {
         <div class="flex flex-col gap-1">
             {if cheapest_listings.is_empty() {
@@ -90,7 +103,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None);
+        let result = get_cheapest_listing(listings, 10, None, &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -104,7 +117,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None);
+        let result = get_cheapest_listing(listings, 12, None, &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -118,7 +131,7 @@ mod tests {
             mock_listing(3, 300, 5, true),  // HQ, taken
             mock_listing(4, 400, 5, false), // NQ, skipped
         ];
-        let result = get_cheapest_listing(listings, 10, Some(true));
+        let result = get_cheapest_listing(listings, 10, Some(true), &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 3);
@@ -132,7 +145,7 @@ mod tests {
             mock_listing(3, 300, 5, false), // NQ, taken
             mock_listing(4, 400, 5, true),  // HQ, skipped
         ];
-        let result = get_cheapest_listing(listings, 10, Some(false));
+        let result = get_cheapest_listing(listings, 10, Some(false), &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 3);
@@ -147,7 +160,7 @@ mod tests {
             mock_listing(4, 400, 5, true),  // HQ
         ];
         // Should pick id=2 then id=1
-        let result = get_cheapest_listing(listings, 10, None);
+        let result = get_cheapest_listing(listings, 10, None, &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 1);
@@ -156,7 +169,7 @@ mod tests {
     #[test]
     fn test_get_cheapest_listing_empty() {
         let listings = vec![];
-        let result = get_cheapest_listing(listings, 10, None);
+        let result = get_cheapest_listing(listings, 10, None, &[]);
         assert!(result.is_empty());
     }
 
@@ -167,7 +180,7 @@ mod tests {
             mock_listing(2, 200, 2, false),
         ];
         // We ask for 10, but only 7 are available. It should return all of them.
-        let result = get_cheapest_listing(listings, 10, None);
+        let result = get_cheapest_listing(listings, 10, None, &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);

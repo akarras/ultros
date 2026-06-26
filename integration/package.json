@@ -19,6 +19,7 @@
     "test:list-bulk-edit": "node ./list-bulk-edit.cjs",
     "test:fc-crafting-breakdown": "node ./fc-crafting-breakdown.cjs",
     "test:dashboard": "node ./dashboard.cjs",
+    "test:group-shared-list": "node ./group-shared-list.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs"
   },
   "devDependencies": {

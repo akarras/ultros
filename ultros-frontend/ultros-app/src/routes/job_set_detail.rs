@@ -801,6 +801,7 @@ mod tests {
             base_param_value_special: [0; 6],
             item_sort_category: 0,
             level_item: ilvl,
+            subcategory_sort: 0,
             level_equip: 0,
             can_be_hq: true,
             is_collectable: false,

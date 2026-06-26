@@ -584,11 +584,6 @@
     "list_view_qty": "qty",
     "list_view_adding": "adding...",
     "list_view_add": "add",
-    "list_view_exclude_world": "Exclude world",
-    "list_view_excluded_worlds_label": "Excluded Worlds",
-    "list_view_no_exclusions": "No worlds excluded",
-    "list_view_clear_exclusions": "Clear exclusions",
-    "list_view_select_world_to_exclude": "Exclude a world...",
     "list_view_bulk_edit": "bulk edit",
     "list_view_bulk_set_hq": "FORCE HQ",
     "list_view_bulk_any_quality": "ANY QUALITY",
@@ -1464,5 +1459,10 @@
     "groups_member_added": "Member added",
     "groups_member_removed": "Member removed",
     "groups_group_created": "Group created",
-    "groups_group_deleted": "Group deleted"
+    "groups_group_deleted": "Group deleted",
+    "list_view_exclude_world": "Exclude world",
+    "list_view_excluded_worlds_label": "Excluded Worlds",
+    "list_view_no_exclusions": "No worlds excluded",
+    "list_view_clear_exclusions": "Clear exclusions",
+    "list_view_select_world_to_exclude": "Exclude a world..."
 }
