@@ -23,12 +23,10 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use std::sync::Arc;
-use ultros_api_types::websocket::{
-    EventType, FilterPredicate, ListingEventData, SaleEventData, ServerClient, SocketMessageType,
-};
+use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
-use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
+use ultros_api_types::{CurrentlyShownItem, SaleHistory};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 #[component]
@@ -1069,64 +1067,6 @@ fn update_current_item(
     });
 }
 
-fn apply_listing_event(data: &mut CurrentlyShownItem, event: EventType<ListingEventData>) {
-    match event {
-        EventType::Added(event) | EventType::Updated(event) => {
-            upsert_listings(data, event.listings);
-        }
-        EventType::Removed(event) => {
-            remove_listings(data, event.listings);
-        }
-    }
-    data.listings
-        .sort_by_key(|(listing, _)| (listing.hq, listing.price_per_unit));
-}
-
-fn upsert_listings(data: &mut CurrentlyShownItem, listings: Vec<(ActiveListing, Retainer)>) {
-    for incoming in listings {
-        data.listings
-            .retain(|(listing, _)| listing.id != incoming.0.id);
-        data.listings.push(incoming);
-    }
-}
-
-fn remove_listings(data: &mut CurrentlyShownItem, listings: Vec<(ActiveListing, Retainer)>) {
-    for (removed, _) in listings {
-        data.listings
-            .retain(|(listing, _)| listing.id != removed.id);
-    }
-}
-
-fn apply_sales_event(data: &mut CurrentlyShownItem, event: EventType<SaleEventData>) {
-    match event {
-        EventType::Added(event) | EventType::Updated(event) => {
-            upsert_sales(
-                data,
-                event
-                    .sales
-                    .into_iter()
-                    .map(|(sale, _)| sale)
-                    .collect::<Vec<_>>(),
-            );
-        }
-        EventType::Removed(event) => {
-            for (removed, _) in event.sales {
-                data.sales.retain(|sale| sale.id != removed.id);
-            }
-        }
-    }
-    data.sales
-        .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-    data.sales.truncate(200);
-}
-
-fn upsert_sales(data: &mut CurrentlyShownItem, sales: Vec<SaleHistory>) {
-    for incoming in sales {
-        data.sales.retain(|sale| sale.id != incoming.id);
-        data.sales.push(incoming);
-    }
-}
-
 #[component]
 fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let listing_resource = Resource::new(
@@ -1147,7 +1087,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
     Effect::new(move |_| {
         market_subscriptions.update_value(|subscriptions| subscriptions.clear());
-        let item_id = item_id();
+        let id = item_id();
         let world = Url::unescape(&world());
         let Some(realtime) = realtime.clone() else {
             return;
@@ -1158,18 +1098,18 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
         else {
             return;
         };
-        if item_id == 0 {
+        if id == 0 {
             return;
         }
 
-        let filter = FilterPredicate::World(selector).and(FilterPredicate::Item(item_id));
+        let filter = FilterPredicate::World(selector).and(FilterPredicate::Item(id));
         let listings_subscription = realtime.subscribe_market(
             filter.clone(),
             SocketMessageType::Listings,
             move |message| match message {
                 ServerClient::Listings(event) => {
                     update_current_item(listing_resource, |data| {
-                        apply_listing_event(data, event);
+                        data.apply_listing_event(id, event);
                     });
                 }
                 ServerClient::Stale { .. } => listing_resource.refetch(),
@@ -1182,7 +1122,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             move |message| match message {
                 ServerClient::Sales(event) => {
                     update_current_item(listing_resource, |data| {
-                        apply_sales_event(data, event);
+                        data.apply_sales_event(id, event);
                     });
                 }
                 ServerClient::Stale { .. } => listing_resource.refetch(),
