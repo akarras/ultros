@@ -169,6 +169,34 @@ pub enum ServerClient {
     SocketConnected,
 }
 
+impl ServerClient {
+    /// Returns true if the event is relevant to any of the provided item IDs.
+    ///
+    /// Stale events are always considered relevant as they indicate that the
+    /// subscription state might be out of sync and a refetch is needed.
+    pub fn is_relevant_to_items(&self, item_ids: &[i32]) -> bool {
+        if item_ids.is_empty() {
+            return false;
+        }
+        match self {
+            ServerClient::Listings(event) => match event {
+                EventType::Added(l) | EventType::Removed(l) | EventType::Updated(l) => {
+                    item_ids.contains(&l.item_id)
+                }
+            },
+            ServerClient::Sales(event) => match event {
+                EventType::Added(s) | EventType::Removed(s) | EventType::Updated(s) => s
+                    .sales
+                    .iter()
+                    .any(|(sale, _)| item_ids.contains(&sale.sold_item_id)),
+            },
+            ServerClient::Stale { .. } => true,
+            ServerClient::SubscriptionEvent { event, .. } => event.is_relevant_to_items(item_ids),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum SocketMessageType {
     Listings,
@@ -389,6 +417,129 @@ mod tests {
         assert_eq!(data.price(), 1234);
         assert!(data.character().is_none());
         assert_eq!(data.retainer(), Some("Bob"));
+    }
+
+    #[test]
+    fn test_is_relevant_to_items() {
+        let item_ids = [1, 2, 3];
+        let empty_ids: [i32; 0] = [];
+
+        // Empty list: never relevant
+        assert!(!ServerClient::Stale { subscription_id: 1 }.is_relevant_to_items(&empty_ids));
+
+        // Stale: always relevant
+        assert!(ServerClient::Stale { subscription_id: 1 }.is_relevant_to_items(&item_ids));
+
+        // Listings: matching ID
+        let listing_match = ServerClient::Listings(EventType::Added(ListingEventData {
+            item_id: 1,
+            world_id: 100,
+            listings: vec![],
+        }));
+        assert!(listing_match.is_relevant_to_items(&item_ids));
+
+        // Listings: non-matching ID
+        let listing_miss = ServerClient::Listings(EventType::Added(ListingEventData {
+            item_id: 4,
+            world_id: 100,
+            listings: vec![],
+        }));
+        assert!(!listing_miss.is_relevant_to_items(&item_ids));
+
+        // Sales: matching ID in list
+        let sale_match = ServerClient::Sales(EventType::Added(SaleEventData {
+            sales: vec![(
+                SaleHistory {
+                    id: 1,
+                    world_id: 100,
+                    sold_item_id: 2,
+                    price_per_item: 100,
+                    quantity: 1,
+                    hq: false,
+                    sold_date: NaiveDateTime::default(),
+                    buying_character_id: 0,
+                    buyer_name: None,
+                },
+                UnknownCharacter {
+                    id: 0,
+                    name: "A".into(),
+                },
+            )],
+        }));
+        assert!(sale_match.is_relevant_to_items(&item_ids));
+
+        // Sales: no matching ID in list
+        let sale_miss = ServerClient::Sales(EventType::Added(SaleEventData {
+            sales: vec![(
+                SaleHistory {
+                    id: 1,
+                    world_id: 100,
+                    sold_item_id: 5,
+                    price_per_item: 100,
+                    quantity: 1,
+                    hq: false,
+                    sold_date: NaiveDateTime::default(),
+                    buying_character_id: 0,
+                    buyer_name: None,
+                },
+                UnknownCharacter {
+                    id: 0,
+                    name: "A".into(),
+                },
+            )],
+        }));
+        assert!(!sale_miss.is_relevant_to_items(&item_ids));
+
+        // Sales: mixed list, at least one matches
+        let sale_mixed = ServerClient::Sales(EventType::Added(SaleEventData {
+            sales: vec![
+                (
+                    SaleHistory {
+                        id: 1,
+                        world_id: 100,
+                        sold_item_id: 5,
+                        price_per_item: 100,
+                        quantity: 1,
+                        hq: false,
+                        sold_date: NaiveDateTime::default(),
+                        buying_character_id: 0,
+                        buyer_name: None,
+                    },
+                    UnknownCharacter {
+                        id: 0,
+                        name: "A".into(),
+                    },
+                ),
+                (
+                    SaleHistory {
+                        id: 2,
+                        world_id: 100,
+                        sold_item_id: 3,
+                        price_per_item: 200,
+                        quantity: 1,
+                        hq: true,
+                        sold_date: NaiveDateTime::default(),
+                        buying_character_id: 0,
+                        buyer_name: None,
+                    },
+                    UnknownCharacter {
+                        id: 0,
+                        name: "B".into(),
+                    },
+                ),
+            ],
+        }));
+        assert!(sale_mixed.is_relevant_to_items(&item_ids));
+
+        // Wrapped event
+        let wrapped = ServerClient::SubscriptionEvent {
+            subscription_id: 42,
+            event: Box::new(listing_match),
+        };
+        assert!(wrapped.is_relevant_to_items(&item_ids));
+
+        // Unrelated event
+        assert!(!ServerClient::SocketConnected.is_relevant_to_items(&item_ids));
     }
 
     #[test]

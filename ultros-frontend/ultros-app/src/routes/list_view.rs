@@ -160,13 +160,10 @@ pub fn ListView() -> impl IntoView {
         let Some(realtime) = realtime_for_market.clone() else {
             return;
         };
-        let filter =
-            FilterPredicate::World(list.list.wdr_filter).and(FilterPredicate::Items(item_ids));
+        let filter = FilterPredicate::World(list.list.wdr_filter)
+            .and(FilterPredicate::Items(item_ids.clone()));
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
-            if matches!(
-                message,
-                ServerClient::Listings(_) | ServerClient::Stale { .. }
-            ) {
+            if message.is_relevant_to_items(&item_ids) {
                 list_view.refetch();
             }
         });
