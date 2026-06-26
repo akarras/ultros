@@ -1522,7 +1522,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/user/retainer", get(user_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
         .route(
-            "/api/v1/retainer/assign_character/:id",
+            "/api/v1/retainer/assign_character/{id}",
             post(assign_retainer_character),
         )
         .route(
