@@ -100,6 +100,16 @@ pub(crate) fn resolve_item_id_any_locale(name: &str) -> Option<i32> {
     None
 }
 
+/// Truncate a string to at most 100 Unicode characters. Discord's autocomplete
+/// choice names and values must be between 1 and 100 characters in length.
+pub(crate) fn truncate_100(s: &str) -> String {
+    if s.chars().count() <= 100 {
+        s.to_string()
+    } else {
+        s.chars().take(100).collect()
+    }
+}
+
 /// A single autocomplete suggestion: a display label (localized into the user's
 /// language when possible) and the item id it resolves to. Returned by
 /// [`localized_item_matches`] and used to build the two flavors of Discord
@@ -146,11 +156,11 @@ pub(crate) fn localized_item_matches(
             if en_name.is_empty() {
                 return None;
             }
-            let label = if display == en_name {
+            let label = truncate_100(&if display == en_name {
                 en_name
             } else {
                 format!("{display} ({en_name})")
-            };
+            });
             Some(LocalizedItemMatch { label, item_id: id })
         })
         .collect();
@@ -553,5 +563,37 @@ mod tests {
         let result = top_n_cheapest_listings(listings, None, 10);
         assert_eq!(result.len(), 3);
         assert!(result.iter().all(|l| l.price_per_unit == 100));
+    }
+
+    // ---------- truncate_100 ----------
+
+    #[test]
+    fn truncate_100_passes_short_strings_through() {
+        assert_eq!(truncate_100("short"), "short");
+        assert_eq!(truncate_100(""), "");
+    }
+
+    #[test]
+    fn truncate_100_truncates_long_ascii() {
+        let long = "a".repeat(110);
+        let result = truncate_100(&long);
+        assert_eq!(result.len(), 100);
+        assert_eq!(result, "a".repeat(100));
+    }
+
+    #[test]
+    fn truncate_100_handles_unicode_correctly() {
+        // Each of these is 1 character but multiple bytes
+        let crab = "🦀";
+        let long_crabs = crab.repeat(110);
+        let result = truncate_100(&long_crabs);
+        assert_eq!(result.chars().count(), 100);
+        assert_eq!(result, crab.repeat(100));
+    }
+
+    #[test]
+    fn truncate_100_at_boundary() {
+        let exactly_100 = "b".repeat(100);
+        assert_eq!(truncate_100(&exactly_100), exactly_100);
     }
 }

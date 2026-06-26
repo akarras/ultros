@@ -1,7 +1,7 @@
 use super::{Context, Error};
 use crate::discord::ffxiv::helpers::{
     discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
-    resolve_item_id_any_locale,
+    resolve_item_id_any_locale, truncate_100,
 };
 use anyhow::anyhow;
 use itertools::Itertools;
@@ -96,7 +96,12 @@ async fn autocomplete_list_name(
         .unwrap_or_default()
         .into_iter()
         .filter(move |l| l.name.to_ascii_lowercase().contains(&partial))
-        .map(|l| poise::serenity_prelude::AutocompleteChoice::new(l.name.clone(), l.name))
+        .map(|l| {
+            poise::serenity_prelude::AutocompleteChoice::new(
+                truncate_100(&l.name),
+                truncate_100(&l.name),
+            )
+        })
 }
 
 async fn autocomplete_item_name_global(
@@ -113,7 +118,8 @@ async fn autocomplete_item_name_global(
                 return None;
             }
             Some(poise::serenity_prelude::AutocompleteChoice::new(
-                m.label, en_name,
+                m.label,
+                truncate_100(&en_name),
             ))
         })
         .take(25)
