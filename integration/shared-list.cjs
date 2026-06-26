@@ -17,7 +17,7 @@ async function login(page, baseUrl, user) {
   const loginUrl = new URL("/test/login", baseUrl);
   loginUrl.searchParams.set("user_id", String(user.id));
   loginUrl.searchParams.set("username", user.username);
-  loginUrl.searchParams.set("redirect", "/");
+  loginUrl.searchParams.set("redirect", "/list");
   const resp = await page.goto(loginUrl.toString(), { waitUntil: "domcontentloaded" });
   if (!resp || resp.status() >= 400) {
     throw new Error(`test login failed for ${user.username}: ${resp ? resp.status() : -1}`);
@@ -64,10 +64,16 @@ async function main() {
   const failures = [];
 
   try {
-    const ownerPage = await browser.newPage();
-    const readerPage = await browser.newPage();
-    const invitedPage = await browser.newPage();
-    const overLimitPage = await browser.newPage();
+    const ownerCtx = await browser.createBrowserContext();
+    const readerCtx = await browser.createBrowserContext();
+    const invitedCtx = await browser.createBrowserContext();
+    const overLimitCtx = await browser.createBrowserContext();
+
+    const ownerPage = await ownerCtx.newPage();
+    const readerPage = await readerCtx.newPage();
+    const invitedPage = await invitedCtx.newPage();
+    const overLimitPage = await overLimitCtx.newPage();
+
     for (const page of [ownerPage, readerPage, invitedPage, overLimitPage]) {
       page.setDefaultTimeout(TIMEOUT_MS);
     }
@@ -140,12 +146,27 @@ async function main() {
     const inviteId = invite.body.id;
     failIf(!inviteId || inviteId.length < 32, failures, "invite id was missing or too short");
 
-    const inviteUse = await api(invitedPage, "POST", `/api/v1/invite/${inviteId}/use`);
-    failIf(inviteUse.status !== 200, failures, `invite use expected 200, got ${inviteUse.status}`);
-    failIf(inviteUse.body !== listId, failures, `invite returned list ${inviteUse.body}, expected ${listId}`);
+    // UI-level invite redemption
+    console.log(`[step] invited user redeems invite via UI: /list/invite/${inviteId}`);
+    await invitedPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
+    await invitedPage.waitForFunction(
+      (expected) => window.location.pathname === expected,
+      { timeout: 10000 },
+      `/list/${listId}`,
+    ).catch(() => {});
 
-    const overLimitUse = await api(overLimitPage, "POST", `/api/v1/invite/${inviteId}/use`);
-    failIf(overLimitUse.status !== 400, failures, `over-limit invite expected 400, got ${overLimitUse.status}`);
+    const invitedUrl = invitedPage.url();
+    failIf(!invitedUrl.endsWith(`/list/${listId}`), failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
+
+    // Exhausted invite path
+    console.log("[step] over-limit user attempts to redeem exhausted invite via UI");
+    await overLimitPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
+    await overLimitPage.waitForSelector(".alert-error", { timeout: 10000 }).catch(() => {});
+    const errorText = await overLimitPage.evaluate(() => {
+      const el = document.querySelector(".alert-error");
+      return el ? el.innerText : "";
+    });
+    failIf(!errorText.includes("Could not accept invite:"), failures, `over-limit user expected error message, got: "${errorText}"`);
 
     for (const page of [ownerPage, readerPage, invitedPage, overLimitPage]) {
       await page.close();
