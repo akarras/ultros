@@ -5,6 +5,7 @@ use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::relative_time::RelativeToNow;
 use crate::components::world_name::WorldName;
+use crate::components::price_viewer::get_cheapest_listing;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
     recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
@@ -247,6 +248,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
+    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
@@ -287,19 +289,9 @@ fn MarketStatsPanel(
                 listing_resource
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
-                            let data = data.clone();
-                            let cheapest_nq = data
-                                .listings
-                                .iter()
-                                .filter(|(listing, _)| !listing.hq)
-                                .min_by_key(|(listing, _)| listing.price_per_unit)
-                                .cloned();
-                            let cheapest_hq = data
-                                .listings
-                                .iter()
-                                .filter(|(listing, _)| listing.hq)
-                                .min_by_key(|(listing, _)| listing.price_per_unit)
-                                .cloned();
+                            let listings = data.listings.iter().map(|(l, _)| l.clone()).collect::<Vec<_>>();
+                            let cheapest_nq = get_cheapest_listing(listings.clone(), 1, Some(false), &excluded_worlds).into_iter().next();
+                            let cheapest_hq = get_cheapest_listing(listings, 1, Some(true), &excluded_worlds).into_iter().next();
                             let listings_count = data.listings.len();
                             let recent_sales = data.sales.clone();
                             let avg_price = if recent_sales.is_empty() {
@@ -563,7 +555,7 @@ fn MarketStatsPanel(
                                     <div class="grid grid-cols-2 gap-2 sm:gap-3">
                                         <a href="#listings" class="rounded-lg border border-[color:var(--color-outline)] hover:border-brand-300/60 transition-colors p-2 sm:p-3 min-h-24">
                                             <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
-                                            {if let Some((listing, _)) = cheapest_nq.clone() {
+                                            {if let Some(listing) = cheapest_nq.clone() {
                                                 view! {
                                                     <div>
                                                         <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
@@ -584,7 +576,7 @@ fn MarketStatsPanel(
                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
                                                 {t!(i18n, hq)}
                                             </div>
-                                            {if let Some((listing, _)) = cheapest_hq.clone() {
+                                            {if let Some(listing) = cheapest_hq.clone() {
                                                 view! {
                                                     <div>
                                                         <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
@@ -1068,7 +1060,11 @@ fn update_current_item(
 }
 
 #[component]
-fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
+fn ListingsContent(
+    item_id: Memo<i32>,
+    world: Memo<String>,
+    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
+) -> impl IntoView {
     let listing_resource = Resource::new(
         move || (item_id(), world()),
         |(item_id, world)| async move {
@@ -1137,7 +1133,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
-                <MarketStatsPanel listing_resource item_id />
+                <MarketStatsPanel listing_resource item_id excluded_worlds=excluded_worlds.clone() />
                 <ChartWrapper listing_resource item_id world />
             </div>
 

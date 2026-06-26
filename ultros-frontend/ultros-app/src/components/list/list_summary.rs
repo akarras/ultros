@@ -117,7 +117,7 @@ fn calculate_list_totals(
 #[component]
 pub fn ListSummary(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -156,7 +156,7 @@ pub fn ListSummary(
         marketable_items,
         &world_data,
         &unknown_label,
-        excluded_worlds,
+        &excluded_worlds,
     );
 
     if grand_total == 0 && world_prices.is_empty() {
@@ -528,7 +528,7 @@ mod tests {
 
         // Exclude world 100
         let (total, world_prices) =
-            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &[100]);
+            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &vec![100]);
 
         // Total should be 10 * 200 = 2000 (from world 101)
         assert_eq!(total, 2000);
