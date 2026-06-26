@@ -43,6 +43,7 @@ pub mod price_viewer;
 pub mod profile_display;
 pub(crate) mod push_subscribe;
 pub mod query_button;
+pub mod realtime_status;
 pub mod recently_viewed;
 pub mod related_items;
 pub mod relative_time;

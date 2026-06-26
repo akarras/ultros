@@ -13,7 +13,7 @@ use crate::global_state::LocalWorldData;
 use ultros_api_types::world_helper::{AnyResult, AnySelector};
 
 /// Represents the total price for items from a specific world
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct WorldPrice {
     world_name: String,
     datacenter_id: i32,
@@ -27,7 +27,6 @@ fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
     quantity: i32,
     hq: Option<bool>,
-    excluded_worlds: &[i32],
 ) -> Vec<ActiveListing> {
     listings.sort_by_key(|listing| listing.price_per_unit);
     let quantity_needed = quantity;
@@ -35,9 +34,6 @@ fn get_cheapest_listing(
     listings
         .into_iter()
         .filter(|listing| {
-            if listing.is_excluded(excluded_worlds) {
-                return false;
-            }
             if let Some(hq) = hq {
                 listing.hq == hq
             } else {
@@ -57,7 +53,6 @@ fn calculate_list_totals(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
     world_data: &ultros_api_types::world_helper::WorldHelper,
     unknown_label: &str,
-    excluded_worlds: &[i32],
 ) -> (i32, HashMap<i32, WorldPrice>) {
     let mut grand_total = 0;
     let mut world_prices: HashMap<i32, WorldPrice> = HashMap::new();
@@ -71,7 +66,7 @@ fn calculate_list_totals(
         }
         let hq = list_item.hq;
 
-        let cheapest_listings = get_cheapest_listing(listings, quantity, hq, excluded_worlds);
+        let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
 
         for listing in cheapest_listings {
             let price = listing.price_per_unit * listing.quantity;
@@ -116,8 +111,7 @@ fn calculate_list_totals(
 
 #[component]
 pub fn ListSummary(
-    items: Vec<(ListItem, Vec<ActiveListing>)>,
-    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(into)] items: Signal<Vec<(ListItem, Vec<ActiveListing>)>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -131,191 +125,198 @@ pub fn ListSummary(
         .expect("LocalWorldData should be loaded");
 
     // Filter out items that are not on the market board
-    let marketable_items: Vec<_> = items
-        .into_iter()
-        .filter(|(item, _)| {
-            game_items
-                .get(&ItemId(item.item_id))
-                .map(|i| i.item_search_category > 1)
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if marketable_items.is_empty() {
-        return view! {
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4">
-                <div class="text-center text-sm text-[color:var(--color-text-muted)]">
-                    {t!(i18n, list_summary_no_marketable)}
-                </div>
-            </div>
-        }
-        .into_any();
-    }
-
-    let (grand_total, world_prices) = calculate_list_totals(
-        marketable_items,
-        &world_data,
-        &unknown_label,
-        excluded_worlds,
-    );
-
-    if grand_total == 0 && world_prices.is_empty() {
-        return view! {
-            <div class="rounded-lg border border-[color:var(--brand-ring)]/40 bg-[color:var(--color-background-panel)] p-4">
-                <div class="text-center text-lg font-bold text-[color:var(--brand-fg)]">
-                    {t!(i18n, list_summary_all_acquired)}
-                </div>
-            </div>
-        }
-        .into_any();
-    }
-
-    // Group by datacenter and calculate datacenter totals
-    let mut datacenter_groups: HashMap<i32, Vec<WorldPrice>> = HashMap::new();
-    let mut datacenter_totals: HashMap<i32, (String, i32, usize)> = HashMap::new();
-
-    for (_, world_price) in world_prices {
-        datacenter_groups
-            .entry(world_price.datacenter_id)
-            .or_default()
-            .push(world_price.clone());
-
-        datacenter_totals
-            .entry(world_price.datacenter_id)
-            .and_modify(|(_, price, count)| {
-                *price += world_price.total_price;
-                *count += world_price.item_count;
+    let marketable_items = Memo::new(move |_| {
+        items
+            .get()
+            .into_iter()
+            .filter(|(item, _)| {
+                game_items
+                    .get(&ItemId(item.item_id))
+                    .map(|i| i.item_search_category > 1)
+                    .unwrap_or(false)
             })
-            .or_insert((
-                world_price.datacenter_name.clone(),
-                world_price.total_price,
-                world_price.item_count,
-            ));
-    }
-
-    // Sort datacenters by total item count (descending)
-    let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
-    sorted_datacenters.sort_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
-        b_item_count.cmp(a_item_count)
+            .collect::<Vec<_>>()
     });
 
-    // Sort worlds within each datacenter: by item count (descending), then alphabetically
-    for worlds in datacenter_groups.values_mut() {
-        worlds.sort_by(|a, b| match b.item_count.cmp(&a.item_count) {
-            std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
-            other => other,
-        });
-    }
-
-    // Track if we have multiple datacenters (enables collapsible behavior)
-    let has_multiple_datacenters = sorted_datacenters.len() > 1;
-
-    // Create a signal to track which datacenters are expanded
-    // Initially expand all if single datacenter, or collapse all if multiple
-    let (expanded_datacenters, set_expanded_datacenters) = signal(if has_multiple_datacenters {
-        std::collections::HashSet::<i32>::new()
-    } else {
-        sorted_datacenters.iter().map(|(dc_id, _)| *dc_id).collect()
+    let totals = Memo::new(move |_| {
+        let marketable = marketable_items.get();
+        if marketable.is_empty() {
+            None
+        } else {
+            Some(calculate_list_totals(marketable, &world_data, &unknown_label))
+        }
     });
 
     view! {
-        <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]">
-            <div class="flex flex-col gap-2 border-b border-[color:var(--color-outline)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <span class="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                    {t!(i18n, list_summary_estimated_remaining_cost)}
-                </span>
-                <div class="text-lg font-bold text-[color:var(--brand-fg)]">
-                    <Gil amount=Signal::derive(move || grand_total) />
-                </div>
-            </div>
+        {move || {
+            let Some((grand_total, world_prices)) = totals.get() else {
+                return view! {
+                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4">
+                        <div class="text-center text-sm text-[color:var(--color-text-muted)]">
+                            {t!(i18n, list_summary_no_marketable)}
+                        </div>
+                    </div>
+                }
+                .into_any();
+            };
+            if grand_total == 0 && world_prices.is_empty() {
+                return view! {
+                    <div class="rounded-lg border border-[color:var(--brand-ring)]/40 bg-[color:var(--color-background-panel)] p-4">
+                        <div class="text-center text-lg font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, list_summary_all_acquired)}
+                        </div>
+                    </div>
+                }
+                .into_any();
+            }
 
-            <div class="flex flex-col gap-2 p-3 text-sm">
-                {sorted_datacenters
-                    .into_iter()
-                    .map(|(dc_id, (dc_name, dc_total, dc_count))| {
-                        let worlds = datacenter_groups.get(&dc_id).cloned().unwrap_or_default();
-                        let is_expanded = Signal::derive(move || {
-                            expanded_datacenters.with(|set| set.contains(&dc_id))
-                        });
+            // Group by datacenter and calculate datacenter totals
+            let mut datacenter_groups: HashMap<i32, Vec<WorldPrice>> = HashMap::new();
+            let mut datacenter_totals: HashMap<i32, (String, i32, usize)> = HashMap::new();
 
-                        view! {
-                            <div class="flex flex-col gap-1">
-                                <div
-                                    class=move || {
-                                        let base = "flex flex-row items-center gap-2 justify-between font-semibold text-[color:var(--brand-fg)] bg-[color:var(--color-background-elevated)] px-3 py-2 rounded-lg border border-[color:var(--color-outline)]";
-                                        if has_multiple_datacenters {
-                                            format!("{} cursor-pointer hover:border-[color:var(--color-outline-strong)] transition-colors", base)
-                                        } else {
-                                            base.to_string()
-                                        }
-                                    }
-                                    on:click=move |_| {
-                                        if has_multiple_datacenters {
-                                            set_expanded_datacenters.update(|set| {
-                                                if set.contains(&dc_id) {
-                                                    set.remove(&dc_id);
-                                                } else {
-                                                    set.insert(dc_id);
-                                                }
-                                            });
-                                        }
-                                    }
-                                >
-                                    <div class="flex items-center gap-2">
-                                        {move || has_multiple_datacenters.then(|| {
-                                            view! {
-                                                <span class="text-[color:var(--color-text-muted)]">
-                                                    <Icon icon=Signal::derive(move || {
-                                                        if is_expanded() {
-                                                            i::BiChevronDownRegular
-                                                        } else {
-                                                            i::BiChevronRightRegular
-                                                        }
-                                                    }) />
-                                                </span>
-                                            }
-                                        })}
-                                        <span>{dc_name}</span>
-                                    </div>
-                                    <div class="flex flex-row items-center gap-2">
-                                        <Gil amount=Signal::derive(move || dc_total) />
-                                        <span class="text-[color:var(--color-text-muted)] font-normal">
-                                            {t!(i18n, list_summary_item_count, count = dc_count)}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div
-                                    class="flex flex-col gap-1 overflow-hidden pl-4 transition-all duration-200"
-                                    class:hidden=move || has_multiple_datacenters && !is_expanded()
-                                >
-                                    {worlds
-                                        .into_iter()
-                                        .map(|world_price| {
-                                            let total_price = world_price.total_price;
-                                            let item_count = world_price.item_count;
-                                            let world_name = world_price.world_name;
-                                            view! {
-                                                <div class="flex flex-row items-center gap-2 justify-between px-3 py-1">
-                                                    <span class="text-[color:var(--color-text)]">{world_name}</span>
-                                                    <div class="flex flex-row items-center gap-2">
-                                                        <Gil amount=Signal::derive(move || total_price) />
-                                                        <span class="text-[color:var(--color-text-muted)]">
-                                                            {t!(i18n, list_summary_item_count, count = item_count)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()}
-                                </div>
-                            </div>
-                        }
+            for (_, world_price) in world_prices {
+                datacenter_groups
+                    .entry(world_price.datacenter_id)
+                    .or_default()
+                    .push(world_price.clone());
+
+                datacenter_totals
+                    .entry(world_price.datacenter_id)
+                    .and_modify(|(_, price, count)| {
+                        *price += world_price.total_price;
+                        *count += world_price.item_count;
                     })
-                    .collect::<Vec<_>>()}
-            </div>
-        </div>
-    }
-    .into_any()
+                    .or_insert((
+                        world_price.datacenter_name.clone(),
+                        world_price.total_price,
+                        world_price.item_count,
+                    ));
+            }
+
+            // Sort datacenters by total item count (descending)
+            let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
+            sorted_datacenters.sort_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
+                b_item_count.cmp(a_item_count)
+            });
+
+            // Sort worlds within each datacenter: by item count (descending), then alphabetically
+            for worlds in datacenter_groups.values_mut() {
+                worlds.sort_by(|a, b| match b.item_count.cmp(&a.item_count) {
+                    std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
+                    other => other,
+                });
+            }
+
+            // Track if we have multiple datacenters (enables collapsible behavior)
+            let has_multiple_datacenters = sorted_datacenters.len() > 1;
+
+            // Create a signal to track which datacenters are expanded
+            // Initially expand all if single datacenter, or collapse all if multiple
+            let (expanded_datacenters, set_expanded_datacenters) = signal(if has_multiple_datacenters {
+                std::collections::HashSet::<i32>::new()
+            } else {
+                sorted_datacenters.iter().map(|(dc_id, _)| *dc_id).collect()
+            });
+
+            view! {
+                <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)]">
+                    <div class="flex flex-col gap-2 border-b border-[color:var(--color-outline)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <span class="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                            {t!(i18n, list_summary_estimated_remaining_cost)}
+                        </span>
+                        <div class="text-lg font-bold text-[color:var(--brand-fg)]">
+                            <Gil amount=Signal::derive(move || grand_total) />
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-2 p-3 text-sm">
+                        {sorted_datacenters
+                            .into_iter()
+                            .map(|(dc_id, (dc_name, dc_total, dc_count))| {
+                                let worlds = datacenter_groups.get(&dc_id).cloned().unwrap_or_default();
+                                let is_expanded = Signal::derive(move || {
+                                    expanded_datacenters.with(|set| set.contains(&dc_id))
+                                });
+
+                                view! {
+                                    <div class="flex flex-col gap-1">
+                                        <div
+                                            class=move || {
+                                                let base = "flex flex-row items-center gap-2 justify-between font-semibold text-[color:var(--brand-fg)] bg-[color:var(--color-background-elevated)] px-3 py-2 rounded-lg border border-[color:var(--color-outline)]";
+                                                if has_multiple_datacenters {
+                                                    format!("{} cursor-pointer hover:border-[color:var(--color-outline-strong)] transition-colors", base)
+                                                } else {
+                                                    base.to_string()
+                                                }
+                                            }
+                                            on:click=move |_| {
+                                                if has_multiple_datacenters {
+                                                    set_expanded_datacenters.update(|set| {
+                                                        if set.contains(&dc_id) {
+                                                            set.remove(&dc_id);
+                                                        } else {
+                                                            set.insert(dc_id);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        >
+                                            <div class="flex items-center gap-2">
+                                                {move || has_multiple_datacenters.then(|| {
+                                                    view! {
+                                                        <span class="text-[color:var(--color-text-muted)]">
+                                                            <Icon icon=Signal::derive(move || {
+                                                                if is_expanded() {
+                                                                    i::BiChevronDownRegular
+                                                                } else {
+                                                                    i::BiChevronRightRegular
+                                                                }
+                                                            }) />
+                                                        </span>
+                                                    }
+                                                })}
+                                                <span>{dc_name}</span>
+                                            </div>
+                                            <div class="flex flex-row items-center gap-2">
+                                                <Gil amount=Signal::derive(move || dc_total) />
+                                                <span class="text-[color:var(--color-text-muted)] font-normal">
+                                                    {t!(i18n, list_summary_item_count, count = dc_count)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div
+                                            class="flex flex-col gap-1 overflow-hidden pl-4 transition-all duration-200"
+                                            class:hidden=move || has_multiple_datacenters && !is_expanded()
+                                        >
+                                            {worlds
+                                                .into_iter()
+                                                .map(|world_price| {
+                                                    let total_price = world_price.total_price;
+                                                    let item_count = world_price.item_count;
+                                                    let world_name = world_price.world_name;
+                                                    view! {
+                                                        <div class="flex flex-row items-center gap-2 justify-between px-3 py-1">
+                                                            <span class="text-[color:var(--color-text)]">{world_name}</span>
+                                                            <div class="flex flex-row items-center gap-2">
+                                                                <Gil amount=Signal::derive(move || total_price) />
+                                                                <span class="text-[color:var(--color-text-muted)]">
+                                                                    {t!(i18n, list_summary_item_count, count = item_count)}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()}
+                                        </div>
+                                    </div>
+                                }
+                            })
+                            .collect::<Vec<_>>()}
+                    </div>
+                </div>
+            }.into_any()
+        }}
+    }.into_any()
 }
 
 #[cfg(test)]
@@ -346,7 +347,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None, &[]);
+        let result = get_cheapest_listing(listings, 10, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -360,7 +361,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None, &[]);
+        let result = get_cheapest_listing(listings, 12, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -426,7 +427,6 @@ mod tests {
             vec![(item1, listings1), (item2, vec![listing2_a, listing2_b])],
             &world_data,
             "Unknown",
-            &[],
         );
 
         // Grand total:
@@ -453,87 +453,5 @@ mod tests {
         assert_eq!(world_prices.get(&101).unwrap().datacenter_name, "Aether");
         assert_eq!(world_prices.get(&101).unwrap().world_name, "Cactuar");
         assert_eq!(world_prices.get(&101).unwrap().datacenter_id, 10);
-    }
-
-    #[test]
-    fn test_get_cheapest_listing_with_excluded_world() {
-        let mut l1 = mock_listing(1, 100, 5, false);
-        l1.world_id = 10;
-        let mut l2 = mock_listing(2, 150, 5, false);
-        l2.world_id = 20;
-        let mut l3 = mock_listing(3, 200, 5, false);
-        l3.world_id = 30;
-
-        let listings = vec![l1, l2, l3];
-
-        // Case 1: Exclude the cheapest world (10)
-        let result = get_cheapest_listing(listings.clone(), 5, None, &[10]);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, 2); // Should pick the next cheapest
-
-        // Case 2: Exclude all current listings
-        let result = get_cheapest_listing(listings.clone(), 5, None, &[10, 20, 30]);
-        assert!(result.is_empty());
-
-        // Case 3: Exclude none
-        let result = get_cheapest_listing(listings, 5, None, &[]);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, 1);
-    }
-
-    #[test]
-    fn test_calculate_list_totals_with_excluded_worlds() {
-        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
-        use ultros_api_types::world_helper::WorldHelper;
-
-        let world_data: WorldHelper = WorldData {
-            regions: vec![Region {
-                id: 1,
-                name: "North-America".into(),
-                datacenters: vec![Datacenter {
-                    id: 10,
-                    name: "Aether".into(),
-                    region_id: 1,
-                    worlds: vec![
-                        World {
-                            id: 100,
-                            name: "Adamantoise".into(),
-                            datacenter_id: 10,
-                        },
-                        World {
-                            id: 101,
-                            name: "Cactuar".into(),
-                            datacenter_id: 10,
-                        },
-                    ],
-                }],
-            }],
-        }
-        .into();
-
-        let item = ListItem {
-            id: 1,
-            list_id: 1,
-            item_id: 1,
-            quantity: Some(10),
-            acquired: Some(0),
-            hq: None,
-            target_price: None,
-        };
-
-        let mut l1 = mock_listing(1, 100, 10, false);
-        l1.world_id = 100; // Cheapest but we will exclude it
-        let mut l2 = mock_listing(2, 200, 10, false);
-        l2.world_id = 101; // Next cheapest
-
-        // Exclude world 100
-        let (total, world_prices) =
-            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &[100]);
-
-        // Total should be 10 * 200 = 2000 (from world 101)
-        assert_eq!(total, 2000);
-        assert_eq!(world_prices.len(), 1);
-        assert!(world_prices.contains_key(&101));
-        assert!(!world_prices.contains_key(&100));
     }
 }

@@ -1,10 +1,10 @@
-use crate::components::icon::Icon;
-use crate::global_state::LocalWorldData;
-use crate::i18n::{t, use_i18n};
-use icondata as i;
+use std::collections::HashSet;
 use leptos::either::Either;
 use leptos::prelude::*;
-use std::collections::HashSet;
+use crate::components::icon::Icon;
+use icondata as i;
+use crate::i18n::{t, use_i18n};
+use crate::global_state::LocalWorldData;
 use ultros_api_types::world_helper::AnySelector;
 
 #[component]
@@ -19,8 +19,7 @@ pub fn WorldExclusionControls(
         .expect("LocalWorldData should be loaded");
 
     let world_name = StoredValue::new(move |id: i32| {
-        world_data
-            .lookup_selector(AnySelector::World(id))
+        world_data.lookup_selector(AnySelector::World(id))
             .and_then(|r| r.as_world().map(|w| w.name.clone()))
             .unwrap_or_else(|| id.to_string())
     });

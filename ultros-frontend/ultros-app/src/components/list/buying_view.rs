@@ -89,8 +89,7 @@ pub fn BuyingView(
         for (world_id, listing) in selected_listings {
             let world_res = world_data.lookup_selector(AnySelector::World(world_id));
             if let Some(AnyResult::World(world)) = world_res {
-                let dc_res =
-                    world_data.lookup_selector(AnySelector::Datacenter(world.datacenter_id));
+                let dc_res = world_data.lookup_selector(AnySelector::Datacenter(world.datacenter_id));
                 if let Some(AnyResult::Datacenter(dc)) = dc_res {
                     let dc_entry = dc_groups
                         .entry(dc.id)

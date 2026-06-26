@@ -23,7 +23,7 @@ impl From<i16> for ListPermission {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct CreateList {
     /// Name of the list to be created
     pub name: String,
@@ -40,7 +40,7 @@ pub struct List {
     pub wdr_filter: AnySelector,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ListWithPermission {
     pub list: List,
     pub permission: ListPermission,
@@ -58,13 +58,13 @@ pub struct ListItem {
     pub quantity: Option<i32>,
     pub acquired: Option<i32>,
     /// Per-item price target for the list-scoped price alert trigger. When set,
-    /// `AlertTrigger::ListItemThreshold` rules fire when a listing meets or
+    /// AlertTrigger::ListItemThreshold rules fire when a listing meets or
     /// undercuts this price.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_price: Option<i64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct ListInvite {
     pub id: String,
     pub list_id: i32,
