@@ -43,7 +43,6 @@ pub fn ListItemRow(
     let (alert_drawer_open, set_alert_drawer_open) = signal(false);
     let item = RwSignal::new(item);
     let temp_item = RwSignal::new(item());
-    let listings = listings;
 
     view! {
         <tr class=move || {
