@@ -87,13 +87,12 @@ pub(crate) fn discord_locale_to_xiv_language(locale: Option<&str>) -> Language {
 /// name exactly; returns the first locale that contains the name. Used so users can
 /// paste a localized item name from anywhere on the site and have the bot resolve it.
 pub(crate) fn resolve_item_id_any_locale(name: &str) -> Option<i32> {
-    if let Ok(id) = name.parse::<i32>() {
-        if xiv_gen_db::data_for(Language::En)
+    if let Some(id) = name.parse::<i32>().ok().filter(|id| {
+        xiv_gen_db::data_for(Language::En)
             .items
-            .contains_key(&ItemId(id))
-        {
-            return Some(id);
-        }
+            .contains_key(&ItemId(*id))
+    }) {
+        return Some(id);
     }
     let lowered = name.to_lowercase();
     for (_, data) in xiv_gen_db::all_locales() {
