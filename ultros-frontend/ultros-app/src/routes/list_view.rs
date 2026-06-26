@@ -923,6 +923,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 recently_changed=recently_changed
                                                                                 can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
                                                                                 excluded_worlds=&[]
+                                                                                excluded_datacenters=&[]
                                                                             />
                                                                         }
                                                                     }
@@ -932,7 +933,7 @@ pub fn ListView() -> impl IntoView {
                                                         </table>
                                                     </div>
                                                     <div class="p-4 sm:p-5">
-                                                        <ListSummary items=items.get_value() excluded_worlds=&[] />
+                                                        <ListSummary items=items.get_value() excluded_worlds=&[] excluded_datacenters=&[] />
                                                     </div>
                                                     <div class="border-t border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <ActivityFeed activity=activity_view />
