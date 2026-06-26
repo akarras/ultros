@@ -189,7 +189,9 @@ pub(crate) async fn autocomplete_item<'a>(
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
     localized_item_matches(partial, user_lang)
         .into_iter()
-        .map(move |m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string()))
+        .map(move |m| {
+            poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
+        })
 }
 
 /// Resolve a user-supplied item name (case-insensitive exact match) to an FFXIV item id.

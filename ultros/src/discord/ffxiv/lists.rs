@@ -132,7 +132,9 @@ async fn autocomplete_item_name_global(
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
     localized_item_matches(partial, user_lang)
         .into_iter()
-        .map(move |m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string()))
+        .map(move |m| {
+            poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
+        })
         .take(25)
         .collect::<Vec<_>>()
         .into_iter()
