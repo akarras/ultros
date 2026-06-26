@@ -3,12 +3,11 @@ use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
-use crate::components::relative_time::RelativeToNow;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
-    stats_display::*, toggle::Toggle, ui_text::*,
+    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
+    sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -249,6 +248,8 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
+    realtime_status: Signal<String>,
+    last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
@@ -330,7 +331,7 @@ fn MarketStatsPanel(
                                 .get(&ItemId(item_id()))
                                 .map(|item| item.price_mid as i32)
                                 .filter(|p| *p > 0);
-                            let latest_timestamp = data
+                            let _latest_timestamp = data
                                 .listings
                                 .iter()
                                 .map(|(listing, _)| listing.timestamp)
@@ -540,20 +541,10 @@ fn MarketStatsPanel(
                                                 <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                                     {t!(i18n, cheapest_found)}
                                                 </h2>
-                                                {latest_timestamp
-                                                    .map(|timestamp| {
-                                                        view! {
-                                                            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border border-brand-400/40 bg-brand-400/10 text-brand-200">
-                                                                <span class="relative flex h-1.5 w-1.5">
-                                                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
-                                                                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-brand-400"></span>
-                                                                </span>
-                                                                {t!(i18n, listings_updated)}
-                                                                " "
-                                                                <RelativeToNow timestamp=timestamp />
-                                                            </span>
-                                                        }
-                                                    })}
+                                                <RealtimeStatus
+                                                    status=realtime_status
+                                                    last_update=last_update_at
+                                                />
                                             </div>
                                             <p class="text-sm text-[color:var(--color-text-muted)]">
                                                 {move || t!(i18n, based_on_sales, count = recent_sales.len())}
@@ -1129,6 +1120,9 @@ fn upsert_sales(data: &mut CurrentlyShownItem, sales: Vec<SaleHistory>) {
 
 #[component]
 fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let listing_resource = Resource::new(
         move || (item_id(), world()),
         |(item_id, world)| async move {
@@ -1167,12 +1161,21 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             filter.clone(),
             SocketMessageType::Listings,
             move |message| match message {
+                ServerClient::Subscribed { .. } => {
+                    set_realtime_status.set("live".to_string());
+                }
                 ServerClient::Listings(event) => {
+                    set_realtime_status.set("live".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     update_current_item(listing_resource, |data| {
                         apply_listing_event(data, event);
                     });
                 }
-                ServerClient::Stale { .. } => listing_resource.refetch(),
+                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                    set_realtime_status.set("reconnecting".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    listing_resource.refetch();
+                }
                 _ => {}
             },
         );
@@ -1180,12 +1183,21 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
             filter,
             SocketMessageType::Sales,
             move |message| match message {
+                ServerClient::Subscribed { .. } => {
+                    set_realtime_status.set("live".to_string());
+                }
                 ServerClient::Sales(event) => {
+                    set_realtime_status.set("live".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     update_current_item(listing_resource, |data| {
                         apply_sales_event(data, event);
                     });
                 }
-                ServerClient::Stale { .. } => listing_resource.refetch(),
+                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                    set_realtime_status.set("reconnecting".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    listing_resource.refetch();
+                }
                 _ => {}
             },
         );
@@ -1197,7 +1209,12 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
-                <MarketStatsPanel listing_resource item_id />
+                <MarketStatsPanel
+                    listing_resource
+                    item_id
+                    realtime_status=realtime_status.into()
+                    last_update_at=last_update_at.into()
+                />
                 <ChartWrapper listing_resource item_id world />
             </div>
 
