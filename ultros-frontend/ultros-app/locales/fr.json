@@ -585,6 +585,8 @@
     "list_view_adding": "ajout…",
     "list_view_add": "ajouter",
     "list_view_bulk_edit": "édition groupée",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "SUPPRIMER",
     "list_view_select_all": "TOUT SÉLECTIONNER",
     "list_view_deselect_all": "TOUT DÉSÉLECTIONNER",

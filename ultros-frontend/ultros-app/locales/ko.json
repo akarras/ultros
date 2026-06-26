@@ -585,6 +585,8 @@
     "list_view_adding": "추가 중…",
     "list_view_add": "추가",
     "list_view_bulk_edit": "일괄 편집",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "삭제",
     "list_view_select_all": "전체 선택",
     "list_view_deselect_all": "선택 해제",

@@ -585,6 +585,8 @@
     "list_view_adding": "wird hinzugefügt…",
     "list_view_add": "hinzufügen",
     "list_view_bulk_edit": "stapelbearbeitung",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "LÖSCHEN",
     "list_view_select_all": "ALLE AUSWÄHLEN",
     "list_view_deselect_all": "AUSWAHL AUFHEBEN",

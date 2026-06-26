@@ -585,6 +585,8 @@
     "list_view_adding": "新增中…",
     "list_view_add": "新增",
     "list_view_bulk_edit": "批次編輯",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "刪除",
     "list_view_select_all": "全選",
     "list_view_deselect_all": "取消全選",

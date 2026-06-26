@@ -585,6 +585,8 @@
     "list_view_adding": "adding...",
     "list_view_add": "add",
     "list_view_bulk_edit": "bulk edit",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "DELETE",
     "list_view_select_all": "SELECT ALL",
     "list_view_deselect_all": "DESLECT ALL",

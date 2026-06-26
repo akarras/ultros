@@ -850,6 +850,46 @@ pub(crate) async fn delete_list_item(
     Ok(Json(()))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct BulkHqUpdate {
+    pub(crate) ids: Vec<i32>,
+    pub(crate) hq: Option<bool>,
+}
+
+pub(crate) async fn bulk_edit_list_items_hq(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Json(data): Json<BulkHqUpdate>,
+) -> Result<Json<()>, ApiError> {
+    let list_ids = db
+        .set_list_items_hq(user.id as i64, &data.ids, data.hq)
+        .await?;
+
+    for list_id in list_ids {
+        if let Ok(list) = db.get_list(list_id, user.id as i64).await {
+            send_list_event(
+                &senders,
+                EventType::updated(ListEventData::List(List::try_from(list)?)),
+            );
+            let _ = record_list_activity(
+                &db,
+                &senders,
+                list_id,
+                &user,
+                ListActivityKind::ItemUpdated,
+                None,
+                None,
+                serde_json::json!({ "bulk_hq": data.hq, "count": data.ids.len() }),
+                format!("{} bulk updated HQ for {} items", user.name, data.ids.len()),
+            )
+            .await;
+        }
+    }
+
+    Ok(Json(()))
+}
+
 pub(crate) async fn delete_multiple_list_items(
     State(db): State<UltrosDb>,
     State(senders): State<EventSenders>,
@@ -1461,6 +1501,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/list/item/hq", post(bulk_edit_list_items_hq))
         .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
         .route("/api/v1/group/{id}", delete(delete_group))
