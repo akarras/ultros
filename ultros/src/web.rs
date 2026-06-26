@@ -517,7 +517,7 @@ pub(crate) async fn get_lists(
                 async move {
                     let permission = db.get_permission(list.id, user_id).await?;
                     Ok::<_, ApiError>(ListWithPermission {
-                        list: List::try_from(list.0)?,
+                        list: List::try_from(list)?,
                         permission,
                         owner_name,
                     })
@@ -542,7 +542,7 @@ pub(crate) async fn get_list(
         .map(ListItem::from)
         .collect::<Vec<_>>();
     let list = ListWithPermission {
-        list: List::try_from(list.0)?,
+        list: List::try_from(list)?,
         permission: perm.permission,
         owner_name: Some(owner_name),
     };
@@ -589,7 +589,7 @@ pub(crate) async fn get_list_with_listings(
 
     Ok(Json((
         ListWithPermission {
-            list: List::try_from(list.0)?,
+            list: List::try_from(list)?,
             permission,
             owner_name: Some(owner_name),
         },
@@ -626,7 +626,7 @@ pub(crate) async fn delete_list(
     db.delete_list(perm.list_id, perm.user_id).await?;
     send_list_event(
         &senders,
-        EventType::removed(ListEventData::List(List::try_from(list.0)?)),
+        EventType::removed(ListEventData::List(List::try_from(list)?)),
     );
     Ok(Json(()))
 }
@@ -872,10 +872,10 @@ pub(crate) async fn bulk_edit_list_items_hq(
         .await?;
 
     for list_id in list_ids {
-        if let Ok(list) = db.get_list(list_id, user.id as i64).await {
+        if let Ok((list, _)) = db.get_list(list_id, user.id as i64).await {
             send_list_event(
                 &senders,
-                EventType::updated(ListEventData::List(List::try_from(list.0)?)),
+                EventType::updated(ListEventData::List(List::try_from(list)?)),
             );
             let _ = record_list_activity(
                 &db,
@@ -1189,7 +1189,7 @@ async fn broadcast_list_update(
     let (list, _) = db.get_list(list_id, user).await?;
     send_list_event(
         senders,
-        EventType::updated(ListEventData::List(List::try_from(list.0)?)),
+        EventType::updated(ListEventData::List(List::try_from(list)?)),
     );
     Ok(())
 }
