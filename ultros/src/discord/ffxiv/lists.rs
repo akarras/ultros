@@ -68,7 +68,7 @@ pub(crate) async fn show_lists(ctx: Context<'_>) -> Result<(), Error> {
         .await?;
     let lists = ctx.data().db.get_lists_for_user(user.id).await?;
     let mut names = Vec::with_capacity(lists.len());
-    for list in lists {
+    for (list, _) in lists {
         let permission = ctx.data().db.get_permission(list.id, user.id).await?;
         names.push(format!("{} ({})", list.name, permission_name(permission)));
     }
@@ -95,6 +95,7 @@ async fn autocomplete_list_name(
         .await
         .unwrap_or_default()
         .into_iter()
+        .map(|(l, _)| l)
         .filter(move |l| l.name.to_ascii_lowercase().contains(&partial))
         .map(|l| poise::serenity_prelude::AutocompleteChoice::new(l.name.clone(), l.name))
 }

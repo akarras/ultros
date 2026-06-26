@@ -158,21 +158,6 @@ impl SalesWindow {
             unit_prices_f64.push(price as f64);
         }
 
-        let data = RegressionDataBuilder::new()
-            .build_from([("X", unit_prices_f64), ("Y", dates)])
-            .inspect_err(|e| {
-                error!("{e:?}");
-            })
-            .ok()?;
-        let model = FormulaRegressionBuilder::new()
-            .data(&data)
-            .data_columns("X", ["Y"])
-            .fit()
-            .inspect_err(|e| {
-                error!("{e:?}");
-            })
-            .ok()?;
-
         unit_prices.sort_unstable();
         let median_unit_price = unit_prices[count / 2];
         let avg_sale_price = total_sale_price as f64 / count as f64;
@@ -182,20 +167,41 @@ impl SalesWindow {
 
         let duration = *date_range.end() - *date_range.start();
         let avg_duration = duration / count as i32;
-        let next_sale_time = [(
-            "Y",
-            vec![
-                ((*date_range.end() + avg_duration).and_utc().timestamp() - start_timestamp) as f64,
-            ],
-        )];
-        let next = model.predict(next_sale_time).ok()?[0];
-        // let paremeters = model.parameters()[0];
-        let p_value = model.p_values()[0];
-        info!(
-            "{:?} {:?}",
-            model.iter_parameter_pairs().collect::<Vec<_>>(),
-            model.iter_p_value_pairs().collect::<Vec<_>>()
-        );
+
+        let (guessed_next_sale_price, p_value) = (|| {
+            let data = RegressionDataBuilder::new()
+                .build_from([("X", unit_prices_f64), ("Y", dates)])
+                .inspect_err(|e| {
+                    error!("{e:?}");
+                })
+                .ok()?;
+            let model = FormulaRegressionBuilder::new()
+                .data(&data)
+                .data_columns("X", ["Y"])
+                .fit()
+                .inspect_err(|e| {
+                    error!("{e:?}");
+                })
+                .ok()?;
+
+            let next_sale_time = [(
+                "Y",
+                vec![
+                    ((*date_range.end() + avg_duration).and_utc().timestamp() - start_timestamp)
+                        as f64,
+                ],
+            )];
+            let next = model.predict(next_sale_time).ok()?[0];
+            // let paremeters = model.parameters()[0];
+            let p_value = model.p_values()[0];
+            info!(
+                "{:?} {:?}",
+                model.iter_parameter_pairs().collect::<Vec<_>>(),
+                model.iter_p_value_pairs().collect::<Vec<_>>()
+            );
+            Some((next, p_value))
+        })()
+        .unwrap_or((avg_sale_price, 1.0));
 
         Some(Self {
             total_gil,
@@ -204,7 +210,7 @@ impl SalesWindow {
             min_unit_price: *unit_prices.first()?,
             median_stack_size,
             hq_percent: ((hq_count as f64 / count as f64) * 100.0).round() as i32,
-            guessed_next_sale_price: next,
+            guessed_next_sale_price,
             time_between_sales: avg_duration,
             median_unit_price,
             p_value,
@@ -533,5 +539,30 @@ mod tests {
         assert_eq!(window.hq_percent, 40);
         // avg_duration is (6 hours) / 5 = 1 hour 12 minutes
         assert_eq!(window.time_between_sales, Duration::minutes(72));
+    }
+
+    #[test]
+    fn test_sales_window_regression_error() {
+        let base_date = NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+
+        // Create two identical sales
+        let sale1 = create_sale(base_date);
+        let sale2 = create_sale(base_date);
+
+        let sales = vec![sale1, sale2];
+
+        let start_range = base_date - Duration::hours(1);
+        let end_range = base_date + Duration::hours(1);
+        let range = start_range..=end_range;
+
+        let window = SalesWindow::try_new(range, &sales);
+
+        assert!(window.is_some());
+        let window = window.unwrap();
+        assert_eq!(window.guessed_next_sale_price, window.average_unit_price);
+        assert_eq!(window.p_value, 1.0);
     }
 }

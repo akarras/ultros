@@ -511,14 +511,15 @@ pub(crate) async fn get_lists(
         db.get_lists_for_user(user.id as i64)
             .await?
             .into_iter()
-            .map(|list| {
+            .map(|(list, owner_name)| {
                 let db = db.clone();
                 let user_id = user.id as i64;
                 async move {
                     let permission = db.get_permission(list.id, user_id).await?;
                     Ok::<_, ApiError>(ListWithPermission {
-                        list: List::try_from(list)?,
+                        list: List::try_from(list.0)?,
                         permission,
+                        owner_name,
                     })
                 }
             }),
@@ -531,7 +532,7 @@ pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
     perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
-    let (list, list_items) = futures::future::try_join(
+    let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(perm.list_id, perm.user_id),
         db.get_list_items(perm.list_id, perm.user_id),
     )
@@ -541,8 +542,9 @@ pub(crate) async fn get_list(
         .map(ListItem::from)
         .collect::<Vec<_>>();
     let list = ListWithPermission {
-        list: List::try_from(list)?,
+        list: List::try_from(list.0)?,
         permission: perm.permission,
+        owner_name: Some(owner_name),
     };
     Ok(Json((list, list_items)))
 }
@@ -553,7 +555,7 @@ pub(crate) async fn get_list_with_listings(
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
-    let (list, list_items) = futures::future::try_join(
+    let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
@@ -587,8 +589,9 @@ pub(crate) async fn get_list_with_listings(
 
     Ok(Json((
         ListWithPermission {
-            list: List::try_from(list)?,
+            list: List::try_from(list.0)?,
             permission,
+            owner_name: Some(owner_name),
         },
         list_items,
     )))
@@ -619,11 +622,11 @@ pub(crate) async fn delete_list(
         { crate::web::list_permission::OWNER },
     >,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
     db.delete_list(perm.list_id, perm.user_id).await?;
     send_list_event(
         &senders,
-        EventType::removed(ListEventData::List(List::try_from(list)?)),
+        EventType::removed(ListEventData::List(List::try_from(list.0)?)),
     );
     Ok(Json(()))
 }
@@ -707,7 +710,7 @@ pub(crate) async fn post_item_to_list(
     >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
     let ListItem {
         item_id,
         hq,
@@ -750,7 +753,7 @@ pub(crate) async fn post_items_to_list(
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(id, user.id as i64).await?;
+    let (list, _) = db.get_list(id, user.id as i64).await?;
 
     let _list = db
         .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
@@ -849,6 +852,46 @@ pub(crate) async fn delete_list_item(
         format!("{} removed {}", user.name, item_name),
     )
     .await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BulkHqUpdate {
+    pub(crate) ids: Vec<i32>,
+    pub(crate) hq: Option<bool>,
+}
+
+pub(crate) async fn bulk_edit_list_items_hq(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Json(data): Json<BulkHqUpdate>,
+) -> Result<Json<()>, ApiError> {
+    let list_ids = db
+        .set_list_items_hq(user.id as i64, &data.ids, data.hq)
+        .await?;
+
+    for list_id in list_ids {
+        if let Ok(list) = db.get_list(list_id, user.id as i64).await {
+            send_list_event(
+                &senders,
+                EventType::updated(ListEventData::List(List::try_from(list.0)?)),
+            );
+            let _ = record_list_activity(
+                &db,
+                &senders,
+                list_id,
+                &user,
+                ListActivityKind::ItemUpdated,
+                None,
+                None,
+                serde_json::json!({ "bulk_hq": data.hq, "count": data.ids.len() }),
+                format!("{} bulk updated HQ for {} items", user.name, data.ids.len()),
+            )
+            .await;
+        }
+    }
+
     Ok(Json(()))
 }
 
@@ -1143,10 +1186,10 @@ async fn broadcast_list_update(
     list_id: i32,
     user: i64,
 ) -> Result<(), ApiError> {
-    let list = db.get_list(list_id, user).await?;
+    let (list, _) = db.get_list(list_id, user).await?;
     send_list_event(
         senders,
-        EventType::updated(ListEventData::List(List::try_from(list)?)),
+        EventType::updated(ListEventData::List(List::try_from(list.0)?)),
     );
     Ok(())
 }
@@ -1490,6 +1533,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/list/item/hq", post(bulk_edit_list_items_hq))
         .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
         .route("/api/v1/group/{id}", delete(delete_group))

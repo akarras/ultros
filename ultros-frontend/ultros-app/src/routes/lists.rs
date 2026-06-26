@@ -141,6 +141,8 @@ fn ListCard(
     user_id: Signal<Option<u64>>,
 ) -> impl IntoView {
     let permission = list.permission;
+    let list_owner = list.list.owner;
+    let owner_name = StoredValue::new(list.owner_name.clone());
     let list = list.list;
     let (is_edit, set_is_edit) = signal(false);
     let (share_open, set_share_open) = signal(false);
@@ -258,6 +260,14 @@ fn ListCard(
                                         <WorldName id=list.wdr_filter />
                                         <PermissionPill permission />
                                     </div>
+                                    <Show when=move || permission < ListPermission::Owner>
+                                        <div class="text-xs text-gray-500">
+                                            {move || {
+                                                let name = owner_name.with_value(|n| n.clone()).unwrap_or_else(|| list_owner.to_string());
+                                                t!(i18n, list_shared_by, name = name)
+                                            }}
+                                        </div>
+                                    </Show>
                                 </div>
                                 <div class="flex items-center gap-1">
                                     <Show when=move || { permission >= ListPermission::Owner }>

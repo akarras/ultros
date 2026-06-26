@@ -122,3 +122,34 @@ pub fn get_price_zone() -> (
     };
     (world.into(), set_world.into_signal_setter())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_locale_preferred_region_mappings() {
+        assert_eq!(
+            locale_preferred_region(crate::i18n::Locale::ja),
+            Some("Japan")
+        );
+        assert_eq!(
+            locale_preferred_region(crate::i18n::Locale::de),
+            Some("Europe")
+        );
+        assert_eq!(
+            locale_preferred_region(crate::i18n::Locale::fr),
+            Some("Europe")
+        );
+        assert_eq!(
+            locale_preferred_region(crate::i18n::Locale::cn),
+            Some("中国")
+        );
+        assert_eq!(
+            locale_preferred_region(crate::i18n::Locale::ko),
+            Some("한국")
+        );
+        assert_eq!(locale_preferred_region(crate::i18n::Locale::en), None);
+        assert_eq!(locale_preferred_region(crate::i18n::Locale::tc), None);
+    }
+}

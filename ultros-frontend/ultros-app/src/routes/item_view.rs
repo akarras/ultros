@@ -3,6 +3,7 @@ use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
+use crate::components::relative_time::RelativeToNow;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
@@ -329,6 +330,11 @@ fn MarketStatsPanel(
                                 .get(&ItemId(item_id()))
                                 .map(|item| item.price_mid as i32)
                                 .filter(|p| *p > 0);
+                            let latest_timestamp = data
+                                .listings
+                                .iter()
+                                .map(|(listing, _)| listing.timestamp)
+                                .max();
                             let real = crate::analysis::real_price(
                                 &recent_sales
                                     .iter()
@@ -530,9 +536,25 @@ fn MarketStatsPanel(
                                 <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
                                     <div class="flex items-center justify-between gap-3 mb-2 sm:mb-3">
                                         <div>
-                                            <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
-                                                {t!(i18n, cheapest_found)}
-                                            </h2>
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
+                                                    {t!(i18n, cheapest_found)}
+                                                </h2>
+                                                {latest_timestamp
+                                                    .map(|timestamp| {
+                                                        view! {
+                                                            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border border-brand-400/40 bg-brand-400/10 text-brand-200">
+                                                                <span class="relative flex h-1.5 w-1.5">
+                                                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
+                                                                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-brand-400"></span>
+                                                                </span>
+                                                                {t!(i18n, listings_updated)}
+                                                                " "
+                                                                <RelativeToNow timestamp=timestamp />
+                                                            </span>
+                                                        }
+                                                    })}
+                                            </div>
                                             <p class="text-sm text-[color:var(--color-text-muted)]">
                                                 {move || t!(i18n, based_on_sales, count = recent_sales.len())}
                                             </p>
