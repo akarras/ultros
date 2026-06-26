@@ -27,6 +27,7 @@ fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
     quantity: i32,
     hq: Option<bool>,
+    excluded_worlds: &[i32],
 ) -> Vec<ActiveListing> {
     listings.sort_by_key(|listing| listing.price_per_unit);
     let quantity_needed = quantity;
@@ -34,6 +35,9 @@ fn get_cheapest_listing(
     listings
         .into_iter()
         .filter(|listing| {
+            if listing.is_excluded(excluded_worlds) {
+                return false;
+            }
             if let Some(hq) = hq {
                 listing.hq == hq
             } else {
@@ -53,6 +57,7 @@ fn calculate_list_totals(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
     world_data: &ultros_api_types::world_helper::WorldHelper,
     unknown_label: &str,
+    excluded_worlds: &[i32],
 ) -> (i32, HashMap<i32, WorldPrice>) {
     let mut grand_total = 0;
     let mut world_prices: HashMap<i32, WorldPrice> = HashMap::new();
@@ -66,7 +71,7 @@ fn calculate_list_totals(
         }
         let hq = list_item.hq;
 
-        let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
+        let cheapest_listings = get_cheapest_listing(listings, quantity, hq, excluded_worlds);
 
         for listing in cheapest_listings {
             let price = listing.price_per_unit * listing.quantity;
@@ -110,7 +115,10 @@ fn calculate_list_totals(
 }
 
 #[component]
-pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView {
+pub fn ListSummary(
+    items: Vec<(ListItem, Vec<ActiveListing>)>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
+) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
     let game_items = &data.items;
@@ -144,8 +152,12 @@ pub fn ListSummary(items: Vec<(ListItem, Vec<ActiveListing>)>) -> impl IntoView 
         .into_any();
     }
 
-    let (grand_total, world_prices) =
-        calculate_list_totals(marketable_items, &world_data, &unknown_label);
+    let (grand_total, world_prices) = calculate_list_totals(
+        marketable_items,
+        &world_data,
+        &unknown_label,
+        excluded_worlds,
+    );
 
     if grand_total == 0 && world_prices.is_empty() {
         return view! {
@@ -334,7 +346,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None);
+        let result = get_cheapest_listing(listings, 10, None, &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -348,7 +360,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None);
+        let result = get_cheapest_listing(listings, 12, None, &[]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -414,6 +426,7 @@ mod tests {
             vec![(item1, listings1), (item2, vec![listing2_a, listing2_b])],
             &world_data,
             "Unknown",
+            &[],
         );
 
         // Grand total:
@@ -440,5 +453,87 @@ mod tests {
         assert_eq!(world_prices.get(&101).unwrap().datacenter_name, "Aether");
         assert_eq!(world_prices.get(&101).unwrap().world_name, "Cactuar");
         assert_eq!(world_prices.get(&101).unwrap().datacenter_id, 10);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_with_excluded_world() {
+        let mut l1 = mock_listing(1, 100, 5, false);
+        l1.world_id = 10;
+        let mut l2 = mock_listing(2, 150, 5, false);
+        l2.world_id = 20;
+        let mut l3 = mock_listing(3, 200, 5, false);
+        l3.world_id = 30;
+
+        let listings = vec![l1, l2, l3];
+
+        // Case 1: Exclude the cheapest world (10)
+        let result = get_cheapest_listing(listings.clone(), 5, None, &[10]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 2); // Should pick the next cheapest
+
+        // Case 2: Exclude all current listings
+        let result = get_cheapest_listing(listings.clone(), 5, None, &[10, 20, 30]);
+        assert!(result.is_empty());
+
+        // Case 3: Exclude none
+        let result = get_cheapest_listing(listings, 5, None, &[]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 1);
+    }
+
+    #[test]
+    fn test_calculate_list_totals_with_excluded_worlds() {
+        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+        use ultros_api_types::world_helper::WorldHelper;
+
+        let world_data: WorldHelper = WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Aether".into(),
+                    region_id: 1,
+                    worlds: vec![
+                        World {
+                            id: 100,
+                            name: "Adamantoise".into(),
+                            datacenter_id: 10,
+                        },
+                        World {
+                            id: 101,
+                            name: "Cactuar".into(),
+                            datacenter_id: 10,
+                        },
+                    ],
+                }],
+            }],
+        }
+        .into();
+
+        let item = ListItem {
+            id: 1,
+            list_id: 1,
+            item_id: 1,
+            quantity: Some(10),
+            acquired: Some(0),
+            hq: None,
+            target_price: None,
+        };
+
+        let mut l1 = mock_listing(1, 100, 10, false);
+        l1.world_id = 100; // Cheapest but we will exclude it
+        let mut l2 = mock_listing(2, 200, 10, false);
+        l2.world_id = 101; // Next cheapest
+
+        // Exclude world 100
+        let (total, world_prices) =
+            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &[100]);
+
+        // Total should be 10 * 200 = 2000 (from world 101)
+        assert_eq!(total, 2000);
+        assert_eq!(world_prices.len(), 1);
+        assert!(world_prices.contains_key(&101));
+        assert!(!world_prices.contains_key(&100));
     }
 }

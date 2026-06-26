@@ -13,3 +13,10 @@ pub struct ActiveListing {
     pub hq: bool,
     pub timestamp: NaiveDateTime,
 }
+
+impl ActiveListing {
+    /// Returns true if this listing belongs to a world that is in the excluded list
+    pub fn is_excluded(&self, excluded_worlds: &[i32]) -> bool {
+        excluded_worlds.contains(&self.world_id)
+    }
+}
