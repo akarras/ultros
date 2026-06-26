@@ -106,7 +106,7 @@ impl CurrentlyShownItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::websocket::{EventType, ListingEventData};
+    use crate::websocket::{EventType, ListingEventData, SaleEventData};
     use chrono::NaiveDateTime;
 
     fn test_listing(id: i32, item_id: i32, price: i32) -> (ActiveListing, Retainer) {
@@ -126,6 +126,31 @@ mod tests {
                 world_id: 1,
                 name: "Retainer".to_string(),
                 retainer_city_id: 1,
+            },
+        )
+    }
+
+    fn test_sale(
+        id: i32,
+        item_id: i32,
+        price: i32,
+        sold_date: NaiveDateTime,
+    ) -> (SaleHistory, UnknownCharacter) {
+        (
+            SaleHistory {
+                id,
+                quantity: 1,
+                price_per_item: price,
+                buying_character_id: 1,
+                hq: false,
+                sold_item_id: item_id,
+                sold_date,
+                world_id: 1,
+                buyer_name: Some("Buyer".to_string()),
+            },
+            UnknownCharacter {
+                id: 1,
+                name: "Buyer".to_string(),
             },
         )
     }
@@ -197,5 +222,119 @@ mod tests {
         assert_eq!(data.listings.len(), 1);
         assert_eq!(data.listings[0].0.item_id, 1);
         assert_eq!(data.listings[0].0.price_per_unit, 100);
+    }
+
+    #[test]
+    fn test_apply_sales_event_add() {
+        let mut data = CurrentlyShownItem {
+            listings: vec![],
+            sales: vec![],
+        };
+        let event = EventType::Added(SaleEventData {
+            sales: vec![test_sale(1, 1, 100, NaiveDateTime::default())],
+        });
+
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 1);
+        assert_eq!(data.sales[0].id, 1);
+    }
+
+    #[test]
+    fn test_apply_sales_event_update() {
+        let (sale, _char) = test_sale(1, 1, 100, NaiveDateTime::default());
+        let mut data = CurrentlyShownItem {
+            listings: vec![],
+            sales: vec![sale],
+        };
+        let event = EventType::Updated(SaleEventData {
+            sales: vec![test_sale(1, 1, 150, NaiveDateTime::default())],
+        });
+
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 1);
+        assert_eq!(data.sales[0].price_per_item, 150);
+    }
+
+    #[test]
+    fn test_apply_sales_event_remove() {
+        let (sale, _char) = test_sale(1, 1, 100, NaiveDateTime::default());
+        let mut data = CurrentlyShownItem {
+            listings: vec![],
+            sales: vec![sale],
+        };
+        let event = EventType::Removed(SaleEventData {
+            sales: vec![test_sale(1, 1, 100, NaiveDateTime::default())],
+        });
+
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 0);
+    }
+
+    #[test]
+    fn test_apply_sales_event_wrong_item_id() {
+        let (sale, _char) = test_sale(1, 1, 100, NaiveDateTime::default());
+        let mut data = CurrentlyShownItem {
+            listings: vec![],
+            sales: vec![sale],
+        };
+        // Add event for wrong item
+        let event = EventType::Added(SaleEventData {
+            sales: vec![test_sale(2, 2, 150, NaiveDateTime::default())],
+        });
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 1);
+        assert_eq!(data.sales[0].price_per_item, 100);
+
+        // Remove event for wrong item
+        let event = EventType::Removed(SaleEventData {
+            sales: vec![test_sale(1, 2, 100, NaiveDateTime::default())],
+        });
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 1);
+    }
+
+    #[test]
+    fn test_apply_sales_event_ordering() {
+        let mut data = CurrentlyShownItem {
+            listings: vec![],
+            sales: vec![],
+        };
+        let date_early = NaiveDateTime::from_timestamp_opt(1000, 0).unwrap();
+        let date_late = NaiveDateTime::from_timestamp_opt(2000, 0).unwrap();
+
+        let event = EventType::Added(SaleEventData {
+            sales: vec![
+                test_sale(1, 1, 100, date_early),
+                test_sale(2, 1, 200, date_late),
+            ],
+        });
+
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 2);
+        assert_eq!(data.sales[0].id, 2); // newest first
+        assert_eq!(data.sales[1].id, 1);
+    }
+
+    #[test]
+    fn test_apply_sales_event_truncation() {
+        let mut data = CurrentlyShownItem {
+            listings: vec![],
+            sales: vec![],
+        };
+        let mut sales = vec![];
+        for i in 0..205 {
+            sales.push(test_sale(
+                i,
+                1,
+                100,
+                NaiveDateTime::from_timestamp_opt(i as i64, 0).unwrap(),
+            ));
+        }
+
+        let event = EventType::Added(SaleEventData { sales });
+
+        data.apply_sales_event(1, event);
+        assert_eq!(data.sales.len(), 200);
+        assert_eq!(data.sales[0].id, 204); // newest first
     }
 }
