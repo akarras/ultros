@@ -29,7 +29,10 @@ use crate::components::{
 };
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
-use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
+use ultros_api_types::websocket::{
+    EventType, FilterPredicate, ListingEventData, ServerClient, SocketMessageType,
+};
+use ultros_api_types::{ActiveListing, Retainer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
@@ -112,6 +115,16 @@ pub fn ListView() -> impl IntoView {
     );
 
     let realtime = use_realtime();
+    let market_subscription_filter = Memo::new(move |_| {
+        let (list, items) = list_view.get()?.ok()?;
+        let mut item_ids = items.iter().map(|(i, _)| i.item_id).collect::<Vec<_>>();
+        item_ids.sort_unstable();
+        item_ids.dedup();
+        if item_ids.is_empty() {
+            return None;
+        }
+        Some((list.list.wdr_filter, item_ids))
+    });
     let list_subscription = StoredValue::new(None::<RealtimeSubscription>);
     let list_market_subscription = StoredValue::new(None::<RealtimeSubscription>);
     let realtime_for_list = realtime.clone();
@@ -147,27 +160,28 @@ pub fn ListView() -> impl IntoView {
     let realtime_for_market = realtime.clone();
     Effect::new(move |_| {
         list_market_subscription.update_value(|sub| *sub = None);
-        let Some(Ok((list, items))) = list_view.get() else {
+        let Some((wdr_filter, item_ids)) = market_subscription_filter.get() else {
             return;
         };
-        let item_ids = items
-            .iter()
-            .map(|(item, _)| item.item_id)
-            .collect::<Vec<_>>();
-        if item_ids.is_empty() {
-            return;
-        }
         let Some(realtime) = realtime_for_market.clone() else {
             return;
         };
-        let filter =
-            FilterPredicate::World(list.list.wdr_filter).and(FilterPredicate::Items(item_ids));
+        let filter = FilterPredicate::World(wdr_filter).and(FilterPredicate::Items(item_ids));
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
-            if matches!(
-                message,
-                ServerClient::Listings(_) | ServerClient::Stale { .. }
-            ) {
-                list_view.refetch();
+            match message {
+                ServerClient::Listings(event) => {
+                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    list_view.update(|data| {
+                        if let Some(Ok((_, items))) = data {
+                            apply_listings_event(items, event);
+                        }
+                    });
+                }
+                ServerClient::Stale { .. } => {
+                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    list_view.refetch();
+                }
+                _ => {}
             }
         });
         list_market_subscription.set_value(Some(sub));
@@ -1033,5 +1047,185 @@ fn ActivityFeed(
                 }}
             </Suspense>
         </section>
+    }
+}
+
+fn upsert_listings(
+    items: &mut Vec<(ListItem, Vec<ActiveListing>)>,
+    listings: Vec<(ActiveListing, Retainer)>,
+) {
+    for (incoming, _) in listings {
+        for (item, current_listings) in items.iter_mut() {
+            if item.item_id == incoming.item_id {
+                if let Some(pos) = current_listings.iter().position(|l| l.id == incoming.id) {
+                    current_listings[pos] = incoming.clone();
+                } else {
+                    current_listings.push(incoming.clone());
+                }
+            }
+        }
+    }
+}
+
+fn remove_listings(
+    items: &mut Vec<(ListItem, Vec<ActiveListing>)>,
+    listings: Vec<(ActiveListing, Retainer)>,
+) {
+    for (removed, _) in listings {
+        for (item, current_listings) in items.iter_mut() {
+            if item.item_id == removed.item_id {
+                current_listings.retain(|l| l.id != removed.id);
+            }
+        }
+    }
+}
+
+fn apply_listings_event(
+    items: &mut Vec<(ListItem, Vec<ActiveListing>)>,
+    event: EventType<ListingEventData>,
+) {
+    match event {
+        EventType::Added(event) | EventType::Updated(event) => {
+            upsert_listings(items, event.listings);
+        }
+        EventType::Removed(event) => {
+            remove_listings(items, event.listings);
+        }
+    }
+    for (_, listings) in items {
+        listings.sort_by_key(|listing| (listing.hq, listing.price_per_unit));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use ultros_api_types::ActiveListing;
+
+    fn mock_listing(id: i32, item_id: i32, price: i32) -> ActiveListing {
+        ActiveListing {
+            id,
+            item_id,
+            price_per_unit: price,
+            quantity: 1,
+            world_id: 1,
+            retainer_id: 1,
+            hq: false,
+            timestamp: Utc::now().naive_utc(),
+        }
+    }
+
+    fn mock_retainer() -> Retainer {
+        Retainer {
+            id: 1,
+            name: "Retainer".to_string(),
+            world_id: 1,
+            retainer_city_id: 1,
+        }
+    }
+
+    #[test]
+    fn test_apply_listings_event_add() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 100,
+                ..Default::default()
+            },
+            vec![],
+        )];
+        let event = EventType::Added(ListingEventData {
+            item_id: 100,
+            world_id: 1,
+            listings: vec![(mock_listing(1, 100, 500), mock_retainer())],
+        });
+
+        apply_listings_event(&mut items, event);
+
+        assert_eq!(items[0].1.len(), 1);
+        assert_eq!(items[0].1[0].price_per_unit, 500);
+    }
+
+    #[test]
+    fn test_apply_listings_event_update() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 100,
+                ..Default::default()
+            },
+            vec![mock_listing(1, 100, 500)],
+        )];
+        let event = EventType::Updated(ListingEventData {
+            item_id: 100,
+            world_id: 1,
+            listings: vec![(mock_listing(1, 100, 400), mock_retainer())],
+        });
+
+        apply_listings_event(&mut items, event);
+
+        assert_eq!(items[0].1.len(), 1);
+        assert_eq!(items[0].1[0].price_per_unit, 400);
+    }
+
+    #[test]
+    fn test_apply_listings_event_remove() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 100,
+                ..Default::default()
+            },
+            vec![mock_listing(1, 100, 500)],
+        )];
+        let event = EventType::Removed(ListingEventData {
+            item_id: 100,
+            world_id: 1,
+            listings: vec![(mock_listing(1, 100, 500), mock_retainer())],
+        });
+
+        apply_listings_event(&mut items, event);
+
+        assert_eq!(items[0].1.len(), 0);
+    }
+
+    #[test]
+    fn test_apply_listings_event_mismatched_item_ignored() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 100,
+                ..Default::default()
+            },
+            vec![],
+        )];
+        let event = EventType::Added(ListingEventData {
+            item_id: 200,
+            world_id: 1,
+            listings: vec![(mock_listing(1, 200, 500), mock_retainer())],
+        });
+
+        apply_listings_event(&mut items, event);
+
+        assert_eq!(items[0].1.len(), 0);
+    }
+
+    #[test]
+    fn test_apply_listings_event_sorts_by_price() {
+        let mut items = vec![(
+            ListItem {
+                item_id: 100,
+                ..Default::default()
+            },
+            vec![mock_listing(1, 100, 500)],
+        )];
+        let event = EventType::Added(ListingEventData {
+            item_id: 100,
+            world_id: 1,
+            listings: vec![(mock_listing(2, 100, 300), mock_retainer())],
+        });
+
+        apply_listings_event(&mut items, event);
+
+        assert_eq!(items[0].1.len(), 2);
+        assert_eq!(items[0].1[0].price_per_unit, 300);
+        assert_eq!(items[0].1[1].price_per_unit, 500);
     }
 }
