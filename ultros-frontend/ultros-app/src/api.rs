@@ -27,7 +27,10 @@ use ultros_api_types::{
     search::SearchResult,
     sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
-    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers, group::UserGroup},
+    user::{
+        OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+        group::{CreateGroup, UserGroup, UserGroupMember},
+    },
 };
 
 use crate::error::{AppError, AppResult};
@@ -455,6 +458,30 @@ pub(crate) async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppRe
 
 pub(crate) async fn get_groups() -> AppResult<Vec<UserGroup>> {
     fetch_api("/api/v1/group").await
+}
+
+pub(crate) async fn create_group(group: CreateGroup) -> AppResult<()> {
+    post_api("/api/v1/group/create", group).await
+}
+
+pub(crate) async fn delete_group(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{id}")).await
+}
+
+pub(crate) async fn get_group_members(id: i32) -> AppResult<Vec<UserGroupMember>> {
+    fetch_api(&format!("/api/v1/group/{id}/members")).await
+}
+
+pub(crate) async fn add_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/member/add/{user_id}"),
+        (),
+    )
+    .await
+}
+
+pub(crate) async fn remove_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{group_id}/member/remove/{user_id}")).await
 }
 
 pub(crate) async fn get_list_shares(
