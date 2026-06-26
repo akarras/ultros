@@ -585,6 +585,8 @@
     "list_view_adding": "ajout…",
     "list_view_add": "ajouter",
     "list_view_bulk_edit": "édition groupée",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "SUPPRIMER",
     "list_view_select_all": "TOUT SÉLECTIONNER",
     "list_view_deselect_all": "TOUT DÉSÉLECTIONNER",
@@ -983,6 +985,7 @@
     "listings_col_datacenter": "centre de données",
     "listings_col_first_seen": "vu pour la première fois",
     "listings_show_more": "Voir plus",
+    "listings_updated": "Listings updated",
     "stats_hq_prefix": "(HQ : ",
     "related_recipe_hq_label": "HQ :",
     "related_recipe_lq_label": "LQ :",
@@ -1026,6 +1029,7 @@
     "lists_page_title": "Listes",
     "list_shared_editor_badge": "Partagé · Éditeur",
     "list_shared_viewer_badge": "Partagé · Lecteur",
+    "list_shared_by": "Shared by {{name}}",
     "shared_with_me": "Partagé avec moi",
     "no_owned_lists_but_shared": "Vous ne possédez aucune liste — mais d'autres en ont partagé {{count}} avec vous.",
     "leave_list": "Quitter la liste",
@@ -1436,5 +1440,11 @@
     "list_view_meta_title": "%name% · Liste de courses · Ultros",
     "list_view_default_meta_title": "Liste de courses · Ultros",
     "list_view_meta_desc": "Suivez l’acquisition des objets, trouvez le monde le moins cher pour chaque objet et partagez vos progrès avec votre compagnie libre sur Ultros.",
-    "profile_meta_title": "Profil · Ultros"
+    "profile_meta_title": "Profil · Ultros",
+    "lists_share_select_group_placeholder": "Select a group you own...",
+    "lists_share_group_share_button": "Share with Group",
+    "lists_share_no_groups_message": "You don't own any groups yet. Create one in your profile settings to share lists with groups.",
+    "lists_share_advanced_user_id": "Advanced: Invite by Discord User ID",
+    "lists_share_user_id_placeholder": "Numeric Discord User ID...",
+    "lists_share_tip": "Tip: Discord users can be added by numeric Discord user ID. Groups must be owned by you to appear in the list."
 }

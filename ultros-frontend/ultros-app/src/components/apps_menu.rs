@@ -283,6 +283,10 @@ pub fn UserMenu() -> impl IntoView {
                                                 <Icon height="1.1em" width="1.1em" icon=i::AiOrderedListOutlined />
                                                 <span class="ml-2">{t!(i18n, lists)}</span>
                                             </A>
+                                            <A href="/groups" attr:class="nav-link w-full justify-start" on:click=close_menu>
+                                                <Icon height="1.1em" width="1.1em" icon=i::BiGroupSolid />
+                                                <span class="ml-2">{t!(i18n, groups)}</span>
+                                            </A>
                                             <A href="/alerts" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsBell />
                                                 <span class="ml-2">{t!(i18n, alerts)}</span>

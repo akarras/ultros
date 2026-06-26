@@ -124,7 +124,8 @@ pub(crate) fn ShareListSection(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let list_id = list.id;
-    let (recipient, set_recipient) = signal(String::new());
+    let (selected_group_id, set_selected_group_id) = signal(None::<i32>);
+    let (manual_user_id, set_manual_user_id) = signal(String::new());
     let (recipient_permission, set_recipient_permission) = signal(ListPermission::Read);
     let (invite_permission, set_invite_permission) = signal(ListPermission::Read);
     let (invite_max_uses, set_invite_max_uses) = signal(String::new());
@@ -222,49 +223,101 @@ pub(crate) fn ShareListSection(
                         <div class="space-y-6">
                             <section class="space-y-3">
                                 <h3 class="text-lg font-bold text-[color:var(--color-text)]">{t!(i18n, lists_share_add_people_heading)}</h3>
-                                <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
-                                    <input
-                                        class="input w-full text-base"
-                                        placeholder=t_string!(i18n, lists_share_search_placeholder)
-                                        prop:value=recipient
-                                        on:input=move |ev| set_recipient(event_target_value(&ev))
-                                    />
-                                    <select
-                                        class="input w-full"
-                                        on:change=move |ev| set_recipient_permission(editable_permission(&event_target_value(&ev)))
-                                    >
-                                        <option value="Read">{t!(i18n, permission_read)}</option>
-                                        <option value="Write">{t!(i18n, permission_write)}</option>
-                                    </select>
-                                    <button
-                                        type="button"
-                                        class="btn-primary"
-                                        prop:disabled=move || recipient().trim().is_empty()
-                                        on:click=move |_| {
-                                            let raw = recipient().trim().to_string();
-                                            if raw.is_empty() {
-                                                return;
+                                {if owned_groups.is_empty() {
+                                    view! {
+                                        <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] p-4 text-center text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, lists_share_no_groups_message)}
+                                        </div>
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
+                                            <select
+                                                class="input w-full"
+                                                on:change=move |ev| {
+                                                    let val = event_target_value(&ev);
+                                                    set_selected_group_id(val.parse::<i32>().ok());
+                                                }
+                                            >
+                                                <option value="" disabled=true selected=selected_group_id.get().is_none()>
+                                                    {t!(i18n, lists_share_select_group_placeholder)}
+                                                </option>
+                                                {owned_groups
+                                                    .iter()
+                                                    .map(|group| {
+                                                        let id = group.id;
+                                                        let name = group.name.clone();
+                                                        view! {
+                                                            <option value=id.to_string() selected=move || selected_group_id.get() == Some(id)>
+                                                                {name}
+                                                            </option>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </select>
+                                            <select
+                                                class="input w-full"
+                                                on:change=move |ev| set_recipient_permission(editable_permission(&event_target_value(&ev)))
+                                            >
+                                                <option value="Read">{t!(i18n, permission_read)}</option>
+                                                <option value="Write">{t!(i18n, permission_write)}</option>
+                                            </select>
+                                            <button
+                                                type="button"
+                                                class="btn-primary"
+                                                prop:disabled=move || selected_group_id().is_none()
+                                                on:click=move |_| {
+                                                    if let Some(group_id) = selected_group_id.get_untracked() {
+                                                        share_group.dispatch((group_id, recipient_permission()));
+                                                        set_selected_group_id(None);
+                                                    }
+                                                }
+                                            >
+                                                {t!(i18n, lists_share_group_share_button)}
+                                            </button>
+                                        </div>
+                                    }.into_any()
+                                }}
+
+                                <details class="group mt-4">
+                                    <summary class="cursor-pointer text-sm font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]">
+                                        {t!(i18n, lists_share_advanced_user_id)}
+                                    </summary>
+                                    <div class="grid gap-3 pt-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
+                                        <input
+                                            class="input w-full text-base"
+                                            placeholder=t_string!(i18n, lists_share_user_id_placeholder)
+                                            prop:value=manual_user_id
+                                            on:input=move |ev| set_manual_user_id(event_target_value(&ev))
+                                        />
+                                        <select
+                                            class="input w-full"
+                                            on:change=move |ev| set_recipient_permission(editable_permission(&event_target_value(&ev)))
+                                        >
+                                            <option value="Read">{t!(i18n, permission_read)}</option>
+                                            <option value="Write">{t!(i18n, permission_write)}</option>
+                                        </select>
+                                        <button
+                                            type="button"
+                                            class="btn-primary"
+                                            prop:disabled=move || manual_user_id().trim().is_empty()
+                                            on:click=move |_| {
+                                                let raw = manual_user_id().trim().to_string();
+                                                if raw.is_empty() {
+                                                    return;
+                                                }
+                                                if let Ok(user_id) = raw.parse::<i64>() {
+                                                    share_user.dispatch((user_id, recipient_permission()));
+                                                    set_manual_user_id(String::new());
+                                                } else if let Some(toasts) = toasts {
+                                                    toasts.error("Enter a numeric Discord user ID");
+                                                }
                                             }
-                                            if let Ok(user_id) = raw.parse::<i64>() {
-                                                share_user.dispatch((user_id, recipient_permission()));
-                                                set_recipient(String::new());
-                                                return;
-                                            }
-                                            let raw_lower = raw.to_lowercase();
-                                            if let Some(group) = owned_groups_for_submit
-                                                .iter()
-                                                .find(|group| group.name.to_lowercase() == raw_lower)
-                                            {
-                                                share_group.dispatch((group.id, recipient_permission()));
-                                                set_recipient(String::new());
-                                            } else if let Some(toasts) = toasts {
-                                                toasts.error("Enter a Discord user ID or an exact group name you own");
-                                            }
-                                        }
-                                    >
-                                        "Invite"
-                                    </button>
-                                </div>
+                                        >
+                                            "Invite"
+                                        </button>
+                                    </div>
+                                </details>
                             </section>
 
                             <section class="space-y-3">
@@ -323,12 +376,7 @@ pub(crate) fn ShareListSection(
                                     delete_invite
                                 />
                                 <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--color-text)_4%,transparent)] p-3 text-sm text-[color:var(--color-text-muted)]">
-                                    "Tip: group names must match one of your owned groups exactly. Discord users can be added by numeric Discord user ID."
-                                    {if owned_groups.is_empty() {
-                                        Some(view! { <span> " You do not own any groups yet." </span> })
-                                    } else {
-                                        None
-                                    }}
+                                    {t!(i18n, lists_share_tip)}
                                 </div>
                             </section>
                         </div>

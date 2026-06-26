@@ -585,6 +585,8 @@
     "list_view_adding": "添加中…",
     "list_view_add": "添加",
     "list_view_bulk_edit": "批量编辑",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "删除",
     "list_view_select_all": "全选",
     "list_view_deselect_all": "取消全选",
@@ -983,6 +985,7 @@
     "listings_col_datacenter": "数据中心",
     "listings_col_first_seen": "首次出现",
     "listings_show_more": "显示更多",
+    "listings_updated": "Listings updated",
     "stats_hq_prefix": "（HQ：",
     "related_recipe_hq_label": "HQ：",
     "related_recipe_lq_label": "LQ：",
@@ -1026,6 +1029,7 @@
     "lists_page_title": "清单",
     "list_shared_editor_badge": "共享 · 编辑者",
     "list_shared_viewer_badge": "共享 · 查看者",
+    "list_shared_by": "Shared by {{name}}",
     "shared_with_me": "与我共享",
     "no_owned_lists_but_shared": "你还没有自己的清单 — 但其他人已与你分享了 {{count}} 个。",
     "leave_list": "退出清单",
@@ -1436,5 +1440,11 @@
     "list_view_meta_title": "%name% · 购物清单 · Ultros",
     "list_view_default_meta_title": "购物清单 · Ultros",
     "list_view_meta_desc": "追踪物品获取情况，为每件物品找到最便宜的服务器，并与部队共享进度。",
-    "profile_meta_title": "个人资料 · Ultros"
+    "profile_meta_title": "个人资料 · Ultros",
+    "lists_share_select_group_placeholder": "Select a group you own...",
+    "lists_share_group_share_button": "Share with Group",
+    "lists_share_no_groups_message": "You don't own any groups yet. Create one in your profile settings to share lists with groups.",
+    "lists_share_advanced_user_id": "Advanced: Invite by Discord User ID",
+    "lists_share_user_id_placeholder": "Numeric Discord User ID...",
+    "lists_share_tip": "Tip: Discord users can be added by numeric Discord user ID. Groups must be owned by you to appear in the list."
 }

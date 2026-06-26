@@ -16,7 +16,10 @@ use sea_orm::{
     ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
     sea_query::Expr,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
@@ -223,9 +226,13 @@ impl UltrosDb {
         Ok(())
     }
 
-    pub async fn get_lists_for_user(&self, discord_user: i64) -> Result<Vec<list::Model>> {
+    pub async fn get_lists_for_user(
+        &self,
+        discord_user: i64,
+    ) -> Result<Vec<(list::Model, Option<String>)>> {
         // This should probably also include lists shared with the user
         let owned_lists = list::Entity::find()
+            .find_also_related(discord_user::Entity)
             .filter(list::Column::Owner.eq(discord_user))
             .all(&self.db)
             .await?;
@@ -233,6 +240,7 @@ impl UltrosDb {
         let shared_lists = list::Entity::find()
             .inner_join(list_shared_user::Entity)
             .filter(list_shared_user::Column::UserId.eq(discord_user))
+            .find_also_related(discord_user::Entity)
             .all(&self.db)
             .await?;
 
@@ -247,16 +255,20 @@ impl UltrosDb {
                 user_group::Relation::UserGroupMember.def(),
             )
             .filter(user_group_member::Column::UserId.eq(discord_user))
+            .find_also_related(discord_user::Entity)
             .all(&self.db)
             .await?;
 
         let mut all_lists = owned_lists;
         all_lists.extend(shared_lists);
         all_lists.extend(group_lists);
-        all_lists.sort_by_key(|l| l.id);
-        all_lists.dedup_by_key(|l| l.id);
+        all_lists.sort_by_key(|(l, _)| l.id);
+        all_lists.dedup_by_key(|(l, _)| l.id);
 
-        Ok(all_lists)
+        Ok(all_lists
+            .into_iter()
+            .map(|(l, u)| (l, u.map(|u| u.username)))
+            .collect())
     }
 
     pub async fn get_list_by_name_for_user(
@@ -301,16 +313,20 @@ impl UltrosDb {
         Ok(group_list)
     }
 
-    pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<list::Model> {
+    pub async fn get_list(&self, list_id: i32, discord_user: i64) -> Result<(list::Model, String)> {
         let permission = self.get_permission(list_id, discord_user).await?;
         if permission < ListPermission::Read {
             return Err(ListError::Forbidden("Insufficient permissions to read list").into());
         }
-        let list = list::Entity::find_by_id(list_id)
+        let (list, owner) = list::Entity::find_by_id(list_id)
+            .find_also_related(discord_user::Entity)
             .one(&self.db)
             .await?
             .ok_or(ListError::NotFound)?;
-        Ok(list)
+        let owner_name = owner
+            .map(|u| u.username)
+            .unwrap_or_else(|| list.owner.to_string());
+        Ok((list, owner_name))
     }
 
     pub async fn get_list_items(
@@ -577,6 +593,36 @@ impl UltrosDb {
         .exec_without_returning(&self.db)
         .await?;
         Ok(many)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn set_list_items_hq(
+        &self,
+        discord_user: i64,
+        list_item_ids: &[i32],
+        hq: Option<bool>,
+    ) -> Result<Vec<i32>> {
+        let items = list_item::Entity::find()
+            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
+            .all(&self.db)
+            .await?;
+        let list_ids: HashSet<i32> = items.iter().map(|i| i.list_id).collect();
+        let list_ids_vec: Vec<i32> = list_ids.iter().copied().collect();
+        for list_id in list_ids {
+            let permission = self.get_permission(list_id, discord_user).await?;
+            if permission < ListPermission::Write {
+                return Err(
+                    ListError::Forbidden("Insufficient permissions to update list items").into(),
+                );
+            }
+        }
+
+        list_item::Entity::update_many()
+            .col_expr(list_item::Column::Hq, Expr::value(hq))
+            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
+            .exec(&self.db)
+            .await?;
+        Ok(list_ids_vec)
     }
 
     #[instrument(skip(self))]
