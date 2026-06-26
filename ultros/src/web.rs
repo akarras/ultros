@@ -509,7 +509,7 @@ pub(crate) async fn get_lists(
         db.get_lists_for_user(user.id as i64)
             .await?
             .into_iter()
-            .map(|list| {
+            .map(|(list, owner_name)| {
                 let db = db.clone();
                 let user_id = user.id as i64;
                 async move {
@@ -517,6 +517,7 @@ pub(crate) async fn get_lists(
                     Ok::<_, ApiError>(ListWithPermission {
                         list: List::try_from(list)?,
                         permission,
+                        owner_name,
                     })
                 }
             }),
@@ -529,7 +530,7 @@ pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
     perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
-    let (list, list_items) = futures::future::try_join(
+    let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(perm.list_id, perm.user_id),
         db.get_list_items(perm.list_id, perm.user_id),
     )
@@ -541,6 +542,7 @@ pub(crate) async fn get_list(
     let list = ListWithPermission {
         list: List::try_from(list)?,
         permission: perm.permission,
+        owner_name: Some(owner_name),
     };
     Ok(Json((list, list_items)))
 }
@@ -551,7 +553,7 @@ pub(crate) async fn get_list_with_listings(
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
-    let (list, list_items) = futures::future::try_join(
+    let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
@@ -587,6 +589,7 @@ pub(crate) async fn get_list_with_listings(
         ListWithPermission {
             list: List::try_from(list)?,
             permission,
+            owner_name: Some(owner_name),
         },
         list_items,
     )))
@@ -617,7 +620,7 @@ pub(crate) async fn delete_list(
         { crate::web::list_permission::OWNER },
     >,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
     db.delete_list(perm.list_id, perm.user_id).await?;
     send_list_event(
         &senders,
@@ -705,7 +708,7 @@ pub(crate) async fn post_item_to_list(
     >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
     let ListItem {
         item_id,
         hq,
@@ -748,7 +751,7 @@ pub(crate) async fn post_items_to_list(
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(id, user.id as i64).await?;
+    let (list, _) = db.get_list(id, user.id as i64).await?;
 
     let _list = db
         .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
@@ -1154,7 +1157,7 @@ async fn broadcast_list_update(
     list_id: i32,
     user: i64,
 ) -> Result<(), ApiError> {
-    let list = db.get_list(list_id, user).await?;
+    let (list, _) = db.get_list(list_id, user).await?;
     send_list_event(
         senders,
         EventType::updated(ListEventData::List(List::try_from(list)?)),
