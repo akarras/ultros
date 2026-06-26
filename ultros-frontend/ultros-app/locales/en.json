@@ -1012,6 +1012,7 @@
     "list_shared_viewer_badge": "Shared · Viewer",
     "shared_with_me": "Shared With Me",
     "no_owned_lists_but_shared": "You don't own any lists yet — but others have shared {{count}} with you.",
+    "list_shared_by": "Shared by {{name}}",
     "leave_list": "Leave list",
     "leave_list_confirm": "Stop following this shared list?",
     "leave_list_tooltip": "Remove yourself from this shared list",

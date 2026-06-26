@@ -1026,6 +1026,7 @@
     "lists_page_title": "Listen",
     "list_shared_editor_badge": "Geteilt · Editor",
     "list_shared_viewer_badge": "Geteilt · Betrachter",
+    "list_shared_by": "Shared by {{name}}",
     "shared_with_me": "Mit mir geteilt",
     "no_owned_lists_but_shared": "Du besitzt noch keine Listen — aber andere haben {{count}} mit dir geteilt.",
     "leave_list": "Liste verlassen",

@@ -1026,6 +1026,7 @@
     "lists_page_title": "清單",
     "list_shared_editor_badge": "共享 · 編輯者",
     "list_shared_viewer_badge": "共享 · 檢視者",
+    "list_shared_by": "Shared by {{name}}",
     "shared_with_me": "與我共享",
     "no_owned_lists_but_shared": "你還沒有自己的清單 — 但其他人已與你分享了 {{count}} 個。",
     "leave_list": "退出清單",
