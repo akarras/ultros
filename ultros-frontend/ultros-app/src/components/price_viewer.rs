@@ -4,8 +4,8 @@ use leptos::prelude::*;
 use super::{datacenter_name::*, gil::*, world_name::*};
 use crate::global_state::LocalWorldData;
 use crate::i18n::*;
-use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
 use ultros_api_types::ActiveListing;
+use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
 
 fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
@@ -258,14 +258,7 @@ mod tests {
         let listings = vec![l1, l2];
 
         // Exclude Aether
-        let result = get_cheapest_listing(
-            listings,
-            10,
-            None,
-            &[],
-            &["Aether"],
-            Some(&world_data),
-        );
+        let result = get_cheapest_listing(listings, 10, None, &[], &["Aether"], Some(&world_data));
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 2);
