@@ -1,5 +1,22 @@
+use crate::ActiveListing;
 use crate::world::{Datacenter, Region, World, WorldData};
 use serde::{Deserialize, Serialize};
+
+pub trait HasWorldId {
+    fn world_id(&self) -> i32;
+}
+
+impl HasWorldId for ActiveListing {
+    fn world_id(&self) -> i32 {
+        self.world_id
+    }
+}
+
+impl<R> HasWorldId for (ActiveListing, R) {
+    fn world_id(&self) -> i32 {
+        self.0.world_id
+    }
+}
 
 /// Like world_cache but built for use in wasm
 #[derive(Serialize, Deserialize, Clone)]
@@ -303,6 +320,34 @@ impl<'a> WorldHelper {
 
     pub fn get_cloned(&self) -> WorldData {
         self.world_data.clone()
+    }
+
+    pub fn filter_by_excluded_datacenters<T, I, S>(
+        &self,
+        listings: I,
+        excluded_datacenters: &std::collections::HashSet<S>,
+    ) -> Vec<T>
+    where
+        T: HasWorldId,
+        I: IntoIterator<Item = T>,
+        S: AsRef<str> + std::hash::Hash + Eq,
+    {
+        listings
+            .into_iter()
+            .filter(|item| {
+                let world_id = item.world_id();
+                let world = self.lookup_selector(AnySelector::World(world_id));
+                let Some(AnyResult::World(world)) = world else {
+                    return true;
+                };
+                let dc = self.lookup_selector(AnySelector::Datacenter(world.datacenter_id));
+                let Some(AnyResult::Datacenter(dc)) = dc else {
+                    return true;
+                };
+
+                !excluded_datacenters.iter().any(|s| s.as_ref() == dc.name)
+            })
+            .collect()
     }
 }
 
@@ -637,5 +682,91 @@ mod tests {
         assert_eq!(owned.as_ref().get_name(), "Adamantoise");
         // into selector
         assert_eq!(AnySelector::from(owned), AnySelector::World(100));
+    }
+
+    #[test]
+    fn test_filter_excluded_datacenter() {
+        let helper: WorldHelper = sample_world_data().into();
+        let listings = vec![
+            ActiveListing {
+                id: 1,
+                world_id: 100, // Aether
+                item_id: 1,
+                retainer_id: 1,
+                price_per_unit: 100,
+                quantity: 1,
+                hq: false,
+                timestamp: chrono::Utc::now().naive_utc(),
+            },
+            ActiveListing {
+                id: 2,
+                world_id: 110, // Primal
+                item_id: 1,
+                retainer_id: 1,
+                price_per_unit: 200,
+                quantity: 1,
+                hq: false,
+                timestamp: chrono::Utc::now().naive_utc(),
+            },
+        ];
+        let mut excluded = std::collections::HashSet::new();
+        excluded.insert("Aether");
+
+        let filtered = helper.filter_by_excluded_datacenters(listings, &excluded);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, 2);
+    }
+
+    #[test]
+    fn test_filter_included_datacenter() {
+        let helper: WorldHelper = sample_world_data().into();
+        let listings = vec![ActiveListing {
+            id: 1,
+            world_id: 100, // Aether
+            item_id: 1,
+            retainer_id: 1,
+            price_per_unit: 100,
+            quantity: 1,
+            hq: false,
+            timestamp: chrono::Utc::now().naive_utc(),
+        }];
+        let mut excluded = std::collections::HashSet::new();
+        excluded.insert("Primal");
+
+        let filtered = helper.filter_by_excluded_datacenters(listings, &excluded);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, 1);
+    }
+
+    #[test]
+    fn test_filter_unknown_world_id() {
+        let helper: WorldHelper = sample_world_data().into();
+        let listings = vec![ActiveListing {
+            id: 1,
+            world_id: 999, // Unknown
+            item_id: 1,
+            retainer_id: 1,
+            price_per_unit: 100,
+            quantity: 1,
+            hq: false,
+            timestamp: chrono::Utc::now().naive_utc(),
+        }];
+        let mut excluded = std::collections::HashSet::new();
+        excluded.insert("Aether");
+
+        let filtered = helper.filter_by_excluded_datacenters(listings, &excluded);
+        // Fail open: keep unknown worlds
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, 1);
+    }
+
+    #[test]
+    fn test_filter_empty_input() {
+        let helper: WorldHelper = sample_world_data().into();
+        let listings: Vec<ActiveListing> = vec![];
+        let excluded = std::collections::HashSet::<String>::new();
+
+        let filtered = helper.filter_by_excluded_datacenters(listings, &excluded);
+        assert!(filtered.is_empty());
     }
 }
