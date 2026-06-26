@@ -20,6 +20,7 @@ use crate::components::{
     list::{
         auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
         list_item_row::ListItemRow, list_settings_drawer::ListSettingsDrawer, list_summary::*,
+        world_exclusion_controls::WorldExclusionControls,
     },
     list_subscribe_drawer::ListSubscribeDrawer,
     loading::*,
@@ -193,9 +194,41 @@ pub fn ListView() -> impl IntoView {
     let (settings_open, set_settings_open) = signal(false);
     let (rename_open, set_rename_open) = signal(false);
     let (rename_value, set_rename_value) = signal(String::new());
+    let world_exclusions = RwSignal::new(HashSet::<i32>::new());
+
+    let available_worlds = Memo::new(move |_| {
+        let mut worlds = HashSet::new();
+        if let Some(Ok((_, items))) = list_view.get() {
+            for (_, listings) in items {
+                for listing in listings {
+                    worlds.insert(listing.world_id);
+                }
+            }
+        }
+        worlds.into_iter().collect::<Vec<_>>()
+    });
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
+
+    let filtered_items = Memo::new(move |_| {
+        list_view.get().and_then(|res| {
+            res.ok().map(|(list, items)| {
+                let exclusions = world_exclusions.get();
+                let filtered = items
+                    .into_iter()
+                    .map(|(item, listings)| {
+                        let filtered_listings = listings
+                            .into_iter()
+                            .filter(|l| !exclusions.contains(&l.world_id))
+                            .collect::<Vec<_>>();
+                        (item, filtered_listings)
+                    })
+                    .collect::<Vec<_>>();
+                (list, filtered)
+            })
+        })
+    });
 
     type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
     let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
@@ -399,6 +432,10 @@ pub fn ListView() -> impl IntoView {
                     </div>
 
                     <div class="flex flex-wrap gap-2 self-start lg:self-auto">
+                        <WorldExclusionControls
+                            world_exclusions=world_exclusions
+                            available_worlds=available_worlds.into()
+                        />
                         <Tooltip tooltip_text=t_string!(i18n, list_view_subscribe_tooltip).to_string()>
                             <button
                                 class="btn-secondary"
@@ -613,10 +650,10 @@ pub fn ListView() -> impl IntoView {
                 view! { <Loading /> }
             }>
                 {move || {
-                    list_view
+                    filtered_items
                         .get()
-                        .map(move |list| match list {
-                            Ok((list, items)) => {
+                        .map(move |(list, items)| {
+                            {
                                 let items = StoredValue::new(items);
                                 Either::Left(move || {
                                     let item_snapshot = items.get_value();
@@ -942,19 +979,17 @@ pub fn ListView() -> impl IntoView {
                                     }
                                 })
                             }
-                            Err(e) => {
-                                Either::Right(
-                                    view! {
-                                        // TODO full table?
-                                        // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
-                                        // ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
-                                        // })).collect::<Vec<_>>();
-                                        // <TableContent rows=price_view on_change=move |_| {} />
-
-                                        <div class="panel rounded-lg p-4">{format!("{}\n{e}", t_string!(i18n, list_view_failed_to_get_items))}</div>
-                                    },
-                                )
-                            }
+                        })
+                        .or_else(|| {
+                            list_view.get().and_then(|res| {
+                                res.err().map(|e| {
+                                    Either::Right(
+                                        view! {
+                                            <div class="panel rounded-lg p-4">{format!("{}\n{e}", t_string!(i18n, list_view_failed_to_get_items))}</div>
+                                        },
+                                    )
+                                })
+                            })
                         })
                 }}
 

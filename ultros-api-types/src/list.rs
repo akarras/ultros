@@ -31,7 +31,7 @@ pub struct CreateList {
     pub wdr_filter: AnySelector,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct List {
     pub id: i32,
     pub owner: i64,
@@ -40,7 +40,7 @@ pub struct List {
     pub wdr_filter: AnySelector,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ListWithPermission {
     pub list: List,
     pub permission: ListPermission,
@@ -64,7 +64,7 @@ pub struct ListItem {
     pub target_price: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ListInvite {
     pub id: String,
     pub list_id: i32,

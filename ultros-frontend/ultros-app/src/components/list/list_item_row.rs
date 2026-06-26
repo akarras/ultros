@@ -14,7 +14,7 @@ use xiv_gen::ItemId;
 #[component]
 pub fn ListItemRow(
     item: ListItem,
-    listings: Vec<ActiveListing>,
+    #[prop(into)] listings: Signal<Vec<ActiveListing>>,
     edit_list_mode: Signal<bool>,
     #[prop(into)] selected_items: RwSignal<HashSet<i32>>,
     // The return type of delete_list_item is impl Future<Output = Result<(), AppError>> so in Action it becomes () for the output if we don't care about the result, but wait. Action<I, O>. The original code used Action::new. Let's check original.
@@ -43,7 +43,7 @@ pub fn ListItemRow(
     let (alert_drawer_open, set_alert_drawer_open) = signal(false);
     let item = RwSignal::new(item);
     let temp_item = RwSignal::new(item());
-    let listings = RwSignal::new(listings);
+    let listings = listings;
 
     view! {
         <tr class=move || {
