@@ -43,7 +43,9 @@ use ultros_api_types::list::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
-use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
+use ultros_api_types::user::{
+    AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
@@ -886,6 +888,33 @@ pub(crate) async fn delete_multiple_list_items(
     Ok(Json(()))
 }
 
+async fn assign_retainer_character(
+    user: AuthDiscordUser,
+    State(db): State<UltrosDb>,
+    Path(id): Path<i32>,
+    Json(data): Json<AssignRetainerCharacter>,
+) -> Result<Json<()>, ApiError> {
+    if let Some(character_id) = data.character_id {
+        // Validate that the character is owned by the user
+        if !db
+            .check_character_owned_by(user.id as i64, character_id)
+            .await?
+        {
+            return Err(ApiError::AnyhowError(anyhow::anyhow!(
+                "Character not found or not owned by user"
+            )));
+        }
+    }
+
+    db.update_owned_retainer(user.id as i64, id, |mut existing_retainer| {
+        existing_retainer.character_id = ActiveValue::Set(data.character_id);
+        existing_retainer
+    })
+    .await?;
+
+    Ok(Json(()))
+}
+
 /// Does a bulk lookup of item listings. Will not preserve order.
 pub(crate) async fn bulk_item_listings(
     State(db): State<UltrosDb>,
@@ -1492,6 +1521,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
+        .route(
+            "/api/v1/retainer/assign_character/:id",
+            post(assign_retainer_character),
+        )
         .route(
             "/api/v1/user/retainer/listings",
             get(user_retainer_listings),

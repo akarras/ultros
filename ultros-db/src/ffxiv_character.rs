@@ -193,4 +193,17 @@ impl UltrosDb {
             .await?;
         Ok(delete.rows_affected)
     }
+
+    pub async fn check_character_owned_by(
+        &self,
+        discord_user_id: i64,
+        ffxiv_character_id: i32,
+    ) -> Result<bool> {
+        let owned = owned_ffxiv_character::Entity::find()
+            .filter(owned_ffxiv_character::Column::DiscordUserId.eq(discord_user_id))
+            .filter(owned_ffxiv_character::Column::FfxivCharacterId.eq(ffxiv_character_id))
+            .one(&self.db)
+            .await?;
+        Ok(owned.is_some())
+    }
 }

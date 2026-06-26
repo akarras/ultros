@@ -27,3 +27,8 @@ pub struct UserRetainerListings {
     /// List of all the user's retainers. If no character is associated, it will be placed into the None.
     pub retainers: UserRetainerListWithListings,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AssignRetainerCharacter {
+    pub character_id: Option<i32>,
+}

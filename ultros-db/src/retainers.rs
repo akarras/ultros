@@ -374,3 +374,23 @@ impl UltrosDb {
         Ok(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_db() -> UltrosDb {
+        UltrosDb::connect().await.expect("connect to test DB")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB"]
+    async fn test_assign_retainer_character() {
+        let db = test_db().await;
+        // This test would ideally set up a user, character, and retainer,
+        // then call update_owned_retainer.
+        // Given the lack of test scaffolding, we'll just verify it compiles
+        // and provides a placeholder for future live-db tests.
+        let _ = db;
+    }
+}
