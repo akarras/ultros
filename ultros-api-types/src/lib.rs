@@ -107,7 +107,7 @@ impl CurrentlyShownItem {
 mod tests {
     use super::*;
     use crate::websocket::{EventType, ListingEventData, SaleEventData};
-    use chrono::NaiveDateTime;
+    use chrono::{DateTime, NaiveDateTime};
 
     fn test_listing(id: i32, item_id: i32, price: i32) -> (ActiveListing, Retainer) {
         (
@@ -299,8 +299,8 @@ mod tests {
             listings: vec![],
             sales: vec![],
         };
-        let date_early = NaiveDateTime::from_timestamp_opt(1000, 0).unwrap();
-        let date_late = NaiveDateTime::from_timestamp_opt(2000, 0).unwrap();
+        let date_early = DateTime::from_timestamp(1000, 0).unwrap().naive_utc();
+        let date_late = DateTime::from_timestamp(2000, 0).unwrap().naive_utc();
 
         let event = EventType::Added(SaleEventData {
             sales: vec![
@@ -327,7 +327,7 @@ mod tests {
                 i,
                 1,
                 100,
-                NaiveDateTime::from_timestamp_opt(i as i64, 0).unwrap(),
+                DateTime::from_timestamp(i as i64, 0).unwrap().naive_utc(),
             ));
         }
 
