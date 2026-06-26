@@ -598,10 +598,9 @@ impl UltrosDb {
         for list_id in list_ids {
             let permission = self.get_permission(list_id, discord_user).await?;
             if permission < ListPermission::Write {
-                return Err(ListError::Forbidden(
-                    "Insufficient permissions to update list items",
-                )
-                .into());
+                return Err(
+                    ListError::Forbidden("Insufficient permissions to update list items").into(),
+                );
             }
         }
 

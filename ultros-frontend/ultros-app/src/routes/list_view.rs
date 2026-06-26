@@ -60,10 +60,9 @@ pub fn ListView() -> impl IntoView {
 
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
-    let edit_items_hq =
-        Action::new(move |(items, hq): &(Vec<i32>, Option<bool>)| {
-            edit_list_items_hq(items.clone(), *hq)
-        });
+    let edit_items_hq = Action::new(move |(items, hq): &(Vec<i32>, Option<bool>)| {
+        edit_list_items_hq(items.clone(), *hq)
+    });
     let edit_list_action =
         Action::new(move |list: &ultros_api_types::list::List| edit_list(list.clone()));
 
@@ -88,7 +87,7 @@ pub fn ListView() -> impl IntoView {
                     external_update_version.get(),
                     edit_item.version().get(),
                     delete_items.version().get(),
-                        edit_items_hq.version().get(),
+                    edit_items_hq.version().get(),
                     edit_list_action.version().get(),
                 ),
             )
