@@ -8,8 +8,6 @@ use itertools::Itertools;
 use poise::serenity_prelude::User;
 use ultros_api_types::list::ListPermission;
 use ultros_db::world_data::world_cache::AnySelector;
-use xiv_gen::ItemId;
-
 #[poise::command(
     slash_command,
     prefix_command,
