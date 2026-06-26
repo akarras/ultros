@@ -870,7 +870,7 @@ pub(crate) async fn bulk_edit_list_items_hq(
         .await?;
 
     for list_id in list_ids {
-        if let Ok(list) = db.get_list(list_id, user.id as i64).await {
+        if let Ok((list, _owner_name)) = db.get_list(list_id, user.id as i64).await {
             send_list_event(
                 &senders,
                 EventType::updated(ListEventData::List(List::try_from(list)?)),
