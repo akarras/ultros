@@ -21,23 +21,19 @@ pub fn Groups() -> impl IntoView {
     let delete_group_action = Action::new(move |id: &i32| delete_group(*id));
 
     Effect::new(move |_| {
-        if let Some(res) = create_group_action.value().get() {
-            if let Some(toasts) = toasts {
-                match res {
-                    Ok(_) => toasts.success(t_string!(i18n, groups_group_created)),
-                    Err(e) => toasts.error(format!("Failed to create group: {e}")),
-                }
+        if let (Some(res), Some(toasts)) = (create_group_action.value().get(), toasts) {
+            match res {
+                Ok(_) => toasts.success(t_string!(i18n, groups_group_created)),
+                Err(e) => toasts.error(format!("Failed to create group: {e}")),
             }
         }
     });
 
     Effect::new(move |_| {
-        if let Some(res) = delete_group_action.value().get() {
-            if let Some(toasts) = toasts {
-                match res {
-                    Ok(_) => toasts.success(t_string!(i18n, groups_group_deleted)),
-                    Err(e) => toasts.error(format!("Failed to delete group: {e}")),
-                }
+        if let (Some(res), Some(toasts)) = (delete_group_action.value().get(), toasts) {
+            match res {
+                Ok(_) => toasts.success(t_string!(i18n, groups_group_deleted)),
+                Err(e) => toasts.error(format!("Failed to delete group: {e}")),
             }
         }
     });
@@ -171,23 +167,19 @@ fn GroupCard(
     });
 
     Effect::new(move |_| {
-        if let Some(res) = add_member_action.value().get() {
-            if let Some(toasts) = toasts {
-                match res {
-                    Ok(_) => toasts.success(t_string!(i18n, groups_member_added)),
-                    Err(e) => toasts.error(format!("Failed to add member: {e}")),
-                }
+        if let (Some(res), Some(toasts)) = (add_member_action.value().get(), toasts) {
+            match res {
+                Ok(_) => toasts.success(t_string!(i18n, groups_member_added)),
+                Err(e) => toasts.error(format!("Failed to add member: {e}")),
             }
         }
     });
 
     Effect::new(move |_| {
-        if let Some(res) = remove_member_action.value().get() {
-            if let Some(toasts) = toasts {
-                match res {
-                    Ok(_) => toasts.success(t_string!(i18n, groups_member_removed)),
-                    Err(e) => toasts.error(format!("Failed to remove member: {e}")),
-                }
+        if let (Some(res), Some(toasts)) = (remove_member_action.value().get(), toasts) {
+            match res {
+                Ok(_) => toasts.success(t_string!(i18n, groups_member_removed)),
+                Err(e) => toasts.error(format!("Failed to remove member: {e}")),
             }
         }
     });
@@ -225,7 +217,7 @@ fn GroupCard(
                         }
                     >
                         <Icon icon=if confirm_delete() { i::BiTrashSolid } else { i::BiTrashRegular } />
-                        {move || confirm_delete().then(|| t!(i18n, groups_delete_group_confirm))}
+                        {move || confirm_delete().then_some(t!(i18n, groups_delete_group_confirm))}
                     </button>
                 </Show>
             </div>
@@ -244,7 +236,7 @@ fn GroupCard(
                                                 key=move |member| member.user_id
                                                 children=move |member| {
                                                     let member_id = member.user_id;
-                                                    let is_owner = group.owner_id == member_id as i64;
+                                                    let is_owner = group.owner_id == member_id;
                                                     view! {
                                                         <div class="flex justify-between items-center p-2 rounded bg-black/20 group">
                                                             <div class="flex items-center gap-2">
