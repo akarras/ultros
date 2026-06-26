@@ -87,6 +87,14 @@ pub(crate) fn discord_locale_to_xiv_language(locale: Option<&str>) -> Language {
 /// name exactly; returns the first locale that contains the name. Used so users can
 /// paste a localized item name from anywhere on the site and have the bot resolve it.
 pub(crate) fn resolve_item_id_any_locale(name: &str) -> Option<i32> {
+    if let Ok(id) = name.parse::<i32>() {
+        if xiv_gen_db::data_for(Language::En)
+            .items
+            .contains_key(&ItemId(id))
+        {
+            return Some(id);
+        }
+    }
     let lowered = name.to_lowercase();
     for (_, data) in xiv_gen_db::all_locales() {
         if let Some((ItemId(id), _)) = data
@@ -172,22 +180,16 @@ pub(crate) fn localized_item_matches(
 /// Discord autocomplete handler for item-name string args. Searches every supported
 /// locale for substring matches; deduplicates by item id; prefers the user's locale
 /// for display when the same item matched in multiple locales. The choice value is
-/// the canonical English item name so existing callers of [`resolve_item_id`] keep
-/// working unchanged.
+/// the FFXIV item id stringified so that [`resolve_item_id`] can always find it
+/// regardless of whether the display name was truncated to 100 characters.
 pub(crate) async fn autocomplete_item<'a>(
     ctx: Context<'_>,
     partial: &'a str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    let en = xiv_gen_db::data_for(Language::En);
     localized_item_matches(partial, user_lang)
         .into_iter()
-        .filter_map(move |m| {
-            let en_name = en.items.get(&ItemId(m.item_id))?.name.to_string();
-            Some(poise::serenity_prelude::AutocompleteChoice::new(
-                m.label, en_name,
-            ))
-        })
+        .map(move |m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string()))
 }
 
 /// Resolve a user-supplied item name (case-insensitive exact match) to an FFXIV item id.

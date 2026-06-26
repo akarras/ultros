@@ -84,6 +84,27 @@ pub(crate) async fn show_lists(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Look up a list by name or stringified list ID for a given user.
+async fn resolve_list(
+    ctx: &Context<'_>,
+    discord_user: i64,
+    list_name_or_id: &str,
+) -> Result<Option<ultros_db::entity::list::Model>, Error> {
+    let db = &ctx.data().db;
+    if let Ok(id) = list_name_or_id.parse::<i32>() {
+        let list = db.get_list_by_id(id).await?;
+        if let Some(list) = list {
+            let permission = db.get_permission(list.id, discord_user).await?;
+            if permission >= ListPermission::Read {
+                return Ok(Some(list));
+            }
+        }
+    }
+    Ok(db
+        .get_list_by_name_for_user(discord_user, list_name_or_id)
+        .await?)
+}
+
 async fn autocomplete_list_name(
     ctx: Context<'_>,
     partial: &str,
@@ -99,7 +120,7 @@ async fn autocomplete_list_name(
         .map(|l| {
             poise::serenity_prelude::AutocompleteChoice::new(
                 truncate_100(&l.name),
-                truncate_100(&l.name),
+                l.id.to_string(),
             )
         })
 }
@@ -109,19 +130,9 @@ async fn autocomplete_item_name_global(
     partial: &str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> {
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    let en = xiv_gen_db::data_for(xiv_gen::Language::En);
     localized_item_matches(partial, user_lang)
         .into_iter()
-        .filter_map(move |m| {
-            let en_name = en.items.get(&ItemId(m.item_id))?.name.to_string();
-            if en_name.is_empty() {
-                return None;
-            }
-            Some(poise::serenity_prelude::AutocompleteChoice::new(
-                m.label,
-                truncate_100(&en_name),
-            ))
-        })
+        .map(move |m| poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string()))
         .take(25)
         .collect::<Vec<_>>()
         .into_iter()
@@ -149,10 +160,7 @@ async fn share_user(
         .get_or_create_discord_user(user.id.get(), user.name.clone())
         .await?;
     let permission = parse_share_permission(permission)?;
-    let list = ctx
-        .data()
-        .db
-        .get_list_by_name_for_user(owner.id, &list_name)
+    let list = resolve_list(&ctx, owner.id, &list_name)
         .await?
         .ok_or(anyhow!("Unable to find list `{list_name}`"))?;
 
@@ -193,10 +201,7 @@ async fn create_invite(
         .get_or_create_discord_user(ctx.author().id.get(), ctx.author().name.clone())
         .await?;
     let permission = parse_share_permission(permission)?;
-    let list = ctx
-        .data()
-        .db
-        .get_list_by_name_for_user(owner.id, &list_name)
+    let list = resolve_list(&ctx, owner.id, &list_name)
         .await?
         .ok_or(anyhow!("Unable to find list `{list_name}`"))?;
     let invite = ctx
@@ -292,15 +297,12 @@ async fn remove(
     list_name: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let lists = ctx
-        .data()
-        .db
-        .get_list_by_name_for_user(ctx.author().id.get() as i64, &list_name)
+    let list = resolve_list(&ctx, ctx.author().id.get() as i64, &list_name)
         .await?
         .ok_or(anyhow!("Failed to find list {list_name}"))?;
     ctx.data()
         .db
-        .delete_list(lists.id, ctx.author().id.get() as i64)
+        .delete_list(list.id, ctx.author().id.get() as i64)
         .await?;
     ctx.send(
         poise::CreateReply::default().embed(
@@ -332,10 +334,7 @@ async fn add_item(
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
     let item_id = resolve_item_id_any_locale(&item_name).ok_or(anyhow!("Unable to find item"))?;
     let display_name = localized_item_name(item_id, user_lang);
-    let list = ctx
-        .data()
-        .db
-        .get_list_by_name_for_user(author_id, &list_name)
+    let list = resolve_list(&ctx, author_id, &list_name)
         .await?
         .ok_or(anyhow!("List not found"))?;
     ctx.data()
@@ -364,10 +363,7 @@ async fn remove_item(
 ) -> Result<(), Error> {
     let author_id = ctx.author().id.get() as i64;
     let id = resolve_item_id_any_locale(&item_name).ok_or(anyhow!("Unable to find item"))?;
-    let list = ctx
-        .data()
-        .db
-        .get_list_by_name_for_user(author_id, &list_name)
+    let list = resolve_list(&ctx, author_id, &list_name)
         .await?
         .ok_or(anyhow!("Unable to find list"))?;
     let item = ctx
@@ -394,10 +390,7 @@ async fn show_list(
 ) -> Result<(), Error> {
     ctx.defer_or_broadcast().await?;
     let discord_user = ctx.author().id.get() as i64;
-    let list = ctx
-        .data()
-        .db
-        .get_list_by_name_for_user(discord_user, &list_name)
+    let list = resolve_list(&ctx, discord_user, &list_name)
         .await?
         .ok_or(anyhow!("Unable to get list"))?;
     let mut list_listings = ctx

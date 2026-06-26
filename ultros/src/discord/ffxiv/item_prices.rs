@@ -7,7 +7,7 @@ use xiv_gen::ItemId;
 use crate::discord::ffxiv::ULTROS_COLOR;
 use crate::discord::ffxiv::helpers::{
     discord_locale_to_xiv_language, localized_item_matches, localized_item_name,
-    name_matches_lowered, top_n_cheapest_listings, truncate_100,
+    name_matches_lowered, top_n_cheapest_listings,
 };
 use crate::web::item_card::generate_image;
 
@@ -38,7 +38,7 @@ async fn autocomplete_world<'a>(
         .world_cache
         .get_all_results()
         .filter(move |w| name_matches_lowered(w.get_name(), &partial))
-        .map(|w| truncate_100(w.get_name()))
+        .map(|w| w.get_name().to_string())
         .take(99)
 }
 
