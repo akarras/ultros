@@ -184,6 +184,12 @@ case " ${LEPTOS_FEATURES:-} " in
         if [ "$shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$shared_list_exit"
         fi
+        log "running group-shared-list flow (test-auth feature detected)"
+        group_shared_list_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:group-shared-list ) || group_shared_list_exit=$?
+        if [ "$group_shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$group_shared_list_exit"
+        fi
         log "running list-flow E2E (test-auth feature detected)"
         list_flow_exit=0
         ( cd integration && BASE_URL="$BASE_URL" npm run test:list-flow ) || list_flow_exit=$?
