@@ -531,7 +531,7 @@ mod tests {
             vec![(item, vec![l1, l2])],
             &world_data,
             "Unknown",
-            &vec![100],
+            &[100],
         );
         // Total should be 10 * 200 = 2000 (from world 101)
         assert_eq!(total, 2000);
