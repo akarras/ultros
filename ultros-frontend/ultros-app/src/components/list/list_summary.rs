@@ -527,9 +527,12 @@ mod tests {
         l2.world_id = 101; // Next cheapest
 
         // Exclude world 100
-        let (total, world_prices) =
-            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &vec![100]);
-
+        let (total, world_prices) = calculate_list_totals(
+            vec![(item, vec![l1, l2])],
+            &world_data,
+            "Unknown",
+            &vec![100],
+        );
         // Total should be 10 * 200 = 2000 (from world 101)
         assert_eq!(total, 2000);
         assert_eq!(world_prices.len(), 1);

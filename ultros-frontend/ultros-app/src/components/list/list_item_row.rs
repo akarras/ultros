@@ -45,6 +45,7 @@ pub fn ListItemRow(
     let item = RwSignal::new(item);
     let temp_item = RwSignal::new(item());
     let listings = RwSignal::new(listings);
+    let excluded_worlds = StoredValue::new(excluded_worlds);
 
     view! {
         <tr class=move || {
@@ -201,7 +202,7 @@ pub fn ListItemRow(
                                             quantity=remaining
                                             hq=item.with(|i| i.hq)
                                             listings=listings()
-                                            excluded_worlds=excluded_worlds.clone()
+                                            excluded_worlds=excluded_worlds.get_value()
                                         />
                                     }
                                 }}
@@ -406,7 +407,7 @@ pub fn ListItemRow(
                                             quantity=remaining
                                             hq=item.hq
                                             listings=listings()
-                                            excluded_worlds=excluded_worlds.clone()
+                                            excluded_worlds=excluded_worlds.get_value()
                                         />
                                     }
                                 }}

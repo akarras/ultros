@@ -5,11 +5,10 @@ use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::relative_time::RelativeToNow;
 use crate::components::world_name::WorldName;
-use crate::components::price_viewer::get_cheapest_listing;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    recently_viewed::RecentItems, related_items::*, sale_history_table::*, skeleton::BoxSkeleton,
-    stats_display::*, toggle::Toggle, ui_text::*,
+    price_viewer::*, recently_viewed::RecentItems, related_items::*, sale_history_table::*,
+    skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
