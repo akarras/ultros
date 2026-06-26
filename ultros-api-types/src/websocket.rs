@@ -118,6 +118,41 @@ impl FilterPredicate {
     }
 }
 
+/// Decides whether a websocket listing/sale event is relevant to an analyzer view.
+/// An event is relevant if:
+/// 1. It matches the item being viewed.
+/// 2. It matches either the target sell world OR it matches the buy filter (if one is active).
+pub fn is_analyzer_event_relevant(
+    event_item_id: i32,
+    event_world_id: i32,
+    viewed_item_id: i32,
+    sell_world_id: i32,
+    buy_filter: Option<AnySelector>,
+    world_helper: &WorldHelper,
+) -> bool {
+    if event_item_id != viewed_item_id {
+        return false;
+    }
+
+    // Always relevant if it happened on our target sell world.
+    if event_world_id == sell_world_id {
+        return true;
+    }
+
+    // If there is a buy filter (world or datacenter), it's relevant if it matches that filter.
+    if let Some(filter) = buy_filter {
+        let event_any = AnySelector::World(event_world_id);
+        if let (Some(event_res), Some(filter_res)) = (
+            world_helper.lookup_selector(event_any),
+            world_helper.lookup_selector(filter),
+        ) {
+            return event_res.is_in(&filter_res);
+        }
+    }
+
+    false
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum EventType<T> {
     Added(T),
@@ -408,5 +443,77 @@ mod tests {
         v.sort();
         assert_eq!(v[0].id, 1);
         assert_eq!(v[1].id, 2);
+    }
+
+    #[test]
+    fn analyzer_matching_logic() {
+        let h = helper();
+        let sell_world = 100;
+        let item_id = 42;
+
+        // 1. Matches item and sell world
+        assert!(is_analyzer_event_relevant(
+            item_id, 100, item_id, sell_world, None, &h
+        ));
+
+        // 2. Unrelated item id (ignored)
+        assert!(!is_analyzer_event_relevant(
+            99, 100, item_id, sell_world, None, &h
+        ));
+
+        // 3. Unrelated world, no filter (ignored)
+        assert!(!is_analyzer_event_relevant(
+            item_id, 101, item_id, sell_world, None, &h
+        ));
+
+        // 4. Unrelated world, matching filter (world level)
+        assert!(is_analyzer_event_relevant(
+            item_id,
+            101,
+            item_id,
+            sell_world,
+            Some(AnySelector::World(101)),
+            &h
+        ));
+
+        // 5. Unrelated world, matching filter (datacenter level)
+        assert!(is_analyzer_event_relevant(
+            item_id,
+            101,
+            item_id,
+            sell_world,
+            Some(AnySelector::Datacenter(10)),
+            &h
+        ));
+
+        // 6. Matching item id on unrelated world when filtered (ignored)
+        // (Event on world 999, but filter is world 101)
+        assert!(!is_analyzer_event_relevant(
+            item_id,
+            999,
+            item_id,
+            sell_world,
+            Some(AnySelector::World(101)),
+            &h
+        ));
+
+        // 7. Matching item id on unrelated world when filtered by another world (ignored)
+        assert!(!is_analyzer_event_relevant(
+            item_id,
+            101,
+            item_id,
+            sell_world,
+            Some(AnySelector::World(100)),
+            &h
+        ));
+    }
+
+    #[test]
+    fn analyzer_matching_logic_empty_states() {
+        let h = helper();
+
+        // Verify "no item viewed" state handling (should return false)
+        assert!(!is_analyzer_event_relevant(42, 100, 0, 100, None, &h));
+        assert!(!is_analyzer_event_relevant(42, 100, 42, 0, None, &h));
     }
 }
