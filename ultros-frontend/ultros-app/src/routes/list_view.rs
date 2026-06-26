@@ -1051,7 +1051,7 @@ fn ActivityFeed(
 }
 
 fn upsert_listings(
-    items: &mut Vec<(ListItem, Vec<ActiveListing>)>,
+    items: &mut [(ListItem, Vec<ActiveListing>)],
     listings: Vec<(ActiveListing, Retainer)>,
 ) {
     for (incoming, _) in listings {
@@ -1068,7 +1068,7 @@ fn upsert_listings(
 }
 
 fn remove_listings(
-    items: &mut Vec<(ListItem, Vec<ActiveListing>)>,
+    items: &mut [(ListItem, Vec<ActiveListing>)],
     listings: Vec<(ActiveListing, Retainer)>,
 ) {
     for (removed, _) in listings {
@@ -1081,7 +1081,7 @@ fn remove_listings(
 }
 
 fn apply_listings_event(
-    items: &mut Vec<(ListItem, Vec<ActiveListing>)>,
+    items: &mut [(ListItem, Vec<ActiveListing>)],
     event: EventType<ListingEventData>,
 ) {
     match event {
