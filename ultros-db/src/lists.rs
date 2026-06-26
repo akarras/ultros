@@ -16,7 +16,10 @@ use sea_orm::{
     ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
     sea_query::Expr,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
@@ -577,6 +580,37 @@ impl UltrosDb {
         .exec_without_returning(&self.db)
         .await?;
         Ok(many)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn set_list_items_hq(
+        &self,
+        discord_user: i64,
+        list_item_ids: &[i32],
+        hq: Option<bool>,
+    ) -> Result<Vec<i32>> {
+        let items = list_item::Entity::find()
+            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
+            .all(&self.db)
+            .await?;
+        let list_ids: HashSet<i32> = items.iter().map(|i| i.list_id).collect();
+        let list_ids_vec: Vec<i32> = list_ids.iter().copied().collect();
+        for list_id in list_ids {
+            let permission = self.get_permission(list_id, discord_user).await?;
+            if permission < ListPermission::Write {
+                return Err(ListError::Forbidden(
+                    "Insufficient permissions to update list items",
+                )
+                .into());
+            }
+        }
+
+        list_item::Entity::update_many()
+            .col_expr(list_item::Column::Hq, Expr::value(hq))
+            .filter(list_item::Column::Id.is_in(list_item_ids.to_vec()))
+            .exec(&self.db)
+            .await?;
+        Ok(list_ids_vec)
     }
 
     #[instrument(skip(self))]

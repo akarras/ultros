@@ -12,7 +12,7 @@ use ultros_api_types::list::{ListActivity, ListItem, ListPermission};
 
 use crate::api::{
     add_item_to_list, delete_list_item, delete_list_items, edit_list, edit_list_item,
-    get_list_activity, get_list_items_with_listings,
+    edit_list_items_hq, get_list_activity, get_list_items_with_listings,
 };
 use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
@@ -60,6 +60,10 @@ pub fn ListView() -> impl IntoView {
 
     let edit_item = Action::new(move |item: &ListItem| edit_list_item(item.clone()));
     let delete_items = Action::new(move |items: &Vec<i32>| delete_list_items(items.clone()));
+    let edit_items_hq =
+        Action::new(move |(items, hq): &(Vec<i32>, Option<bool>)| {
+            edit_list_items_hq(items.clone(), *hq)
+        });
     let edit_list_action =
         Action::new(move |list: &ultros_api_types::list::List| edit_list(list.clone()));
 
@@ -84,6 +88,7 @@ pub fn ListView() -> impl IntoView {
                     external_update_version.get(),
                     edit_item.version().get(),
                     delete_items.version().get(),
+                        edit_items_hq.version().get(),
                     edit_list_action.version().get(),
                 ),
             )
@@ -823,6 +828,30 @@ pub fn ListView() -> impl IntoView {
                                                                     >
                                                                         <Icon icon=i::BiTrashSolid />
                                                                         <span>{t!(i18n, list_view_delete)}</span>
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn-secondary"
+                                                                        on:click=move |_| {
+                                                                            let items = selected_items
+                                                                                .with_untracked(|s| {
+                                                                                    s.iter().copied().collect::<Vec<_>>()
+                                                                                });
+                                                                            edit_items_hq.dispatch((items, Some(true)));
+                                                                        }
+                                                                    >
+                                                                        <span>{t!(i18n, list_view_bulk_set_hq)}</span>
+                                                                    </button>
+                                                                    <button
+                                                                        class="btn-secondary"
+                                                                        on:click=move |_| {
+                                                                            let items = selected_items
+                                                                                .with_untracked(|s| {
+                                                                                    s.iter().copied().collect::<Vec<_>>()
+                                                                                });
+                                                                            edit_items_hq.dispatch((items, None));
+                                                                        }
+                                                                    >
+                                                                        <span>{t!(i18n, list_view_bulk_any_quality)}</span>
                                                                     </button>
                                                                 </div>
                                                             </div>

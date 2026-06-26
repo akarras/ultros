@@ -443,6 +443,16 @@ pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
     post_api("/api/v1/list/item/delete", list_items).await
 }
 
+#[derive(Serialize)]
+pub(crate) struct BulkHqUpdate {
+    pub(crate) ids: Vec<i32>,
+    pub(crate) hq: Option<bool>,
+}
+
+pub(crate) async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppResult<()> {
+    post_api("/api/v1/list/item/hq", BulkHqUpdate { ids, hq }).await
+}
+
 pub(crate) async fn get_groups() -> AppResult<Vec<UserGroup>> {
     fetch_api("/api/v1/group").await
 }

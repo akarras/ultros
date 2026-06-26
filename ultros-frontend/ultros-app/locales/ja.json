@@ -585,6 +585,8 @@
     "list_view_adding": "追加中…",
     "list_view_add": "追加",
     "list_view_bulk_edit": "一括編集",
+    "list_view_bulk_set_hq": "FORCE HQ",
+    "list_view_bulk_any_quality": "ANY QUALITY",
     "list_view_delete": "削除",
     "list_view_select_all": "すべて選択",
     "list_view_deselect_all": "選択を解除",
