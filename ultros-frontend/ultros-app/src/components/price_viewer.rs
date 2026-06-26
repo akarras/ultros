@@ -21,20 +21,15 @@ fn get_cheapest_listing(
         if listing.is_excluded(excluded_worlds) {
             return false;
         }
-        if !excluded_datacenters.is_empty() {
-            if let Some(world_helper) = world_helper {
-                if let Some(AnyResult::World(world)) =
-                    world_helper.lookup_selector(AnySelector::World(listing.world_id))
-                {
-                    if let Some(AnyResult::Datacenter(dc)) =
-                        world_helper.lookup_selector(AnySelector::Datacenter(world.datacenter_id))
-                    {
-                        if excluded_datacenters.iter().any(|&name| name == dc.name) {
-                            return false;
-                        }
-                    }
-                }
-            }
+        if !excluded_datacenters.is_empty()
+            && let Some(world_helper) = world_helper
+            && let Some(AnyResult::World(world)) =
+                world_helper.lookup_selector(AnySelector::World(listing.world_id))
+            && let Some(AnyResult::Datacenter(dc)) =
+                world_helper.lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+            && excluded_datacenters.iter().any(|&name| name == dc.name)
+        {
+            return false;
         }
         if let Some(hq) = hq {
             listing.hq == hq

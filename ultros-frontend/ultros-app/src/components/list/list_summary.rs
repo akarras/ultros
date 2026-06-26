@@ -10,7 +10,7 @@ use xiv_gen::ItemId;
 
 use crate::components::gil::*;
 use crate::global_state::LocalWorldData;
-use ultros_api_types::world_helper::{AnyResult, AnySelector};
+use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
 
 /// Represents the total price for items from a specific world
 #[derive(Clone, Debug)]
@@ -29,7 +29,7 @@ fn get_cheapest_listing(
     hq: Option<bool>,
     excluded_worlds: &[i32],
     excluded_datacenters: &[&str],
-    world_helper: Option<&ultros_api_types::world_helper::WorldHelper>,
+    world_helper: Option<&WorldHelper>,
 ) -> Vec<ActiveListing> {
     listings.sort_by_key(|listing| listing.price_per_unit);
     let quantity_needed = quantity;
@@ -40,20 +40,15 @@ fn get_cheapest_listing(
             if listing.is_excluded(excluded_worlds) {
                 return false;
             }
-            if !excluded_datacenters.is_empty() {
-                if let Some(world_helper) = world_helper {
-                    if let Some(AnyResult::World(world)) =
-                        world_helper.lookup_selector(AnySelector::World(listing.world_id))
-                    {
-                        if let Some(AnyResult::Datacenter(dc)) = world_helper
-                            .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
-                        {
-                            if excluded_datacenters.iter().any(|&name| name == dc.name) {
-                                return false;
-                            }
-                        }
-                    }
-                }
+            if !excluded_datacenters.is_empty()
+                && let Some(world_helper) = world_helper
+                && let Some(AnyResult::World(world)) =
+                    world_helper.lookup_selector(AnySelector::World(listing.world_id))
+                && let Some(AnyResult::Datacenter(dc)) = world_helper
+                    .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                && excluded_datacenters.iter().any(|&name| name == dc.name)
+            {
+                return false;
             }
             if let Some(hq) = hq {
                 listing.hq == hq
@@ -72,7 +67,7 @@ fn get_cheapest_listing(
 /// Calculate the total price and breakdown by world for all items in the list
 fn calculate_list_totals(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    world_data: &ultros_api_types::world_helper::WorldHelper,
+    world_data: &WorldHelper,
     unknown_label: &str,
     excluded_worlds: &[i32],
     excluded_datacenters: &[&str],
