@@ -9,6 +9,7 @@ use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
 use crate::components::gil::*;
+use crate::components::price_viewer::get_cheapest_listing;
 use crate::global_state::LocalWorldData;
 use ultros_api_types::world_helper::{AnyResult, AnySelector};
 
@@ -20,36 +21,6 @@ struct WorldPrice {
     datacenter_name: String,
     total_price: i32,
     item_count: usize,
-}
-
-/// Find the cheapest listings for a given item based on quantity and HQ preference
-fn get_cheapest_listing(
-    mut listings: Vec<ActiveListing>,
-    quantity: i32,
-    hq: Option<bool>,
-    excluded_worlds: &[i32],
-) -> Vec<ActiveListing> {
-    listings.sort_by_key(|listing| listing.price_per_unit);
-    let quantity_needed = quantity;
-    let mut current_quantity = 0;
-    listings
-        .into_iter()
-        .filter(|listing| {
-            if listing.is_excluded(excluded_worlds) {
-                return false;
-            }
-            if let Some(hq) = hq {
-                listing.hq == hq
-            } else {
-                true
-            }
-        })
-        .take_while(|listing| {
-            let needed_more = current_quantity < quantity_needed;
-            current_quantity += listing.quantity;
-            needed_more
-        })
-        .collect::<Vec<_>>()
 }
 
 /// Calculate the total price and breakdown by world for all items in the list
