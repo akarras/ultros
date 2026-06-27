@@ -182,10 +182,10 @@ pub fn ListSummary(
         })
     });
 
-    if (move || {
+    if {
         let (grand_total, world_prices) = list_totals.get();
         grand_total == 0 && world_prices.is_empty()
-    })() {
+    } {
         return view! {
             <div class="rounded-lg border border-[color:var(--brand-ring)]/40 bg-[color:var(--color-background-panel)] p-4">
                 <div class="text-center text-lg font-bold text-[color:var(--brand-fg)]">

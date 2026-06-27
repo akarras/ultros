@@ -590,6 +590,7 @@
     "list_view_delete": "LÖSCHEN",
     "list_view_select_all": "ALLE AUSWÄHLEN",
     "list_view_deselect_all": "AUSWAHL AUFHEBEN",
+    "list_view_exclude_datacenters": "Exclude Datacenters",
     "list_view_hq": "HQ",
     "list_view_item": "Gegenstand",
     "list_view_quantity": "Menge",

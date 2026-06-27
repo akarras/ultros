@@ -436,7 +436,7 @@ pub fn ListView() -> impl IntoView {
                                         .collect_view()
                                         .into_any()
                                 }
-                                _ => view! {}.into_any(),
+                                _ => ().into_any(),
                             }
                         }}
                     </div>
