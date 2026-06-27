@@ -103,6 +103,12 @@ async fn resolve_list(
         .await?)
 }
 
+pub(crate) fn list_to_choice(
+    list: &ultros_db::entity::list::Model,
+) -> poise::serenity_prelude::AutocompleteChoice {
+    poise::serenity_prelude::AutocompleteChoice::new(truncate_100(&list.name), list.id.to_string())
+}
+
 async fn autocomplete_list_name(
     ctx: Context<'_>,
     partial: &str,
@@ -116,12 +122,7 @@ async fn autocomplete_list_name(
         .into_iter()
         .map(|(l, _)| l)
         .filter(move |l| l.name.to_ascii_lowercase().contains(&partial))
-        .map(|l| {
-            poise::serenity_prelude::AutocompleteChoice::new(
-                truncate_100(&l.name),
-                l.id.to_string(),
-            )
-        })
+        .map(|l| list_to_choice(&l))
 }
 
 async fn autocomplete_item_name_global(
@@ -427,4 +428,28 @@ async fn show_list(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_to_choice_truncation() {
+        let long_name = "L".repeat(110);
+        let list = ultros_db::entity::list::Model {
+            id: 12345,
+            owner: 1,
+            name: long_name.clone(),
+            world_id: None,
+            datacenter_id: None,
+            region_id: None,
+        };
+        let choice = list_to_choice(&list);
+        assert_eq!(choice.name.chars().count(), 100);
+        assert_eq!(
+            choice.value,
+            poise::serenity_prelude::AutocompleteChoiceValue::String("12345".to_string())
+        );
+    }
 }
