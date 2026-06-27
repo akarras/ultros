@@ -17,6 +17,7 @@ pub mod datacenter_name;
 pub mod endpoints_panel;
 pub mod filter_card;
 pub mod fonts;
+pub mod freshness_badge;
 pub mod gil;
 pub mod history_panel;
 pub mod icon;
