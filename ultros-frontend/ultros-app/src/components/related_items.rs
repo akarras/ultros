@@ -579,23 +579,23 @@ fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
         if is_receive_0 || is_receive_1 {
             let mut costs = Vec::new();
             // Check all three possible cost slots
-            if let Some(&cost_item) = shop.item_cost_0.get(i) {
-                if cost_item > 0 {
-                    let count = shop.count_cost_0.get(i).cloned().unwrap_or(0);
-                    costs.push((ItemId(cost_item as i32), count));
-                }
+            if let Some(&cost_item) = shop.item_cost_0.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_0.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
             }
-            if let Some(&cost_item) = shop.item_cost_1.get(i) {
-                if cost_item > 0 {
-                    let count = shop.count_cost_1.get(i).cloned().unwrap_or(0);
-                    costs.push((ItemId(cost_item as i32), count));
-                }
+            if let Some(&cost_item) = shop.item_cost_1.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_1.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
             }
-            if let Some(&cost_item) = shop.item_cost_2.get(i) {
-                if cost_item > 0 {
-                    let count = shop.count_cost_2.get(i).cloned().unwrap_or(0);
-                    costs.push((ItemId(cost_item as i32), count));
-                }
+            if let Some(&cost_item) = shop.item_cost_2.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_2.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
             }
 
             if !costs.is_empty() {
