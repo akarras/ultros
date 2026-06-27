@@ -57,6 +57,9 @@ RUN cargo chef cook --release --target wasm32-unknown-unknown -p ultros-client -
 # Now the actual source.
 COPY . .
 ENV WASM_BINDGEN_WEAKREF=1
+# CARGO_BUILD_JOBS=1 limits parallelism to reduce peak memory usage,
+# preventing OOM errors on resource-constrained CI runners.
+ENV CARGO_BUILD_JOBS=1
 RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via

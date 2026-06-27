@@ -125,8 +125,10 @@ web-push = { version = "0.11.0", default-features = false }
 [profile.release]
 # Optimized for size — used by the WASM client bundle (where bytes-on-the-wire matter).
 # The server binary uses [profile.server-release] below; see workspace.metadata.leptos.
+# codegen-units=1 reduces peak memory usage during compilation to prevent CI OOMs.
 opt-level = "z"
 strip = "debuginfo"
+codegen-units = 1
 
 # Server binary profile. cargo-leptos builds the bin with this when set as
 # bin-profile-release in workspace.metadata.leptos.
@@ -243,4 +245,5 @@ opt-level = 3
 
 [profile.release.build-override]
 opt-level = 3
-codegen-units = 256
+# codegen-units=1 reduces peak memory usage during compilation to prevent CI OOMs.
+codegen-units = 1
