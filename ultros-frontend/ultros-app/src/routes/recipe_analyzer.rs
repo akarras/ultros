@@ -7,6 +7,7 @@ use crate::components::related_items::is_shard_item;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{SalesStats, analyze_sales, roi_badge_class},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -17,6 +18,7 @@ use crate::{
         icon::Icon,
         item_icon::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -94,6 +96,16 @@ fn RecipeAnalyzerTable(
 
     world: Signal<String>,
 ) -> impl IntoView {
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -155,9 +167,9 @@ fn RecipeAnalyzerTable(
         let filter_outliers = filter_outliers().unwrap_or(false);
 
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map = HashMap::new();
+            let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
-                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
+                map.entry(sale.item_id).or_default().push(sale);
             }
             map
         } else {
@@ -508,6 +520,10 @@ fn RecipeAnalyzerTable(
                     </ToolbarPills>
                 </ToolbarField>
                 <ToolbarSpacer />
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                    />
             </Toolbar>
 
             <Show when=move || !has_levels()>

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
 /**
- * Shared-list E2E. Requires the server to be built with --features test-auth.
+ * Shared-list E2E. Requires the server to be built with `--features test-auth`.
  */
 
 "use strict";
@@ -10,8 +10,8 @@ const USERS = {
   owner: { id: 880000000001, username: "SharedListOwner" },
   reader: { id: 880000000002, username: "SharedListReader" },
   invited: { id: 880000000003, username: "SharedListInvited" },
-  overLimit: { id: 880000000004, username: "SharedListOverLimit" },
-  manual: { id: 880000000005, username: "SharedListManual" },
+  manual: { id: 880000000004, username: "SharedListManual" },
+  overLimit: { id: 880000000005, username: "SharedListOverLimit" },
 };
 
 async function login(page, baseUrl, user) {
@@ -68,24 +68,24 @@ async function main() {
     const ownerCtx = await browser.createBrowserContext();
     const readerCtx = await browser.createBrowserContext();
     const invitedCtx = await browser.createBrowserContext();
-    const overLimitCtx = await browser.createBrowserContext();
     const manualCtx = await browser.createBrowserContext();
+    const overLimitCtx = await browser.createBrowserContext();
 
     const ownerPage = await ownerCtx.newPage();
     const readerPage = await readerCtx.newPage();
     const invitedPage = await invitedCtx.newPage();
-    const overLimitPage = await overLimitCtx.newPage();
     const manualPage = await manualCtx.newPage();
+    const overLimitPage = await overLimitCtx.newPage();
 
-    for (const page of [ownerPage, readerPage, invitedPage, overLimitPage, manualPage]) {
+    for (const page of [ownerPage, readerPage, invitedPage, manualPage, overLimitPage]) {
       page.setDefaultTimeout(TIMEOUT_MS);
     }
 
     await login(ownerPage, BASE_URL, USERS.owner);
     await login(readerPage, BASE_URL, USERS.reader);
     await login(invitedPage, BASE_URL, USERS.invited);
-    await login(overLimitPage, BASE_URL, USERS.overLimit);
     await login(manualPage, BASE_URL, USERS.manual);
+    await login(overLimitPage, BASE_URL, USERS.overLimit);
 
     const worldData = await api(ownerPage, "GET", "/api/v1/world_data");
     failIf(worldData.status !== 200, failures, `world_data expected 200, got ${worldData.status}`);
@@ -144,14 +144,32 @@ async function main() {
 
     const invite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
       permission: "Read",
-      max_uses: 1,
+      max_uses: 2,
     });
     failIf(invite.status !== 200, failures, `create invite expected 200, got ${invite.status}`);
     const inviteId = invite.body.id;
     failIf(!inviteId || inviteId.length < 32, failures, "invite id was missing or too short");
 
-    // UI-level invite redemption
-    console.log(`[step] invited user redeems invite via UI: /list/invite/${inviteId}`);
+    // Manual invite redemption via UI
+    console.log(`[step] manual user redeems invite via code input: ${inviteId}`);
+    await manualPage.goto(`${BASE_URL}/list`, { waitUntil: "networkidle0" });
+    await manualPage.type('input[placeholder="Invite code"]', inviteId);
+    await manualPage.click('button.btn-secondary ::-p-text(Redeem)');
+    await manualPage.waitForFunction(
+      (expected) => window.location.pathname === expected,
+      { timeout: 10000 },
+      `/list/${listId}`,
+    ).catch(() => {});
+
+    const manualUrl = manualPage.url();
+    failIf(!manualUrl.endsWith(`/list/${listId}`), failures, `manual user expected redirect to /list/${listId}, got ${manualUrl}`);
+
+    const manualLists = await api(manualPage, "GET", "/api/v1/list");
+    const manualList = manualLists.body.find((entry) => entry.list.id === listId);
+    failIf(!manualList, failures, "manually-redeemed list not returned to user via API");
+
+    // UI-level invite redemption (direct link)
+    console.log(`[step] invited user redeems invite via direct link UI: /list/invite/${inviteId}`);
     await invitedPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
     await invitedPage.waitForFunction(
       (expected) => window.location.pathname === expected,
@@ -241,31 +259,6 @@ async function main() {
     const ownerListsAfterLeave = await api(ownerPage, "GET", "/api/v1/list");
     const ownerListAfterLeave = ownerListsAfterLeave.body.find((entry) => entry.list.id === listId);
     failIf(!ownerListAfterLeave, failures, "list disappeared for owner after reader left");
-
-    // Manual invite redemption
-    console.log("[step] manual user redeems invite via form on /list");
-    const manualInvite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
-      permission: "Read",
-      max_uses: 1,
-    });
-    failIf(manualInvite.status !== 200, failures, `create manual invite expected 200, got ${manualInvite.status}`);
-    const manualInviteId = manualInvite.body.id;
-
-    await manualPage.goto(`${BASE_URL}/list`, { waitUntil: "networkidle0" });
-    await manualPage.type('input[placeholder="Invite code"]', manualInviteId);
-    await manualPage.click("button.btn-secondary ::-p-text(Redeem)");
-
-    await manualPage.waitForFunction(
-      (expectedName) => {
-        const links = Array.from(document.querySelectorAll("a"));
-        return links.some((a) => a.innerText === expectedName);
-      },
-      { timeout: 10000 },
-      name,
-    );
-    const manualLists = await api(manualPage, "GET", "/api/v1/list");
-    const manualList = manualLists.body.find((entry) => entry.list.id === listId);
-    failIf(!manualList, failures, "manually-redeemed list not returned to user");
 
     for (const page of [ownerPage, readerPage, invitedPage, overLimitPage, manualPage]) {
       await page.close();

@@ -5,7 +5,7 @@ use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use icondata as i;
 use leptos::prelude::*;
 use ultros_api_types::ActiveListing;
-use ultros_api_types::list::{ListItem, ListPermission, ListWithPermission};
+use ultros_api_types::list::{ListCapabilities, ListItem, ListPermission, ListWithPermission};
 use ultros_api_types::websocket::{EventType, FilterPredicate, ServerClient, SocketMessageType};
 
 type ListViewResult =
@@ -77,7 +77,7 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
                             list_view
                                 .get()
                                 .and_then(Result::ok)
-                                .map(|(list, _)| list.permission < ListPermission::Write)
+                                .map(|(list, _)| !ListCapabilities::from(list.permission).can_write)
                                 .unwrap_or(true)
                         }
                         on:click=move |_| set_is_watching.update(|w| *w = !*w)
@@ -95,7 +95,7 @@ fn apply_purchase_to_list(
     items: &mut [(ListItem, Vec<ActiveListing>)],
     item_id: i32,
 ) -> Vec<ListItem> {
-    if permission < ListPermission::Write {
+    if !ListCapabilities::from(permission).can_write {
         return vec![];
     }
     let mut updated_items = Vec::new();
