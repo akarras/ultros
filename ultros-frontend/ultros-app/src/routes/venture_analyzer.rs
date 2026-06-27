@@ -175,7 +175,7 @@ fn VentureAnalyzerTable(
         let filter_outliers = filter_outliers().unwrap_or(false);
 
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map = HashMap::new();
+            let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
                 map.entry(sale.item_id).or_default().push(sale);
             }
