@@ -10,15 +10,17 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         virtual_scroller::*,
         world_picker::*,
     },
-    error::AppError,
+    error::{AppError, AppResult},
     global_state::LocalWorldData,
     i18n::*,
+    ws::realtime::{RealtimeSubscription, use_realtime},
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -62,7 +64,7 @@ enum SortMode {
     Profit,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct VendorProfitTable(Vec<Arc<VendorProfitData>>);
 
 fn compute_summary(sale: SaleData) -> SaleSummary {
@@ -207,12 +209,70 @@ impl VendorProfitTable {
 
 #[component]
 fn VendorResaleTable(
-    sales: RecentSales,
-    world_cheapest_listings: CheapestListings,
+    sales_resource: ArcResource<AppResult<RecentSales>>,
+    world_cheapest_listings_resource: ArcResource<AppResult<CheapestListings>>,
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let profits = VendorProfitTable::new(sales, world_cheapest_listings);
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
+
+    let profits = Memo::new(move |_| {
+        let sales = sales_resource.get().and_then(|r| r.ok())?;
+        let world_cheapest = world_cheapest_listings_resource
+            .get()
+            .and_then(|r| r.ok())?;
+        Some(VendorProfitTable::new(sales, world_cheapest))
+    });
+
+    let realtime = use_realtime();
+    let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    Effect::new(move |_| {
+        market_subscription.update_value(|sub| *sub = None);
+        let world_name = world.get();
+        let Some(realtime) = realtime.clone() else {
+            set_realtime_status.set("offline".to_string());
+            return;
+        };
+        let worlds = use_context::<LocalWorldData>()
+            .expect("Worlds should always be populated here")
+            .0
+            .unwrap();
+        let Some(selector) = worlds
+            .lookup_world_by_name(&world_name)
+            .map(|world| ultros_api_types::world_helper::AnySelector::from(&world))
+        else {
+            return;
+        };
+
+        let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
+        let sub = realtime.subscribe_market(
+            filter,
+            ultros_api_types::websocket::SocketMessageType::Sales,
+            move |message| {
+                use ultros_api_types::websocket::ServerClient;
+                match message {
+                    ServerClient::Subscribed { .. } => {
+                        set_realtime_status.set("live".to_string());
+                    }
+                    ServerClient::Sales(_) => {
+                        set_realtime_status.set("live".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        sales_resource.refetch();
+                    }
+                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                        set_realtime_status.set("reconnecting".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        sales_resource.refetch();
+                        world_cheapest_listings_resource.refetch();
+                    }
+                    _ => {}
+                }
+            },
+        );
+        market_subscription.set_value(Some(sub));
+    });
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
@@ -234,6 +294,9 @@ fn VendorResaleTable(
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
+        let Some(profits) = profits.get() else {
+            return vec![];
+        };
         let mut sorted_data = profits
             .0
             .iter()
@@ -445,8 +508,14 @@ fn VendorResaleTable(
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
+                <div class="text-sm text-[color:var(--color-text)] flex flex-wrap items-center gap-3">
+                    <div>
+                        <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
+                    </div>
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update_at
+                    />
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {
@@ -735,12 +804,14 @@ pub fn VendorWorldView() -> impl IntoView {
                             let world_cheapest = world_cheapest_listings.get();
                             let sales = sales.get();
                             match (world_cheapest, sales) {
-                                (Some(Ok(w)), Some(Ok(s))) => {
+                                (Some(_), Some(_)) => {
+                                    let world_cheapest = world_cheapest.clone();
+                                    let sales = sales.clone();
                                     Either::Left(
                                         view! {
                                             <VendorResaleTable
-                                                sales=s
-                                                world_cheapest_listings=w
+                                                sales_resource=sales
+                                                world_cheapest_listings_resource=world_cheapest
                                                 world=world
                                             />
                                         },

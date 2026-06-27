@@ -17,6 +17,7 @@ use crate::{
         icon::Icon,
         item_icon::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -24,10 +25,12 @@ use crate::{
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
+    error::AppResult,
     global_state::{
         cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
         region_for_world::use_region_for_world,
     },
+    ws::realtime::{RealtimeSubscription, use_realtime},
 };
 use icondata as i;
 use leptos::prelude::*;
@@ -89,17 +92,73 @@ impl Display for SortMode {
 
 #[component]
 fn RecipeAnalyzerTable(
-    global_cheapest_listings: CheapestListings,
-    recent_sales: Option<RecentSales>,
+    global_cheapest_listings_resource: ArcResource<AppResult<CheapestListings>>,
+    recent_sales_resource: ArcResource<AppResult<RecentSales>>,
 
     world: Signal<String>,
 ) -> impl IntoView {
-    let prices = CheapestListingsMap::from(global_cheapest_listings);
+    let prices = Memo::new(move |_| {
+        global_cheapest_listings_resource
+            .get()
+            .and_then(|r| r.ok())
+            .map(|listings| CheapestListingsMap::from(listings.clone()))
+    });
     let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
     let recipe_level_tables = &data.recipe_level_tables;
     let i18n = use_i18n();
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
+
+    let realtime = use_realtime();
+    let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    Effect::new(move |_| {
+        market_subscription.update_value(|sub| *sub = None);
+        let world_name = world.get();
+        let Some(realtime) = realtime.clone() else {
+            set_realtime_status.set("offline".to_string());
+            return;
+        };
+        let worlds = use_context::<LocalWorldData>()
+            .expect("Worlds should always be populated here")
+            .0
+            .unwrap();
+        let Some(selector) = worlds
+            .lookup_world_by_name(&world_name)
+            .map(|world| ultros_api_types::world_helper::AnySelector::from(&world))
+        else {
+            return;
+        };
+
+        let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
+        let sub = realtime.subscribe_market(
+            filter,
+            ultros_api_types::websocket::SocketMessageType::Sales,
+            move |message| {
+                use ultros_api_types::websocket::ServerClient;
+                match message {
+                    ServerClient::Subscribed { .. } => {
+                        set_realtime_status.set("live".to_string());
+                    }
+                    ServerClient::Sales(_) => {
+                        set_realtime_status.set("live".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        recent_sales_resource.refetch();
+                    }
+                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                        set_realtime_status.set("reconnecting".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        recent_sales_resource.refetch();
+                        global_cheapest_listings_resource.refetch();
+                    }
+                    _ => {}
+                }
+            },
+        );
+        market_subscription.set_value(Some(sub));
+    });
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -149,20 +208,24 @@ fn RecipeAnalyzerTable(
 
     let computed_data = Memo::new(move |_| {
         let recipes_by_output = recipes_by_output();
+        let Some(prices) = prices.get() else {
+            return vec![];
+        };
+        let Some(recent_sales) = recent_sales_resource.get().and_then(|r| r.ok()) else {
+            return vec![];
+        };
         let levels = crafter_levels.get().unwrap_or_default();
         let use_sub = use_subcrafts().unwrap_or(false);
         let require_hq_flag = require_hq().unwrap_or(false);
         let filter_outliers = filter_outliers().unwrap_or(false);
 
-        let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map = HashMap::new();
-            for sale in &sales.sales {
-                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
-            }
-            map
-        } else {
-            HashMap::new()
-        };
+        let mut sales_map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
+        for sale in &recent_sales.sales {
+            sales_map
+                .entry(sale.item_id)
+                .or_insert_with(Vec::new)
+                .push(sale);
+        }
 
         let mut results = Vec::new();
 
@@ -508,6 +571,10 @@ fn RecipeAnalyzerTable(
                     </ToolbarPills>
                 </ToolbarField>
                 <ToolbarSpacer />
+                <RealtimeStatus
+                    status=realtime_status
+                    last_update=last_update_at
+                />
             </Toolbar>
 
             <Show when=move || !has_levels()>
@@ -806,20 +873,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
                         match (listings, sales) {
-                            (Some(Ok(listings)), Some(Ok(sales))) => {
+                            (Some(_), Some(_)) => {
+                                let listings = global_cheapest_listings.clone();
+                                let sales = recent_sales.clone();
                                 view! {
                                     <RecipeAnalyzerTable
-                                        global_cheapest_listings=listings
-                                        recent_sales=Some(sales)
-                                        world=Signal::derive(region)
-                                    />
-                                }.into_any()
-                            }
-                            (Some(Ok(listings)), _) => {
-                                view! {
-                                    <RecipeAnalyzerTable
-                                        global_cheapest_listings=listings
-                                        recent_sales=None
+                                        global_cheapest_listings_resource=listings
+                                        recent_sales_resource=sales
                                         world=Signal::derive(region)
                                     />
                                 }.into_any()
