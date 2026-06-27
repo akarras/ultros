@@ -4,6 +4,7 @@ use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageTy
 #[cfg(not(feature = "ssr"))]
 mod client {
     use super::*;
+    use chrono::{DateTime, Utc};
     use gloo_timers::callback::Timeout;
     use send_wrapper::SendWrapper;
     use std::{
@@ -36,6 +37,8 @@ mod client {
         pending_messages: RefCell<Vec<String>>,
         next_subscription_id: Cell<u64>,
         reconnect_attempt: Cell<u32>,
+        status: Signal<String>,
+        last_update: Signal<Option<DateTime<Utc>>>,
         set_status: WriteSignal<String>,
         set_last_update: WriteSignal<Option<DateTime<Utc>>>,
         onopen: RefCell<Option<Closure<dyn FnMut(Event)>>>,
@@ -49,8 +52,8 @@ mod client {
             let (status, set_status) = signal("connecting".to_string());
             let (last_update, set_last_update) = signal(None);
             let client = Self {
-                status,
-                last_update,
+                status: status.into(),
+                last_update: last_update.into(),
                 inner: SendWrapper::new(Rc::new(RealtimeInner {
                     socket: RefCell::new(None),
                     handlers: RefCell::new(HashMap::new()),
@@ -58,6 +61,8 @@ mod client {
                     pending_messages: RefCell::new(Vec::new()),
                     next_subscription_id: Cell::new(1),
                     reconnect_attempt: Cell::new(0),
+                    status: status.into(),
+                    last_update: last_update.into(),
                     set_status,
                     set_last_update,
                     onopen: RefCell::new(None),
@@ -307,7 +312,11 @@ mod client {
         let weak = Rc::downgrade(&inner);
         Timeout::new(delay_ms, move || {
             if let Some(inner) = weak.upgrade() {
+                let status = inner.status;
+                let last_update = inner.last_update;
                 RealtimeClient {
+                    status,
+                    last_update,
                     inner: SendWrapper::new(inner),
                 }
                 .connect();
