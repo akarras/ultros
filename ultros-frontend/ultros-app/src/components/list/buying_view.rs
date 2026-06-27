@@ -102,21 +102,22 @@ pub fn BuyingView(
         let mut dc_groups: HashMap<i32, (String, WorldMap)> = HashMap::new();
 
         for (world_id, listing) in selected_listings.get() {
-        let world_res = world_data_2.lookup_selector(AnySelector::World(world_id));
-        if let Some(AnyResult::World(world)) = world_res {
-            let dc_res = world_data.lookup_selector(AnySelector::Datacenter(world.datacenter_id));
-            if let Some(AnyResult::Datacenter(dc)) = dc_res {
-                let dc_entry = dc_groups
-                    .entry(dc.id)
-                    .or_insert_with(|| (dc.name.clone(), HashMap::new()));
-                let world_entry = dc_entry
-                    .1
-                    .entry(world.id)
-                    .or_insert_with(|| (world.name.clone(), Vec::new()));
-                world_entry.1.push(listing);
+            let world_res = world_data_2.lookup_selector(AnySelector::World(world_id));
+            if let Some(AnyResult::World(world)) = world_res {
+                let dc_res =
+                    world_data.lookup_selector(AnySelector::Datacenter(world.datacenter_id));
+                if let Some(AnyResult::Datacenter(dc)) = dc_res {
+                    let dc_entry = dc_groups
+                        .entry(dc.id)
+                        .or_insert_with(|| (dc.name.clone(), HashMap::new()));
+                    let world_entry = dc_entry
+                        .1
+                        .entry(world.id)
+                        .or_insert_with(|| (world.name.clone(), Vec::new()));
+                    world_entry.1.push(listing);
+                }
             }
         }
-    }
         dc_groups
     });
 

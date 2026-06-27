@@ -203,23 +203,23 @@ pub fn ListSummary(
         let mut datacenter_totals: HashMap<i32, (String, i32, usize)> = HashMap::new();
 
         for (_, world_price) in world_prices {
-        datacenter_groups
-            .entry(world_price.datacenter_id)
-            .or_default()
-            .push(world_price.clone());
+            datacenter_groups
+                .entry(world_price.datacenter_id)
+                .or_default()
+                .push(world_price.clone());
 
-        datacenter_totals
-            .entry(world_price.datacenter_id)
-            .and_modify(|(_, price, count)| {
-                *price += world_price.total_price;
-                *count += world_price.item_count;
-            })
-            .or_insert((
-                world_price.datacenter_name.clone(),
-                world_price.total_price,
-                world_price.item_count,
-            ));
-    }
+            datacenter_totals
+                .entry(world_price.datacenter_id)
+                .and_modify(|(_, price, count)| {
+                    *price += world_price.total_price;
+                    *count += world_price.item_count;
+                })
+                .or_insert((
+                    world_price.datacenter_name.clone(),
+                    world_price.total_price,
+                    world_price.item_count,
+                ));
+        }
 
         // Sort datacenters by total item count (descending)
         let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
@@ -245,7 +245,8 @@ pub fn ListSummary(
         let has_multiple = sorted_datacenters.len() > 1;
         if prev.is_none() || prev != Some(has_multiple) {
             if !has_multiple {
-                set_expanded_datacenters.set(sorted_datacenters.iter().map(|(id, _)| *id).collect());
+                set_expanded_datacenters
+                    .set(sorted_datacenters.iter().map(|(id, _)| *id).collect());
             } else {
                 set_expanded_datacenters.set(HashSet::new());
             }
