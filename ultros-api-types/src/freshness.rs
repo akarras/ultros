@@ -184,4 +184,38 @@ mod tests {
             FreshnessVerdict::VerifyInGame
         );
     }
+
+    #[test]
+    fn test_item_view_regression_focused_coverage() {
+        use FreshnessVerdict::*;
+
+        // 1. Reliable/current: Very recent data for a slow mover
+        assert_eq!(
+            calculate_freshness_verdict(Some(Duration::minutes(5)), Some(0.1)),
+            Fresh,
+            "5-minute old data for slow mover should be Fresh"
+        );
+
+        // 2. Stale/verify-in-game: Old data for a very fast mover
+        // 100 sales/day => Fresh threshold ~14m, Caution ~42m.
+        assert_eq!(
+            calculate_freshness_verdict(Some(Duration::hours(2)), Some(100.0)),
+            VerifyInGame,
+            "2-hour old data for ultra-fast mover should be VerifyInGame"
+        );
+
+        // 3. Missing/unknown timestamp
+        assert_eq!(
+            calculate_freshness_verdict(None, Some(1.0)),
+            NoData,
+            "Missing age should result in NoData"
+        );
+
+        // 4. Missing velocity (unknown state)
+        assert_eq!(
+            calculate_freshness_verdict(Some(Duration::hours(1)), None),
+            NoData,
+            "Missing velocity should result in NoData"
+        );
+    }
 }

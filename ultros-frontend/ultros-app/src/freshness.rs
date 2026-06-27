@@ -118,6 +118,36 @@ mod tests {
     }
 
     #[test]
+    fn test_verdict_to_display_mapping_exhaustive() {
+        use FreshnessVerdict::*;
+
+        let cases = vec![
+            (Fresh, FreshnessLabel::Fresh, FreshnessTone::Success),
+            (Caution, FreshnessLabel::Caution, FreshnessTone::Warning),
+            (
+                VerifyInGame,
+                FreshnessLabel::VerifyInGame,
+                FreshnessTone::Error,
+            ),
+            (NoData, FreshnessLabel::NoData, FreshnessTone::Neutral),
+        ];
+
+        for (verdict, expected_label, expected_tone) in cases {
+            let display = get_freshness_verdict_display(verdict, None);
+            assert_eq!(
+                display.label, expected_label,
+                "Verdict {:?} should map to label {:?}",
+                verdict, expected_label
+            );
+            assert_eq!(
+                display.tone, expected_tone,
+                "Verdict {:?} should map to tone {:?}",
+                verdict, expected_tone
+            );
+        }
+    }
+
+    #[test]
     fn test_age_formatting_boundaries() {
         // 59 seconds
         let display =
