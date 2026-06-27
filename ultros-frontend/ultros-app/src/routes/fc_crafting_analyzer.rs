@@ -290,10 +290,7 @@ fn FCCraftingAnalyzerTable(
 
         let mut sales_map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
         for sale in &recent_sales.sales {
-            sales_map
-                .entry(sale.item_id)
-                .or_insert_with(Vec::new)
-                .push(sale);
+            sales_map.entry(sale.item_id).or_default().push(sale);
         }
 
         // Hoist context lookups ONCE; the on-hand SNAPSHOT is rebuilt
