@@ -10,7 +10,7 @@ use xiv_gen::ItemId;
 
 use crate::components::gil::*;
 use crate::global_state::LocalWorldData;
-use ultros_api_types::world_helper::{AnyResult, AnySelector};
+use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
 
 /// Represents the total price for items from a specific world
 #[derive(Clone, Debug)]
@@ -28,6 +28,8 @@ fn get_cheapest_listing(
     quantity: i32,
     hq: Option<bool>,
     excluded_worlds: &[i32],
+    excluded_datacenters: &[&str],
+    world_helper: Option<&WorldHelper>,
 ) -> Vec<ActiveListing> {
     listings.sort_by_key(|listing| listing.price_per_unit);
     let quantity_needed = quantity;
@@ -36,6 +38,16 @@ fn get_cheapest_listing(
         .into_iter()
         .filter(|listing| {
             if listing.is_excluded(excluded_worlds) {
+                return false;
+            }
+            if !excluded_datacenters.is_empty()
+                && let Some(world_helper) = world_helper
+                && let Some(AnyResult::World(world)) =
+                    world_helper.lookup_selector(AnySelector::World(listing.world_id))
+                && let Some(AnyResult::Datacenter(dc)) =
+                    world_helper.lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                && excluded_datacenters.iter().any(|&name| name == dc.name)
+            {
                 return false;
             }
             if let Some(hq) = hq {
@@ -55,9 +67,10 @@ fn get_cheapest_listing(
 /// Calculate the total price and breakdown by world for all items in the list
 fn calculate_list_totals(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    world_data: &ultros_api_types::world_helper::WorldHelper,
+    world_data: &WorldHelper,
     unknown_label: &str,
     excluded_worlds: &[i32],
+    excluded_datacenters: &[&str],
 ) -> (i32, HashMap<i32, WorldPrice>) {
     let mut grand_total = 0;
     let mut world_prices: HashMap<i32, WorldPrice> = HashMap::new();
@@ -71,7 +84,14 @@ fn calculate_list_totals(
         }
         let hq = list_item.hq;
 
-        let cheapest_listings = get_cheapest_listing(listings, quantity, hq, excluded_worlds);
+        let cheapest_listings = get_cheapest_listing(
+            listings,
+            quantity,
+            hq,
+            excluded_worlds,
+            excluded_datacenters,
+            Some(world_data),
+        );
 
         for listing in cheapest_listings {
             let price = listing.price_per_unit * listing.quantity;
@@ -118,6 +138,7 @@ fn calculate_list_totals(
 pub fn ListSummary(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
     #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(default = &[])] excluded_datacenters: &'static [&'static str],
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -157,6 +178,7 @@ pub fn ListSummary(
         &world_data,
         &unknown_label,
         excluded_worlds,
+        excluded_datacenters,
     );
 
     if grand_total == 0 && world_prices.is_empty() {
@@ -346,7 +368,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None, &[]);
+        let result = get_cheapest_listing(listings, 10, None, &[], &[], None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -360,7 +382,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None, &[]);
+        let result = get_cheapest_listing(listings, 12, None, &[], &[], None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -427,6 +449,7 @@ mod tests {
             &world_data,
             "Unknown",
             &[],
+            &[],
         );
 
         // Grand total:
@@ -467,16 +490,16 @@ mod tests {
         let listings = vec![l1, l2, l3];
 
         // Case 1: Exclude the cheapest world (10)
-        let result = get_cheapest_listing(listings.clone(), 5, None, &[10]);
+        let result = get_cheapest_listing(listings.clone(), 5, None, &[10], &[], None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 2); // Should pick the next cheapest
 
         // Case 2: Exclude all current listings
-        let result = get_cheapest_listing(listings.clone(), 5, None, &[10, 20, 30]);
+        let result = get_cheapest_listing(listings.clone(), 5, None, &[10, 20, 30], &[], None);
         assert!(result.is_empty());
 
         // Case 3: Exclude none
-        let result = get_cheapest_listing(listings, 5, None, &[]);
+        let result = get_cheapest_listing(listings, 5, None, &[], &[], None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 1);
     }
@@ -527,8 +550,13 @@ mod tests {
         l2.world_id = 101; // Next cheapest
 
         // Exclude world 100
-        let (total, world_prices) =
-            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &[100]);
+        let (total, world_prices) = calculate_list_totals(
+            vec![(item, vec![l1, l2])],
+            &world_data,
+            "Unknown",
+            &[100],
+            &[],
+        );
 
         // Total should be 10 * 200 = 2000 (from world 101)
         assert_eq!(total, 2000);
