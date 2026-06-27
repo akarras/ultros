@@ -153,6 +153,14 @@ strip = "debuginfo"
 [profile.server-release]
 inherits = "release"
 debug = "line-tables-only"
+# Memory reduction for CI OOMs:
+#  - incremental=false and lto=false: Reduce overhead of link-time/build-state tracking.
+#  - codegen-units=16: Splitting the crate into units allows LLVM to process smaller
+#    chunks of code sequentially (since CARGO_BUILD_JOBS=1 is set in Docker),
+#    preventing a single massive LLVM unit from exhausting runner memory.
+codegen-units = 16
+incremental = false
+lto = false
 
 [profile.dev]
 # opt-level = 1

@@ -1,14 +1,15 @@
 use crate::api::{get_extended_sale_history, get_item_stats, get_listings};
 use crate::components::confidence_badge::ConfidenceBadge;
+use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
-use crate::components::relative_time::RelativeToNow;
+use crate::components::price_viewer::get_cheapest_listing;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    price_viewer::*, recently_viewed::RecentItems, related_items::*, sale_history_table::*,
-    skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
+    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
+    sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -22,6 +23,7 @@ use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
+use std::collections::HashSet;
 use std::sync::Arc;
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world_helper::AnySelector;
@@ -247,9 +249,15 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
+    realtime_status: Signal<String>,
+    last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
     #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
+    let world_data = use_context::<LocalWorldData>();
     let cheapest_prices = use_context::<CheapestPrices>();
 
     // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
@@ -289,8 +297,31 @@ fn MarketStatsPanel(
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let listings = data.listings.iter().map(|(l, _)| l.clone()).collect::<Vec<_>>();
-                            let cheapest_nq = get_cheapest_listing(listings.clone(), 1, Some(false), &excluded_worlds).into_iter().next();
-                            let cheapest_hq = get_cheapest_listing(listings, 1, Some(true), &excluded_worlds).into_iter().next();
+                            let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+                            let cheapest_nq = excluded_datacenters.with(|excluded_datacenters| {
+                                get_cheapest_listing(
+                                    listings.clone(),
+                                    1,
+                                    Some(false),
+                                    &excluded_worlds,
+                                    excluded_datacenters,
+                                    world_helper.map(|h| h.as_ref()),
+                                )
+                                .into_iter()
+                                .next()
+                            });
+                            let cheapest_hq = excluded_datacenters.with(|excluded_datacenters| {
+                                get_cheapest_listing(
+                                    listings,
+                                    1,
+                                    Some(true),
+                                    &excluded_worlds,
+                                    excluded_datacenters,
+                                    world_helper.map(|h| h.as_ref()),
+                                )
+                                .into_iter()
+                                .next()
+                            });
                             let listings_count = data.listings.len();
                             let recent_sales = data.sales.clone();
                             let avg_price = if recent_sales.is_empty() {
@@ -319,11 +350,38 @@ fn MarketStatsPanel(
                                 .get(&ItemId(item_id()))
                                 .map(|item| item.price_mid as i32)
                                 .filter(|p| *p > 0);
+
+                            let sales_per_day = if recent_sales.len() > 1 {
+                                let newest = recent_sales.first().unwrap().sold_date;
+                                let oldest = recent_sales.last().unwrap().sold_date;
+                                let seconds = (newest - oldest).num_seconds().abs();
+                                let count = recent_sales.len() - 1;
+                                if seconds > 0 {
+                                    Some((count as f32) / (seconds as f32 / 86400.0))
+                                } else {
+                                    Some(100.0) // high velocity
+                                }
+                            } else if recent_sales.is_empty() {
+                                Some(0.0)
+                            } else {
+                                None
+                            };
+
                             let latest_timestamp = data
                                 .listings
                                 .iter()
                                 .map(|(listing, _)| listing.timestamp)
                                 .max();
+
+                            let age = latest_timestamp.map(|t| {
+                                chrono::Utc::now().naive_utc() - t
+                            });
+
+                            let freshness_verdict = ultros_api_types::freshness::calculate_freshness_verdict(
+                                age,
+                                sales_per_day,
+                            );
+
                             let real = crate::analysis::real_price(
                                 &recent_sales
                                     .iter()
@@ -529,20 +587,11 @@ fn MarketStatsPanel(
                                                 <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                                     {t!(i18n, cheapest_found)}
                                                 </h2>
-                                                {latest_timestamp
-                                                    .map(|timestamp| {
-                                                        view! {
-                                                            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border border-brand-400/40 bg-brand-400/10 text-brand-200">
-                                                                <span class="relative flex h-1.5 w-1.5">
-                                                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
-                                                                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-brand-400"></span>
-                                                                </span>
-                                                                {t!(i18n, listings_updated)}
-                                                                " "
-                                                                <RelativeToNow timestamp=timestamp />
-                                                            </span>
-                                                        }
-                                                    })}
+                                                <RealtimeStatus
+                                                    status=realtime_status
+                                                    last_update=last_update_at
+                                                />
+                                                    <FreshnessBadge verdict=freshness_verdict age=age />
                                             </div>
                                             <p class="text-sm text-[color:var(--color-text-muted)]">
                                                 {move || t!(i18n, based_on_sales, count = recent_sales.len())}
@@ -1063,7 +1112,13 @@ fn ListingsContent(
     item_id: Memo<i32>,
     world: Memo<String>,
     #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
 ) -> impl IntoView {
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let listing_resource = Resource::new(
         move || (item_id(), world()),
         |(item_id, world)| async move {
@@ -1102,12 +1157,21 @@ fn ListingsContent(
             filter.clone(),
             SocketMessageType::Listings,
             move |message| match message {
+                ServerClient::Subscribed { .. } => {
+                    set_realtime_status.set("live".to_string());
+                }
                 ServerClient::Listings(event) => {
+                    set_realtime_status.set("live".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     update_current_item(listing_resource, |data| {
                         data.apply_listing_event(item_id, event);
                     });
                 }
-                ServerClient::Stale { .. } => listing_resource.refetch(),
+                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                    set_realtime_status.set("reconnecting".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    listing_resource.refetch();
+                }
                 _ => {}
             },
         );
@@ -1115,12 +1179,21 @@ fn ListingsContent(
             filter,
             SocketMessageType::Sales,
             move |message| match message {
+                ServerClient::Subscribed { .. } => {
+                    set_realtime_status.set("live".to_string());
+                }
                 ServerClient::Sales(event) => {
+                    set_realtime_status.set("live".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
                     update_current_item(listing_resource, |data| {
                         data.apply_sales_event(item_id, event);
                     });
                 }
-                ServerClient::Stale { .. } => listing_resource.refetch(),
+                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                    set_realtime_status.set("reconnecting".to_string());
+                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    listing_resource.refetch();
+                }
                 _ => {}
             },
         );
@@ -1132,7 +1205,14 @@ fn ListingsContent(
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
-                <MarketStatsPanel listing_resource item_id excluded_worlds=excluded_worlds.clone() />
+                <MarketStatsPanel
+                    listing_resource
+                    item_id
+                    realtime_status=realtime_status.into()
+                    last_update_at=last_update_at.into()
+                    excluded_worlds
+                    excluded_datacenters
+                />
                 <ChartWrapper listing_resource item_id world />
             </div>
 
@@ -1358,7 +1438,7 @@ pub fn ItemView() -> impl IntoView {
             <WorldMenu world_name=world item_id />
 
             <div class="main-content px-0 sm:px-4">
-                <ListingsContent item_id world />
+                <ListingsContent item_id world excluded_worlds=Vec::new() />
                 <div class="mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>

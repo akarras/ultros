@@ -48,6 +48,23 @@ pub struct ListWithPermission {
     pub owner_name: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ListCapabilities {
+    pub can_write: bool,
+    pub can_admin: bool,
+    pub can_leave: bool,
+}
+
+impl From<ListPermission> for ListCapabilities {
+    fn from(permission: ListPermission) -> Self {
+        Self {
+            can_write: permission >= ListPermission::Write,
+            can_admin: permission >= ListPermission::Owner,
+            can_leave: permission == ListPermission::Write || permission == ListPermission::Read,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct ListItem {
     pub id: i32,
@@ -269,6 +286,29 @@ mod tests {
         let s = serde_json::to_string(&item).unwrap();
         let back: ListItem = serde_json::from_str(&s).unwrap();
         assert_eq!(item, back);
+    }
+
+    #[test]
+    fn list_capabilities_from_permission() {
+        let none = ListCapabilities::from(ListPermission::None);
+        assert!(!none.can_write);
+        assert!(!none.can_admin);
+        assert!(!none.can_leave);
+
+        let read = ListCapabilities::from(ListPermission::Read);
+        assert!(!read.can_write);
+        assert!(!read.can_admin);
+        assert!(read.can_leave);
+
+        let write = ListCapabilities::from(ListPermission::Write);
+        assert!(write.can_write);
+        assert!(!write.can_admin);
+        assert!(write.can_leave);
+
+        let owner = ListCapabilities::from(ListPermission::Owner);
+        assert!(owner.can_write);
+        assert!(owner.can_admin);
+        assert!(!owner.can_leave);
     }
 
     #[test]

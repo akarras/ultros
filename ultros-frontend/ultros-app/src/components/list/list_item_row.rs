@@ -17,7 +17,10 @@ pub fn ListItemRow(
     listings: Vec<ActiveListing>,
     edit_list_mode: Signal<bool>,
     #[prop(into)] selected_items: RwSignal<HashSet<i32>>,
-    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
     // The return type of delete_list_item is impl Future<Output = Result<(), AppError>> so in Action it becomes () for the output if we don't care about the result, but wait. Action<I, O>. The original code used Action::new. Let's check original.
     // original: let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
     // delete_list_item returns Result<(), AppError>.
@@ -45,7 +48,6 @@ pub fn ListItemRow(
     let item = RwSignal::new(item);
     let temp_item = RwSignal::new(item());
     let listings = RwSignal::new(listings);
-    let excluded_worlds = StoredValue::new(excluded_worlds);
 
     view! {
         <tr class=move || {
@@ -202,7 +204,8 @@ pub fn ListItemRow(
                                             quantity=remaining
                                             hq=item.with(|i| i.hq)
                                             listings=listings()
-                                            excluded_worlds=excluded_worlds.get_value()
+                                            excluded_worlds=excluded_worlds
+                                            excluded_datacenters=excluded_datacenters
                                         />
                                     }
                                 }}
@@ -407,7 +410,8 @@ pub fn ListItemRow(
                                             quantity=remaining
                                             hq=item.hq
                                             listings=listings()
-                                            excluded_worlds=excluded_worlds.get_value()
+                                            excluded_worlds=excluded_worlds
+                                            excluded_datacenters=excluded_datacenters
                                         />
                                     }
                                 }}

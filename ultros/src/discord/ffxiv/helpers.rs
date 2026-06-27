@@ -87,6 +87,13 @@ pub(crate) fn discord_locale_to_xiv_language(locale: Option<&str>) -> Language {
 /// name exactly; returns the first locale that contains the name. Used so users can
 /// paste a localized item name from anywhere on the site and have the bot resolve it.
 pub(crate) fn resolve_item_id_any_locale(name: &str) -> Option<i32> {
+    if let Some(id) = name.parse::<i32>().ok().filter(|id| {
+        xiv_gen_db::data_for(Language::En)
+            .items
+            .contains_key(&ItemId(*id))
+    }) {
+        return Some(id);
+    }
     let lowered = name.to_lowercase();
     for (_, data) in xiv_gen_db::all_locales() {
         if let Some((ItemId(id), _)) = data
@@ -98,6 +105,16 @@ pub(crate) fn resolve_item_id_any_locale(name: &str) -> Option<i32> {
         }
     }
     None
+}
+
+/// Truncate a string to at most 100 Unicode characters. Discord's autocomplete
+/// choice names and values must be between 1 and 100 characters in length.
+pub(crate) fn truncate_100(s: &str) -> String {
+    if s.chars().count() <= 100 {
+        s.to_string()
+    } else {
+        s.chars().take(100).collect()
+    }
 }
 
 /// A single autocomplete suggestion: a display label (localized into the user's
@@ -146,11 +163,11 @@ pub(crate) fn localized_item_matches(
             if en_name.is_empty() {
                 return None;
             }
-            let label = if display == en_name {
+            let label = truncate_100(&if display == en_name {
                 en_name
             } else {
                 format!("{display} ({en_name})")
-            };
+            });
             Some(LocalizedItemMatch { label, item_id: id })
         })
         .collect();
@@ -162,21 +179,17 @@ pub(crate) fn localized_item_matches(
 /// Discord autocomplete handler for item-name string args. Searches every supported
 /// locale for substring matches; deduplicates by item id; prefers the user's locale
 /// for display when the same item matched in multiple locales. The choice value is
-/// the canonical English item name so existing callers of [`resolve_item_id`] keep
-/// working unchanged.
+/// the FFXIV item id stringified so that [`resolve_item_id`] can always find it
+/// regardless of whether the display name was truncated to 100 characters.
 pub(crate) async fn autocomplete_item<'a>(
     ctx: Context<'_>,
     partial: &'a str,
 ) -> impl Iterator<Item = poise::serenity_prelude::AutocompleteChoice> + 'a {
     let user_lang = discord_locale_to_xiv_language(ctx.locale());
-    let en = xiv_gen_db::data_for(Language::En);
     localized_item_matches(partial, user_lang)
         .into_iter()
-        .filter_map(move |m| {
-            let en_name = en.items.get(&ItemId(m.item_id))?.name.to_string();
-            Some(poise::serenity_prelude::AutocompleteChoice::new(
-                m.label, en_name,
-            ))
+        .map(move |m| {
+            poise::serenity_prelude::AutocompleteChoice::new(m.label, m.item_id.to_string())
         })
 }
 
@@ -553,5 +566,54 @@ mod tests {
         let result = top_n_cheapest_listings(listings, None, 10);
         assert_eq!(result.len(), 3);
         assert!(result.iter().all(|l| l.price_per_unit == 100));
+    }
+
+    // ---------- truncate_100 ----------
+
+    #[test]
+    fn truncate_100_passes_short_strings_through() {
+        assert_eq!(truncate_100("short"), "short");
+        assert_eq!(truncate_100(""), "");
+    }
+
+    #[test]
+    fn truncate_100_truncates_long_ascii() {
+        let long = "a".repeat(110);
+        let result = truncate_100(&long);
+        assert_eq!(result.len(), 100);
+        assert_eq!(result, "a".repeat(100));
+    }
+
+    #[test]
+    fn truncate_100_handles_unicode_correctly() {
+        // Each of these is 1 character but multiple bytes
+        let crab = "🦀";
+        let long_crabs = crab.repeat(110);
+        let result = truncate_100(&long_crabs);
+        assert_eq!(result.chars().count(), 100);
+        assert_eq!(result, crab.repeat(100));
+    }
+
+    #[test]
+    fn truncate_100_at_boundary() {
+        let exactly_100 = "b".repeat(100);
+        assert_eq!(truncate_100(&exactly_100), exactly_100);
+    }
+
+    #[test]
+    fn test_localized_item_matches_truncation() {
+        let results = localized_item_matches("Torn from the Heavens", Language::Fr);
+        let m = results
+            .iter()
+            .find(|m| m.item_id == 31681)
+            .expect("should find the medley orchestrion roll");
+
+        assert!(m.label.chars().count() <= 100);
+    }
+
+    #[test]
+    fn test_resolve_item_id_any_locale_with_string_id() {
+        assert_eq!(resolve_item_id_any_locale("31681"), Some(31681));
+        assert_eq!(resolve_item_id_any_locale("not-an-id"), None);
     }
 }

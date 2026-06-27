@@ -10,14 +10,15 @@ const USERS = {
   owner: { id: 880000000001, username: "SharedListOwner" },
   reader: { id: 880000000002, username: "SharedListReader" },
   invited: { id: 880000000003, username: "SharedListInvited" },
-  overLimit: { id: 880000000004, username: "SharedListOverLimit" },
+  manual: { id: 880000000004, username: "SharedListManual" },
+  overLimit: { id: 880000000005, username: "SharedListOverLimit" },
 };
 
 async function login(page, baseUrl, user) {
   const loginUrl = new URL("/test/login", baseUrl);
   loginUrl.searchParams.set("user_id", String(user.id));
   loginUrl.searchParams.set("username", user.username);
-  loginUrl.searchParams.set("redirect", "/");
+  loginUrl.searchParams.set("redirect", "/list");
   const resp = await page.goto(loginUrl.toString(), { waitUntil: "domcontentloaded" });
   if (!resp || resp.status() >= 400) {
     throw new Error(`test login failed for ${user.username}: ${resp ? resp.status() : -1}`);
@@ -64,17 +65,26 @@ async function main() {
   const failures = [];
 
   try {
-    const ownerPage = await browser.newPage();
-    const readerPage = await browser.newPage();
-    const invitedPage = await browser.newPage();
-    const overLimitPage = await browser.newPage();
-    for (const page of [ownerPage, readerPage, invitedPage, overLimitPage]) {
+    const ownerCtx = await browser.createBrowserContext();
+    const readerCtx = await browser.createBrowserContext();
+    const invitedCtx = await browser.createBrowserContext();
+    const manualCtx = await browser.createBrowserContext();
+    const overLimitCtx = await browser.createBrowserContext();
+
+    const ownerPage = await ownerCtx.newPage();
+    const readerPage = await readerCtx.newPage();
+    const invitedPage = await invitedCtx.newPage();
+    const manualPage = await manualCtx.newPage();
+    const overLimitPage = await overLimitCtx.newPage();
+
+    for (const page of [ownerPage, readerPage, invitedPage, manualPage, overLimitPage]) {
       page.setDefaultTimeout(TIMEOUT_MS);
     }
 
     await login(ownerPage, BASE_URL, USERS.owner);
     await login(readerPage, BASE_URL, USERS.reader);
     await login(invitedPage, BASE_URL, USERS.invited);
+    await login(manualPage, BASE_URL, USERS.manual);
     await login(overLimitPage, BASE_URL, USERS.overLimit);
 
     const worldData = await api(ownerPage, "GET", "/api/v1/world_data");
@@ -134,20 +144,119 @@ async function main() {
 
     const invite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
       permission: "Read",
-      max_uses: 1,
+      max_uses: 2,
     });
     failIf(invite.status !== 200, failures, `create invite expected 200, got ${invite.status}`);
     const inviteId = invite.body.id;
     failIf(!inviteId || inviteId.length < 32, failures, "invite id was missing or too short");
 
-    const inviteUse = await api(invitedPage, "POST", `/api/v1/invite/${inviteId}/use`);
-    failIf(inviteUse.status !== 200, failures, `invite use expected 200, got ${inviteUse.status}`);
-    failIf(inviteUse.body !== listId, failures, `invite returned list ${inviteUse.body}, expected ${listId}`);
+    // Manual invite redemption via UI
+    console.log(`[step] manual user redeems invite via code input: ${inviteId}`);
+    await manualPage.goto(`${BASE_URL}/list`, { waitUntil: "networkidle0" });
+    await manualPage.type('input[placeholder="Invite code"]', inviteId);
+    await manualPage.click('button.btn-secondary ::-p-text(Redeem)');
+    await manualPage.waitForFunction(
+      (expected) => window.location.pathname === expected,
+      { timeout: 10000 },
+      `/list/${listId}`,
+    ).catch(() => {});
 
-    const overLimitUse = await api(overLimitPage, "POST", `/api/v1/invite/${inviteId}/use`);
-    failIf(overLimitUse.status !== 400, failures, `over-limit invite expected 400, got ${overLimitUse.status}`);
+    const manualUrl = manualPage.url();
+    failIf(!manualUrl.endsWith(`/list/${listId}`), failures, `manual user expected redirect to /list/${listId}, got ${manualUrl}`);
 
-    for (const page of [ownerPage, readerPage, invitedPage, overLimitPage]) {
+    // UI-level invite redemption (direct link)
+    console.log(`[step] invited user redeems invite via direct link UI: /list/invite/${inviteId}`);
+    await invitedPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
+    await invitedPage.waitForFunction(
+      (expected) => window.location.pathname === expected,
+      { timeout: 10000 },
+      `/list/${listId}`,
+    ).catch(() => {});
+
+    const invitedUrl = invitedPage.url();
+    failIf(!invitedUrl.endsWith(`/list/${listId}`), failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
+
+    // Exhausted invite path
+    console.log("[step] over-limit user attempts to redeem exhausted invite via UI");
+    await overLimitPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
+    await overLimitPage.waitForSelector(".alert-error", { timeout: 10000 }).catch(() => {});
+    const errorText = await overLimitPage.evaluate(() => {
+      const el = document.querySelector(".alert-error");
+      return el ? el.innerText : "";
+    });
+    failIf(!errorText.includes("Could not accept invite:"), failures, `over-limit user expected error message, got: "${errorText}"`);
+
+    // Invite deletion path
+    console.log("[step] owner creates a second invite for deletion");
+    const deleteInvite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
+      permission: "Write",
+      max_uses: 5,
+    });
+    failIf(deleteInvite.status !== 200, failures, `create second invite expected 200, got ${deleteInvite.status}`);
+    const deleteInviteId = deleteInvite.body.id;
+
+    console.log("[step] owner deletes invite via UI");
+    await ownerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "networkidle0" });
+    await ownerPage.click('[data-testid="list-settings-btn"]');
+    await ownerPage.waitForSelector('[data-testid="list-settings-drawer"]', { timeout: 10000 });
+
+    // Find the row containing our new invite ID (first 10 chars)
+    const shortId = deleteInviteId.substring(0, 10);
+    const deleted = await ownerPage.evaluate((id) => {
+      const rows = Array.from(document.querySelectorAll("div.flex.items-center.gap-3.py-2"));
+      const targetRow = rows.find((row) => row.innerText.includes(`Link: ${id}`));
+      if (targetRow) {
+        const btn = targetRow.querySelector('button[aria-label="Remove access"]');
+        if (btn) {
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    }, shortId);
+    failIf(!deleted, failures, "could not find or click delete button for invite");
+
+    // Verify it disappears without reload
+    const disappeared = await ownerPage
+      .waitForFunction((id) => !document.body.innerText.includes(`Link: ${id}`), { timeout: 10000 }, shortId)
+      .then(() => true)
+      .catch(() => false);
+    failIf(!disappeared, failures, "invite link did not disappear from UI after deletion");
+
+    console.log("[step] over-limit user attempts to redeem deleted invite via UI");
+    await overLimitPage.goto(`${BASE_URL}/list/invite/${deleteInviteId}`, { waitUntil: "networkidle0" });
+    await overLimitPage.waitForSelector(".alert-error", { timeout: 10000 }).catch(() => {});
+    const deletedInviteError = await overLimitPage.evaluate(() => {
+      const el = document.querySelector(".alert-error");
+      return el ? el.innerText : "";
+    });
+    failIf(
+      !deletedInviteError.includes("Could not accept invite:"),
+      failures,
+      `over-limit user expected error for deleted invite, got: "${deletedInviteError}"`,
+    );
+
+    // Leave list path
+    console.log("[step] reader leaves the shared list via UI");
+    await readerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "networkidle0" });
+    await readerPage.click('[data-testid="list-settings-btn"]');
+    await readerPage.waitForSelector('[data-testid="list-settings-drawer"]', { timeout: 10000 });
+    await readerPage.click('[data-testid="list-leave-btn"]');
+
+    // Wait for redirect to /list
+    await readerPage.waitForFunction(() => window.location.pathname === "/list", { timeout: 10000 });
+
+    // Verify it's gone for the reader
+    const readerListsAfterLeave = await api(readerPage, "GET", "/api/v1/list");
+    const readerListAfterLeave = readerListsAfterLeave.body.find((entry) => entry.list.id === listId);
+    failIf(readerListAfterLeave, failures, "list still present for reader after leaving");
+
+    // Verify it's still there for the owner
+    const ownerListsAfterLeave = await api(ownerPage, "GET", "/api/v1/list");
+    const ownerListAfterLeave = ownerListsAfterLeave.body.find((entry) => entry.list.id === listId);
+    failIf(!ownerListAfterLeave, failures, "list disappeared for owner after reader left");
+
+    for (const page of [ownerPage, readerPage, invitedPage, overLimitPage, manualPage]) {
       await page.close();
     }
   } finally {

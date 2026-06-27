@@ -8,7 +8,7 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::{ListActivity, ListItem, ListPermission};
+use ultros_api_types::list::{ListActivity, ListCapabilities, ListItem};
 
 use crate::api::{
     add_item_to_list, delete_list_item, delete_list_items, edit_list, edit_list_item,
@@ -25,6 +25,7 @@ use crate::components::{
     loading::*,
     make_place_importer::*,
     meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
+    realtime_status::RealtimeStatus,
     tooltip::*,
 };
 use crate::i18n::*;
@@ -167,6 +168,7 @@ pub fn ListView() -> impl IntoView {
                 message,
                 ServerClient::Listings(_) | ServerClient::Stale { .. }
             ) {
+                set_last_update_at.set(Some(chrono::Utc::now()));
                 list_view.refetch();
             }
         });
@@ -196,6 +198,7 @@ pub fn ListView() -> impl IntoView {
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
+    let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
 
     type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
     let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
@@ -238,25 +241,11 @@ pub fn ListView() -> impl IntoView {
         }
     });
 
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    struct ViewCaps {
-        can_write: bool,
-        can_admin: bool,
-        can_leave: bool,
-    }
-
-    let view_caps = RwSignal::new(ViewCaps::default());
+    let view_caps = RwSignal::new(ListCapabilities::default());
     Effect::new(move |_| {
         let next = match list_view.get() {
-            Some(Ok((list_with_perm, _))) => {
-                let p = list_with_perm.permission;
-                ViewCaps {
-                    can_write: p >= ListPermission::Write,
-                    can_admin: p >= ListPermission::Owner,
-                    can_leave: p == ListPermission::Write || p == ListPermission::Read,
-                }
-            }
-            _ => ViewCaps::default(),
+            Some(Ok((list_with_perm, _))) => ListCapabilities::from(list_with_perm.permission),
+            _ => ListCapabilities::default(),
         };
         view_caps.set(next);
     });
@@ -267,61 +256,6 @@ pub fn ListView() -> impl IntoView {
             .map(|t| t.timestamp_millis() as u32)
             .unwrap_or(0)
     });
-
-    let updated_label = Signal::derive(move || {
-        let _ = clock_tick.get();
-        let Some(t) = last_update_at.get() else {
-            return String::new();
-        };
-        let now = chrono::Utc::now();
-        let secs = now.signed_duration_since(t).num_seconds().max(0);
-        if secs < 2 {
-            t_string!(i18n, list_view_updated_just_now).to_string()
-        } else {
-            format!("Updated {secs}s ago")
-        }
-    });
-
-    let live_indicator = move || {
-        let status_key = realtime_status.get();
-        let (dot_class, status_label): (&'static str, String) = match status_key.as_str() {
-            "live" => (
-                "bg-green-400",
-                t_string!(i18n, list_view_live_status_live).to_string(),
-            ),
-            "reconnecting" => (
-                "bg-amber-400 animate-pulse",
-                t_string!(i18n, list_view_live_status_reconnecting).to_string(),
-            ),
-            "offline" => (
-                "bg-gray-500",
-                t_string!(i18n, list_view_live_status_offline).to_string(),
-            ),
-            _ => (
-                "bg-amber-400 animate-pulse",
-                t_string!(i18n, list_view_live_status_connecting).to_string(),
-            ),
-        };
-        let updated = updated_label.get();
-        let tooltip_text = if updated.is_empty() {
-            status_label.clone()
-        } else {
-            format!("{status_label} · {updated}")
-        };
-        let status_label_for_view = status_label.clone();
-        view! {
-            <Tooltip tooltip_text=tooltip_text>
-                <span
-                    class="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text-muted)]"
-                    data-testid="list-live-indicator"
-                    data-status=status_key.clone()
-                >
-                    <span class=format!("h-2 w-2 rounded-full {}", dot_class) aria-hidden="true"></span>
-                    <span>{status_label_for_view.clone()}</span>
-                </span>
-            </Tooltip>
-        }
-    };
 
     // Auto-mark logic moved to AutoMarkPurchases component
 
@@ -432,6 +366,65 @@ pub fn ListView() -> impl IntoView {
                                 <span>{t!(i18n, list_view_settings)}</span>
                             </button>
                         </Tooltip>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel rounded-lg p-3">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                        {t!(i18n, list_view_exclude_datacenters)}
+                    </span>
+                    <div class="flex flex-wrap gap-2">
+                        {move || {
+                            let world_data = use_context::<crate::global_state::LocalWorldData>();
+                            let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+                            let list_data = list_view.get();
+                            match (helper, list_data) {
+                                (Some(helper), Some(Ok((list, _)))) => {
+                                    let filter = list.list.wdr_filter;
+                                    let datacenters = helper
+                                        .lookup_selector(filter)
+                                        .map(|r| helper.get_datacenters(&r))
+                                        .unwrap_or_default();
+                                    datacenters
+                                        .into_iter()
+                                        .map(|dc| {
+                                            let name = dc.name.clone();
+                                            let is_excluded = Signal::derive(move || {
+                                                excluded_datacenters.with(|set| set.contains(&name))
+                                            });
+                                            let toggle = {
+                                                let name = dc.name.clone();
+                                                move |_| {
+                                                    excluded_datacenters
+                                                        .update(|set| {
+                                                            if set.contains(&name) {
+                                                                set.remove(&name);
+                                                            } else {
+                                                                set.insert(name.clone());
+                                                            }
+                                                        })
+                                                }
+                                            };
+                                            view! {
+                                                <button
+                                                    class="btn-secondary px-3 py-1 text-xs"
+                                                    class:bg-red-950=is_excluded
+                                                    class:text-red-200=is_excluded
+                                                    class:border-red-400=is_excluded
+                                                    on:click=toggle
+                                                >
+                                                    {dc.name.clone()}
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()
+                                        .into_any()
+                                }
+                                _ => ().into_any(),
+                            }
+                        }}
                     </div>
                 </div>
             </div>
@@ -658,7 +651,10 @@ pub fn ListView() -> impl IntoView {
                                                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
                                                             </div>
                                                             <div class="flex flex-wrap gap-2 text-sm">
-                                                                {live_indicator()}
+                                                                <RealtimeStatus
+                                                                    status=realtime_status
+                                                                    last_update=last_update_at
+                                                                />
                                                                 <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
                                                                     {format!("{remaining_items} remaining")}
                                                                 </span>
@@ -666,7 +662,11 @@ pub fn ListView() -> impl IntoView {
                                                         </div>
                                                     </div>
                                                     <div class="p-4 sm:p-5">
-                                                        <BuyingView items=items.get_value() edit_item=edit_item />
+                                                        <BuyingView
+                                                            items=items.get_value()
+                                                            edit_item=edit_item
+                                                            excluded_datacenters=excluded_datacenters
+                                                        />
                                                     </div>
                                                 </section>
                                             },
@@ -748,7 +748,10 @@ pub fn ListView() -> impl IntoView {
                                                                     }
                                                                 </div>
                                                                 <div class="mt-2">
-                                                                    {live_indicator()}
+                                                                    <RealtimeStatus
+                                                                        status=realtime_status
+                                                                        last_update=last_update_at
+                                                                    />
                                                                 </div>
                                                                 <div class="mt-3 flex items-center gap-3 text-sm">
                                                                     {if total_quantity > 0 {
@@ -922,6 +925,8 @@ pub fn ListView() -> impl IntoView {
                                                                                 edit_item=edit_item
                                                                                 recently_changed=recently_changed
                                                                                 can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
+                                                                                excluded_worlds=&[]
+                                                                                excluded_datacenters=excluded_datacenters
                                                                             />
                                                                         }
                                                                     }
@@ -931,7 +936,11 @@ pub fn ListView() -> impl IntoView {
                                                         </table>
                                                     </div>
                                                     <div class="p-4 sm:p-5">
-                                                        <ListSummary items=items.get_value() />
+                                                        <ListSummary
+                                                            items=items.get_value()
+                                                            excluded_worlds=&[]
+                                                            excluded_datacenters=excluded_datacenters
+                                                        />
                                                     </div>
                                                     <div class="border-t border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <ActivityFeed activity=activity_view />

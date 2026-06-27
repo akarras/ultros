@@ -51,7 +51,10 @@ function sanitizeFileComponent(s) {
 const ROUTE_ASSERTS = {
   "/": { titleIncludes: "Ultros" },
   "/items": { titleIncludes: "Ultros" },
-  "/item/46010": { titleIncludes: "Ceremonial Shamshir" },
+  "/item/46010": {
+    titleIncludes: "Ceremonial Shamshir",
+    bodyIncludesAny: ["Fresh", "Caution", "Verify In-Game", "No Data"],
+  },
   "/items/category/Gunbreaker's Arms": { titleIncludes: "Gunbreaker" },
   "/flip-finder": { titleIncludes: "Ultros" },
   "/flip-finder/Gilgamesh": { titleIncludes: "Gilgamesh" },

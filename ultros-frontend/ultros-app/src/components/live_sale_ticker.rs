@@ -11,6 +11,7 @@ use leptos_router::components::A;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;
 
+use crate::components::realtime_status::RealtimeStatus;
 use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::home_world::use_home_world;
 use crate::i18n::*;
@@ -38,6 +39,9 @@ fn Item(item_id: i32) -> impl IntoView {
 #[component]
 pub fn LiveSaleTicker() -> impl IntoView {
     let i18n = use_i18n();
+    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
+    let (last_update_at, set_last_update_at) =
+        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let (done_loading, set_done_loading) = signal(false);
     let sales = RwSignal::<VecDeque<SaleView>>::new(VecDeque::new());
     let (homeworld, _) = use_home_world();
@@ -70,7 +74,12 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 FilterPredicate::World(sale),
                 SocketMessageType::Sales,
                 move |message| match message {
+                    ServerClient::Subscribed { .. } => {
+                        set_realtime_status.set("live".to_string());
+                    }
                     ServerClient::Sales(EventType::Added(add)) => {
+                        set_realtime_status.set("live".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
                         let _ = sales.try_update(|sales| {
                             for (sale, _) in add.sales {
                                 sales.push_front(SaleView {
@@ -92,7 +101,11 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             });
                         });
                     }
-                    ServerClient::Stale { .. } => retrigger.set(true),
+                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                        set_realtime_status.set("reconnecting".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        retrigger.set(true);
+                    }
                     _ => {}
                 },
             );
@@ -162,17 +175,23 @@ pub fn LiveSaleTicker() -> impl IntoView {
                             {move || homeworld().map(|world| world.name).unwrap_or_default()}
                         </span>
                     </h3>
-                    <button
-                        class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors flex items-center gap-1"
-                        on:click=move |_| {
-                            sales.update(|s| s.clear());
-                            set_done_loading(false);
-                            retrigger.set(true);
-                        }
-                    >
-                        <Icon icon=i::BiRefreshRegular aria_hidden=true />
-                        {t!(i18n, refresh)}
-                    </button>
+                    <div class="flex items-center gap-3">
+                        <RealtimeStatus
+                            status=realtime_status
+                            last_update=last_update_at
+                        />
+                        <button
+                            class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors flex items-center gap-1"
+                            on:click=move |_| {
+                                sales.update(|s| s.clear());
+                                set_done_loading(false);
+                                retrigger.set(true);
+                            }
+                        >
+                            <Icon icon=i::BiRefreshRegular aria_hidden=true />
+                            {t!(i18n, refresh)}
+                        </button>
+                    </div>
                 </div>
 
                 <div class="relative max-h-[480px] overflow-y-auto overflow-x-hidden scrollbar-thin pl-4">

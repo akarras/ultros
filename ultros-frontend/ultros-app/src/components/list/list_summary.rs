@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::components::icon::Icon;
 use crate::global_state::xiv_data::tracked_data;
@@ -9,12 +9,11 @@ use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
 use crate::components::gil::*;
-use crate::components::price_viewer::get_cheapest_listing;
 use crate::global_state::LocalWorldData;
-use ultros_api_types::world_helper::{AnyResult, AnySelector};
+use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
 
 /// Represents the total price for items from a specific world
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct WorldPrice {
     world_name: String,
     datacenter_id: i32,
@@ -23,12 +22,50 @@ struct WorldPrice {
     item_count: usize,
 }
 
+/// Find the cheapest listings for a given item based on quantity and HQ preference
+fn get_cheapest_listing(
+    mut listings: Vec<ActiveListing>,
+    quantity: i32,
+    hq: Option<bool>,
+    excluded_worlds: &[i32],
+    excluded_datacenters: &HashSet<String>,
+    world_helper: Option<&WorldHelper>,
+) -> Vec<ActiveListing> {
+    listings.sort_by_key(|listing| listing.price_per_unit);
+    let quantity_needed = quantity;
+    let mut current_quantity = 0;
+    listings
+        .into_iter()
+        .filter(|listing| {
+            if listing.is_excluded(excluded_worlds) {
+                return false;
+            }
+            if let Some(world_helper) = world_helper
+                && listing.is_datacenter_excluded(excluded_datacenters, world_helper)
+            {
+                return false;
+            }
+            if let Some(hq) = hq {
+                listing.hq == hq
+            } else {
+                true
+            }
+        })
+        .take_while(|listing| {
+            let needed_more = current_quantity < quantity_needed;
+            current_quantity += listing.quantity;
+            needed_more
+        })
+        .collect::<Vec<_>>()
+}
+
 /// Calculate the total price and breakdown by world for all items in the list
 fn calculate_list_totals(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    world_data: &ultros_api_types::world_helper::WorldHelper,
+    world_data: &WorldHelper,
     unknown_label: &str,
     excluded_worlds: &[i32],
+    excluded_datacenters: &HashSet<String>,
 ) -> (i32, HashMap<i32, WorldPrice>) {
     let mut grand_total = 0;
     let mut world_prices: HashMap<i32, WorldPrice> = HashMap::new();
@@ -42,7 +79,14 @@ fn calculate_list_totals(
         }
         let hq = list_item.hq;
 
-        let cheapest_listings = get_cheapest_listing(listings, quantity, hq, excluded_worlds);
+        let cheapest_listings = get_cheapest_listing(
+            listings,
+            quantity,
+            hq,
+            excluded_worlds,
+            excluded_datacenters,
+            Some(world_data),
+        );
 
         for listing in cheapest_listings {
             let price = listing.price_per_unit * listing.quantity;
@@ -88,7 +132,10 @@ fn calculate_list_totals(
 #[component]
 pub fn ListSummary(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
@@ -123,14 +170,23 @@ pub fn ListSummary(
         .into_any();
     }
 
-    let (grand_total, world_prices) = calculate_list_totals(
-        marketable_items,
-        &world_data,
-        &unknown_label,
-        &excluded_worlds,
-    );
+    let list_totals = Memo::new(move |_| {
+        excluded_datacenters.with(|excluded_datacenters| {
+            calculate_list_totals(
+                marketable_items.clone(),
+                &world_data,
+                &unknown_label,
+                excluded_worlds,
+                excluded_datacenters,
+            )
+        })
+    });
 
-    if grand_total == 0 && world_prices.is_empty() {
+    let all_acquired = move || {
+        let (grand_total, world_prices) = list_totals.get();
+        grand_total == 0 && world_prices.is_empty()
+    };
+    if all_acquired() {
         return view! {
             <div class="rounded-lg border border-[color:var(--brand-ring)]/40 bg-[color:var(--color-background-panel)] p-4">
                 <div class="text-center text-lg font-bold text-[color:var(--brand-fg)]">
@@ -142,51 +198,61 @@ pub fn ListSummary(
     }
 
     // Group by datacenter and calculate datacenter totals
-    let mut datacenter_groups: HashMap<i32, Vec<WorldPrice>> = HashMap::new();
-    let mut datacenter_totals: HashMap<i32, (String, i32, usize)> = HashMap::new();
+    let summary_data = Memo::new(move |_| {
+        let (_grand_total, world_prices) = list_totals.get();
+        let mut datacenter_groups: HashMap<i32, Vec<WorldPrice>> = HashMap::new();
+        let mut datacenter_totals: HashMap<i32, (String, i32, usize)> = HashMap::new();
 
-    for (_, world_price) in world_prices {
-        datacenter_groups
-            .entry(world_price.datacenter_id)
-            .or_default()
-            .push(world_price.clone());
+        for (_, world_price) in world_prices {
+            datacenter_groups
+                .entry(world_price.datacenter_id)
+                .or_default()
+                .push(world_price.clone());
 
-        datacenter_totals
-            .entry(world_price.datacenter_id)
-            .and_modify(|(_, price, count)| {
-                *price += world_price.total_price;
-                *count += world_price.item_count;
-            })
-            .or_insert((
-                world_price.datacenter_name.clone(),
-                world_price.total_price,
-                world_price.item_count,
-            ));
-    }
+            datacenter_totals
+                .entry(world_price.datacenter_id)
+                .and_modify(|(_, price, count)| {
+                    *price += world_price.total_price;
+                    *count += world_price.item_count;
+                })
+                .or_insert((
+                    world_price.datacenter_name.clone(),
+                    world_price.total_price,
+                    world_price.item_count,
+                ));
+        }
 
-    // Sort datacenters by total item count (descending)
-    let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
-    sorted_datacenters.sort_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
-        b_item_count.cmp(a_item_count)
-    });
-
-    // Sort worlds within each datacenter: by item count (descending), then alphabetically
-    for worlds in datacenter_groups.values_mut() {
-        worlds.sort_by(|a, b| match b.item_count.cmp(&a.item_count) {
-            std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
-            other => other,
+        // Sort datacenters by total item count (descending)
+        let mut sorted_datacenters: Vec<_> = datacenter_totals.into_iter().collect();
+        sorted_datacenters.sort_by(|(_, (_, _, a_item_count)), (_, (_, _, b_item_count))| {
+            b_item_count.cmp(a_item_count)
         });
-    }
 
-    // Track if we have multiple datacenters (enables collapsible behavior)
-    let has_multiple_datacenters = sorted_datacenters.len() > 1;
+        // Sort worlds within each datacenter: by item count (descending), then alphabetically
+        for worlds in datacenter_groups.values_mut() {
+            worlds.sort_by(|a, b| match b.item_count.cmp(&a.item_count) {
+                std::cmp::Ordering::Equal => a.world_name.cmp(&b.world_name),
+                other => other,
+            });
+        }
+        (sorted_datacenters, datacenter_groups)
+    });
 
     // Create a signal to track which datacenters are expanded
     // Initially expand all if single datacenter, or collapse all if multiple
-    let (expanded_datacenters, set_expanded_datacenters) = signal(if has_multiple_datacenters {
-        std::collections::HashSet::<i32>::new()
-    } else {
-        sorted_datacenters.iter().map(|(dc_id, _)| *dc_id).collect()
+    let (expanded_datacenters, set_expanded_datacenters) = signal(HashSet::<i32>::new());
+    Effect::new(move |prev: Option<bool>| {
+        let (sorted_datacenters, _) = summary_data.get();
+        let has_multiple = sorted_datacenters.len() > 1;
+        if prev.is_none() || prev != Some(has_multiple) {
+            if !has_multiple {
+                set_expanded_datacenters
+                    .set(sorted_datacenters.iter().map(|(id, _)| *id).collect());
+            } else {
+                set_expanded_datacenters.set(HashSet::new());
+            }
+        }
+        has_multiple
     });
 
     view! {
@@ -196,12 +262,15 @@ pub fn ListSummary(
                     {t!(i18n, list_summary_estimated_remaining_cost)}
                 </span>
                 <div class="text-lg font-bold text-[color:var(--brand-fg)]">
-                    <Gil amount=Signal::derive(move || grand_total) />
+                    <Gil amount=Signal::derive(move || list_totals.get().0) />
                 </div>
             </div>
 
             <div class="flex flex-col gap-2 p-3 text-sm">
-                {sorted_datacenters
+                {move || {
+                    let (sorted_datacenters, datacenter_groups) = summary_data.get();
+                    let has_multiple_datacenters = sorted_datacenters.len() > 1;
+                    sorted_datacenters
                     .into_iter()
                     .map(|(dc_id, (dc_name, dc_total, dc_count))| {
                         let worlds = datacenter_groups.get(&dc_id).cloned().unwrap_or_default();
@@ -282,7 +351,8 @@ pub fn ListSummary(
                             </div>
                         }
                     })
-                    .collect::<Vec<_>>()}
+                    .collect::<Vec<_>>()
+                }}
             </div>
         </div>
     }
@@ -317,7 +387,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None, &[]);
+        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -331,7 +401,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None, &[]);
+        let result = get_cheapest_listing(listings, 12, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -398,6 +468,7 @@ mod tests {
             &world_data,
             "Unknown",
             &[],
+            &HashSet::new(),
         );
 
         // Grand total:
@@ -438,16 +509,23 @@ mod tests {
         let listings = vec![l1, l2, l3];
 
         // Case 1: Exclude the cheapest world (10)
-        let result = get_cheapest_listing(listings.clone(), 5, None, &[10]);
+        let result = get_cheapest_listing(listings.clone(), 5, None, &[10], &HashSet::new(), None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 2); // Should pick the next cheapest
 
         // Case 2: Exclude all current listings
-        let result = get_cheapest_listing(listings.clone(), 5, None, &[10, 20, 30]);
+        let result = get_cheapest_listing(
+            listings.clone(),
+            5,
+            None,
+            &[10, 20, 30],
+            &HashSet::new(),
+            None,
+        );
         assert!(result.is_empty());
 
         // Case 3: Exclude none
-        let result = get_cheapest_listing(listings, 5, None, &[]);
+        let result = get_cheapest_listing(listings, 5, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 1);
     }
@@ -498,8 +576,14 @@ mod tests {
         l2.world_id = 101; // Next cheapest
 
         // Exclude world 100
-        let (total, world_prices) =
-            calculate_list_totals(vec![(item, vec![l1, l2])], &world_data, "Unknown", &[100]);
+        let (total, world_prices) = calculate_list_totals(
+            vec![(item, vec![l1, l2])],
+            &world_data,
+            "Unknown",
+            &[100],
+            &HashSet::new(),
+        );
+
         // Total should be 10 * 200 = 2000 (from world 101)
         assert_eq!(total, 2000);
         assert_eq!(world_prices.len(), 1);

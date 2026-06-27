@@ -19,4 +19,25 @@ impl ActiveListing {
     pub fn is_excluded(&self, excluded_worlds: &[i32]) -> bool {
         excluded_worlds.contains(&self.world_id)
     }
+
+    pub fn is_datacenter_excluded(
+        &self,
+        excluded_datacenters: &std::collections::HashSet<String>,
+        world_helper: &crate::world_helper::WorldHelper,
+    ) -> bool {
+        if excluded_datacenters.is_empty() {
+            return false;
+        }
+        world_helper
+            .lookup_selector(crate::world_helper::AnySelector::World(self.world_id))
+            .and_then(|r| r.as_world())
+            .and_then(|w| {
+                world_helper.lookup_selector(crate::world_helper::AnySelector::Datacenter(
+                    w.datacenter_id,
+                ))
+            })
+            .and_then(|r| r.as_datacenter())
+            .map(|dc| excluded_datacenters.contains(&dc.name))
+            .unwrap_or(false)
+    }
 }
