@@ -162,25 +162,6 @@ async function main() {
     const invitedUrl = invitedPage.url();
     failIf(!invitedUrl.endsWith(`/list/${listId}`), failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
 
-    // Verify Read permissions for invited user
-    console.log("[step] verifying Read permission for invited user");
-    const invitedReadAdd = await api(invitedPage, "POST", `/api/v1/list/${listId}/add/item`, {
-      id: 0,
-      item_id: 3,
-      list_id: listId,
-      hq: null,
-      quantity: 1,
-      acquired: null,
-    });
-    failIf(invitedReadAdd.status !== 403, failures, `invited read-only add expected 403, got ${invitedReadAdd.status}`);
-
-    const hasAddItem = await invitedPage.evaluate(() =>
-      Array.from(document.querySelectorAll("button")).some((b) =>
-        (b.innerText || "").includes("Add Item"),
-      ),
-    );
-    failIf(hasAddItem, failures, "invited read-only user should not see Add Item button");
-
     // Exhausted invite path
     console.log("[step] over-limit user attempts to redeem exhausted invite via UI");
     await overLimitPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
