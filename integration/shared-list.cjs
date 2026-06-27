@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
 /**
- * Shared-list E2E. Requires the server to be built with `--features test-auth`.
+ * Shared-list E2E. Requires the server to be built with --features test-auth.
  */
 
 "use strict";
@@ -171,6 +171,56 @@ async function main() {
       return el ? el.innerText : "";
     });
     failIf(!errorText.includes("Could not accept invite:"), failures, `over-limit user expected error message, got: "${errorText}"`);
+
+    // Invite deletion path
+    console.log("[step] owner creates a second invite for deletion");
+    const deleteInvite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
+      permission: "Write",
+      max_uses: 5,
+    });
+    failIf(deleteInvite.status !== 200, failures, `create second invite expected 200, got ${deleteInvite.status}`);
+    const deleteInviteId = deleteInvite.body.id;
+
+    console.log("[step] owner deletes invite via UI");
+    await ownerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "networkidle0" });
+    await ownerPage.click('[data-testid="list-settings-btn"]');
+    await ownerPage.waitForSelector('[data-testid="list-settings-drawer"]', { timeout: 10000 });
+
+    // Find the row containing our new invite ID (first 10 chars)
+    const shortId = deleteInviteId.substring(0, 10);
+    const deleted = await ownerPage.evaluate((id) => {
+      const rows = Array.from(document.querySelectorAll("div.flex.items-center.gap-3.py-2"));
+      const targetRow = rows.find((row) => row.innerText.includes(`Link: ${id}`));
+      if (targetRow) {
+        const btn = targetRow.querySelector('button[aria-label="Remove access"]');
+        if (btn) {
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    }, shortId);
+    failIf(!deleted, failures, "could not find or click delete button for invite");
+
+    // Verify it disappears without reload
+    const disappeared = await ownerPage
+      .waitForFunction((id) => !document.body.innerText.includes(`Link: ${id}`), { timeout: 10000 }, shortId)
+      .then(() => true)
+      .catch(() => false);
+    failIf(!disappeared, failures, "invite link did not disappear from UI after deletion");
+
+    console.log("[step] over-limit user attempts to redeem deleted invite via UI");
+    await overLimitPage.goto(`${BASE_URL}/list/invite/${deleteInviteId}`, { waitUntil: "networkidle0" });
+    await overLimitPage.waitForSelector(".alert-error", { timeout: 10000 }).catch(() => {});
+    const deletedInviteError = await overLimitPage.evaluate(() => {
+      const el = document.querySelector(".alert-error");
+      return el ? el.innerText : "";
+    });
+    failIf(
+      !deletedInviteError.includes("Could not accept invite:"),
+      failures,
+      `over-limit user expected error for deleted invite, got: "${deletedInviteError}"`,
+    );
 
     // Manual invite redemption
     console.log("[step] manual user redeems invite via form on /list");
