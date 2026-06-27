@@ -446,10 +446,8 @@ mod tests {
             region_id: None,
         };
         let choice = list_to_choice(&list);
-        assert_eq!(choice.name.chars().count(), 100);
-        assert_eq!(
-            choice.value,
-            poise::serenity_prelude::AutocompleteChoiceValue::String("12345".to_string())
-        );
+        let val = serde_json::to_value(choice).unwrap();
+        assert_eq!(val["name"].as_str().unwrap().chars().count(), 100);
+        assert_eq!(val["value"], "12345");
     }
 }

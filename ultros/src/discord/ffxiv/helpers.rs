@@ -602,9 +602,6 @@ mod tests {
 
     #[test]
     fn test_localized_item_matches_truncation() {
-        // Item 31681 has a very long name in French (79 chars).
-        // If it matches and the English name is different, the combined label "FR (EN)"
-        // will likely exceed 100 chars.
         let results = localized_item_matches("Torn from the Heavens", Language::Fr);
         let m = results
             .iter()
@@ -616,8 +613,6 @@ mod tests {
 
     #[test]
     fn test_resolve_item_id_any_locale_with_string_id() {
-        // Autocomplete values are stringified IDs. resolve_item_id_any_locale must
-        // handle these even if the display label was truncated.
         assert_eq!(resolve_item_id_any_locale("31681"), Some(31681));
         assert_eq!(resolve_item_id_any_locale("not-an-id"), None);
     }
