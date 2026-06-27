@@ -23,6 +23,8 @@ use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
 use std::collections::HashSet;
 use std::sync::Arc;
+use ultros_api_types::ActiveListing;
+use ultros_api_types::retainer::Retainer;
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
@@ -249,11 +251,10 @@ fn MarketStatsPanel(
     item_id: Memo<i32>,
     realtime_status: Signal<String>,
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
-    #[prop(into)] excluded_datacenters: Signal<HashSet<String>>,
+    #[prop(into)] filtered_listings: Signal<Option<Vec<(ActiveListing, Arc<Retainer>)>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
-    let world_data = use_context::<LocalWorldData>();
 
     // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
     // after hydration. The chip lives inside an inner `<Suspense>` in
@@ -291,23 +292,7 @@ fn MarketStatsPanel(
                 listing_resource
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
-                            let data = data.clone();
-                            let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
-                            let filtered_listings: Vec<_> = excluded_datacenters.with(|excluded| {
-                                if excluded.is_empty() {
-                                    data.listings.clone()
-                                } else if let Some(world_helper) = world_helper {
-                                    data.listings
-                                        .iter()
-                                        .filter(|(listing, _)| {
-                                            !listing.is_datacenter_excluded(excluded, world_helper.as_ref())
-                                        })
-                                        .cloned()
-                                        .collect()
-                                } else {
-                                    data.listings.clone()
-                                }
-                            });
+                            let filtered_listings = filtered_listings.get().unwrap_or_default();
                             let cheapest_nq = filtered_listings
                                 .iter()
                                 .filter(|(listing, _)| !listing.hq)
@@ -346,8 +331,7 @@ fn MarketStatsPanel(
                                 .get(&ItemId(item_id()))
                                 .map(|item| item.price_mid as i32)
                                 .filter(|p| *p > 0);
-                            let _latest_timestamp = data
-                                .listings
+                            let _latest_timestamp = filtered_listings
                                 .iter()
                                 .map(|(listing, _)| listing.timestamp)
                                 .max();
@@ -929,52 +913,35 @@ pub fn ChartWrapper(
 
 #[component]
 fn HighQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] excluded_datacenters: Signal<HashSet<String>>,
+    #[prop(into)] filtered_listings: Signal<Option<Vec<(ActiveListing, Arc<Retainer>)>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let world_data = use_context::<LocalWorldData>();
     view! {
         <div class="space-y-6">
             <Transition fallback=move || {
                 view! { <BoxSkeleton /> }
             }>
-                {
-                    let world_data = world_data.clone();
-                    move || {
-                    let world_data = world_data.clone();
+                {move || {
                     let hq_listings = Memo::new(move |_| {
-                        let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref()
-                                    .and_then(|l| {
-                                        l.as_ref()
-                                            .ok()
-                                            .map(|l| {
-                                                excluded_datacenters.with(|excluded| {
-                                                    l.listings
-                                                        .iter()
-                                                        .filter(|(listing, _)| {
-                                                            listing.hq && (excluded.is_empty() || world_helper.as_ref().map(|h| !listing.is_datacenter_excluded(excluded, h.as_ref())).unwrap_or(true))
-                                                        })
-                                                        .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
-                                                        .collect::<Vec<_>>()
-                                                })
-                                            })
-                                    })
+                        filtered_listings
+                            .get()
+                            .map(|listings: Vec<(ActiveListing, Arc<Retainer>)>| {
+                                listings
+                                    .into_iter()
+                                    .filter(|(l, _)| l.hq)
+                                    .collect::<Vec<_>>()
                             })
                             .unwrap_or_default()
                     });
                     view! {
                         <div
                             class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || hq_listings.with(|l| l.is_empty())
+                            class:hidden=move || hq_listings.with(|l: &Vec<(ActiveListing, Arc<Retainer>)>| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 {move || t_string!(i18n, high_quality_listings).to_string()}
                             </h2>
-                            <ListingsTable listings=hq_listings excluded_datacenters />
+                            <ListingsTable listings=hq_listings />
                         </div>
                     }
                 }}
@@ -986,52 +953,35 @@ fn HighQualityTable(
 
 #[component]
 fn LowQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] excluded_datacenters: Signal<HashSet<String>>,
+    #[prop(into)] filtered_listings: Signal<Option<Vec<(ActiveListing, Arc<Retainer>)>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let world_data = use_context::<LocalWorldData>();
     view! {
         <div class="space-y-6">
             <Transition fallback=move || {
                 view! { <BoxSkeleton /> }
             }>
-                {
-                    let world_data = world_data.clone();
-                    move || {
-                    let world_data = world_data.clone();
+                {move || {
                     let lq_listings = Memo::new(move |_| {
-                        let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref()
-                                    .and_then(|l| {
-                                        l.as_ref()
-                                            .ok()
-                                            .map(|l| {
-                                                excluded_datacenters.with(|excluded| {
-                                                    l.listings
-                                                        .iter()
-                                                        .filter(|(listing, _)| {
-                                                            !listing.hq && (excluded.is_empty() || world_helper.as_ref().map(|h| !listing.is_datacenter_excluded(excluded, h.as_ref())).unwrap_or(true))
-                                                        })
-                                                        .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
-                                                        .collect::<Vec<_>>()
-                                                })
-                                            })
-                                    })
+                        filtered_listings
+                            .get()
+                            .map(|listings: Vec<(ActiveListing, Arc<Retainer>)>| {
+                                listings
+                                    .into_iter()
+                                    .filter(|(l, _)| !l.hq)
+                                    .collect::<Vec<_>>()
                             })
                             .unwrap_or_default()
                     });
                     view! {
                         <div
                             class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || lq_listings.with(|l| l.is_empty())
+                            class:hidden=move || lq_listings.with(|l: &Vec<(ActiveListing, Arc<Retainer>)>| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 {move || t_string!(i18n, low_quality_listings).to_string()}
                             </h2>
-                            <ListingsTable listings=lq_listings excluded_datacenters />
+                            <ListingsTable listings=lq_listings />
                         </div>
                     }
                         .into_any()
@@ -1120,16 +1070,18 @@ fn ListingsContent(
     let realtime = use_realtime();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
-    Effect::new(move |_| {
-        market_subscriptions.update_value(|subscriptions| subscriptions.clear());
-        let item_id = item_id();
-        let world = Url::unescape(&world());
-        let Some(realtime) = realtime.clone() else {
-            return;
-        };
-        let Some(selector) = world_data
-            .lookup_world_by_name(&world)
-            .map(|world| AnySelector::from(&world))
+    Effect::new({
+        let world_data = world_data.clone();
+        move |_| {
+            market_subscriptions.update_value(|subscriptions| subscriptions.clear());
+            let item_id = item_id();
+            let world = Url::unescape(&world());
+            let Some(realtime) = realtime.clone() else {
+                return;
+            };
+            let Some(selector) = world_data
+                .lookup_world_by_name(&world)
+                .map(|world| AnySelector::from(&world))
         else {
             return;
         };
@@ -1183,10 +1135,37 @@ fn ListingsContent(
             },
         );
         market_subscriptions.set_value(vec![listings_subscription, sales_subscription]);
-    });
+    }});
     on_cleanup(move || {
         market_subscriptions.update_value(|subscriptions| subscriptions.clear());
     });
+
+    let filtered_listings = Memo::new({
+        let world_data = world_data.clone();
+        move |_| {
+            let world_helper = Some(&world_data);
+            listing_resource.with(|data| {
+                data.as_ref().and_then(|res| res.as_ref().ok()).map(|data| {
+                    excluded_datacenters.with(|excluded| {
+                        data.listings
+                            .iter()
+                            .filter(|(listing, _)| {
+                                if excluded.is_empty() {
+                                    true
+                                } else if let Some(world_helper) = world_helper {
+                                    !listing.is_datacenter_excluded(excluded, world_helper.as_ref())
+                                } else {
+                                    true
+                                }
+                            })
+                            .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
+                            .collect::<Vec<_>>()
+                    })
+                })
+            })
+        }
+    });
+
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
@@ -1195,14 +1174,14 @@ fn ListingsContent(
                     item_id
                     realtime_status=realtime_status.into()
                     last_update_at=last_update_at.into()
-                    excluded_datacenters
+                    filtered_listings
                 />
                 <ChartWrapper listing_resource item_id world />
             </div>
 
             <div id="listings" class="grid grid-cols-1 gap-6 mt-6">
-                <HighQualityTable listing_resource excluded_datacenters />
-                <LowQualityTable listing_resource excluded_datacenters />
+                <HighQualityTable filtered_listings />
+                <LowQualityTable filtered_listings />
             </div>
 
             <div class="grid grid-cols-1 gap-6 mt-8">
