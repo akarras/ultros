@@ -50,6 +50,7 @@ pub mod related_items;
 pub mod relative_time;
 pub mod reorderable_list;
 pub mod sale_history_table;
+pub mod sales_cadence_badge;
 pub mod search_box;
 pub mod select;
 pub mod side_nav;

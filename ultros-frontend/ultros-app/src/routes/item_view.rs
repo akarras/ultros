@@ -4,6 +4,7 @@ use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
+use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
@@ -361,6 +362,10 @@ fn MarketStatsPanel(
                                 age,
                                 sales_per_day,
                             );
+                            let cadence_verdict = crate::analysis::get_sales_cadence(
+                                sales_per_day.unwrap_or_default(),
+                                recent_sales.len(),
+                            );
 
                             let real = crate::analysis::real_price(
                                 &recent_sales
@@ -571,7 +576,11 @@ fn MarketStatsPanel(
                                                     status=realtime_status
                                                     last_update=last_update_at
                                                 />
-                                                    <FreshnessBadge verdict=freshness_verdict age=age />
+                                                <FreshnessBadge verdict=freshness_verdict age=age />
+                                                <SalesCadenceBadge
+                                                    cadence=cadence_verdict
+                                                    sales_per_day=sales_per_day.unwrap_or_default()
+                                                />
                                             </div>
                                             <p class="text-sm text-[color:var(--color-text-muted)]">
                                                 {move || t!(i18n, based_on_sales, count = recent_sales.len())}

@@ -7,6 +7,7 @@ pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) mod math;
 pub(crate) mod routes;
+pub(crate) mod sales_cadence;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
