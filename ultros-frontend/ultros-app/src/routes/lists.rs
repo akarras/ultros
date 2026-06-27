@@ -17,7 +17,9 @@ use crate::components::list::share_list_modal::ShareListModal;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
-use ultros_api_types::list::{CreateList, List, ListPermission, ListWithPermission};
+use ultros_api_types::list::{
+    CreateList, List, ListCapabilities, ListPermission, ListWithPermission,
+};
 
 #[component]
 pub fn ListInviteAccept() -> impl IntoView {
@@ -141,6 +143,7 @@ fn ListCard(
     user_id: Signal<Option<u64>>,
 ) -> impl IntoView {
     let permission = list.permission;
+    let caps = ListCapabilities::from(permission);
     let list_owner = list.list.owner;
     let owner_name = StoredValue::new(list.owner_name.clone());
     let list = list.list;
@@ -164,9 +167,9 @@ fn ListCard(
         <div class="panel p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
             {move || {
                 let list = list_for_render.clone();
-                if is_edit() {
+                if is_edit() && (caps.can_admin || caps.can_leave) {
                     let list_id = list.id;
-                    if permission >= ListPermission::Owner {
+                    if caps.can_admin {
                         let list_for_save = list.clone();
                         let list_for_delete = list.clone();
                         view! {
@@ -260,7 +263,7 @@ fn ListCard(
                                         <WorldName id=list.wdr_filter />
                                         <PermissionPill permission />
                                     </div>
-                                    <Show when=move || permission < ListPermission::Owner>
+                                    <Show when=move || !caps.can_admin>
                                         <div class="text-xs text-gray-500">
                                             {move || {
                                                 let name = owner_name.with_value(|n| n.clone()).unwrap_or_else(|| list_owner.to_string());
@@ -270,23 +273,25 @@ fn ListCard(
                                     </Show>
                                 </div>
                                 <div class="flex items-center gap-1">
-                                    <Show when=move || { permission >= ListPermission::Owner }>
+                                    <Show when=move || { caps.can_admin }>
                                         <Tooltip tooltip_text=Signal::derive(move || "Share list".to_string())>
                                             <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_share_open(true) aria_label="Share list">
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
                                         </Tooltip>
                                     </Show>
-                                    <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
-                                        <button
-                                            type="button"
-                                            class="btn-ghost btn-sm text-gray-400 hover:text-white"
-                                            aria-label=move || t_string!(i18n, edit_list).to_string()
-                                            on:click=move |_| set_is_edit(true)
-                                        >
-                                            <Icon icon=i::BsPencilFill />
-                                        </button>
-                                    </Tooltip>
+                                    <Show when=move || { caps.can_admin || caps.can_leave }>
+                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
+                                            <button
+                                                type="button"
+                                                class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                                aria-label=move || t_string!(i18n, edit_list).to_string()
+                                                on:click=move |_| set_is_edit(true)
+                                            >
+                                                <Icon icon=i::BsPencilFill />
+                                            </button>
+                                        </Tooltip>
+                                    </Show>
                                 </div>
                             </div>
                             <div class="mt-4 flex justify-end">
@@ -467,7 +472,7 @@ pub fn EditLists() -> impl IntoView {
                                 Ok(lists) => {
                                     let (owned, shared): (Vec<_>, Vec<_>) = lists
                                         .into_iter()
-                                        .partition(|lwp| lwp.permission >= ListPermission::Owner);
+                                        .partition(|lwp| ListCapabilities::from(lwp.permission).can_admin);
                                     let shared_count = shared.len();
 
                                     if owned.is_empty() && shared.is_empty() {

@@ -8,7 +8,7 @@ use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::{ListActivity, ListItem, ListPermission};
+use ultros_api_types::list::{ListActivity, ListCapabilities, ListItem};
 
 use crate::api::{
     add_item_to_list, delete_list_item, delete_list_items, edit_list, edit_list_item,
@@ -241,25 +241,11 @@ pub fn ListView() -> impl IntoView {
         }
     });
 
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    struct ViewCaps {
-        can_write: bool,
-        can_admin: bool,
-        can_leave: bool,
-    }
-
-    let view_caps = RwSignal::new(ViewCaps::default());
+    let view_caps = RwSignal::new(ListCapabilities::default());
     Effect::new(move |_| {
         let next = match list_view.get() {
-            Some(Ok((list_with_perm, _))) => {
-                let p = list_with_perm.permission;
-                ViewCaps {
-                    can_write: p >= ListPermission::Write,
-                    can_admin: p >= ListPermission::Owner,
-                    can_leave: p == ListPermission::Write || p == ListPermission::Read,
-                }
-            }
-            _ => ViewCaps::default(),
+            Some(Ok((list_with_perm, _))) => ListCapabilities::from(list_with_perm.permission),
+            _ => ListCapabilities::default(),
         };
         view_caps.set(next);
     });
