@@ -360,8 +360,6 @@ pub fn Trends() -> impl IntoView {
         items
     });
 
-    // ⚡ Bolt: Removed `format!` macro that dynamically generated class strings. We now just conditionally return the `&'static str`
-    // representing the classes, eliminating string allocations during reactive renders.
     let pill_active_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
     let pill_inactive_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
 

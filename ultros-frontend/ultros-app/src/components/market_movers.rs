@@ -198,8 +198,6 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
 
     let tab_btn = move |this: MoverTab, label: AnyView, tooltip: String| {
         let active = move || tab.get() == this;
-        // ⚡ Bolt: Removed string allocation on reactive renders by avoiding `format!` with multiple class strings.
-        // Returning `&'static str` based on conditional checks saves string allocations, making UI updates faster.
         let active_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
         let inactive_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
         view! {
