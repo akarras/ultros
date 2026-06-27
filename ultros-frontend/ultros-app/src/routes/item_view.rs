@@ -1,5 +1,6 @@
 use crate::api::{get_extended_sale_history, get_item_stats, get_listings};
 use crate::components::confidence_badge::ConfidenceBadge;
+use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
@@ -329,11 +330,38 @@ fn MarketStatsPanel(
                                 .get(&ItemId(item_id()))
                                 .map(|item| item.price_mid as i32)
                                 .filter(|p| *p > 0);
-                            let _latest_timestamp = data
+
+                            let sales_per_day = if recent_sales.len() > 1 {
+                                let newest = recent_sales.first().unwrap().sold_date;
+                                let oldest = recent_sales.last().unwrap().sold_date;
+                                let seconds = (newest - oldest).num_seconds().abs();
+                                let count = recent_sales.len() - 1;
+                                if seconds > 0 {
+                                    Some((count as f32) / (seconds as f32 / 86400.0))
+                                } else {
+                                    Some(100.0) // high velocity
+                                }
+                            } else if recent_sales.is_empty() {
+                                Some(0.0)
+                            } else {
+                                None
+                            };
+
+                            let latest_timestamp = data
                                 .listings
                                 .iter()
                                 .map(|(listing, _)| listing.timestamp)
                                 .max();
+
+                            let age = latest_timestamp.map(|t| {
+                                chrono::Utc::now().naive_utc() - t
+                            });
+
+                            let freshness_verdict = ultros_api_types::freshness::calculate_freshness_verdict(
+                                age,
+                                sales_per_day,
+                            );
+
                             let real = crate::analysis::real_price(
                                 &recent_sales
                                     .iter()
@@ -543,6 +571,7 @@ fn MarketStatsPanel(
                                                     status=realtime_status
                                                     last_update=last_update_at
                                                 />
+                                                    <FreshnessBadge verdict=freshness_verdict age=age />
                                             </div>
                                             <p class="text-sm text-[color:var(--color-text-muted)]">
                                                 {move || t!(i18n, based_on_sales, count = recent_sales.len())}
