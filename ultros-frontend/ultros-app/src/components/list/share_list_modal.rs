@@ -440,3 +440,51 @@ pub(crate) fn AccessList(
         </div>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ultros_api_types::list::{ListInvite, ListPermission};
+
+    #[test]
+    fn test_permission_label() {
+        assert_eq!(permission_label(ListPermission::None), "No access");
+        assert_eq!(permission_label(ListPermission::Read), "Read");
+        assert_eq!(permission_label(ListPermission::Write), "Write");
+        assert_eq!(permission_label(ListPermission::Owner), "Owner");
+    }
+
+    #[test]
+    fn test_editable_permission() {
+        assert_eq!(editable_permission("Write"), ListPermission::Write);
+        assert_eq!(editable_permission("Read"), ListPermission::Read);
+        assert_eq!(editable_permission("something else"), ListPermission::Read);
+    }
+
+    #[test]
+    fn test_invite_url_ssr() {
+        // In unit tests, the hydrate feature should not be active, so it should return the relative path
+        assert_eq!(invite_url("test-id"), "/list/invite/test-id");
+    }
+
+    #[test]
+    fn test_invite_uses_label() {
+        let invite_unlimited = ListInvite {
+            id: "id".to_string(),
+            list_id: 1,
+            permission: ListPermission::Read,
+            max_uses: None,
+            uses: 5,
+        };
+        assert_eq!(invite_uses_label(&invite_unlimited), "5/∞ uses");
+
+        let invite_limited = ListInvite {
+            id: "id".to_string(),
+            list_id: 1,
+            permission: ListPermission::Read,
+            max_uses: Some(10),
+            uses: 3,
+        };
+        assert_eq!(invite_uses_label(&invite_limited), "3/10 uses");
+    }
+}
