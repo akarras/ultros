@@ -85,8 +85,9 @@ fn VentureAnalyzerTable(
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let global_res_for_memo = global_cheapest_listings_resource.clone();
     let prices = Memo::new(move |_| {
-        global_cheapest_listings_resource
+        global_res_for_memo
             .get()
             .and_then(|r| r.ok())
             .map(|listings| CheapestListingsMap::from(listings.clone()))
@@ -104,6 +105,8 @@ fn VentureAnalyzerTable(
 
     let realtime = use_realtime();
     let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let global_res_capture = global_cheapest_listings_resource.clone();
+    let recent_res_capture = recent_sales_resource.clone();
     Effect::new(move |_| {
         market_subscription.update_value(|sub| *sub = None);
         let world_name = world.get();
@@ -123,6 +126,8 @@ fn VentureAnalyzerTable(
         };
 
         let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
+        let recent_res = recent_res_capture.clone();
+        let global_res = global_res_capture.clone();
         let sub = realtime.subscribe_market(
             filter,
             ultros_api_types::websocket::SocketMessageType::Sales,
@@ -135,13 +140,13 @@ fn VentureAnalyzerTable(
                     ServerClient::Sales(_) => {
                         set_realtime_status.set("live".to_string());
                         set_last_update_at.set(Some(chrono::Utc::now()));
-                        recent_sales_resource.refetch();
+                        recent_res.refetch();
                     }
                     ServerClient::Stale { .. } | ServerClient::Error { .. } => {
                         set_realtime_status.set("reconnecting".to_string());
                         set_last_update_at.set(Some(chrono::Utc::now()));
-                        recent_sales_resource.refetch();
-                        global_cheapest_listings_resource.refetch();
+                        recent_res.refetch();
+                        global_res.refetch();
                     }
                     _ => {}
                 }
@@ -217,11 +222,13 @@ fn VentureAnalyzerTable(
     });
 
     let computed_data = Memo::new(move |_| {
-        let Some(prices) = prices.get() else {
-            return vec![];
+        let prices = match prices.get() {
+            Some(p) => p,
+            None => return vec![],
         };
-        let Some(recent_sales) = recent_sales_resource.get().and_then(|r| r.ok()) else {
-            return vec![];
+        let recent_sales = match recent_sales_resource.get().and_then(|r| r.ok()) {
+            Some(s) => s,
+            None => return vec![],
         };
         let mut results = Vec::new();
         let selected_ids = selected_category_ids.get();
@@ -611,16 +618,14 @@ pub fn VentureAnalyzer() -> impl IntoView {
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
-                        let listings = global_cheapest_listings.get();
-                        let sales = recent_sales.get();
-                        match (listings, sales) {
+                        let global_resource = global_cheapest_listings.clone();
+                        let recent_resource = recent_sales.clone();
+                        match (global_resource.get(), recent_resource.get()) {
                             (Some(_), Some(_)) => {
-                                let listings = global_cheapest_listings.clone();
-                                let sales = recent_sales.clone();
                                 view! {
                                     <VentureAnalyzerTable
-                                        global_cheapest_listings_resource=listings
-                                        recent_sales_resource=sales
+                                        global_cheapest_listings_resource=global_resource
+                                        recent_sales_resource=recent_resource
                                         world=region.into()
                                     />
                                 }.into_any()

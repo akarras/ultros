@@ -218,16 +218,24 @@ fn VendorResaleTable(
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
 
+    let sales_res_for_memo = sales_resource.clone();
+    let world_res_for_memo = world_cheapest_listings_resource.clone();
     let profits = Memo::new(move |_| {
-        let sales = sales_resource.get().and_then(|r| r.ok())?;
-        let world_cheapest = world_cheapest_listings_resource
-            .get()
-            .and_then(|r| r.ok())?;
+        let sales = match sales_res_for_memo.get() {
+            Some(Ok(s)) => s,
+            _ => return None,
+        };
+        let world_cheapest = match world_res_for_memo.get() {
+            Some(Ok(w)) => w,
+            _ => return None,
+        };
         Some(VendorProfitTable::new(sales, world_cheapest))
     });
 
     let realtime = use_realtime();
     let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let sales_res = sales_resource.clone();
+    let world_res = world_cheapest_listings_resource.clone();
     Effect::new(move |_| {
         market_subscription.update_value(|sub| *sub = None);
         let world_name = world.get();
@@ -247,6 +255,8 @@ fn VendorResaleTable(
         };
 
         let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
+        let sales_res = sales_res.clone();
+        let world_res = world_res.clone();
         let sub = realtime.subscribe_market(
             filter,
             ultros_api_types::websocket::SocketMessageType::Sales,
@@ -259,13 +269,13 @@ fn VendorResaleTable(
                     ServerClient::Sales(_) => {
                         set_realtime_status.set("live".to_string());
                         set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_resource.refetch();
+                        sales_res.refetch();
                     }
                     ServerClient::Stale { .. } | ServerClient::Error { .. } => {
                         set_realtime_status.set("reconnecting".to_string());
                         set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_resource.refetch();
-                        world_cheapest_listings_resource.refetch();
+                        sales_res.refetch();
+                        world_res.refetch();
                     }
                     _ => {}
                 }
@@ -294,8 +304,9 @@ fn VendorResaleTable(
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
-        let Some(profits) = profits.get() else {
-            return vec![];
+        let profits = match profits.get() {
+            Some(p) => p,
+            None => return vec![],
         };
         let mut sorted_data = profits
             .0
@@ -801,17 +812,15 @@ pub fn VendorWorldView() -> impl IntoView {
                 <div class="min-h-screen">
                     <Suspense fallback=BoxSkeleton>
                         {move || {
-                            let world_cheapest = world_cheapest_listings.get();
-                            let sales = sales.get();
-                            match (world_cheapest, sales) {
+                            let world_res = world_cheapest_listings.clone();
+                            let sales_res = sales.clone();
+                            match (world_res.get(), sales_res.get()) {
                                 (Some(_), Some(_)) => {
-                                    let world_cheapest = world_cheapest.clone();
-                                    let sales = sales.clone();
                                     Either::Left(
                                         view! {
                                             <VendorResaleTable
-                                                sales_resource=sales
-                                                world_cheapest_listings_resource=world_cheapest
+                                                sales_resource=sales_res
+                                                world_cheapest_listings_resource=world_res
                                                 world=world
                                             />
                                         },

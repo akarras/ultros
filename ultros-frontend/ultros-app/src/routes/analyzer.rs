@@ -423,20 +423,29 @@ fn AnalyzerTable(
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
 
+    let sales_res_for_memo = sales_resource.clone();
+    let global_res_for_memo = global_cheapest_listings_resource.clone();
+    let world_res_for_memo = world_cheapest_listings_resource.clone();
+    let cross_region_clone_for_memo = cross_region.clone();
     let profits = Memo::new(move |_| {
-        let sales = sales_resource.get().and_then(|r| r.ok())?;
-        let global = global_cheapest_listings_resource
-            .get()
-            .and_then(|r| r.ok())?;
-        let world_cheapest = world_cheapest_listings_resource
-            .get()
-            .and_then(|r| r.ok())?;
+        let sales = match sales_res_for_memo.get() {
+            Some(Ok(s)) => s,
+            _ => return None,
+        };
+        let global = match global_res_for_memo.get() {
+            Some(Ok(g)) => g,
+            _ => return None,
+        };
+        let world_cheapest = match world_res_for_memo.get() {
+            Some(Ok(w)) => w,
+            _ => return None,
+        };
 
         Some(ProfitTable::new(
             sales,
             global,
             world_cheapest,
-            cross_region.clone(),
+            cross_region_clone_for_memo.clone(),
             filter_outliers,
         ))
     });
@@ -444,6 +453,9 @@ fn AnalyzerTable(
     let realtime = use_realtime();
     let world_data = worlds.clone();
     let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let sales_res_capture = sales_resource.clone();
+    let global_res_capture = global_cheapest_listings_resource.clone();
+    let world_res_capture = world_cheapest_listings_resource.clone();
     Effect::new(move |_| {
         market_subscription.update_value(|sub| *sub = None);
         let world_name = world.get();
@@ -459,6 +471,9 @@ fn AnalyzerTable(
         };
 
         let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
+        let sales_res = sales_res_capture.clone();
+        let global_res = global_res_capture.clone();
+        let world_res = world_res_capture.clone();
         let sub = realtime.subscribe_market(
             filter,
             ultros_api_types::websocket::SocketMessageType::Sales,
@@ -471,14 +486,14 @@ fn AnalyzerTable(
                     ServerClient::Sales(_) => {
                         set_realtime_status.set("live".to_string());
                         set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_resource.refetch();
+                        sales_res.refetch();
                     }
                     ServerClient::Stale { .. } | ServerClient::Error { .. } => {
                         set_realtime_status.set("reconnecting".to_string());
                         set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_resource.refetch();
-                        global_cheapest_listings_resource.refetch();
-                        world_cheapest_listings_resource.refetch();
+                        sales_res.refetch();
+                        global_res.refetch();
+                        world_res.refetch();
                     }
                     _ => {}
                 }
@@ -1766,9 +1781,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     <div class="min-h-screen">
                         <Suspense fallback=BoxSkeleton>
                             {move || {
-                                let world_cheapest = world_cheapest_listings.get();
-                                let sales = sales.get();
-                                let global_cheapest_listings = global_cheapest_listings.get();
+                                let sales_resource = sales.clone();
+                                let global_resource = global_cheapest_listings.clone();
+                                let world_resource = world_cheapest_listings.clone();
                                 let cross_region = cross_region
                                     .get()
                                     .and_then(|r: Result<_, AppError>| r.ok())
@@ -1777,18 +1792,15 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     .expect("Worlds should always be populated here")
                                     .0
                                     .unwrap();
-                                match (world_cheapest, sales, global_cheapest_listings) {
+                                match (world_resource.get(), sales_resource.get(), global_resource.get()) {
                                     (Some(_), Some(_), Some(_)) => {
-                                        let sales = sales.clone();
-                                        let global = global_cheapest_listings.clone();
-                                        let world_cheapest = world_cheapest.clone();
                                         Either::Left(
 
                                             view! {
                                                 <AnalyzerTable
-                                                    sales_resource=sales
-                                                    global_cheapest_listings_resource=global
-                                                    world_cheapest_listings_resource=world_cheapest
+                                                    sales_resource=sales_resource
+                                                    global_cheapest_listings_resource=global_resource
+                                                    world_cheapest_listings_resource=world_resource
                                                     cross_region
                                                     worlds
                                                     world=world
