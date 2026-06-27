@@ -167,7 +167,7 @@ fn ListCard(
         <div class="panel p-4 rounded-xl flex flex-col gap-2 h-full justify-between transition-shadow hover:shadow-lg dark:hover:shadow-gray-700/30 relative">
             {move || {
                 let list = list_for_render.clone();
-                if is_edit() {
+                if is_edit() && (caps.can_admin || caps.can_leave) {
                     let list_id = list.id;
                     if caps.can_admin {
                         let list_for_save = list.clone();
@@ -280,16 +280,18 @@ fn ListCard(
                                             </button>
                                         </Tooltip>
                                     </Show>
-                                    <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
-                                        <button
-                                            type="button"
-                                            class="btn-ghost btn-sm text-gray-400 hover:text-white"
-                                            aria-label=move || t_string!(i18n, edit_list).to_string()
-                                            on:click=move |_| set_is_edit(true)
-                                        >
-                                            <Icon icon=i::BsPencilFill />
-                                        </button>
-                                    </Tooltip>
+                                    <Show when=move || { caps.can_admin || caps.can_leave }>
+                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, edit_list).to_string())>
+                                            <button
+                                                type="button"
+                                                class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                                aria-label=move || t_string!(i18n, edit_list).to_string()
+                                                on:click=move |_| set_is_edit(true)
+                                            >
+                                                <Icon icon=i::BsPencilFill />
+                                            </button>
+                                        </Tooltip>
+                                    </Show>
                                 </div>
                             </div>
                             <div class="mt-4 flex justify-end">
