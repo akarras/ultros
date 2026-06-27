@@ -3,6 +3,33 @@ use crate::i18n::{t_string, use_i18n};
 use chrono::{DateTime, Utc};
 use leptos::prelude::*;
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct StatusInfo {
+    pub dot_class: &'static str,
+    pub label_key: &'static str,
+}
+
+pub fn get_status_info(status: &str) -> StatusInfo {
+    match status {
+        "live" => StatusInfo {
+            dot_class: "bg-green-400",
+            label_key: "list_view_live_status_live",
+        },
+        "reconnecting" => StatusInfo {
+            dot_class: "bg-amber-400 animate-pulse",
+            label_key: "list_view_live_status_reconnecting",
+        },
+        "offline" => StatusInfo {
+            dot_class: "bg-gray-500",
+            label_key: "list_view_live_status_offline",
+        },
+        _ => StatusInfo {
+            dot_class: "bg-amber-400 animate-pulse",
+            label_key: "list_view_live_status_connecting",
+        },
+    }
+}
+
 #[component]
 pub fn RealtimeStatus(
     #[prop(into)] status: Signal<String>,
@@ -37,18 +64,10 @@ pub fn RealtimeStatus(
 
     move || {
         let status_key = status.get();
-        let (dot_class, label_key): (&'static str, &'static str) = match status_key.as_str() {
-            "live" => ("bg-green-400", "list_view_live_status_live"),
-            "reconnecting" => (
-                "bg-amber-400 animate-pulse",
-                "list_view_live_status_reconnecting",
-            ),
-            "offline" => ("bg-gray-500", "list_view_live_status_offline"),
-            _ => (
-                "bg-amber-400 animate-pulse",
-                "list_view_live_status_connecting",
-            ),
-        };
+        let StatusInfo {
+            dot_class,
+            label_key,
+        } = get_status_info(status_key.as_str());
 
         let status_label = match label_key {
             "list_view_live_status_live" => t_string!(i18n, list_view_live_status_live).to_string(),
@@ -93,5 +112,45 @@ pub fn RealtimeStatus(
                 </span>
             </Tooltip>
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_status_info_live() {
+        let info = get_status_info("live");
+        assert_eq!(info.dot_class, "bg-green-400");
+        assert_eq!(info.label_key, "list_view_live_status_live");
+    }
+
+    #[test]
+    fn test_get_status_info_reconnecting() {
+        let info = get_status_info("reconnecting");
+        assert_eq!(info.dot_class, "bg-amber-400 animate-pulse");
+        assert_eq!(info.label_key, "list_view_live_status_reconnecting");
+    }
+
+    #[test]
+    fn test_get_status_info_offline() {
+        let info = get_status_info("offline");
+        assert_eq!(info.dot_class, "bg-gray-500");
+        assert_eq!(info.label_key, "list_view_live_status_offline");
+    }
+
+    #[test]
+    fn test_get_status_info_unknown() {
+        let info = get_status_info("unknown");
+        assert_eq!(info.dot_class, "bg-amber-400 animate-pulse");
+        assert_eq!(info.label_key, "list_view_live_status_connecting");
+    }
+
+    #[test]
+    fn test_get_status_info_empty() {
+        let info = get_status_info("");
+        assert_eq!(info.dot_class, "bg-amber-400 animate-pulse");
+        assert_eq!(info.label_key, "list_view_live_status_connecting");
     }
 }
