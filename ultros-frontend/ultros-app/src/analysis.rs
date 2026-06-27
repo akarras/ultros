@@ -9,7 +9,8 @@ pub struct SalesStats {
     pub total_sales: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SalesCadence {
     Fast,
     Steady,
@@ -17,6 +18,7 @@ pub enum SalesCadence {
     NotEnoughData,
 }
 
+#[allow(dead_code)]
 /// Converts sales/day plus sample count into a movement verdict.
 ///
 /// Thresholds:
