@@ -9,6 +9,33 @@ pub struct SalesStats {
     pub total_sales: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SalesCadence {
+    Fast,
+    Steady,
+    Slow,
+    NotEnoughData,
+}
+
+/// Converts sales/day plus sample count into a movement verdict.
+///
+/// Thresholds:
+/// - NotEnoughData: < 3 sales or <= 0 sales/day
+/// - Fast: >= 5 sales/day
+/// - Steady: >= 1 sale/day
+/// - Slow: > 0 sales/day
+pub fn get_sales_cadence(sales_per_day: f32, sample_count: usize) -> SalesCadence {
+    if sample_count < 3 || sales_per_day <= 0.0 {
+        SalesCadence::NotEnoughData
+    } else if sales_per_day >= 5.0 {
+        SalesCadence::Fast
+    } else if sales_per_day >= 1.0 {
+        SalesCadence::Steady
+    } else {
+        SalesCadence::Slow
+    }
+}
+
 /// Summary stats for a single (item_id, hq) bucket of recent sales. Shared by the analyzer
 /// and vendor-resale tables.
 #[derive(Hash, Clone, Debug, PartialEq)]
@@ -457,6 +484,41 @@ mod tests {
 
         // large number of days
         assert_eq!(format_duration_short(86400 * 365 + 3600), "365d 1h");
+    }
+
+    #[test]
+    fn test_get_sales_cadence() {
+        use SalesCadence::*;
+
+        // NotEnoughData: fewer than 3 sales
+        assert_eq!(get_sales_cadence(10.0, 0), NotEnoughData);
+        assert_eq!(get_sales_cadence(10.0, 1), NotEnoughData);
+        assert_eq!(get_sales_cadence(10.0, 2), NotEnoughData);
+
+        // NotEnoughData: non-positive cadence
+        assert_eq!(get_sales_cadence(0.0, 3), NotEnoughData);
+        assert_eq!(get_sales_cadence(-1.0, 3), NotEnoughData);
+
+        // Fast: >= 5 sales/day
+        assert_eq!(get_sales_cadence(5.0, 3), Fast);
+        assert_eq!(get_sales_cadence(10.0, 3), Fast);
+        assert_eq!(get_sales_cadence(4.99, 3), Steady); // Just below Fast
+
+        // Steady: >= 1 sale/day
+        assert_eq!(get_sales_cadence(1.0, 3), Steady);
+        assert_eq!(get_sales_cadence(4.9, 3), Steady);
+        assert_eq!(get_sales_cadence(0.99, 3), Slow); // Just below Steady
+
+        // Slow: positive below 1
+        assert_eq!(get_sales_cadence(0.1, 3), Slow);
+        assert_eq!(get_sales_cadence(0.5, 3), Slow);
+        assert_eq!(get_sales_cadence(0.0001, 3), Slow);
+
+        // Boundary cases
+        assert_eq!(get_sales_cadence(0.999, 3), Slow);
+        assert_eq!(get_sales_cadence(1.0, 3), Steady);
+        assert_eq!(get_sales_cadence(4.999, 3), Steady);
+        assert_eq!(get_sales_cadence(5.0, 3), Fast);
     }
 }
 
