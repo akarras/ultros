@@ -1,5 +1,7 @@
 use crate::analysis::format_duration_short;
+use crate::i18n::{I18nKeys, Locale, t_string};
 use chrono::Duration;
+use leptos_i18n::I18nContext;
 use ultros_api_types::freshness::FreshnessVerdict;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,12 +22,42 @@ pub enum FreshnessLabel {
     NoData,
 }
 
+impl FreshnessLabel {
+    #[allow(dead_code)]
+    pub fn get_text(&self, i18n: I18nContext<Locale, I18nKeys>) -> String {
+        match self {
+            Self::Fresh => t_string!(i18n, freshness_fresh).to_string(),
+            Self::Caution => t_string!(i18n, freshness_caution).to_string(),
+            Self::VerifyInGame => t_string!(i18n, freshness_verify).to_string(),
+            Self::NoData => t_string!(i18n, freshness_no_data).to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub struct FreshnessVerdictDisplay {
     pub tone: FreshnessTone,
     pub label: FreshnessLabel,
     pub age_formatted: Option<String>,
+}
+
+impl FreshnessVerdictDisplay {
+    #[allow(dead_code)]
+    pub fn format_label(&self, i18n: I18nContext<Locale, I18nKeys>) -> String {
+        let label_text = self.label.get_text(i18n);
+        if let Some(age) = &self.age_formatted {
+            t_string!(
+                i18n,
+                freshness_label_with_age,
+                label = label_text,
+                age = age
+            )
+            .to_string()
+        } else {
+            label_text
+        }
+    }
 }
 
 /// Pure helper that maps a freshness verdict and optional age into structured display data.
