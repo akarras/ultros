@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use leptos::either::Either;
 use leptos::prelude::*;
 
@@ -5,14 +7,14 @@ use super::{datacenter_name::*, gil::*, world_name::*};
 use crate::global_state::LocalWorldData;
 use crate::i18n::*;
 use ultros_api_types::ActiveListing;
-use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
 fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
     quantity: i32,
     hq: Option<bool>,
     excluded_worlds: &[i32],
-    excluded_datacenters: &[&str],
+    excluded_datacenters: &HashSet<String>,
     world_helper: Option<&WorldHelper>,
 ) -> Vec<ActiveListing> {
     // Optimization: Filter out unwanted listings *before* sorting.
@@ -21,13 +23,8 @@ fn get_cheapest_listing(
         if listing.is_excluded(excluded_worlds) {
             return false;
         }
-        if !excluded_datacenters.is_empty()
-            && let Some(world_helper) = world_helper
-            && let Some(AnyResult::World(world)) =
-                world_helper.lookup_selector(AnySelector::World(listing.world_id))
-            && let Some(AnyResult::Datacenter(dc)) =
-                world_helper.lookup_selector(AnySelector::Datacenter(world.datacenter_id))
-            && excluded_datacenters.iter().any(|&name| name == dc.name)
+        if let Some(world_helper) = world_helper
+            && listing.is_datacenter_excluded(excluded_datacenters, world_helper)
         {
             return false;
         }
@@ -57,23 +54,31 @@ pub fn PriceViewer(
     hq: Option<bool>,
     listings: Vec<ActiveListing>,
     #[prop(default = &[])] excluded_worlds: &'static [i32],
-    #[prop(default = &[])] excluded_datacenters: &'static [&'static str],
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let world_data = use_context::<LocalWorldData>();
-    let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
 
-    let cheapest_listings = get_cheapest_listing(
-        listings,
-        quantity,
-        hq,
-        excluded_worlds,
-        excluded_datacenters,
-        world_helper.map(|h| h.as_ref()),
-    );
+    let cheapest_listings = Memo::new(move |_| {
+        let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+        excluded_datacenters.with(|excluded_datacenters| {
+            get_cheapest_listing(
+                listings.clone(),
+                quantity,
+                hq,
+                excluded_worlds,
+                excluded_datacenters,
+                world_helper.map(|h| h.as_ref()),
+            )
+        })
+    });
     view! {
         <div class="flex flex-col gap-1">
-            {if cheapest_listings.is_empty() {
+            {move || {
+                let cheapest = cheapest_listings.get();
+                if cheapest.is_empty() {
                 Either::Left(
                     view! {
                         <span class="text-[color:var(--color-text-muted)]">{t!(i18n, price_viewer_no_listing_data)}</span>
@@ -81,7 +86,7 @@ pub fn PriceViewer(
                 )
             } else {
                 Either::Right(
-                    cheapest_listings
+                    cheapest
                         .iter()
                         .map(|listing| {
                             view! {
@@ -98,6 +103,7 @@ pub fn PriceViewer(
                         .collect::<Vec<_>>(),
                 )
             }}
+        }
         </div>
     }
     .into_any()
@@ -128,7 +134,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None, &[], &[], None);
+        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -142,7 +148,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None, &[], &[], None);
+        let result = get_cheapest_listing(listings, 12, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -156,7 +162,7 @@ mod tests {
             mock_listing(3, 300, 5, true),  // HQ, taken
             mock_listing(4, 400, 5, false), // NQ, skipped
         ];
-        let result = get_cheapest_listing(listings, 10, Some(true), &[], &[], None);
+        let result = get_cheapest_listing(listings, 10, Some(true), &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 3);
@@ -170,7 +176,7 @@ mod tests {
             mock_listing(3, 300, 5, false), // NQ, taken
             mock_listing(4, 400, 5, true),  // HQ, skipped
         ];
-        let result = get_cheapest_listing(listings, 10, Some(false), &[], &[], None);
+        let result = get_cheapest_listing(listings, 10, Some(false), &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 3);
@@ -185,7 +191,7 @@ mod tests {
             mock_listing(4, 400, 5, true),  // HQ
         ];
         // Should pick id=2 then id=1
-        let result = get_cheapest_listing(listings, 10, None, &[], &[], None);
+        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 1);
@@ -194,7 +200,7 @@ mod tests {
     #[test]
     fn test_get_cheapest_listing_empty() {
         let listings = vec![];
-        let result = get_cheapest_listing(listings, 10, None, &[], &[], None);
+        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
         assert!(result.is_empty());
     }
 
@@ -205,7 +211,7 @@ mod tests {
             mock_listing(2, 200, 2, false),
         ];
         // We ask for 10, but only 7 are available. It should return all of them.
-        let result = get_cheapest_listing(listings, 10, None, &[], &[], None);
+        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -253,7 +259,9 @@ mod tests {
         let listings = vec![l1, l2];
 
         // Exclude Aether
-        let result = get_cheapest_listing(listings, 10, None, &[], &["Aether"], Some(&world_data));
+        let mut excluded = HashSet::new();
+        excluded.insert("Aether".to_string());
+        let result = get_cheapest_listing(listings, 10, None, &[], &excluded, Some(&world_data));
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 2);

@@ -590,6 +590,7 @@
     "list_view_delete": "삭제",
     "list_view_select_all": "전체 선택",
     "list_view_deselect_all": "선택 해제",
+    "list_view_exclude_datacenters": "Exclude Datacenters",
     "list_view_hq": "HQ",
     "list_view_item": "아이템",
     "list_view_quantity": "수량",

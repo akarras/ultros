@@ -590,6 +590,7 @@
     "list_view_delete": "削除",
     "list_view_select_all": "すべて選択",
     "list_view_deselect_all": "選択を解除",
+    "list_view_exclude_datacenters": "Exclude Datacenters",
     "list_view_hq": "HQ",
     "list_view_item": "アイテム",
     "list_view_quantity": "数量",

@@ -590,6 +590,7 @@
     "list_view_delete": "删除",
     "list_view_select_all": "全选",
     "list_view_deselect_all": "取消全选",
+    "list_view_exclude_datacenters": "Exclude Datacenters",
     "list_view_hq": "HQ",
     "list_view_item": "物品",
     "list_view_quantity": "数量",
