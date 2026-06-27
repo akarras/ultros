@@ -1,7 +1,7 @@
 use crate::analysis::{SaleSummary, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::ws::realtime::{RealtimeSubscription, use_realtime};
+use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world, get_resale_quality, post_sparklines},
     components::{
@@ -22,7 +22,7 @@ use crate::{
         virtual_scroller::*,
         world_picker::*,
     },
-    error::{AppError, AppResult},
+    error::AppError,
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
 };
@@ -158,7 +158,7 @@ enum SortMode {
     ProfitPerDay,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct ProfitTable(Vec<Arc<ProfitData>>);
 
 fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
@@ -410,97 +410,30 @@ fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl I
 
 #[component]
 fn AnalyzerTable(
-    sales_resource: ArcResource<AppResult<RecentSales>>,
-    global_cheapest_listings_resource: ArcResource<AppResult<CheapestListings>>,
-    world_cheapest_listings_resource: ArcResource<AppResult<CheapestListings>>,
+    sales: RecentSales,
+    global_cheapest_listings: CheapestListings,
+    world_cheapest_listings: CheapestListings,
     cross_region: Vec<CheapestListings>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
     filter_outliers: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
-    let (last_update_at, set_last_update_at) =
-        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
-
-    let sales_res_for_memo = sales_resource.clone();
-    let global_res_for_memo = global_cheapest_listings_resource.clone();
-    let world_res_for_memo = world_cheapest_listings_resource.clone();
-    let cross_region_clone_for_memo = cross_region.clone();
-    let profits = Memo::new(move |_| {
-        let sales = match sales_res_for_memo.get() {
-            Some(Ok(s)) => s,
-            _ => return None,
-        };
-        let global = match global_res_for_memo.get() {
-            Some(Ok(g)) => g,
-            _ => return None,
-        };
-        let world_cheapest = match world_res_for_memo.get() {
-            Some(Ok(w)) => w,
-            _ => return None,
-        };
-
-        Some(ProfitTable::new(
-            sales,
-            global,
-            world_cheapest,
-            cross_region_clone_for_memo.clone(),
-            filter_outliers,
-        ))
-    });
-
     let realtime = use_realtime();
-    let world_data = worlds.clone();
-    let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
-    let sales_res_capture = sales_resource.clone();
-    let global_res_capture = global_cheapest_listings_resource.clone();
-    let world_res_capture = world_cheapest_listings_resource.clone();
-    Effect::new(move |_| {
-        market_subscription.update_value(|sub| *sub = None);
-        let world_name = world.get();
-        let Some(realtime) = realtime.clone() else {
-            set_realtime_status.set("offline".to_string());
-            return;
-        };
-        let Some(selector) = world_data
-            .lookup_world_by_name(&world_name)
-            .map(|world| ultros_api_types::world_helper::AnySelector::from(&world))
-        else {
-            return;
-        };
-
-        let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
-        let sales_res = sales_res_capture.clone();
-        let global_res = global_res_capture.clone();
-        let world_res = world_res_capture.clone();
-        let sub = realtime.subscribe_market(
-            filter,
-            ultros_api_types::websocket::SocketMessageType::Sales,
-            move |message| {
-                use ultros_api_types::websocket::ServerClient;
-                match message {
-                    ServerClient::Subscribed { .. } => {
-                        set_realtime_status.set("live".to_string());
-                    }
-                    ServerClient::Sales(_) => {
-                        set_realtime_status.set("live".to_string());
-                        set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_res.refetch();
-                    }
-                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                        set_realtime_status.set("reconnecting".to_string());
-                        set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_res.refetch();
-                        global_res.refetch();
-                        world_res.refetch();
-                    }
-                    _ => {}
-                }
-            },
-        );
-        market_subscription.set_value(Some(sub));
+    let realtime_status = Signal::derive(move || {
+        realtime
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
     });
+    let last_update = Signal::derive(move || realtime.as_ref().and_then(|r| r.last_update.get()));
+    let profits = ProfitTable::new(
+        sales,
+        global_cheapest_listings,
+        world_cheapest_listings,
+        cross_region,
+        filter_outliers,
+    );
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
@@ -564,9 +497,6 @@ fn AnalyzerTable(
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
-        let Some(profits) = profits.get() else {
-            return vec![];
-        };
         let mut sorted_data = profits
             .0
             .iter()
@@ -1082,7 +1012,7 @@ fn AnalyzerTable(
                     </div>
                     <RealtimeStatus
                         status=realtime_status
-                        last_update=last_update_at
+                        last_update=last_update
                     />
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -1781,9 +1711,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     <div class="min-h-screen">
                         <Suspense fallback=BoxSkeleton>
                             {move || {
-                                let sales_resource = sales.clone();
-                                let global_resource = global_cheapest_listings.clone();
-                                let world_resource = world_cheapest_listings.clone();
+                                let world_cheapest = world_cheapest_listings.get();
+                                let sales = sales.get();
+                                let global_cheapest_listings = global_cheapest_listings.get();
                                 let cross_region = cross_region
                                     .get()
                                     .and_then(|r: Result<_, AppError>| r.ok())
@@ -1792,15 +1722,15 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                     .expect("Worlds should always be populated here")
                                     .0
                                     .unwrap();
-                                match (world_resource.get(), sales_resource.get(), global_resource.get()) {
-                                    (Some(_), Some(_), Some(_)) => {
+                                match (world_cheapest, sales, global_cheapest_listings) {
+                                    (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => {
                                         Either::Left(
 
                                             view! {
                                                 <AnalyzerTable
-                                                    sales_resource=sales_resource
-                                                    global_cheapest_listings_resource=global_resource
-                                                    world_cheapest_listings_resource=world_resource
+                                                    sales=s
+                                                    global_cheapest_listings=g
+                                                    world_cheapest_listings=w
                                                     cross_region
                                                     worlds
                                                     world=world

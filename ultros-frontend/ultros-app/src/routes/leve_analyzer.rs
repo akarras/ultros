@@ -1,6 +1,7 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -16,11 +17,9 @@ use crate::{
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
-    error::AppResult,
     global_state::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
-    ws::realtime::{RealtimeSubscription, use_realtime},
 };
 use icondata as i;
 use leptos::prelude::*;
@@ -84,18 +83,20 @@ impl std::fmt::Display for SortMode {
 
 #[component]
 fn LeveAnalyzerTable(
-    global_cheapest_listings_resource: ArcResource<AppResult<CheapestListings>>,
-    recent_sales_resource: ArcResource<AppResult<RecentSales>>,
+    global_cheapest_listings: CheapestListings,
+    recent_sales: Option<RecentSales>,
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let global_res_for_memo = global_cheapest_listings_resource.clone();
-    let prices = Memo::new(move |_| {
-        global_res_for_memo
-            .get()
-            .and_then(|r| r.ok())
-            .map(|listings| CheapestListingsMap::from(listings.clone()))
+    let realtime = use_realtime();
+    let realtime_status = Signal::derive(move || {
+        realtime
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
     });
+    let last_update = Signal::derive(move || realtime.as_ref().and_then(|r| r.last_update.get()));
+    let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
     let leves = &data.leves;
@@ -106,80 +107,22 @@ fn LeveAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
-    let (last_update_at, set_last_update_at) =
-        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
-
-    let realtime = use_realtime();
-    let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
-    let global_res_capture = global_cheapest_listings_resource.clone();
-    let recent_res_capture = recent_sales_resource.clone();
-    Effect::new(move |_| {
-        market_subscription.update_value(|sub| *sub = None);
-        let world_name = world.get();
-        let Some(realtime) = realtime.clone() else {
-            set_realtime_status.set("offline".to_string());
-            return;
-        };
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        let Some(selector) = worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| ultros_api_types::world_helper::AnySelector::from(&world))
-        else {
-            return;
-        };
-
-        let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
-        let recent_res = recent_res_capture.clone();
-        let global_res = global_res_capture.clone();
-        let sub = realtime.subscribe_market(
-            filter,
-            ultros_api_types::websocket::SocketMessageType::Sales,
-            move |message| {
-                use ultros_api_types::websocket::ServerClient;
-                match message {
-                    ServerClient::Subscribed { .. } => {
-                        set_realtime_status.set("live".to_string());
-                    }
-                    ServerClient::Sales(_) => {
-                        set_realtime_status.set("live".to_string());
-                        set_last_update_at.set(Some(chrono::Utc::now()));
-                        recent_res.refetch();
-                    }
-                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                        set_realtime_status.set("reconnecting".to_string());
-                        set_last_update_at.set(Some(chrono::Utc::now()));
-                        recent_res.refetch();
-                        global_res.refetch();
-                    }
-                    _ => {}
-                }
-            },
-        );
-        market_subscription.set_value(Some(sub));
-    });
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
 
     let computed_data = Memo::new(move |_| {
-        let prices = match prices.get() {
-            Some(p) => p,
-            None => return vec![],
-        };
-        let recent_sales = match recent_sales_resource.get().and_then(|r| r.ok()) {
-            Some(s) => s,
-            None => return vec![],
-        };
         let mut results = Vec::new();
         let filter_outliers = filter_outliers().unwrap_or(false);
 
-        let mut sales_map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
-        for sale in &recent_sales.sales {
-            sales_map.entry(sale.item_id).or_default().push(sale);
-        }
+        let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
+            let mut map = HashMap::new();
+            for sale in &sales.sales {
+                map.entry(sale.item_id).or_default().push(sale);
+            }
+            map
+        } else {
+            HashMap::new()
+        };
 
         for craft_leve in craft_leves.values() {
             let leve_id = craft_leve.leve;
@@ -449,10 +392,10 @@ fn LeveAnalyzerTable(
                         </div>
                     </div>
                 </ToolbarField>
-                <div class="ml-auto">
+                <div class="flex-1 flex justify-end">
                     <RealtimeStatus
                         status=realtime_status
-                        last_update=last_update_at
+                        last_update=last_update
                     />
                 </div>
             </Toolbar>
@@ -677,14 +620,23 @@ pub fn LeveAnalyzer() -> impl IntoView {
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
-                        let global_resource = global_cheapest_listings.clone();
-                        let recent_resource = recent_sales.clone();
-                        match (global_resource.get(), recent_resource.get()) {
-                            (Some(_), Some(_)) => {
+                        let listings = global_cheapest_listings.get();
+                        let sales = recent_sales.get();
+                        match (listings, sales) {
+                            (Some(Ok(listings)), Some(Ok(sales))) => {
                                 view! {
                                     <LeveAnalyzerTable
-                                        global_cheapest_listings_resource=global_resource
-                                        recent_sales_resource=recent_resource
+                                        global_cheapest_listings=listings
+                                        recent_sales=Some(sales)
+                                        world=region.into()
+                                    />
+                                }.into_any()
+                            }
+                            (Some(Ok(listings)), _) => {
+                                view! {
+                                    <LeveAnalyzerTable
+                                        global_cheapest_listings=listings
+                                        recent_sales=None
                                         world=region.into()
                                     />
                                 }.into_any()

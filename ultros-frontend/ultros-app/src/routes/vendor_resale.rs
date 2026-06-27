@@ -10,17 +10,16 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
-        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         virtual_scroller::*,
         world_picker::*,
     },
-    error::{AppError, AppResult},
+    error::AppError,
     global_state::LocalWorldData,
     i18n::*,
-    ws::realtime::{RealtimeSubscription, use_realtime},
+    ws::realtime::use_realtime,
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -64,7 +63,7 @@ enum SortMode {
     Profit,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct VendorProfitTable(Vec<Arc<VendorProfitData>>);
 
 fn compute_summary(sale: SaleData) -> SaleSummary {
@@ -209,80 +208,20 @@ impl VendorProfitTable {
 
 #[component]
 fn VendorResaleTable(
-    sales_resource: ArcResource<AppResult<RecentSales>>,
-    world_cheapest_listings_resource: ArcResource<AppResult<CheapestListings>>,
+    sales: RecentSales,
+    world_cheapest_listings: CheapestListings,
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
-    let (last_update_at, set_last_update_at) =
-        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
-
-    let sales_res_for_memo = sales_resource.clone();
-    let world_res_for_memo = world_cheapest_listings_resource.clone();
-    let profits = Memo::new(move |_| {
-        let sales = match sales_res_for_memo.get() {
-            Some(Ok(s)) => s,
-            _ => return None,
-        };
-        let world_cheapest = match world_res_for_memo.get() {
-            Some(Ok(w)) => w,
-            _ => return None,
-        };
-        Some(VendorProfitTable::new(sales, world_cheapest))
-    });
-
     let realtime = use_realtime();
-    let market_subscription = StoredValue::new(None::<RealtimeSubscription>);
-    let sales_res = sales_resource.clone();
-    let world_res = world_cheapest_listings_resource.clone();
-    Effect::new(move |_| {
-        market_subscription.update_value(|sub| *sub = None);
-        let world_name = world.get();
-        let Some(realtime) = realtime.clone() else {
-            set_realtime_status.set("offline".to_string());
-            return;
-        };
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        let Some(selector) = worlds
-            .lookup_world_by_name(&world_name)
-            .map(|world| ultros_api_types::world_helper::AnySelector::from(&world))
-        else {
-            return;
-        };
-
-        let filter = ultros_api_types::websocket::FilterPredicate::World(selector);
-        let sales_res = sales_res.clone();
-        let world_res = world_res.clone();
-        let sub = realtime.subscribe_market(
-            filter,
-            ultros_api_types::websocket::SocketMessageType::Sales,
-            move |message| {
-                use ultros_api_types::websocket::ServerClient;
-                match message {
-                    ServerClient::Subscribed { .. } => {
-                        set_realtime_status.set("live".to_string());
-                    }
-                    ServerClient::Sales(_) => {
-                        set_realtime_status.set("live".to_string());
-                        set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_res.refetch();
-                    }
-                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                        set_realtime_status.set("reconnecting".to_string());
-                        set_last_update_at.set(Some(chrono::Utc::now()));
-                        sales_res.refetch();
-                        world_res.refetch();
-                    }
-                    _ => {}
-                }
-            },
-        );
-        market_subscription.set_value(Some(sub));
+    let realtime_status = Signal::derive(move || {
+        realtime
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
     });
+    let last_update = Signal::derive(move || realtime.as_ref().and_then(|r| r.last_update.get()));
+    let profits = VendorProfitTable::new(sales, world_cheapest_listings);
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
@@ -304,10 +243,6 @@ fn VendorResaleTable(
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
-        let profits = match profits.get() {
-            Some(p) => p,
-            None => return vec![],
-        };
         let mut sorted_data = profits
             .0
             .iter()
@@ -525,7 +460,7 @@ fn VendorResaleTable(
                     </div>
                     <RealtimeStatus
                         status=realtime_status
-                        last_update=last_update_at
+                        last_update=last_update
                     />
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -812,15 +747,15 @@ pub fn VendorWorldView() -> impl IntoView {
                 <div class="min-h-screen">
                     <Suspense fallback=BoxSkeleton>
                         {move || {
-                            let world_res = world_cheapest_listings.clone();
-                            let sales_res = sales.clone();
-                            match (world_res.get(), sales_res.get()) {
-                                (Some(_), Some(_)) => {
+                            let world_cheapest = world_cheapest_listings.get();
+                            let sales = sales.get();
+                            match (world_cheapest, sales) {
+                                (Some(Ok(w)), Some(Ok(s))) => {
                                     Either::Left(
                                         view! {
                                             <VendorResaleTable
-                                                sales_resource=sales_res
-                                                world_cheapest_listings_resource=world_res
+                                                sales=s
+                                                world_cheapest_listings=w
                                                 world=world
                                             />
                                         },
