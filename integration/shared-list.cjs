@@ -218,6 +218,26 @@ async function main() {
       `over-limit user expected error for deleted invite, got: "${deletedInviteError}"`,
     );
 
+    // Leave list path
+    console.log("[step] reader leaves the shared list via UI");
+    await readerPage.goto(`${BASE_URL}/list/${listId}`, { waitUntil: "networkidle0" });
+    await readerPage.click('[data-testid="list-settings-btn"]');
+    await readerPage.waitForSelector('[data-testid="list-settings-drawer"]', { timeout: 10000 });
+    await readerPage.click('[data-testid="list-leave-btn"]');
+
+    // Wait for redirect to /list
+    await readerPage.waitForFunction(() => window.location.pathname === "/list", { timeout: 10000 });
+
+    // Verify it's gone for the reader
+    const readerListsAfterLeave = await api(readerPage, "GET", "/api/v1/list");
+    const readerListAfterLeave = readerListsAfterLeave.body.find((entry) => entry.list.id === listId);
+    failIf(readerListAfterLeave, failures, "list still present for reader after leaving");
+
+    // Verify it's still there for the owner
+    const ownerListsAfterLeave = await api(ownerPage, "GET", "/api/v1/list");
+    const ownerListAfterLeave = ownerListsAfterLeave.body.find((entry) => entry.list.id === listId);
+    failIf(!ownerListAfterLeave, failures, "list disappeared for owner after reader left");
+
     for (const page of [ownerPage, readerPage, invitedPage, overLimitPage]) {
       await page.close();
     }
