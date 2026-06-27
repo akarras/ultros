@@ -57,6 +57,22 @@ RUN cargo chef cook --release --target wasm32-unknown-unknown -p ultros-client -
 # Now the actual source.
 COPY . .
 ENV WASM_BINDGEN_WEAKREF=1
+# Limit peak memory usage to prevent OOM errors on resource-constrained CI runners.
+#  - CARGO_BUILD_JOBS=1: Compile one crate at a time.
+#  - CARGO_INCREMENTAL=0: Avoid overhead of maintaining incremental build state.
+ENV CARGO_BUILD_JOBS=1 \
+    CARGO_INCREMENTAL=0
+
+# cargo-leptos 0.3 builds the server and client in parallel. Even with
+# CARGO_BUILD_JOBS=1, the two distinct rustc processes (one for native, one
+# for WASM) can overlap and exceed the 7GB runner limit.
+#
+# We force sequential build by compiling the server binary first.
+#  - Cargo will cache the server-release artifacts.
+#  - The subsequent cargo-leptos call will see the server is already built
+#    and spend its memory budget on the WASM client.
+RUN cargo build --profile server-release -p ultros --features jemalloc
+
 RUN cargo leptos --manifest-path=./Cargo.toml build --release -vv
 # Split debug info: keep an unstripped copy for CI to upload to GlitchTip,
 # strip the production binary. objcopy is in binutils (transitive via
