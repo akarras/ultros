@@ -200,14 +200,13 @@ pub fn MarketMovers(world: Signal<Option<String>>) -> impl IntoView {
         let active = move || tab.get() == this;
         // ⚡ Bolt: Removed string allocation on reactive renders by avoiding `format!` with multiple class strings.
         // Returning `&'static str` based on conditional checks saves string allocations, making UI updates faster.
-        let base_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors";
-        let active_class = "bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
-        let inactive_class = "bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
+        let active_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
+        let inactive_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
         view! {
             <button
                 type="button"
                 title=tooltip
-                class=move || format!("{} {}", base_class, if active() { active_class } else { inactive_class })
+                class=move || if active() { active_combined_class } else { inactive_combined_class }
                 on:click=move |_| set_tab.set(this)
             >
                 {label}

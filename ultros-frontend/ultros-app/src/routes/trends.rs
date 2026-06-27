@@ -362,9 +362,8 @@ pub fn Trends() -> impl IntoView {
 
     // ⚡ Bolt: Removed `format!` macro that dynamically generated class strings. We now just conditionally return the `&'static str`
     // representing the classes, eliminating string allocations during reactive renders.
-    let pill_active_class = "bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
-    let pill_inactive_class = "bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
-    let pill_base_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors";
+    let pill_active_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
+    let pill_inactive_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
 
     view! {
         <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
@@ -388,21 +387,21 @@ pub fn Trends() -> impl IntoView {
                         <ToolbarPills>
                             <button
                                 aria-pressed=move || (window_days() == 7).to_string()
-                                class=move || format!("{} {}", pill_base_class, if window_days() == 7 { pill_active_class } else { pill_inactive_class })
+                                class=move || if window_days() == 7 { pill_active_combined_class } else { pill_inactive_combined_class }
                                 on:click=move |_| set_window_param.set(Some(7))
                             >
                                 {t!(i18n, trends_window_7d)}
                             </button>
                             <button
                                 aria-pressed=move || (window_days() == 30).to_string()
-                                class=move || format!("{} {}", pill_base_class, if window_days() == 30 { pill_active_class } else { pill_inactive_class })
+                                class=move || if window_days() == 30 { pill_active_combined_class } else { pill_inactive_combined_class }
                                 on:click=move |_| set_window_param.set(Some(30))
                             >
                                 {t!(i18n, trends_window_30d)}
                             </button>
                             <button
                                 aria-pressed=move || (window_days() == 90).to_string()
-                                class=move || format!("{} {}", pill_base_class, if window_days() == 90 { pill_active_class } else { pill_inactive_class })
+                                class=move || if window_days() == 90 { pill_active_combined_class } else { pill_inactive_combined_class }
                                 on:click=move |_| set_window_param.set(Some(90))
                             >
                                 {t!(i18n, trends_window_90d)}
@@ -477,7 +476,7 @@ pub fn Trends() -> impl IntoView {
                             type="button"
                             title=t_string!(i18n, trends_show_suspicious_help).to_string()
                             aria-pressed=move || show_suspicious().to_string()
-                            class=move || format!("{} {}", pill_base_class, if show_suspicious() { pill_active_class } else { pill_inactive_class })
+                            class=move || if show_suspicious() { pill_active_combined_class } else { pill_inactive_combined_class }
                             on:click=move |_| set_suspicious.set(Some(!show_suspicious()))
                         >
                             {move || if show_suspicious() { "On" } else { "Off" }}
