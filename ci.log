@@ -1733,3 +1733,5 @@
     Checking rexie v0.6.2
     Checking ece v2.3.1
     Checking web-push v0.11.0
+    Checking ultros-client v0.1.0 (/app/ultros-frontend/ultros-client)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 26m 06s
