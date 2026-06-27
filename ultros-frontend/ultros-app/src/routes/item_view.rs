@@ -31,6 +31,8 @@ use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::{CurrentlyShownItem, SaleHistory};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
+type FilteredListings = Vec<(ActiveListing, Arc<Retainer>)>;
+
 #[component]
 fn WorldButton(
     current_world: Memo<String>,
@@ -251,7 +253,7 @@ fn MarketStatsPanel(
     item_id: Memo<i32>,
     realtime_status: Signal<String>,
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
-    #[prop(into)] filtered_listings: Signal<Option<Vec<(ActiveListing, Arc<Retainer>)>>>,
+    #[prop(into)] filtered_listings: Signal<Option<FilteredListings>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
@@ -913,7 +915,7 @@ pub fn ChartWrapper(
 
 #[component]
 fn HighQualityTable(
-    #[prop(into)] filtered_listings: Signal<Option<Vec<(ActiveListing, Arc<Retainer>)>>>,
+    #[prop(into)] filtered_listings: Signal<Option<FilteredListings>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
@@ -925,18 +927,18 @@ fn HighQualityTable(
                     let hq_listings = Memo::new(move |_| {
                         filtered_listings
                             .get()
-                            .map(|listings: Vec<(ActiveListing, Arc<Retainer>)>| {
+                            .map(|listings| {
                                 listings
                                     .into_iter()
                                     .filter(|(l, _)| l.hq)
-                                    .collect::<Vec<_>>()
+                                    .collect::<FilteredListings>()
                             })
                             .unwrap_or_default()
                     });
                     view! {
                         <div
                             class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || hq_listings.with(|l: &Vec<(ActiveListing, Arc<Retainer>)>| l.is_empty())
+                            class:hidden=move || hq_listings.with(|l: &FilteredListings| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 {move || t_string!(i18n, high_quality_listings).to_string()}
@@ -953,7 +955,7 @@ fn HighQualityTable(
 
 #[component]
 fn LowQualityTable(
-    #[prop(into)] filtered_listings: Signal<Option<Vec<(ActiveListing, Arc<Retainer>)>>>,
+    #[prop(into)] filtered_listings: Signal<Option<FilteredListings>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
@@ -965,18 +967,18 @@ fn LowQualityTable(
                     let lq_listings = Memo::new(move |_| {
                         filtered_listings
                             .get()
-                            .map(|listings: Vec<(ActiveListing, Arc<Retainer>)>| {
+                            .map(|listings| {
                                 listings
                                     .into_iter()
                                     .filter(|(l, _)| !l.hq)
-                                    .collect::<Vec<_>>()
+                                    .collect::<FilteredListings>()
                             })
                             .unwrap_or_default()
                     });
                     view! {
                         <div
                             class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || lq_listings.with(|l: &Vec<(ActiveListing, Arc<Retainer>)>| l.is_empty())
+                            class:hidden=move || lq_listings.with(|l: &FilteredListings| l.is_empty())
                         >
                             <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
                                 {move || t_string!(i18n, low_quality_listings).to_string()}
