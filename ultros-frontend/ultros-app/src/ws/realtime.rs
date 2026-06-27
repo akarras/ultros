@@ -4,6 +4,7 @@ use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageTy
 #[cfg(not(feature = "ssr"))]
 mod client {
     use super::*;
+    use chrono::{DateTime, Utc};
     use gloo_timers::callback::Timeout;
     use send_wrapper::SendWrapper;
     use std::{
@@ -19,6 +20,8 @@ mod client {
 
     #[derive(Clone)]
     pub(crate) struct RealtimeClient {
+        pub status: Signal<String>,
+        pub last_update: Signal<Option<DateTime<Utc>>>,
         inner: SendWrapper<Rc<RealtimeInner>>,
     }
 
@@ -34,6 +37,10 @@ mod client {
         pending_messages: RefCell<Vec<String>>,
         next_subscription_id: Cell<u64>,
         reconnect_attempt: Cell<u32>,
+        status: Signal<String>,
+        last_update: Signal<Option<DateTime<Utc>>>,
+        set_status: WriteSignal<String>,
+        set_last_update: WriteSignal<Option<DateTime<Utc>>>,
         onopen: RefCell<Option<Closure<dyn FnMut(Event)>>>,
         onmessage: RefCell<Option<Closure<dyn FnMut(MessageEvent)>>>,
         onclose: RefCell<Option<Closure<dyn FnMut(CloseEvent)>>>,
@@ -42,7 +49,11 @@ mod client {
 
     impl RealtimeClient {
         pub(crate) fn new() -> Self {
+            let (status, set_status) = signal("connecting".to_string());
+            let (last_update, set_last_update) = signal(None);
             let client = Self {
+                status: status.into(),
+                last_update: last_update.into(),
                 inner: SendWrapper::new(Rc::new(RealtimeInner {
                     socket: RefCell::new(None),
                     handlers: RefCell::new(HashMap::new()),
@@ -50,6 +61,10 @@ mod client {
                     pending_messages: RefCell::new(Vec::new()),
                     next_subscription_id: Cell::new(1),
                     reconnect_attempt: Cell::new(0),
+                    status: status.into(),
+                    last_update: last_update.into(),
+                    set_status,
+                    set_last_update,
                     onopen: RefCell::new(None),
                     onmessage: RefCell::new(None),
                     onclose: RefCell::new(None),
@@ -168,6 +183,7 @@ mod client {
             let onopen = Closure::wrap(Box::new(move |_event: Event| {
                 if let Some(inner) = weak.upgrade() {
                     inner.reconnect_attempt.set(0);
+                    inner.set_status.set("live".to_string());
                     if let Some(socket) = inner.socket.borrow().as_ref().cloned() {
                         for message in inner.subscription_messages.borrow().values() {
                             let _ = socket.send_with_str(message);
@@ -235,6 +251,12 @@ mod client {
         let Some(inner) = weak.upgrade() else {
             return;
         };
+        match &message {
+            ServerClient::Sales(_) | ServerClient::Listings(_) | ServerClient::ListUpdate(_) => {
+                inner.set_last_update.set(Some(Utc::now()));
+            }
+            _ => {}
+        }
         match message {
             ServerClient::SubscriptionEvent {
                 subscription_id,
@@ -277,9 +299,11 @@ mod client {
         let Some(inner) = weak.upgrade() else {
             return;
         };
+        inner.set_status.set("reconnecting".to_string());
         if inner.subscription_messages.borrow().is_empty()
             && inner.pending_messages.borrow().is_empty()
         {
+            inner.set_status.set("offline".to_string());
             return;
         }
         let attempt = inner.reconnect_attempt.get().saturating_add(1).min(6);
@@ -288,7 +312,11 @@ mod client {
         let weak = Rc::downgrade(&inner);
         Timeout::new(delay_ms, move || {
             if let Some(inner) = weak.upgrade() {
+                let status = inner.status;
+                let last_update = inner.last_update;
                 RealtimeClient {
+                    status,
+                    last_update,
                     inner: SendWrapper::new(inner),
                 }
                 .connect();
@@ -310,15 +338,22 @@ mod client {
 #[cfg(feature = "ssr")]
 mod client {
     use super::*;
+    use chrono::{DateTime, Utc};
 
     #[derive(Clone)]
-    pub(crate) struct RealtimeClient;
+    pub(crate) struct RealtimeClient {
+        pub status: Signal<String>,
+        pub last_update: Signal<Option<DateTime<Utc>>>,
+    }
 
     pub(crate) struct RealtimeSubscription;
 
     impl RealtimeClient {
         pub(crate) fn new() -> Self {
-            Self
+            Self {
+                status: Signal::derive(|| "connecting".to_string()),
+                last_update: Signal::derive(|| None),
+            }
         }
 
         pub(crate) fn subscribe_market(

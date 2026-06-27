@@ -11,7 +11,8 @@ const USERS = {
   reader: { id: 880000000002, username: "SharedListReader" },
   invited: { id: 880000000003, username: "SharedListInvited" },
   invitedWriter: { id: 880000000005, username: "SharedListInvitedWriter" },
-  overLimit: { id: 880000000004, username: "SharedListOverLimit" },
+  manual: { id: 880000000004, username: "SharedListManual" },
+  overLimit: { id: 880000000005, username: "SharedListOverLimit" },
 };
 
 async function login(page, baseUrl, user) {
@@ -69,15 +70,17 @@ async function main() {
     const readerCtx = await browser.createBrowserContext();
     const invitedCtx = await browser.createBrowserContext();
     const invitedWriterCtx = await browser.createBrowserContext();
+    const manualCtx = await browser.createBrowserContext();
     const overLimitCtx = await browser.createBrowserContext();
 
     const ownerPage = await ownerCtx.newPage();
     const readerPage = await readerCtx.newPage();
     const invitedPage = await invitedCtx.newPage();
     const invitedWriterPage = await invitedWriterCtx.newPage();
+    const manualPage = await manualCtx.newPage();
     const overLimitPage = await overLimitCtx.newPage();
 
-    for (const page of [ownerPage, readerPage, invitedPage, invitedWriterPage, overLimitPage]) {
+    for (const page of [ownerPage, readerPage, invitedPage, invitedWriterPage, manualPage, overLimitPage]) {
       page.setDefaultTimeout(TIMEOUT_MS);
     }
 
@@ -85,6 +88,7 @@ async function main() {
     await login(readerPage, BASE_URL, USERS.reader);
     await login(invitedPage, BASE_URL, USERS.invited);
     await login(invitedWriterPage, BASE_URL, USERS.invitedWriter);
+    await login(manualPage, BASE_URL, USERS.manual);
     await login(overLimitPage, BASE_URL, USERS.overLimit);
 
     const worldData = await api(ownerPage, "GET", "/api/v1/world_data");
@@ -144,14 +148,28 @@ async function main() {
 
     const invite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
       permission: "Read",
-      max_uses: 1,
+      max_uses: 2,
     });
     failIf(invite.status !== 200, failures, `create invite expected 200, got ${invite.status}`);
     const inviteId = invite.body.id;
     failIf(!inviteId || inviteId.length < 32, failures, "invite id was missing or too short");
 
-    // UI-level invite redemption
-    console.log(`[step] invited user redeems invite via UI: /list/invite/${inviteId}`);
+    // Manual invite redemption via UI
+    console.log(`[step] manual user redeems invite via code input: ${inviteId}`);
+    await manualPage.goto(`${BASE_URL}/list`, { waitUntil: "networkidle0" });
+    await manualPage.type('input[placeholder="Invite code"]', inviteId);
+    await manualPage.click('button.btn-secondary ::-p-text(Redeem)');
+    await manualPage.waitForFunction(
+      (expected) => window.location.pathname === expected,
+      { timeout: 10000 },
+      `/list/${listId}`,
+    ).catch(() => {});
+
+    const manualUrl = manualPage.url();
+    failIf(!manualUrl.endsWith(`/list/${listId}`), failures, `manual user expected redirect to /list/${listId}, got ${manualUrl}`);
+
+    // UI-level invite redemption (direct link)
+    console.log(`[step] invited user redeems invite via direct link UI: /list/invite/${inviteId}`);
     await invitedPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
     await invitedPage.waitForFunction(
       (expected) => window.location.pathname === expected,
@@ -161,6 +179,25 @@ async function main() {
 
     const invitedUrl = invitedPage.url();
     failIf(!invitedUrl.endsWith(`/list/${listId}`), failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
+
+    // Verify Read permissions for invited user
+    console.log("[step] verifying Read permission for invited user");
+    const invitedReadAdd = await api(invitedPage, "POST", `/api/v1/list/${listId}/add/item`, {
+      id: 0,
+      item_id: 3,
+      list_id: listId,
+      hq: null,
+      quantity: 1,
+      acquired: null,
+    });
+    failIf(invitedReadAdd.status !== 403, failures, `invited read-only add expected 403, got ${invitedReadAdd.status}`);
+
+    const hasAddItem = await invitedPage.evaluate(() =>
+      Array.from(document.querySelectorAll("button")).some((b) =>
+        (b.innerText || "").includes("Add Item"),
+      ),
+    );
+    failIf(hasAddItem, failures, "invited read-only user should not see Add Item button");
 
     // Exhausted invite path
     console.log("[step] over-limit user attempts to redeem exhausted invite via UI");
@@ -274,7 +311,7 @@ async function main() {
     });
     failIf(invitedWriterAdd.status !== 200, failures, `invited writer add expected 200, got ${invitedWriterAdd.status}`);
 
-    for (const page of [ownerPage, readerPage, invitedPage, invitedWriterPage, overLimitPage]) {
+    for (const page of [ownerPage, readerPage, invitedPage, invitedWriterPage, overLimitPage, manualPage]) {
       await page.close();
     }
   } finally {

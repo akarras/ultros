@@ -599,4 +599,21 @@ mod tests {
         let exactly_100 = "b".repeat(100);
         assert_eq!(truncate_100(&exactly_100), exactly_100);
     }
+
+    #[test]
+    fn test_localized_item_matches_truncation() {
+        let results = localized_item_matches("Torn from the Heavens", Language::Fr);
+        let m = results
+            .iter()
+            .find(|m| m.item_id == 31681)
+            .expect("should find the medley orchestrion roll");
+
+        assert!(m.label.chars().count() <= 100);
+    }
+
+    #[test]
+    fn test_resolve_item_id_any_locale_with_string_id() {
+        assert_eq!(resolve_item_id_any_locale("31681"), Some(31681));
+        assert_eq!(resolve_item_id_any_locale("not-an-id"), None);
+    }
 }
