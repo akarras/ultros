@@ -10,6 +10,7 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -214,13 +215,15 @@ fn VendorResaleTable(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
+    let rt_status = realtime.clone();
     let realtime_status = Signal::derive(move || {
-        realtime
+        rt_status
             .as_ref()
             .map(|r| r.status.get())
             .unwrap_or_else(|| "offline".to_string())
     });
-    let last_update = Signal::derive(move || realtime.as_ref().and_then(|r| r.last_update.get()));
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let profits = VendorProfitTable::new(sales, world_cheapest_listings);
 
     let items = &tracked_data().items;

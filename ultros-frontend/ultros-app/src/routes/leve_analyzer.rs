@@ -89,13 +89,15 @@ fn LeveAnalyzerTable(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
+    let rt_status = realtime.clone();
     let realtime_status = Signal::derive(move || {
-        realtime
+        rt_status
             .as_ref()
             .map(|r| r.status.get())
             .unwrap_or_else(|| "offline".to_string())
     });
-    let last_update = Signal::derive(move || realtime.as_ref().and_then(|r| r.last_update.get()));
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -115,7 +117,7 @@ fn LeveAnalyzerTable(
         let filter_outliers = filter_outliers().unwrap_or(false);
 
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map = HashMap::new();
+            let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
                 map.entry(sale.item_id).or_default().push(sale);
             }
