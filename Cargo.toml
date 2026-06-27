@@ -125,18 +125,8 @@ web-push = { version = "0.11.0", default-features = false }
 [profile.release]
 # Optimized for size — used by the WASM client bundle (where bytes-on-the-wire matter).
 # The server binary uses [profile.server-release] below; see workspace.metadata.leptos.
-#
-# Memory reduction for CI OOMs:
-#  - incremental=false and lto=false: Reduce overhead of link-time/build-state tracking.
-#  - opt-level=2 (instead of "z"): Slightly less aggressive optimization reduces peak RAM.
-#  - codegen-units=16: Splitting the crate into units allows LLVM to process smaller
-#    chunks of code sequentially (since CARGO_BUILD_JOBS=1 is set in Docker),
-#    preventing a single massive LLVM unit from exhausting runner memory.
-opt-level = 2
+opt-level = "z"
 strip = "debuginfo"
-codegen-units = 16
-incremental = false
-lto = false
 
 # Server binary profile. cargo-leptos builds the bin with this when set as
 # bin-profile-release in workspace.metadata.leptos.
@@ -163,6 +153,14 @@ lto = false
 [profile.server-release]
 inherits = "release"
 debug = "line-tables-only"
+# Memory reduction for CI OOMs:
+#  - incremental=false and lto=false: Reduce overhead of link-time/build-state tracking.
+#  - codegen-units=16: Splitting the crate into units allows LLVM to process smaller
+#    chunks of code sequentially (since CARGO_BUILD_JOBS=1 is set in Docker),
+#    preventing a single massive LLVM unit from exhausting runner memory.
+codegen-units = 16
+incremental = false
+lto = false
 
 [profile.dev]
 # opt-level = 1
@@ -253,6 +251,4 @@ opt-level = 3
 
 [profile.release.build-override]
 opt-level = 3
-# codegen-units=256 reduces the size of individual work units for LLVM, preventing
-# memory exhaustion during compilation of large proc-macro or build-script crates.
 codegen-units = 256
