@@ -2,6 +2,7 @@ pub mod alert;
 pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
+pub mod freshness;
 pub mod icon_size;
 pub mod item_stats;
 pub mod list;
