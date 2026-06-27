@@ -198,6 +198,7 @@ pub fn ListView() -> impl IntoView {
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
+    let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
 
     type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
     let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
@@ -379,6 +380,65 @@ pub fn ListView() -> impl IntoView {
                                 <span>{t!(i18n, list_view_settings)}</span>
                             </button>
                         </Tooltip>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel rounded-lg p-3">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                        {t!(i18n, list_view_exclude_datacenters)}
+                    </span>
+                    <div class="flex flex-wrap gap-2">
+                        {move || {
+                            let world_data = use_context::<crate::global_state::LocalWorldData>();
+                            let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+                            let list_data = list_view.get();
+                            match (helper, list_data) {
+                                (Some(helper), Some(Ok((list, _)))) => {
+                                    let filter = list.list.wdr_filter;
+                                    let datacenters = helper
+                                        .lookup_selector(filter)
+                                        .map(|r| helper.get_datacenters(&r))
+                                        .unwrap_or_default();
+                                    datacenters
+                                        .into_iter()
+                                        .map(|dc| {
+                                            let name = dc.name.clone();
+                                            let is_excluded = Signal::derive(move || {
+                                                excluded_datacenters.with(|set| set.contains(&name))
+                                            });
+                                            let toggle = {
+                                                let name = dc.name.clone();
+                                                move |_| {
+                                                    excluded_datacenters
+                                                        .update(|set| {
+                                                            if set.contains(&name) {
+                                                                set.remove(&name);
+                                                            } else {
+                                                                set.insert(name.clone());
+                                                            }
+                                                        })
+                                                }
+                                            };
+                                            view! {
+                                                <button
+                                                    class="btn-secondary px-3 py-1 text-xs"
+                                                    class:bg-red-950=is_excluded
+                                                    class:text-red-200=is_excluded
+                                                    class:border-red-400=is_excluded
+                                                    on:click=toggle
+                                                >
+                                                    {dc.name.clone()}
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()
+                                        .into_any()
+                                }
+                                _ => view! {}.into_any(),
+                            }
+                        }}
                     </div>
                 </div>
             </div>
@@ -616,7 +676,11 @@ pub fn ListView() -> impl IntoView {
                                                         </div>
                                                     </div>
                                                     <div class="p-4 sm:p-5">
-                                                        <BuyingView items=items.get_value() edit_item=edit_item />
+                                                        <BuyingView
+                                                            items=items.get_value()
+                                                            edit_item=edit_item
+                                                            excluded_datacenters=excluded_datacenters
+                                                        />
                                                     </div>
                                                 </section>
                                             },
@@ -876,7 +940,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 recently_changed=recently_changed
                                                                                 can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
                                                                                 excluded_worlds=&[]
-                                                                                excluded_datacenters=&[]
+                                                                                excluded_datacenters=excluded_datacenters
                                                                             />
                                                                         }
                                                                     }
@@ -886,7 +950,11 @@ pub fn ListView() -> impl IntoView {
                                                         </table>
                                                     </div>
                                                     <div class="p-4 sm:p-5">
-                                                        <ListSummary items=items.get_value() excluded_worlds=&[] excluded_datacenters=&[] />
+                                                        <ListSummary
+                                                            items=items.get_value()
+                                                            excluded_worlds=&[]
+                                                            excluded_datacenters=excluded_datacenters
+                                                        />
                                                     </div>
                                                     <div class="border-t border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <ActivityFeed activity=activity_view />
