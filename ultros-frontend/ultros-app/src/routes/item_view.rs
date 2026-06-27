@@ -1082,60 +1082,60 @@ fn ListingsContent(
             let Some(selector) = world_data
                 .lookup_world_by_name(&world)
                 .map(|world| AnySelector::from(&world))
-        else {
-            return;
-        };
-        if item_id == 0 {
-            return;
-        }
+            else {
+                return;
+            };
+            if item_id == 0 {
+                return;
+            }
 
-        let filter = FilterPredicate::World(selector).and(FilterPredicate::Item(item_id));
-        let listings_subscription = realtime.subscribe_market(
-            filter.clone(),
-            SocketMessageType::Listings,
-            move |message| match message {
-                ServerClient::Subscribed { .. } => {
-                    set_realtime_status.set("live".to_string());
-                }
-                ServerClient::Listings(event) => {
-                    set_realtime_status.set("live".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
-                    update_current_item(listing_resource, |data| {
-                        data.apply_listing_event(item_id, event);
-                    });
-                }
-                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                    set_realtime_status.set("reconnecting".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
-                    listing_resource.refetch();
-                }
-                _ => {}
-            },
-        );
-        let sales_subscription = realtime.subscribe_market(
-            filter,
-            SocketMessageType::Sales,
-            move |message| match message {
-                ServerClient::Subscribed { .. } => {
-                    set_realtime_status.set("live".to_string());
-                }
-                ServerClient::Sales(event) => {
-                    set_realtime_status.set("live".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
-                    update_current_item(listing_resource, |data| {
-                        data.apply_sales_event(item_id, event);
-                    });
-                }
-                ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                    set_realtime_status.set("reconnecting".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
-                    listing_resource.refetch();
-                }
-                _ => {}
-            },
-        );
-        market_subscriptions.set_value(vec![listings_subscription, sales_subscription]);
-    }});
+            let filter = FilterPredicate::World(selector).and(FilterPredicate::Item(item_id));
+            let listings_subscription = realtime.subscribe_market(
+                filter.clone(),
+                SocketMessageType::Listings,
+                move |message| match message {
+                    ServerClient::Subscribed { .. } => {
+                        set_realtime_status.set("live".to_string());
+                    }
+                    ServerClient::Listings(event) => {
+                        set_realtime_status.set("live".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        update_current_item(listing_resource, |data| {
+                            data.apply_listing_event(item_id, event);
+                        });
+                    }
+                    ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                        set_realtime_status.set("reconnecting".to_string());
+                        set_last_update_at.set(Some(chrono::Utc::now()));
+                        listing_resource.refetch();
+                    }
+                    _ => {}
+                },
+            );
+            let sales_subscription =
+                realtime.subscribe_market(filter, SocketMessageType::Sales, move |message| {
+                    match message {
+                        ServerClient::Subscribed { .. } => {
+                            set_realtime_status.set("live".to_string());
+                        }
+                        ServerClient::Sales(event) => {
+                            set_realtime_status.set("live".to_string());
+                            set_last_update_at.set(Some(chrono::Utc::now()));
+                            update_current_item(listing_resource, |data| {
+                                data.apply_sales_event(item_id, event);
+                            });
+                        }
+                        ServerClient::Stale { .. } | ServerClient::Error { .. } => {
+                            set_realtime_status.set("reconnecting".to_string());
+                            set_last_update_at.set(Some(chrono::Utc::now()));
+                            listing_resource.refetch();
+                        }
+                        _ => {}
+                    }
+                });
+            market_subscriptions.set_value(vec![listings_subscription, sales_subscription]);
+        }
+    });
     on_cleanup(move || {
         market_subscriptions.update_value(|subscriptions| subscriptions.clear());
     });
