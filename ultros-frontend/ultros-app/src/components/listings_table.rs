@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use super::gil::*;
 use super::relative_time::*;
 use crate::components::{datacenter_name::*, world_name::*};
+use crate::global_state::LocalWorldData;
 use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -10,8 +13,12 @@ use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelec
 #[component]
 pub fn ListingsTable(
     #[prop(into)] listings: Signal<Vec<(ActiveListing, Arc<Retainer>)>>,
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let world_data = use_context::<LocalWorldData>();
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     let show_click = move |_| set_show_more(true);
@@ -20,6 +27,16 @@ pub fn ListingsTable(
     // Note: We use Arc<Retainer> to make cloning cheap (pointer copy vs string copy).
     let sorted_listings = Memo::new(move |_| {
         let mut listings = listings();
+        let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+        excluded_datacenters.with(|excluded| {
+            if !excluded.is_empty() {
+                if let Some(world_helper) = world_helper {
+                    listings.retain(|(listing, _)| {
+                        !listing.is_datacenter_excluded(excluded, world_helper.as_ref())
+                    });
+                }
+            }
+        });
         listings.sort_by_key(|(listing, _)| listing.price_per_unit);
         listings
     });
