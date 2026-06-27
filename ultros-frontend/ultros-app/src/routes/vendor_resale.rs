@@ -10,6 +10,7 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -19,6 +20,7 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     i18n::*,
+    ws::realtime::use_realtime,
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -212,6 +214,16 @@ fn VendorResaleTable(
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let profits = VendorProfitTable::new(sales, world_cheapest_listings);
 
     let items = &tracked_data().items;
@@ -445,8 +457,14 @@ fn VendorResaleTable(
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
+                <div class="text-sm text-[color:var(--color-text)] flex flex-wrap items-center gap-3">
+                    <div>
+                        <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
+                    </div>
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                    />
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {

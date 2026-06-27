@@ -1,6 +1,7 @@
 use crate::analysis::{SaleSummary, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world, get_resale_quality, post_sparklines},
     components::{
@@ -11,6 +12,7 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
@@ -417,6 +419,16 @@ fn AnalyzerTable(
     filter_outliers: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let profits = ProfitTable::new(
         sales,
         global_cheapest_listings,
@@ -996,8 +1008,14 @@ fn AnalyzerTable(
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> {t!(i18n, analyzer_results)}
+                <div class="text-sm text-[color:var(--color-text)] flex flex-wrap items-center gap-3">
+                    <div>
+                        <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> {t!(i18n, analyzer_results)}
+                    </div>
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                    />
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {
