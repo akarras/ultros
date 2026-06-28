@@ -4,36 +4,22 @@ use leptos::either::Either;
 use leptos::prelude::*;
 
 use super::{datacenter_name::*, gil::*, world_name::*};
+use crate::components::listing_filters::filter_active_listings;
 use crate::global_state::LocalWorldData;
 use crate::i18n::*;
 use ultros_api_types::ActiveListing;
-use ultros_api_types::world_helper::{AnySelector, WorldHelper};
+use ultros_api_types::world_helper::AnySelector;
 
 fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
     quantity: i32,
     hq: Option<bool>,
-    excluded_worlds: &[i32],
-    excluded_datacenters: &HashSet<String>,
-    world_helper: Option<&WorldHelper>,
 ) -> Vec<ActiveListing> {
-    // Optimization: Filter out unwanted listings *before* sorting.
-    // This significantly reduces the N in O(N log N) sorting time.
-    listings.retain(|listing| {
-        if listing.is_excluded(excluded_worlds) {
-            return false;
-        }
-        if let Some(world_helper) = world_helper
-            && listing.is_datacenter_excluded(excluded_datacenters, world_helper)
-        {
-            return false;
-        }
-        if let Some(hq) = hq {
-            listing.hq == hq
-        } else {
-            true
-        }
-    });
+    // Optimization: Filter out unwanted quality types *before* sorting.
+    // This significantly reduces the N in O(N log N) sorting time when filtering by HQ/NQ.
+    if let Some(hq) = hq {
+        listings.retain(|listing| listing.hq == hq);
+    }
     listings.sort_by_key(|listing| listing.price_per_unit);
 
     let quantity_needed = quantity;
@@ -59,19 +45,18 @@ pub fn PriceViewer(
     >,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let world_data = use_context::<LocalWorldData>();
+    let world_data = use_context::<LocalWorldData>().and_then(|world_data| world_data.0.ok());
+    let excluded_worlds = excluded_worlds.iter().copied().collect::<HashSet<_>>();
 
     let cheapest_listings = Memo::new(move |_| {
-        let world_helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
         excluded_datacenters.with(|excluded_datacenters| {
-            get_cheapest_listing(
+            let listings = filter_active_listings(
                 listings.clone(),
-                quantity,
-                hq,
-                excluded_worlds,
+                world_data.as_deref(),
+                &excluded_worlds,
                 excluded_datacenters,
-                world_helper.map(|h| h.as_ref()),
-            )
+            );
+            get_cheapest_listing(listings, quantity, hq)
         })
     });
     view! {
@@ -134,7 +119,7 @@ mod tests {
             mock_listing(2, 200, 5, false),
             mock_listing(3, 300, 5, false),
         ];
-        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 10, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -148,7 +133,7 @@ mod tests {
             mock_listing(3, 300, 5, false),
         ];
         // We need 12. We take the 5 from id=1, and we need 7 more, so we take the 10 from id=2.
-        let result = get_cheapest_listing(listings, 12, None, &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 12, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
@@ -162,7 +147,7 @@ mod tests {
             mock_listing(3, 300, 5, true),  // HQ, taken
             mock_listing(4, 400, 5, false), // NQ, skipped
         ];
-        let result = get_cheapest_listing(listings, 10, Some(true), &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 10, Some(true));
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 3);
@@ -176,7 +161,7 @@ mod tests {
             mock_listing(3, 300, 5, false), // NQ, taken
             mock_listing(4, 400, 5, true),  // HQ, skipped
         ];
-        let result = get_cheapest_listing(listings, 10, Some(false), &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 10, Some(false));
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 3);
@@ -191,7 +176,7 @@ mod tests {
             mock_listing(4, 400, 5, true),  // HQ
         ];
         // Should pick id=2 then id=1
-        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 10, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 2);
         assert_eq!(result[1].id, 1);
@@ -200,7 +185,7 @@ mod tests {
     #[test]
     fn test_get_cheapest_listing_empty() {
         let listings = vec![];
-        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 10, None);
         assert!(result.is_empty());
     }
 
@@ -211,83 +196,23 @@ mod tests {
             mock_listing(2, 200, 2, false),
         ];
         // We ask for 10, but only 7 are available. It should return all of them.
-        let result = get_cheapest_listing(listings, 10, None, &[], &HashSet::new(), None);
+        let result = get_cheapest_listing(listings, 10, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
     }
 
     #[test]
-    fn test_get_cheapest_listing_excluded_world_before_cheapest_selection() {
-        let mut l1 = mock_listing(1, 100, 5, false);
-        l1.world_id = 100;
-        let mut l2 = mock_listing(2, 200, 5, false);
-        l2.world_id = 200;
-        let mut l3 = mock_listing(3, 50, 5, true);
-        l3.world_id = 300;
+    fn test_get_cheapest_listing_uses_pre_filtered_listings() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 5, false),
+        ];
+        let filtered = listings.into_iter().skip(1).collect::<Vec<_>>();
 
-        let result = get_cheapest_listing(
-            vec![l1, l2, l3],
-            5,
-            Some(false),
-            &[100],
-            &HashSet::new(),
-            None,
-        );
+        let result = get_cheapest_listing(filtered, 5, None);
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 2);
-        assert_eq!(result[0].world_id, 200);
-    }
-
-    #[test]
-    fn test_get_cheapest_listing_excluded_datacenter() {
-        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
-
-        let world_data: WorldHelper = WorldData {
-            regions: vec![Region {
-                id: 1,
-                name: "North-America".into(),
-                datacenters: vec![
-                    Datacenter {
-                        id: 10,
-                        name: "Aether".into(),
-                        region_id: 1,
-                        worlds: vec![World {
-                            id: 100,
-                            name: "Adamantoise".into(),
-                            datacenter_id: 10,
-                        }],
-                    },
-                    Datacenter {
-                        id: 11,
-                        name: "Primal".into(),
-                        region_id: 1,
-                        worlds: vec![World {
-                            id: 110,
-                            name: "Behemoth".into(),
-                            datacenter_id: 11,
-                        }],
-                    },
-                ],
-            }],
-        }
-        .into();
-
-        let mut l1 = mock_listing(1, 100, 5, false);
-        l1.world_id = 100; // Aether
-        let mut l2 = mock_listing(2, 200, 5, false);
-        l2.world_id = 110; // Primal
-
-        let listings = vec![l1, l2];
-
-        // Exclude Aether
-        let mut excluded = HashSet::new();
-        excluded.insert("Aether".to_string());
-        let result = get_cheapest_listing(listings, 10, None, &[], &excluded, Some(&world_data));
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, 2);
-        assert_eq!(result[0].world_id, 110);
     }
 }
