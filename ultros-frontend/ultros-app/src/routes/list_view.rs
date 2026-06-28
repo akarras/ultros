@@ -30,7 +30,9 @@ use crate::components::{
 };
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
-use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
+use ultros_api_types::websocket::{
+    FilterPredicate, ServerClient, SocketMessageType, is_list_market_update_relevant,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
@@ -161,13 +163,10 @@ pub fn ListView() -> impl IntoView {
         let Some(realtime) = realtime_for_market.clone() else {
             return;
         };
-        let filter =
-            FilterPredicate::World(list.list.wdr_filter).and(FilterPredicate::Items(item_ids));
+        let filter = FilterPredicate::World(list.list.wdr_filter)
+            .and(FilterPredicate::Items(item_ids.clone()));
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
-            if matches!(
-                message,
-                ServerClient::Listings(_) | ServerClient::Stale { .. }
-            ) {
+            if is_list_market_update_relevant(&message, &item_ids) {
                 set_last_update_at.set(Some(chrono::Utc::now()));
                 list_view.refetch();
             }
