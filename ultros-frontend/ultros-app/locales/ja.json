@@ -1473,5 +1473,8 @@
     "groups_member_added": "Member added",
     "groups_member_removed": "Member removed",
     "groups_group_created": "Group created",
-    "groups_group_deleted": "Group deleted"
+    "groups_group_deleted": "Group deleted",
+    "retainers_assign_character": "Assign Character",
+    "retainers_no_character": "No character",
+    "retainers_assign_error": "Failed to assign character"
 }

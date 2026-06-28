@@ -28,7 +28,7 @@ use ultros_api_types::{
     sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
     user::{
-        OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+        AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
         group::{CreateGroup, UserGroup, UserGroupMember},
     },
 };
@@ -527,6 +527,17 @@ pub(crate) async fn delete_list_invite(invite_id: String) -> AppResult<()> {
 
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
     post_api("/api/v1/retainer/reorder", retainers).await
+}
+
+pub(crate) async fn assign_retainer_character(
+    owned_retainer_id: i32,
+    character_id: Option<i32>,
+) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/retainer/{owned_retainer_id}/character"),
+        AssignRetainerCharacter { character_id },
+    )
+    .await
 }
 
 pub(crate) async fn get_alerts() -> AppResult<Vec<Alert>> {

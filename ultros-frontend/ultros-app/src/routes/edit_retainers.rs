@@ -5,7 +5,8 @@ use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::api::{
-    claim_retainer, get_retainers, search_retainers, unclaim_retainer, update_retainer_order,
+    assign_retainer_character, claim_retainer, get_characters, get_retainers, search_retainers,
+    unclaim_retainer, update_retainer_order,
 };
 use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
 use crate::i18n::*;
@@ -27,12 +28,19 @@ pub fn EditRetainers() -> impl IntoView {
     let remove_retainer = Action::new(move |owned_id| unclaim_retainer(*owned_id));
     let update_retainers =
         Action::new(move |owners: &Vec<OwnedRetainer>| update_retainer_order(owners.clone()));
+    let assign_character = Action::new(
+        move |(owned_retainer_id, character_id): &(i32, Option<i32>)| {
+            assign_retainer_character(*owned_retainer_id, *character_id)
+        },
+    );
+    let characters = Resource::new(|| (), move |_| get_characters());
     let retainers = Resource::new(
         move || {
             (
                 claim.version().get(),
                 remove_retainer.version().get(),
                 update_retainers.version().get(),
+                assign_character.version().get(),
             )
         },
         move |key| {
@@ -147,28 +155,91 @@ pub fn EditRetainers() -> impl IntoView {
                                                             <div class="flex flex-col gap-2">
                                                                 <ReorderableList
                                                                     items=retainers
-                                                                    item_view=move |
-                                                                        (owned, retainer): (OwnedRetainer, Retainer)|
-                                                                    {
+                                                                    item_view=move |(owned, retainer): (OwnedRetainer, Retainer)| {
                                                                         let owned_id = owned.id;
                                                                         let retainer_name = retainer.name.to_string();
                                                                         let world_id = retainer.world_id;
+                                                                        let current_character_id = owned.character_id;
+
                                                                         view! {
-                                                                            <div class="card bg-base-200 border border-base-300 p-3 rounded-xl flex flex-row items-center justify-between gap-4 mb-2 shadow-sm">
-                                                                                <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden">
-                                                                                    <span class="font-bold truncate text-lg">{retainer_name}</span>
-                                                                                    <div class="opacity-80 text-sm">
-                                                                                        <WorldName id=AnySelector::World(world_id) />
+                                                                            <div class="card bg-base-200 border border-base-300 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
+                                                                                <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden flex-grow">
+                                                                                    <div class="flex flex-col">
+                                                                                        <span class="font-bold truncate text-lg">{retainer_name}</span>
+                                                                                        <div class="opacity-80 text-sm">
+                                                                                            <WorldName id=AnySelector::World(world_id) />
+                                                                                        </div>
+                                                                                    </div>
+
+                                                                                    <div class="flex flex-col gap-1 min-w-[200px]">
+                                                                                        <label class="text-xs opacity-60 ml-1">
+                                                                                            {t!(i18n, retainers_assign_character)}
+                                                                                        </label>
+                                                                                        <select
+                                                                                            class="select select-sm select-bordered w-full"
+                                                                                            class:opacity-50=move || {
+                                                                                                assign_character.pending().get() &&
+                                                                                                assign_character.input().get().map(|(id, _)| id == owned_id).unwrap_or_default()
+                                                                                            }
+                                                                                            prop:value=move || current_character_id.map(|id| id.to_string()).unwrap_or_default()
+                                                                                            on:pointerdown=move |e| e.stop_propagation()
+                                                                                            on:change=move |ev| {
+                                                                                                let val = event_target_value(&ev);
+                                                                                                let id = if val.is_empty() {
+                                                                                                    None
+                                                                                                } else {
+                                                                                                    val.parse::<i32>().ok()
+                                                                                                };
+                                                                                                assign_character.dispatch((owned_id, id));
+                                                                                            }
+                                                                                        >
+                                                                                            <option value="">
+                                                                                                {t!(i18n, retainers_no_character)}
+                                                                                            </option>
+                                                                                            <Suspense>
+                                                                                                {move || characters.get().map(|chars| {
+                                                                                                    chars.ok().map(|chars| {
+                                                                                                        chars.into_iter().map(|c| {
+                                                                                                            let id = c.id;
+                                                                                                            view! {
+                                                                                                                <option
+                                                                                                                    value=id
+                                                                                                                >
+                                                                                                                    {c.first_name} " " {c.last_name}
+                                                                                                                </option>
+                                                                                                            }
+                                                                                                        }).collect_view()
+                                                                                                    })
+                                                                                                })}
+                                                                                            </Suspense>
+                                                                                        </select>
+                                                                                        {move || {
+                                                                                            let input = assign_character.input().get();
+                                                                                            let value = assign_character.value().get();
+                                                                                            if let (Some((input_id, _)), Some(Err(e))) = (input, value) {
+                                                                                                if input_id == owned_id {
+                                                                                                    return Some(view! {
+                                                                                                        <span class="text-error text-xs ml-1">
+                                                                                                            {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
+                                                                                                        </span>
+                                                                                                    }.into_any());
+                                                                                                }
+                                                                                            }
+                                                                                            None
+                                                                                        }}
                                                                                     </div>
                                                                                 </div>
-                                                                                <button
-                                                                                    class="btn btn-sm btn-error btn-outline"
-                                                                                    on:click=move |_| {
-                                                                                        let _ = remove_retainer.dispatch(owned_id);
-                                                                                    }
-                                                                                >
-                                                                                    {t!(i18n, retainers_unclaim)}
-                                                                                </button>
+                                                                                <div class="flex items-center">
+                                                                                    <button
+                                                                                        class="btn btn-sm btn-error btn-outline"
+                                                                                        on:pointerdown=move |e| e.stop_propagation()
+                                                                                        on:click=move |_| {
+                                                                                            let _ = remove_retainer.dispatch(owned_id);
+                                                                                        }
+                                                                                    >
+                                                                                        {t!(i18n, retainers_unclaim)}
+                                                                                    </button>
+                                                                                </div>
                                                                             </div>
                                                                         }
                                                                     }
