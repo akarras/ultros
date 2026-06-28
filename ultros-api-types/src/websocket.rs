@@ -153,6 +153,27 @@ pub fn is_analyzer_event_relevant(
     false
 }
 
+/// Decides whether a websocket market update should refresh a list view.
+///
+/// Listing updates carry an item id and are relevant only when that item is
+/// present in the current list view. `Stale` messages are already routed to a
+/// specific subscription and do not carry an item id, so they are relevant as
+/// long as the current list view has subscribed market items.
+pub fn is_list_market_update_relevant(message: &ServerClient, list_item_ids: &[i32]) -> bool {
+    match message {
+        ServerClient::Listings(event) => {
+            let data = match event {
+                EventType::Added(data) | EventType::Removed(data) | EventType::Updated(data) => {
+                    data
+                }
+            };
+            list_item_ids.contains(&data.item_id)
+        }
+        ServerClient::Stale { .. } => !list_item_ids.is_empty(),
+        _ => false,
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum EventType<T> {
     Added(T),
@@ -515,5 +536,53 @@ mod tests {
         // Verify "no item viewed" state handling (should return false)
         assert!(!is_analyzer_event_relevant(42, 100, 0, 100, None, &h));
         assert!(!is_analyzer_event_relevant(42, 100, 42, 0, None, &h));
+    }
+
+    fn list_market_message(item_id: i32) -> ServerClient {
+        ServerClient::Listings(EventType::Updated(ListingEventData {
+            item_id,
+            world_id: 100,
+            listings: vec![],
+        }))
+    }
+
+    #[test]
+    fn list_market_update_matches_item_id_in_current_list() {
+        let message = list_market_message(42);
+
+        assert!(is_list_market_update_relevant(&message, &[42]));
+    }
+
+    #[test]
+    fn list_market_update_ignores_unrelated_item_id() {
+        let message = list_market_message(42);
+
+        assert!(!is_list_market_update_relevant(&message, &[7]));
+    }
+
+    #[test]
+    fn list_market_update_ignores_empty_list() {
+        let message = list_market_message(42);
+
+        assert!(!is_list_market_update_relevant(&message, &[]));
+        assert!(!is_list_market_update_relevant(
+            &ServerClient::Stale { subscription_id: 1 },
+            &[]
+        ));
+    }
+
+    #[test]
+    fn list_market_update_matches_mixed_item_list() {
+        let message = list_market_message(42);
+
+        assert!(is_list_market_update_relevant(&message, &[7, 42, 99]));
+        assert!(!is_list_market_update_relevant(&message, &[7, 99]));
+    }
+
+    #[test]
+    fn list_market_stale_event_is_relevant_to_non_empty_subscription() {
+        let message = ServerClient::Stale { subscription_id: 1 };
+
+        assert!(is_list_market_update_relevant(&message, &[42]));
     }
 }
