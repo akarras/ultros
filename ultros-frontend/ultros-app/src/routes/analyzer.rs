@@ -1,9 +1,11 @@
 use crate::analysis::{SaleSummary, get_sales_cadence, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::ws::realtime::use_realtime;
+use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use crate::{
-    api::{get_cheapest_listings, get_recent_sales_for_world, get_resale_quality, post_sparklines},
+    api::{
+        get_cheapest_listings_live, get_recent_sales_for_world, get_resale_quality, post_sparklines,
+    },
     components::{
         add_to_list::AddToList,
         clipboard::*,
@@ -127,6 +129,7 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
+    websocket::{FilterPredicate, SocketMessageType, is_analyzer_market_update_relevant},
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 use xiv_gen::ItemId;
@@ -419,9 +422,11 @@ fn AnalyzerTable(
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
     filter_outliers: bool,
+    on_market_update: Callback<()>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
+    let realtime_for_market = realtime.clone();
     let rt_status = realtime.clone();
     let realtime_status = Signal::derive(move || {
         rt_status
@@ -429,7 +434,7 @@ fn AnalyzerTable(
             .map(|r| r.status.get())
             .unwrap_or_else(|| "offline".to_string())
     });
-    let rt_update = realtime;
+    let rt_update = realtime.clone();
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let profits = ProfitTable::new(
         sales,
@@ -467,6 +472,14 @@ fn AnalyzerTable(
             .map(|w| w.id)
             .collect::<Vec<_>>();
         Some(filter)
+    });
+
+    let world_clone = worlds.clone();
+    let buy_filter = Memo::new(move |_| {
+        let world = world_filter().or_else(datacenter_filter)?;
+        world_clone
+            .lookup_world_by_name(&world)
+            .map(|world| AnySelector::from(&world))
     });
 
     let world_clone = worlds.clone();
@@ -645,6 +658,63 @@ fn AnalyzerTable(
     // Generation counter for debounce-with-cancellation (RwSignal, mirroring
     // components/search_box.rs). `gen` is a reserved keyword in edition 2024.
     let fetch_id = RwSignal::new(0u64);
+    let analyzer_market_subscription = StoredValue::new(None::<RealtimeSubscription>);
+    let worlds_for_market = worlds.clone();
+
+    Effect::new(move |_| {
+        analyzer_market_subscription.update_value(|sub| *sub = None);
+
+        let Some(realtime) = realtime_for_market.clone() else {
+            return;
+        };
+        let Some(sell_world_id) = lookup_world().and_then(|world| world.as_world_id()) else {
+            return;
+        };
+        let buy_filter = buy_filter();
+        let range = visible_range.get();
+        let mut item_ids = sorted_data.with(|data| {
+            let (start, end) = range;
+            let lo = start.saturating_sub(PREFETCH_MARGIN);
+            let hi = (end + PREFETCH_MARGIN).min(data.len());
+            data.get(lo..hi)
+                .unwrap_or(&[])
+                .iter()
+                .map(|(_, data)| data.inner.sale_summary.item_id)
+                .collect::<Vec<_>>()
+        });
+        item_ids.sort_unstable();
+        item_ids.dedup();
+        if item_ids.is_empty() {
+            return;
+        }
+
+        let sell_selector = AnySelector::World(sell_world_id);
+        let mut world_filter = FilterPredicate::World(sell_selector);
+        if let Some(filter) = buy_filter
+            && filter != sell_selector
+        {
+            world_filter = world_filter.or(FilterPredicate::World(filter));
+        }
+        let filter = world_filter.and(FilterPredicate::Items(item_ids.clone()));
+        let worlds = worlds_for_market.clone();
+        let subscribed_item_ids = item_ids.clone();
+        let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
+            if is_analyzer_market_update_relevant(
+                &message,
+                &subscribed_item_ids,
+                sell_world_id,
+                buy_filter,
+                &worlds,
+            ) {
+                on_market_update.run(());
+            }
+        });
+        analyzer_market_subscription.set_value(Some(sub));
+    });
+
+    on_cleanup(move || {
+        analyzer_market_subscription.update_value(|sub| *sub = None);
+    });
 
     // Reset accumulated enrichment when the world changes. Defense-in-depth: if
     // the component is updated in place rather than remounted, another world's
@@ -1542,6 +1612,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
+    let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
     let sales = ArcResource::new(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
@@ -1550,10 +1621,15 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
 
     let world_cheapest_listings = ArcResource::new(
-        move || params.with(|p| p.get("world").clone()),
-        move |world| async move {
+        move || {
+            (
+                params.with(|p| p.get("world").clone()),
+                market_refresh_version.get(),
+            )
+        },
+        move |(world, refresh_version)| async move {
             let world = world.ok_or(AppError::ParamMissing)?;
-            get_cheapest_listings(&world).await
+            get_cheapest_listings_live(&world, refresh_version).await
         },
     );
 
@@ -1574,9 +1650,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         Result::<_, AppError>::Ok(region)
     });
 
-    let global_cheapest_listings = ArcResource::new(region, move |region| async move {
-        get_cheapest_listings(region?.as_str()).await
-    });
+    let global_cheapest_listings = ArcResource::new(
+        move || (region(), market_refresh_version.get()),
+        move |(region, refresh_version)| async move {
+            get_cheapest_listings_live(region?.as_str(), refresh_version).await
+        },
+    );
 
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
@@ -1592,8 +1671,15 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     };
 
     let cross_region = ArcResource::new(
-        move || (cross_region_enabled(), region(), enabled_regions()),
-        move |(enabled, region, enabled_regions)| async move {
+        move || {
+            (
+                cross_region_enabled(),
+                region(),
+                enabled_regions(),
+                market_refresh_version.get(),
+            )
+        },
+        move |(enabled, region, enabled_regions, refresh_version)| async move {
             let region = region?;
             if enabled.unwrap_or_default() && connected_regions.contains(&region.as_str()) {
                 Ok(futures::future::join_all(
@@ -1601,7 +1687,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         .iter()
                         .filter(|r| **r != region.as_str())
                         .filter(|r| enabled_regions.contains(r))
-                        .map(|region| get_cheapest_listings(region)),
+                        .map(|region| get_cheapest_listings_live(region, refresh_version)),
                 )
                 .await
                 .into_iter()
@@ -1612,6 +1698,12 @@ pub fn AnalyzerWorldView() -> impl IntoView {
             }
         },
     );
+
+    let refetch_market_data = Callback::new(move |_| {
+        set_market_refresh_version.update(|version| {
+            *version = version.wrapping_add(1);
+        });
+    });
 
     view! {
         <div class="main-content p-2 sm:p-6">
@@ -1767,6 +1859,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     worlds
                                                     world=world
                                                     filter_outliers=filter_outliers().unwrap_or(false)
+                                                    on_market_update=refetch_market_data
                                                 />
                                             },
                                         )

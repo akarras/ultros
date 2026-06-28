@@ -92,6 +92,20 @@ pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<Cheapes
     fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
 }
 
+pub(crate) async fn get_cheapest_listings_live(
+    world_name: &str,
+    refresh_version: u64,
+) -> AppResult<CheapestListings> {
+    if refresh_version == 0 {
+        get_cheapest_listings(world_name).await
+    } else {
+        fetch_api(&format!(
+            "/api/v1/cheapest/{world_name}?rt={refresh_version}"
+        ))
+        .await
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ResaleStatsDto {
     pub(crate) profit: i32,
