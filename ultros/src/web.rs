@@ -43,7 +43,9 @@ use ultros_api_types::list::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
-use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
+use ultros_api_types::user::{
+    AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
@@ -1365,6 +1367,30 @@ async fn reorder_retainer(
     Ok(Json(()))
 }
 
+async fn assign_retainer_character(
+    user: AuthDiscordUser,
+    State(db): State<UltrosDb>,
+    Path(owned_retainer_id): Path<i32>,
+    Json(data): Json<AssignRetainerCharacter>,
+) -> Result<Json<()>, ApiError> {
+    if let Some(character_id) = data.character_id {
+        let owns_character = db.user_owns_character(user.id as i64, character_id).await?;
+        if !owns_character {
+            return Err(ApiError::Forbidden(
+                "Cannot assign a character owned by another user",
+            ));
+        }
+    }
+
+    db.update_owned_retainer(user.id as i64, owned_retainer_id, |mut owned_retainer| {
+        owned_retainer.character_id = ActiveValue::Set(data.character_id);
+        owned_retainer
+    })
+    .await?;
+
+    Ok(Json(()))
+}
+
 async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
@@ -1536,6 +1562,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
+        .route(
+            "/api/v1/retainer/{id}/character",
+            post(assign_retainer_character),
+        )
         .route(
             "/api/v1/user/retainer/listings",
             get(user_retainer_listings),

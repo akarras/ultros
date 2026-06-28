@@ -5,31 +5,43 @@ use leptos::prelude::*;
 use ultros_api_types::freshness::FreshnessVerdict;
 
 #[component]
-pub fn FreshnessBadge(verdict: FreshnessVerdict, age: Option<Duration>) -> impl IntoView {
+pub fn FreshnessBadge(
+    verdict: FreshnessVerdict,
+    age: Option<Duration>,
+    #[prop(optional)] compact: bool,
+) -> impl IntoView {
     let i18n = use_i18n();
     let display = get_freshness_verdict_display(verdict, age);
-    let classes = match display.tone {
-        FreshnessTone::Success => {
-            "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-             border text-emerald-300 border-emerald-400/40 \
-             bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]"
-        }
-        FreshnessTone::Warning => {
-            "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-             border text-amber-300 border-amber-400/40 \
-             bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
-        }
-        FreshnessTone::Error => {
-            "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-             border text-red-300 border-red-400/40 \
-             bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]"
-        }
-        FreshnessTone::Neutral => {
-            "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-             border text-[color:var(--color-text)] border-[color:var(--color-outline)] \
-             bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
-        }
-    };
 
-    view! { <span class=classes>{display.format_label(i18n)}</span> }
+    view! {
+        <span
+            class="inline-flex items-center py-0.5 rounded-full text-xs font-semibold border"
+            class=("px-1.5", move || compact)
+            class=("px-2", move || !compact)
+            class=("text-emerald-300", move || display.tone == FreshnessTone::Success)
+            class=("border-emerald-400/40", move || display.tone == FreshnessTone::Success)
+            class=("bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]", move || {
+                display.tone == FreshnessTone::Success
+            })
+            class=("text-amber-300", move || display.tone == FreshnessTone::Warning)
+            class=("border-amber-400/40", move || display.tone == FreshnessTone::Warning)
+            class=("bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]", move || {
+                display.tone == FreshnessTone::Warning
+            })
+            class=("text-red-300", move || display.tone == FreshnessTone::Error)
+            class=("border-red-400/40", move || display.tone == FreshnessTone::Error)
+            class=("bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]", move || {
+                display.tone == FreshnessTone::Error
+            })
+            class=("text-[color:var(--color-text)]", move || display.tone == FreshnessTone::Neutral)
+            class=("border-[color:var(--color-outline)]", move || {
+                display.tone == FreshnessTone::Neutral
+            })
+            class=("bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]", move || {
+                display.tone == FreshnessTone::Neutral
+            })
+        >
+            {display.format_label(i18n)}
+        </span>
+    }
 }

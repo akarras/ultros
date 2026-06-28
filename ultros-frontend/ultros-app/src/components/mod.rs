@@ -27,6 +27,7 @@ pub mod job_set_grouping;
 pub mod language_picker;
 pub mod list;
 pub mod list_subscribe_drawer;
+pub(crate) mod listing_filters;
 pub mod listings_table;
 pub mod live_sale_ticker;
 pub mod loading;

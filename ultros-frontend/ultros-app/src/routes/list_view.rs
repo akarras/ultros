@@ -1,14 +1,19 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::global_state::xiv_data::tracked_data;
 
 use crate::components::icon::Icon;
+use crate::global_state::LocalWorldData;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-use ultros_api_types::list::{ListActivity, ListCapabilities, ListItem};
+use ultros_api_types::{
+    ActiveListing,
+    list::{ListActivity, ListCapabilities, ListItem},
+    world_helper::{AnyResult, AnySelector},
+};
 
 use crate::api::{
     add_item_to_list, delete_list_item, delete_list_items, edit_list, edit_list_item,
@@ -30,7 +35,9 @@ use crate::components::{
 };
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
-use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
+use ultros_api_types::websocket::{
+    FilterPredicate, ServerClient, SocketMessageType, is_list_market_update_relevant,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
@@ -38,6 +45,145 @@ enum MenuState {
     Item,
     // Recipe is now handled by a modal
     MakePlace,
+}
+
+fn filter_excluded_worlds(
+    items: &[(ListItem, Vec<ActiveListing>)],
+    excluded_worlds: &HashSet<i32>,
+) -> Vec<(ListItem, Vec<ActiveListing>)> {
+    if excluded_worlds.is_empty() {
+        return items.to_vec();
+    }
+    let excluded_worlds = excluded_worlds.iter().copied().collect::<Vec<_>>();
+
+    items
+        .iter()
+        .map(|(item, listings)| {
+            (
+                item.clone(),
+                listings
+                    .iter()
+                    .filter(|listing| !listing.is_excluded(&excluded_worlds))
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[component]
+fn WorldExclusionControl(
+    items: Vec<(ListItem, Vec<ActiveListing>)>,
+    excluded_worlds: RwSignal<HashSet<i32>>,
+) -> impl IntoView {
+    let world_data = use_context::<LocalWorldData>()
+        .expect("LocalWorldData should be available")
+        .0
+        .expect("LocalWorldData should be loaded");
+
+    let worlds = Memo::new(move |_| {
+        let mut worlds = BTreeMap::new();
+        for (_, listings) in &items {
+            for listing in listings {
+                worlds.entry(listing.world_id).or_insert_with(|| {
+                    world_data
+                        .lookup_selector(AnySelector::World(listing.world_id))
+                        .and_then(|result| match result {
+                            AnyResult::World(world) => Some(world.name.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| format!("World {}", listing.world_id))
+                });
+            }
+        }
+        worlds.into_iter().collect::<Vec<_>>()
+    });
+
+    let available_to_add = Memo::new(move |_| {
+        let excluded = excluded_worlds.get();
+        worlds
+            .get()
+            .into_iter()
+            .filter(|(world_id, _)| !excluded.contains(world_id))
+            .collect::<Vec<_>>()
+    });
+
+    view! {
+        <div class="flex flex-wrap items-center gap-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2 text-sm">
+            <label class="font-semibold text-[color:var(--color-text-muted)]" for="list-world-exclusion">
+                "Exclude worlds"
+            </label>
+            <select
+                id="list-world-exclusion"
+                class="input h-9 min-w-40 py-1 text-sm"
+                on:change=move |event| {
+                    let value = event_target_value(&event);
+                    if let Ok(world_id) = value.parse::<i32>() {
+                        excluded_worlds.update(|set| {
+                            set.insert(world_id);
+                        });
+                    }
+                }
+            >
+                <option value="">{move || {
+                    if available_to_add.with(|worlds| worlds.is_empty()) {
+                        "No worlds left".to_string()
+                    } else {
+                        "Add world".to_string()
+                    }
+                }}</option>
+                <For
+                    each=move || available_to_add.get()
+                    key=|(world_id, _)| *world_id
+                    children=move |(world_id, name)| {
+                        view! {
+                            <option value=world_id.to_string()>{name}</option>
+                        }
+                    }
+                />
+            </select>
+            <Show when=move || !excluded_worlds.with(|set| set.is_empty())>
+                <div class="flex flex-wrap items-center gap-1">
+                    <For
+                        each=move || {
+                            let excluded = excluded_worlds.get();
+                            worlds
+                                .get()
+                                .into_iter()
+                                .filter(|(world_id, _)| excluded.contains(world_id))
+                                .collect::<Vec<_>>()
+                        }
+                        key=|(world_id, _)| *world_id
+                        children=move |(world_id, name)| {
+                            let aria_label = format!("Remove {name} world exclusion");
+                            view! {
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text)] hover:border-[color:var(--color-outline-strong)]"
+                                    aria-label=aria_label
+                                    on:click=move |_| {
+                                        excluded_worlds.update(|set| {
+                                            set.remove(&world_id);
+                                        });
+                                    }
+                                >
+                                    <span>{name}</span>
+                                    <Icon icon=i::BiXRegular />
+                                </button>
+                            }
+                        }
+                    />
+                    <button
+                        type="button"
+                        class="btn-ghost px-2 py-1 text-xs"
+                        on:click=move |_| excluded_worlds.update(|set| set.clear())
+                    >
+                        "Clear"
+                    </button>
+                </div>
+            </Show>
+        </div>
+    }
 }
 
 #[component]
@@ -161,13 +307,10 @@ pub fn ListView() -> impl IntoView {
         let Some(realtime) = realtime_for_market.clone() else {
             return;
         };
-        let filter =
-            FilterPredicate::World(list.list.wdr_filter).and(FilterPredicate::Items(item_ids));
+        let filter = FilterPredicate::World(list.list.wdr_filter)
+            .and(FilterPredicate::Items(item_ids.clone()));
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
-            if matches!(
-                message,
-                ServerClient::Listings(_) | ServerClient::Stale { .. }
-            ) {
+            if is_list_market_update_relevant(&message, &item_ids) {
                 set_last_update_at.set(Some(chrono::Utc::now()));
                 list_view.refetch();
             }
@@ -199,6 +342,7 @@ pub fn ListView() -> impl IntoView {
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
     let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
+    let excluded_worlds = RwSignal::new(HashSet::<i32>::new());
 
     type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
     let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
@@ -372,59 +516,77 @@ pub fn ListView() -> impl IntoView {
 
             <div class="panel rounded-lg p-3">
                 <div class="flex flex-wrap items-center gap-3">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                        {t!(i18n, list_view_exclude_datacenters)}
-                    </span>
-                    <div class="flex flex-wrap gap-2">
-                        {move || {
-                            let world_data = use_context::<crate::global_state::LocalWorldData>();
-                            let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
-                            let list_data = list_view.get();
-                            match (helper, list_data) {
-                                (Some(helper), Some(Ok((list, _)))) => {
-                                    let filter = list.list.wdr_filter;
-                                    let datacenters = helper
-                                        .lookup_selector(filter)
-                                        .map(|r| helper.get_datacenters(&r))
-                                        .unwrap_or_default();
-                                    datacenters
-                                        .into_iter()
-                                        .map(|dc| {
-                                            let name = dc.name.clone();
-                                            let is_excluded = Signal::derive(move || {
-                                                excluded_datacenters.with(|set| set.contains(&name))
-                                            });
-                                            let toggle = {
+                    {move || {
+                        list_view
+                            .get()
+                            .and_then(|result| {
+                                result
+                                    .ok()
+                                    .map(|(_, items)| {
+                                        view! {
+                                            <WorldExclusionControl
+                                                items=items
+                                                excluded_worlds=excluded_worlds
+                                            />
+                                        }
+                                    })
+                            })
+                    }}
+                    <div class="flex flex-wrap items-center gap-3">
+                        <span class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                            {t!(i18n, list_view_exclude_datacenters)}
+                        </span>
+                        <div class="flex flex-wrap gap-2">
+                            {move || {
+                                let world_data = use_context::<crate::global_state::LocalWorldData>();
+                                let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+                                let list_data = list_view.get();
+                                match (helper, list_data) {
+                                    (Some(helper), Some(Ok((list, _)))) => {
+                                        let filter = list.list.wdr_filter;
+                                        let datacenters = helper
+                                            .lookup_selector(filter)
+                                            .map(|r| helper.get_datacenters(&r))
+                                            .unwrap_or_default();
+                                        datacenters
+                                            .into_iter()
+                                            .map(|dc| {
                                                 let name = dc.name.clone();
-                                                move |_| {
-                                                    excluded_datacenters
-                                                        .update(|set| {
-                                                            if set.contains(&name) {
-                                                                set.remove(&name);
-                                                            } else {
-                                                                set.insert(name.clone());
-                                                            }
-                                                        })
+                                                let is_excluded = Signal::derive(move || {
+                                                    excluded_datacenters.with(|set| set.contains(&name))
+                                                });
+                                                let toggle = {
+                                                    let name = dc.name.clone();
+                                                    move |_| {
+                                                        excluded_datacenters
+                                                            .update(|set| {
+                                                                if set.contains(&name) {
+                                                                    set.remove(&name);
+                                                                } else {
+                                                                    set.insert(name.clone());
+                                                                }
+                                                            })
+                                                    }
+                                                };
+                                                view! {
+                                                    <button
+                                                        class="btn-secondary px-3 py-1 text-xs"
+                                                        class:bg-red-950=is_excluded
+                                                        class:text-red-200=is_excluded
+                                                        class:border-red-400=is_excluded
+                                                        on:click=toggle
+                                                    >
+                                                        {dc.name.clone()}
+                                                    </button>
                                                 }
-                                            };
-                                            view! {
-                                                <button
-                                                    class="btn-secondary px-3 py-1 text-xs"
-                                                    class:bg-red-950=is_excluded
-                                                    class:text-red-200=is_excluded
-                                                    class:border-red-400=is_excluded
-                                                    on:click=toggle
-                                                >
-                                                    {dc.name.clone()}
-                                                </button>
-                                            }
-                                        })
-                                        .collect_view()
-                                        .into_any()
+                                            })
+                                            .collect_view()
+                                            .into_any()
+                                    }
+                                    _ => ().into_any(),
                                 }
-                                _ => ().into_any(),
-                            }
-                        }}
+                            }}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -639,6 +801,13 @@ pub fn ListView() -> impl IntoView {
                                         0
                                     };
                                     let list_name = list.list.name.clone();
+                                    let filtered_item_snapshot = filter_excluded_worlds(
+                                        &item_snapshot,
+                                        &excluded_worlds.get(),
+                                    );
+                                    let filtered_items_for_buying = filtered_item_snapshot.clone();
+                                    let filtered_items_for_rows = filtered_item_snapshot.clone();
+                                    let filtered_items_for_summary = filtered_item_snapshot.clone();
 
                                     if buying_view() {
                                         Either::Left(
@@ -663,7 +832,7 @@ pub fn ListView() -> impl IntoView {
                                                     </div>
                                                     <div class="p-4 sm:p-5">
                                                         <BuyingView
-                                                            items=items.get_value()
+                                                            items=filtered_items_for_buying
                                                             edit_item=edit_item
                                                             excluded_datacenters=excluded_datacenters
                                                         />
@@ -912,7 +1081,7 @@ pub fn ListView() -> impl IntoView {
                                                             </thead>
                                                             <tbody class="divide-y divide-[color:var(--color-outline)]">
                                                                 <For
-                                                                    each=move || items.get_value()
+                                                                    each=move || filtered_items_for_rows.clone()
                                                                     key=|(item, _)| item.id
                                                                     children=move |(item, listings)| {
                                                                         view! {
@@ -937,7 +1106,7 @@ pub fn ListView() -> impl IntoView {
                                                     </div>
                                                     <div class="p-4 sm:p-5">
                                                         <ListSummary
-                                                            items=items.get_value()
+                                                            items=filtered_items_for_summary.clone()
                                                             excluded_worlds=&[]
                                                             excluded_datacenters=excluded_datacenters
                                                         />
@@ -1042,5 +1211,82 @@ fn ActivityFeed(
                 }}
             </Suspense>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn list_item(id: i32) -> ListItem {
+        ListItem {
+            id,
+            list_id: 1,
+            item_id: id,
+            quantity: Some(1),
+            acquired: Some(0),
+            hq: None,
+            target_price: None,
+        }
+    }
+
+    fn listing(id: i32, world_id: i32) -> ActiveListing {
+        ActiveListing {
+            id,
+            world_id,
+            item_id: 1,
+            retainer_id: 1,
+            price_per_unit: 100,
+            quantity: 1,
+            hq: false,
+            timestamp: NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        }
+    }
+
+    #[test]
+    fn world_exclusion_filter_preserves_current_behavior_when_empty() {
+        let items = vec![(
+            list_item(1),
+            vec![listing(1, 100), listing(2, 101), listing(3, 102)],
+        )];
+
+        let filtered = filter_excluded_worlds(&items, &HashSet::new());
+
+        assert_eq!(filtered[0].1.len(), 3);
+        assert_eq!(
+            filtered[0]
+                .1
+                .iter()
+                .map(|listing| listing.world_id)
+                .collect::<Vec<_>>(),
+            vec![100, 101, 102]
+        );
+    }
+
+    #[test]
+    fn world_exclusion_filter_removes_only_matching_listing_worlds() {
+        let items = vec![
+            (list_item(1), vec![listing(1, 100), listing(2, 101)]),
+            (list_item(2), vec![listing(3, 101), listing(4, 102)]),
+        ];
+        let excluded = HashSet::from([101]);
+
+        let filtered = filter_excluded_worlds(&items, &excluded);
+
+        assert_eq!(
+            filtered
+                .iter()
+                .flat_map(|(_, listings)| listings.iter().map(|listing| listing.world_id))
+                .collect::<Vec<_>>(),
+            vec![100, 102]
+        );
+        assert_eq!(
+            filtered.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
     }
 }
