@@ -216,14 +216,14 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                         {move || {
                                                                                             let input = assign_character.input().get();
                                                                                             let value = assign_character.value().get();
-                                                                                            if let (Some((input_id, _)), Some(Err(e))) = (input, value) {
-                                                                                                if input_id == owned_id {
-                                                                                                    return Some(view! {
-                                                                                                        <span class="text-error text-xs ml-1">
-                                                                                                            {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
-                                                                                                        </span>
-                                                                                                    }.into_any());
-                                                                                                }
+                                                                                            if let (Some((input_id, _)), Some(Err(e))) = (input, value)
+                                                                                                && input_id == owned_id
+                                                                                            {
+                                                                                                return Some(view! {
+                                                                                                    <span class="text-error text-xs ml-1">
+                                                                                                        {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
+                                                                                                    </span>
+                                                                                                }.into_any());
                                                                                             }
                                                                                             None
                                                                                         }}
