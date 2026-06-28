@@ -4,12 +4,12 @@ use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
 use crate::components::price_history_chart::PriceHistoryChart;
-use crate::components::price_viewer::get_cheapest_listing;
 use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
+    price_viewer::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems,
+    related_items::*, sale_history_table::*, skeleton::BoxSkeleton, stats_display::*,
+    toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -1438,7 +1438,7 @@ pub fn ItemView() -> impl IntoView {
             <WorldMenu world_name=world item_id />
 
             <div class="main-content px-0 sm:px-4">
-                <ListingsContent item_id world excluded_worlds=Vec::new() />
+                <ListingsContent item_id world />
                 <div class="mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>

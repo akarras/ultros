@@ -53,7 +53,7 @@ pub fn PriceViewer(
     quantity: i32,
     hq: Option<bool>,
     listings: Vec<ActiveListing>,
-    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
     #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
         HashSet<String>,
     >,
@@ -68,7 +68,7 @@ pub fn PriceViewer(
                 listings.clone(),
                 quantity,
                 hq,
-                excluded_worlds,
+                &excluded_worlds,
                 excluded_datacenters,
                 world_helper.map(|h| h.as_ref()),
             )

@@ -925,7 +925,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 edit_item=edit_item
                                                                                 recently_changed=recently_changed
                                                                                 can_write=Signal::derive(move || view_caps.with(|c| c.can_write))
-                                                                                excluded_worlds=&[]
+                                                                                excluded_worlds=Vec::new()
                                                                                 excluded_datacenters=excluded_datacenters
                                                                             />
                                                                         }
@@ -938,7 +938,7 @@ pub fn ListView() -> impl IntoView {
                                                     <div class="p-4 sm:p-5">
                                                         <ListSummary
                                                             items=items.get_value()
-                                                            excluded_worlds=&[]
+                                                            excluded_worlds=Vec::new()
                                                             excluded_datacenters=excluded_datacenters
                                                         />
                                                     </div>
