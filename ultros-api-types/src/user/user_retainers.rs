@@ -11,6 +11,11 @@ pub struct OwnedRetainer {
     pub weight: Option<i32>,
 }
 
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
+pub struct AssignRetainerCharacter {
+    pub character_id: Option<i32>,
+}
+
 pub type UserRetainerList = Vec<(Option<FfxivCharacter>, Vec<(OwnedRetainer, Retainer)>)>;
 pub type UserRetainerListWithListings =
     Vec<(Option<FfxivCharacter>, Vec<(Retainer, Vec<ActiveListing>)>)>;

@@ -20,7 +20,7 @@ use tracing::{error, info};
 use ultros_api_types::result::JsonErrorWrapper;
 use ultros_db::{
     SeaDbErr, common_type_conversions::ApiConversionError, lists::ListError,
-    world_data::world_cache::WorldCacheError,
+    retainers::RetainerError, world_data::world_cache::WorldCacheError,
 };
 
 use crate::{analyzer_service::AnalyzerError, event};
@@ -99,12 +99,15 @@ define_error_enum!(ApiError {
     NoAuthCookie,
     #[error("Discord token was invalid")]
     DiscordTokenInvalid(PrivateCookieJar<Key>),
+    #[error("{0}")]
+    Forbidden(&'static str),
 });
 
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {
             ApiError::NoAuthCookie => StatusCode::OK, // In this case I don't want a real error.
+            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
                 Some(ListError::NotFound | ListError::InviteNotFound) => StatusCode::NOT_FOUND,
@@ -112,7 +115,8 @@ impl ApiError {
                     StatusCode::BAD_REQUEST
                 }
                 None => StatusCode::INTERNAL_SERVER_ERROR,
-            },
+            }
+            .or_else_status(e.downcast_ref::<RetainerError>()),
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -120,6 +124,7 @@ impl ApiError {
     fn as_api_error(&self) -> ultros_api_types::result::ApiError {
         match self {
             ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
+            ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => ultros_api_types::result::ApiError::Forbidden,
                 Some(ListError::NotFound | ListError::InviteNotFound) => {
@@ -131,9 +136,15 @@ impl ApiError {
                 Some(ListError::InviteExhausted) => ultros_api_types::result::ApiError::BadRequest(
                     "Invite has reached max uses".into(),
                 ),
-                None => {
-                    ultros_api_types::result::ApiError::Message("Internal server error".to_string())
-                }
+                None => match e.downcast_ref::<RetainerError>() {
+                    Some(RetainerError::Forbidden(_)) => {
+                        ultros_api_types::result::ApiError::Forbidden
+                    }
+                    Some(RetainerError::NotFound) => ultros_api_types::result::ApiError::NotFound,
+                    None => ultros_api_types::result::ApiError::Message(
+                        "Internal server error".to_string(),
+                    ),
+                },
             },
             _ => {
                 if self.as_status_code().is_server_error() {
@@ -142,6 +153,23 @@ impl ApiError {
                     ultros_api_types::result::ApiError::Message(self.to_string())
                 }
             }
+        }
+    }
+}
+
+trait RetainerStatus {
+    fn or_else_status(self, retainer_error: Option<&RetainerError>) -> StatusCode;
+}
+
+impl RetainerStatus for StatusCode {
+    fn or_else_status(self, retainer_error: Option<&RetainerError>) -> StatusCode {
+        if self != StatusCode::INTERNAL_SERVER_ERROR {
+            return self;
+        }
+        match retainer_error {
+            Some(RetainerError::Forbidden(_)) => StatusCode::FORBIDDEN,
+            Some(RetainerError::NotFound) => StatusCode::NOT_FOUND,
+            None => self,
         }
     }
 }
