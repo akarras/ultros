@@ -21,7 +21,7 @@ use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
 use std::{collections::HashSet, sync::Arc};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
@@ -255,6 +255,13 @@ fn cheapest_listing_for_quality(
         .filter(|(listing, _)| !excluded_worlds.contains(&listing.world_id))
         .min_by_key(|(listing, _)| listing.price_per_unit)
         .cloned()
+}
+
+fn parse_excluded_world_ids(raw: Option<&str>) -> HashSet<i32> {
+    raw.unwrap_or_default()
+        .split(',')
+        .filter_map(|world| world.trim().parse::<i32>().ok())
+        .collect()
 }
 
 #[component]
@@ -1268,6 +1275,7 @@ fn DiscordCommandChip(
 pub fn ItemView() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
+    let query = use_query_map();
     let item_id = Memo::new(move |_| {
         params()
             .get("id")
@@ -1281,7 +1289,9 @@ pub fn ItemView() -> impl IntoView {
     });
 
     let (price_zone, _) = get_price_zone();
-    let excluded_worlds = RwSignal::new(HashSet::<i32>::new());
+    let excluded_worlds = Memo::new(move |_| {
+        query.with(|query| parse_excluded_world_ids(query.get("exclude-worlds").as_deref()))
+    });
 
     let world = Memo::new(move |_| {
         params.with(|p| {
@@ -1494,5 +1504,19 @@ mod tests {
 
         assert_eq!(result.0.id, 2);
         assert_eq!(result.0.world_id, 200);
+    }
+
+    #[test]
+    fn item_view_excluded_worlds_query_parses_world_ids() {
+        let result = parse_excluded_world_ids(Some("100, 200,not-a-world,300"));
+
+        assert_eq!(result, HashSet::from([100, 200, 300]));
+    }
+
+    #[test]
+    fn item_view_excluded_worlds_query_absent_defaults_empty() {
+        let result = parse_excluded_world_ids(None);
+
+        assert!(result.is_empty());
     }
 }
