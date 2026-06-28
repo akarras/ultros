@@ -218,6 +218,29 @@ mod tests {
     }
 
     #[test]
+    fn test_get_cheapest_listing_excluded_world_before_cheapest_selection() {
+        let mut l1 = mock_listing(1, 100, 5, false);
+        l1.world_id = 100;
+        let mut l2 = mock_listing(2, 200, 5, false);
+        l2.world_id = 200;
+        let mut l3 = mock_listing(3, 50, 5, true);
+        l3.world_id = 300;
+
+        let result = get_cheapest_listing(
+            vec![l1, l2, l3],
+            5,
+            Some(false),
+            &[100],
+            &HashSet::new(),
+            None,
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 2);
+        assert_eq!(result[0].world_id, 200);
+    }
+
+    #[test]
     fn test_get_cheapest_listing_excluded_datacenter() {
         use ultros_api_types::world::{Datacenter, Region, World, WorldData};
 
