@@ -508,17 +508,135 @@ fn parse_excluded_world_ids(raw: Option<&str>) -> HashSet<i32> {
 }
 
 #[component]
+fn DecisionHeader(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    #[prop(into)] filtered_listings: Signal<ListingRows>,
+    world: Memo<String>,
+) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+
+    view! {
+        <Transition fallback=move || view! { <BoxSkeleton /> }>
+            {move || {
+                listing_resource
+                    .with(|data_ref| {
+                        if let Some(Ok(data)) = data_ref.as_ref() {
+                            let listings = filtered_listings.get();
+                            let current_world_id = {
+                                let world_name = Url::unescape(&world());
+                                world_data
+                                    .lookup_world_by_name(&world_name)
+                                    .and_then(|result| result.as_world().map(|world| world.id))
+                            };
+                            let savings_verdict = current_world_id
+                                .and_then(|world_id| cheapest_savings_verdict(&listings, world_id));
+                            let recent_sales = &data.sales;
+
+                            let sales_per_day = if recent_sales.len() > 1 {
+                                let newest = recent_sales.first().unwrap().sold_date;
+                                let oldest = recent_sales.last().unwrap().sold_date;
+                                let seconds = (newest - oldest).num_seconds().abs();
+                                let count = recent_sales.len() - 1;
+                                if seconds > 0 {
+                                    Some((count as f32) / (seconds as f32 / 86400.0))
+                                } else {
+                                    Some(100.0) // high velocity
+                                }
+                            } else if recent_sales.is_empty() {
+                                Some(0.0)
+                            } else {
+                                None
+                            };
+
+                            let latest_timestamp = listings
+                                .iter()
+                                .map(|(listing, _)| listing.timestamp)
+                                .max();
+
+                            let age = latest_timestamp.map(|t| chrono::Utc::now().naive_utc() - t);
+
+                            let freshness_verdict = ultros_api_types::freshness::calculate_freshness_verdict(
+                                age,
+                                sales_per_day,
+                            );
+                            let cadence_verdict = crate::analysis::get_sales_cadence(
+                                sales_per_day.unwrap_or_default(),
+                                recent_sales.len(),
+                            );
+
+                            view! {
+                                <div class="flex flex-col gap-3 mb-4">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <FreshnessBadge verdict=freshness_verdict age=age />
+                                        <SalesCadenceBadge
+                                            cadence=cadence_verdict
+                                            sales_per_day=sales_per_day.unwrap_or_default()
+                                        />
+                                    </div>
+                                    {savings_verdict
+                                        .map(|verdict| {
+                                            let quality_label = if verdict.cheapest_listing.hq {
+                                                t_string!(i18n, hq).to_string()
+                                            } else {
+                                                t_string!(i18n, nq).to_string()
+                                            };
+                                            let percent = format_savings_percent(verdict.savings_percent);
+                                            view! {
+                                                <a
+                                                    href="#listings"
+                                                    class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 transition-colors hover:border-emerald-300/70"
+                                                >
+                                                    <Icon icon=icondata::FaGlobeSolid attr:class="text-sm shrink-0" />
+                                                    <span class="font-semibold">
+                                                        {t!(i18n, item_view_savings_cheapest_on)}
+                                                    </span>
+                                                    <span class="inline-flex items-center gap-1">
+                                                        <WorldName id=AnySelector::World(verdict.cheapest_listing.world_id) />
+                                                        <span class="rounded border border-emerald-300/40 px-1 text-[10px] font-bold leading-4 text-emerald-100">
+                                                            {quality_label}
+                                                        </span>
+                                                    </span>
+                                                    <span class="text-[color:var(--color-text-muted)]">":"</span>
+                                                    <div class="font-bold text-[color:var(--color-text)]">
+                                                        <Gil amount=verdict.cheapest_listing.price_per_unit />
+                                                    </div>
+                                                    <span class="text-[color:var(--color-text-muted)]">"-"</span>
+                                                    <span>{t!(i18n, item_view_savings_save)}</span>
+                                                    <div class="font-bold text-[color:var(--color-text)]">
+                                                        <Gil amount=verdict.savings />
+                                                    </div>
+                                                    <span class="text-[color:var(--color-text-muted)]">
+                                                        "("{percent}"%)"
+                                                    </span>
+                                                </a>
+                                            }
+                                            .into_any()
+                                        })
+                                        .unwrap_or_else(|| ().into_any())}
+                                </div>
+                            }
+                            .into_any()
+                        } else {
+                            ().into_any()
+                        }
+                    })
+            }}
+        </Transition>
+    }
+    .into_any()
+}
+
+#[component]
 fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     #[prop(into)] filtered_listings: Signal<ListingRows>,
     item_id: Memo<i32>,
-    world: Memo<String>,
     realtime_status: Signal<String>,
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
-    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
 
     // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
     // after hydration. The chip lives inside an inner `<Suspense>` in
@@ -561,14 +679,6 @@ fn MarketStatsPanel(
                             let cheapest_nq = cheapest_listing_for_quality(&listings, false);
                             let cheapest_hq = cheapest_listing_for_quality(&listings, true);
                             let listings_count = listings.len();
-                            let current_world_id = {
-                                let world_name = Url::unescape(&world());
-                                world_data
-                                    .lookup_world_by_name(&world_name)
-                                    .and_then(|result| result.as_world().map(|world| world.id))
-                            };
-                            let savings_verdict = current_world_id
-                                .and_then(|world_id| cheapest_savings_verdict(&listings, world_id));
                             let recent_sales = data.sales.clone();
                             let avg_price = if recent_sales.is_empty() {
                                 None
@@ -596,40 +706,6 @@ fn MarketStatsPanel(
                                 .get(&ItemId(item_id()))
                                 .map(|item| item.price_mid as i32)
                                 .filter(|p| *p > 0);
-
-                            let sales_per_day = if recent_sales.len() > 1 {
-                                let newest = recent_sales.first().unwrap().sold_date;
-                                let oldest = recent_sales.last().unwrap().sold_date;
-                                let seconds = (newest - oldest).num_seconds().abs();
-                                let count = recent_sales.len() - 1;
-                                if seconds > 0 {
-                                    Some((count as f32) / (seconds as f32 / 86400.0))
-                                } else {
-                                    Some(100.0) // high velocity
-                                }
-                            } else if recent_sales.is_empty() {
-                                Some(0.0)
-                            } else {
-                                None
-                            };
-
-                            let latest_timestamp = listings
-                                .iter()
-                                .map(|(listing, _)| listing.timestamp)
-                                .max();
-
-                            let age = latest_timestamp.map(|t| {
-                                chrono::Utc::now().naive_utc() - t
-                            });
-
-                            let freshness_verdict = ultros_api_types::freshness::calculate_freshness_verdict(
-                                age,
-                                sales_per_day,
-                            );
-                            let cadence_verdict = crate::analysis::get_sales_cadence(
-                                sales_per_day.unwrap_or_default(),
-                                recent_sales.len(),
-                            );
 
                             let real = crate::analysis::real_price(
                                 &recent_sales
@@ -840,11 +916,6 @@ fn MarketStatsPanel(
                                                     status=realtime_status
                                                     last_update=last_update_at
                                                 />
-                                                <FreshnessBadge verdict=freshness_verdict age=age />
-                                                <SalesCadenceBadge
-                                                    cadence=cadence_verdict
-                                                    sales_per_day=sales_per_day.unwrap_or_default()
-                                                />
                                             </div>
                                             <p class="text-sm text-[color:var(--color-text-muted)]">
                                                 {move || t!(i18n, based_on_sales, count = recent_sales.len())}
@@ -965,44 +1036,6 @@ fn MarketStatsPanel(
                                     </div>
 
                                     <div class="mt-3 sm:mt-4 space-y-2">
-                                        {savings_verdict
-                                            .map(|verdict| {
-                                                let quality_label = if verdict.cheapest_listing.hq {
-                                                    t_string!(i18n, hq).to_string()
-                                                } else {
-                                                    t_string!(i18n, nq).to_string()
-                                                };
-                                                let percent = format_savings_percent(verdict.savings_percent);
-                                                view! {
-                                                    <a
-                                                        href="#listings"
-                                                        class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 transition-colors hover:border-emerald-300/70"
-                                                    >
-                                                        <Icon icon=icondata::FaGlobeSolid attr:class="text-sm shrink-0" />
-                                                        <span class="font-semibold">{t!(i18n, item_view_savings_cheapest_on)}</span>
-                                                        <span class="inline-flex items-center gap-1">
-                                                            <WorldName id=AnySelector::World(verdict.cheapest_listing.world_id) />
-                                                            <span class="rounded border border-emerald-300/40 px-1 text-[10px] font-bold leading-4 text-emerald-100">
-                                                                {quality_label}
-                                                            </span>
-                                                        </span>
-                                                        <span class="text-[color:var(--color-text-muted)]">":"</span>
-                                                        <div class="font-bold text-[color:var(--color-text)]">
-                                                            <Gil amount=verdict.cheapest_listing.price_per_unit />
-                                                        </div>
-                                                        <span class="text-[color:var(--color-text-muted)]">"-"</span>
-                                                        <span>{t!(i18n, item_view_savings_save)}</span>
-                                                        <div class="font-bold text-[color:var(--color-text)]">
-                                                            <Gil amount=verdict.savings />
-                                                        </div>
-                                                        <span class="text-[color:var(--color-text-muted)]">
-                                                            "("{percent}"%)"
-                                                        </span>
-                                                    </a>
-                                                }
-                                                .into_any()
-                                            })
-                                            .unwrap_or_else(|| ().into_any())}
                                         {source_callout}
                                         {if listings_count == 0 {
                                             view! {
@@ -1491,12 +1524,12 @@ fn ListingsContent(
     });
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
+            <DecisionHeader listing_resource filtered_listings world />
             <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
                 <MarketStatsPanel
                     listing_resource
                     filtered_listings
                     item_id
-                    world
                     realtime_status=realtime_status.into()
                     last_update_at=last_update_at.into()
                 />
