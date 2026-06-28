@@ -1374,7 +1374,7 @@ fn AnalyzerTable(
                                                     view! {
                                                         <ConfidenceBadge
                                                             band=q.confidence_band
-                                                            sample_size=q.sample_size as u32
+                                                            sample_size=q.sample_size
                                                         />
                                                     }
                                                 })
@@ -1480,7 +1480,7 @@ fn AnalyzerTable(
                                                             let secs = d.num_seconds().abs().max(1) as f32;
                                                             86400.0 / secs
                                                         }).unwrap_or(0.0);
-                                                        let cadence = get_sales_cadence(spd, summary.num_sold as usize);
+                                                        let cadence = get_sales_cadence(spd, summary.num_sold);
                                                         view! { <SalesCadenceBadge cadence sales_per_day=spd compact=true /> }.into_any()
                                                     } else {
                                                         view! { "—" }.into_any()
