@@ -12,6 +12,7 @@ const USERS = {
   invited: { id: 880000000003, username: "SharedListInvited" },
   manual: { id: 880000000004, username: "SharedListManual" },
   overLimit: { id: 880000000005, username: "SharedListOverLimit" },
+  inviteWriter: { id: 880000000006, username: "SharedListInviteWriter" },
 };
 
 async function login(page, baseUrl, user) {
@@ -51,6 +52,34 @@ function failIf(condition, failures, message) {
   if (condition) failures.push(message);
 }
 
+async function addItem(page, listId, itemId) {
+  return api(page, "POST", `/api/v1/list/${listId}/add/item`, {
+    id: 0,
+    item_id: itemId,
+    list_id: listId,
+    hq: null,
+    quantity: 1,
+    acquired: null,
+  });
+}
+
+async function getListEntry(page, listId) {
+  const lists = await api(page, "GET", "/api/v1/list");
+  return Array.isArray(lists.body) ? lists.body.find((candidate) => candidate.list.id === listId) : null;
+}
+
+async function listControlState(page, timeout) {
+  await page.waitForSelector('[data-testid="list-settings-btn"]', { timeout });
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  return page.evaluate(() => {
+    const text = document.body.innerText;
+    return {
+      hasAddItem: text.includes("Add Item"),
+      hasSettings: !!document.querySelector('[data-testid="list-settings-btn"]'),
+    };
+  });
+}
+
 async function main() {
   const puppeteer = require("puppeteer");
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
@@ -70,14 +99,16 @@ async function main() {
     const invitedCtx = await browser.createBrowserContext();
     const manualCtx = await browser.createBrowserContext();
     const overLimitCtx = await browser.createBrowserContext();
+    const inviteWriterCtx = await browser.createBrowserContext();
 
     const ownerPage = await ownerCtx.newPage();
     const readerPage = await readerCtx.newPage();
     const invitedPage = await invitedCtx.newPage();
     const manualPage = await manualCtx.newPage();
     const overLimitPage = await overLimitCtx.newPage();
+    const inviteWriterPage = await inviteWriterCtx.newPage();
 
-    for (const page of [ownerPage, readerPage, invitedPage, manualPage, overLimitPage]) {
+    for (const page of [ownerPage, readerPage, invitedPage, manualPage, overLimitPage, inviteWriterPage]) {
       page.setDefaultTimeout(TIMEOUT_MS);
     }
 
@@ -86,6 +117,7 @@ async function main() {
     await login(invitedPage, BASE_URL, USERS.invited);
     await login(manualPage, BASE_URL, USERS.manual);
     await login(overLimitPage, BASE_URL, USERS.overLimit);
+    await login(inviteWriterPage, BASE_URL, USERS.inviteWriter);
 
     const worldData = await api(ownerPage, "GET", "/api/v1/world_data");
     failIf(worldData.status !== 200, failures, `world_data expected 200, got ${worldData.status}`);
@@ -111,19 +143,11 @@ async function main() {
     });
     failIf(readShare.status !== 200, failures, `read share expected 200, got ${readShare.status}`);
 
-    const readerLists = await api(readerPage, "GET", "/api/v1/list");
-    const readerList = readerLists.body.find((entry) => entry.list.id === listId);
+    const readerList = await getListEntry(readerPage, listId);
     failIf(!readerList, failures, "read-shared list not returned to reader");
     failIf(readerList && readerList.permission !== "Read", failures, `reader permission was ${readerList && readerList.permission}`);
 
-    const readAdd = await api(readerPage, "POST", `/api/v1/list/${listId}/add/item`, {
-      id: 0,
-      item_id: 2,
-      list_id: listId,
-      hq: null,
-      quantity: 1,
-      acquired: null,
-    });
+    const readAdd = await addItem(readerPage, listId, 2);
     failIf(readAdd.status !== 403, failures, `read-only add expected 403, got ${readAdd.status}`);
 
     const writeShare = await api(ownerPage, "POST", `/api/v1/list/${listId}/share/user`, {
@@ -132,14 +156,7 @@ async function main() {
     });
     failIf(writeShare.status !== 200, failures, `write share expected 200, got ${writeShare.status}`);
 
-    const writeAdd = await api(readerPage, "POST", `/api/v1/list/${listId}/add/item`, {
-      id: 0,
-      item_id: 2,
-      list_id: listId,
-      hq: null,
-      quantity: 1,
-      acquired: null,
-    });
+    const writeAdd = await addItem(readerPage, listId, 2);
     failIf(writeAdd.status !== 200, failures, `write add expected 200, got ${writeAdd.status}`);
 
     const invite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
@@ -176,6 +193,21 @@ async function main() {
     const invitedUrl = invitedPage.url();
     failIf(!invitedUrl.endsWith(`/list/${listId}`), failures, `invited user expected redirect to /list/${listId}, got ${invitedUrl}`);
 
+    const readInviteList = await getListEntry(invitedPage, listId);
+    failIf(!readInviteList, failures, "read-invited list not returned to invited user");
+    failIf(
+      readInviteList && readInviteList.permission !== "Read",
+      failures,
+      `read invite permission was ${readInviteList && readInviteList.permission}`,
+    );
+
+    const readInviteControls = await listControlState(invitedPage, TIMEOUT_MS);
+    failIf(readInviteControls.hasAddItem, failures, "read-invited user should not see Add Item");
+    failIf(!readInviteControls.hasSettings, failures, "read-invited user should see Settings button");
+
+    const readInviteAdd = await addItem(invitedPage, listId, 3);
+    failIf(readInviteAdd.status !== 403, failures, `read invite add expected 403, got ${readInviteAdd.status}`);
+
     // Exhausted invite path
     console.log("[step] over-limit user attempts to redeem exhausted invite via UI");
     await overLimitPage.goto(`${BASE_URL}/list/invite/${inviteId}`, { waitUntil: "networkidle0" });
@@ -186,8 +218,48 @@ async function main() {
     });
     failIf(!errorText.includes("Could not accept invite:"), failures, `over-limit user expected error message, got: "${errorText}"`);
 
+    // Write invite path
+    console.log("[step] invite writer redeems write invite and adds an item");
+    const writeInvite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
+      permission: "Write",
+      max_uses: 1,
+    });
+    failIf(writeInvite.status !== 200, failures, `create write invite expected 200, got ${writeInvite.status}`);
+    const writeInviteId = writeInvite.body.id;
+    failIf(!writeInviteId || writeInviteId.length < 32, failures, "write invite id was missing or too short");
+
+    await inviteWriterPage.goto(`${BASE_URL}/list/invite/${writeInviteId}`, { waitUntil: "networkidle0" });
+    await inviteWriterPage.waitForFunction(
+      (expected) => window.location.pathname === expected,
+      { timeout: 10000 },
+      `/list/${listId}`,
+    ).catch(() => {});
+
+    const inviteWriterUrl = inviteWriterPage.url();
+    failIf(
+      !inviteWriterUrl.endsWith(`/list/${listId}`),
+      failures,
+      `invite writer expected redirect to /list/${listId}, got ${inviteWriterUrl}`,
+    );
+
+    const writeInviteList = await getListEntry(inviteWriterPage, listId);
+    failIf(!writeInviteList, failures, "write-invited list not returned to invite writer");
+    failIf(
+      writeInviteList && writeInviteList.permission !== "Write",
+      failures,
+      `write invite permission was ${writeInviteList && writeInviteList.permission}`,
+    );
+
+    await inviteWriterPage.waitForFunction(
+      () => Array.from(document.querySelectorAll(".list-toolbar button")).some((button) => button.innerText.includes("Add Item")),
+      { timeout: TIMEOUT_MS },
+    );
+
+    const writeInviteAdd = await addItem(inviteWriterPage, listId, 3);
+    failIf(writeInviteAdd.status !== 200, failures, `write invite add expected 200, got ${writeInviteAdd.status}`);
+
     // Invite deletion path
-    console.log("[step] owner creates a second invite for deletion");
+    console.log("[step] owner creates a disposable invite for deletion");
     const deleteInvite = await api(ownerPage, "POST", `/api/v1/list/${listId}/invite/create`, {
       permission: "Write",
       max_uses: 5,
@@ -256,7 +328,7 @@ async function main() {
     const ownerListAfterLeave = ownerListsAfterLeave.body.find((entry) => entry.list.id === listId);
     failIf(!ownerListAfterLeave, failures, "list disappeared for owner after reader left");
 
-    for (const page of [ownerPage, readerPage, invitedPage, overLimitPage, manualPage]) {
+    for (const page of [ownerPage, readerPage, invitedPage, overLimitPage, manualPage, inviteWriterPage]) {
       await page.close();
     }
   } finally {
