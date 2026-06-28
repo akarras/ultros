@@ -20,15 +20,28 @@ impl<'a> TagData<'a> {
         let tag_start = text.find('<')?;
         let tag_end = text.find('>')?;
         let tag_name = &text[tag_start + 1..tag_end];
-        let closing_tag_str = format!("</{tag_name}>");
-        let closing_tag = text.find(&closing_tag_str)?;
+
+        // Zero-allocation search for the closing tag to prevent creating a String per parsing step
+        let mut search_start = tag_end + 1;
+        let mut text_rem = &text[search_start..];
+        let (closing_tag, closing_tag_end) = loop {
+            let idx = text_rem.find("</")?;
+            let abs_idx = search_start + idx;
+            let after_open = &text[abs_idx + 2..];
+            if after_open.starts_with(tag_name) && after_open[tag_name.len()..].starts_with('>') {
+                break (abs_idx, abs_idx + 2 + tag_name.len() + 1);
+            }
+            search_start = abs_idx + 2;
+            text_rem = &text[search_start..];
+        };
+
         Some((
             &text[..tag_start],
             TagData {
                 tag_name,
                 tag_content: &text[&tag_end + 1..closing_tag],
             },
-            &text[closing_tag + closing_tag_str.len()..],
+            &text[closing_tag_end..],
         ))
     }
 }

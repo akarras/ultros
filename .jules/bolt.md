@@ -7,3 +7,6 @@
 ## 2024-07-16 - Replacing Vec clone/re-collect with retain in-place in Leptos
 **Learning:** In a hot path like WebSocket event parsing (which occurs frequently), converting slices to new iterators using `.cloned().collect()` creates garbage memory. Replacing it with `retain` where possible combined with short circuit conditions like `seen.len() < MAX` directly truncates the collection naturally while filtering. Furthermore, replacing `Memo::new()` with `Signal::derive` in leptos is a deoptimization for operations that clone/allocate on the heap because `Signal::derive` re-executes on every read, thus discarding caching benefits.
 **Action:** When seeing `Vec` reallocations with Iterators, look for in-place modifications using `make_contiguous`, `retain`, `drain`, or `truncate`. Also, do not blindly change `Memo` to `Signal::derive` if the inner function executes heap allocations.
+## 2026-06-25 - Avoid heap allocations when parsing substrings
+**Learning:** We can write a zero-allocation string search algorithm that performs identical substring matching without the need to allocate intermediate `String` instances with `format!()` in hot parsing paths.
+**Action:** When working on parsing logic (e.g. FFXIV tags parsing), prefer manual string searches using `find` and `starts_with` rather than creating `String` using `format!()` for simple matching tasks.
