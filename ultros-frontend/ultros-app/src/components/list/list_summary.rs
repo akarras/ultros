@@ -9,7 +9,6 @@ use ultros_api_types::{ActiveListing, list::ListItem};
 use xiv_gen::ItemId;
 
 use crate::components::gil::*;
-use crate::components::price_viewer::get_cheapest_listing;
 use crate::global_state::LocalWorldData;
 use ultros_api_types::world_helper::{AnyResult, AnySelector, WorldHelper};
 
@@ -21,6 +20,43 @@ struct WorldPrice {
     datacenter_name: String,
     total_price: i32,
     item_count: usize,
+}
+
+/// Find the cheapest listings for a given item based on quantity and HQ preference
+fn get_cheapest_listing(
+    mut listings: Vec<ActiveListing>,
+    quantity: i32,
+    hq: Option<bool>,
+    excluded_worlds: &[i32],
+    excluded_datacenters: &HashSet<String>,
+    world_helper: Option<&WorldHelper>,
+) -> Vec<ActiveListing> {
+    listings.sort_by_key(|listing| listing.price_per_unit);
+    let quantity_needed = quantity;
+    let mut current_quantity = 0;
+    listings
+        .into_iter()
+        .filter(|listing| {
+            if listing.is_excluded(excluded_worlds) {
+                return false;
+            }
+            if let Some(world_helper) = world_helper
+                && listing.is_datacenter_excluded(excluded_datacenters, world_helper)
+            {
+                return false;
+            }
+            if let Some(hq) = hq {
+                listing.hq == hq
+            } else {
+                true
+            }
+        })
+        .take_while(|listing| {
+            let needed_more = current_quantity < quantity_needed;
+            current_quantity += listing.quantity;
+            needed_more
+        })
+        .collect::<Vec<_>>()
 }
 
 /// Calculate the total price and breakdown by world for all items in the list
@@ -96,7 +132,7 @@ fn calculate_list_totals(
 #[component]
 pub fn ListSummary(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    #[prop(default = Vec::new())] excluded_worlds: Vec<i32>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
     #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
         HashSet<String>,
     >,
@@ -140,7 +176,7 @@ pub fn ListSummary(
                 marketable_items.clone(),
                 &world_data,
                 &unknown_label,
-                &excluded_worlds,
+                excluded_worlds,
                 excluded_datacenters,
             )
         })
