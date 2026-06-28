@@ -3,6 +3,7 @@ use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
+use crate::components::listing_filters::filter_listing_rows;
 use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
@@ -25,10 +26,13 @@ use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
 use std::{collections::HashSet, sync::Arc};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
+use ultros_api_types::world::Datacenter;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
+
+type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
 
 #[component]
 fn WorldButton(
@@ -244,15 +248,178 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     .into_any()
 }
 
+#[component]
+fn DatacenterExclusionControls(
+    world: Memo<String>,
+    excluded_datacenters: RwSignal<HashSet<String>>,
+) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+
+    let datacenters = Memo::new({
+        let world_data = world_data.clone();
+        move |_| {
+            let world_name = Url::unescape(&world());
+            world_data
+                .lookup_world_by_name(&world_name)
+                .map(|result| {
+                    world_data
+                        .get_datacenters(&result)
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        }
+    });
+    let excluded_visible = Memo::new({
+        let world_data = world_data.clone();
+        move |_| {
+            excluded_datacenters.with(|excluded| {
+                let mut datacenters = excluded
+                    .iter()
+                    .filter_map(|name| {
+                        world_data
+                            .lookup_world_by_name(name)
+                            .and_then(|result| result.as_datacenter())
+                            .cloned()
+                    })
+                    .collect::<Vec<_>>();
+                datacenters.sort_by(|a, b| a.name.cmp(&b.name));
+                datacenters
+            })
+        }
+    });
+
+    view! {
+        {move || {
+            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty())
+                || excluded_visible.with(|datacenters| !datacenters.is_empty());
+            has_controls.then(|| {
+                view! {
+                    <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <h2 class="text-sm font-bold uppercase text-brand-200">
+                                {t!(i18n, item_view_exclude_datacenters)}
+                            </h2>
+                            <button
+                                type="button"
+                                class="btn-secondary h-8 px-2 text-xs"
+                                class:hidden=move || excluded_datacenters.with(|set| set.is_empty())
+                                on:click=move |_| {
+                                    excluded_datacenters.update(|set| set.clear());
+                                }
+                            >
+                                <Icon icon=icondata::MdiClose attr:class="text-sm" />
+                                {t!(i18n, clear_all)}
+                            </button>
+                        </div>
+
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            {move || {
+                                datacenters
+                                    .get()
+                                    .into_iter()
+                                    .map(|datacenter: Datacenter| {
+                                        let name = datacenter.name.clone();
+                                        let label_name = name.clone();
+                                        let state_name = name.clone();
+                                        let click_name = name.clone();
+                                        let is_excluded = Signal::derive(move || {
+                                            excluded_datacenters.with(|set| set.contains(&state_name))
+                                        });
+                                        view! {
+                                            <button
+                                                type="button"
+                                                aria-pressed=move || is_excluded().to_string()
+                                                aria-label=move || {
+                                                    if is_excluded() {
+                                                        t_string!(i18n, item_view_include_datacenter_aria, datacenter = label_name.clone()).to_string()
+                                                    } else {
+                                                        t_string!(i18n, item_view_exclude_datacenter_aria, datacenter = label_name.clone()).to_string()
+                                                    }
+                                                }
+                                                class=move || {
+                                                    [
+                                                        "inline-flex min-h-9 items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors",
+                                                        if is_excluded() {
+                                                            "border-amber-300/60 bg-amber-500/10 text-amber-100"
+                                                        } else {
+                                                            "border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:border-brand-300/60"
+                                                        },
+                                                    ]
+                                                        .join(" ")
+                                                }
+                                                on:click=move |_| {
+                                                    excluded_datacenters.update(|set| {
+                                                        if !set.remove(&click_name) {
+                                                            set.insert(click_name.clone());
+                                                        }
+                                                    });
+                                                }
+                                            >
+                                                {move || {
+                                                    is_excluded()
+                                                        .then(|| view! { <Icon icon=icondata::BsCheck attr:class="text-sm" /> })
+                                                }}
+                                                <span>{name.clone()}</span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()
+                            }}
+                        </div>
+
+                        <div
+                            class="mt-3 flex flex-wrap gap-2"
+                            class:hidden=move || excluded_visible.with(|datacenters| datacenters.is_empty())
+                        >
+                            {move || {
+                                excluded_visible
+                                    .get()
+                                    .into_iter()
+                                    .map(|datacenter: Datacenter| {
+                                        let name = datacenter.name.clone();
+                                        let label_name = name.clone();
+                                        let click_name = name.clone();
+                                        view! {
+                                            <button
+                                                type="button"
+                                                class="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-100 transition-colors hover:border-amber-200/70"
+                                                aria-label=move || t_string!(
+                                                    i18n,
+                                                    item_view_include_datacenter_aria,
+                                                    datacenter = label_name.clone()
+                                                )
+                                                on:click=move |_| {
+                                                    excluded_datacenters.update(|set| {
+                                                        set.remove(&click_name);
+                                                    });
+                                                }
+                                            >
+                                                <Icon icon=icondata::MdiClose attr:class="text-sm" />
+                                                <span>{name.clone()}</span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()
+                            }}
+                        </div>
+                    </div>
+                }
+            })
+        }}
+    }
+    .into_any()
+}
+
 fn cheapest_listing_for_quality(
-    listings: &[(ActiveListing, Retainer)],
+    listings: &ListingRows,
     hq: bool,
-    excluded_worlds: &HashSet<i32>,
-) -> Option<(ActiveListing, Retainer)> {
+) -> Option<(ActiveListing, Arc<Retainer>)> {
     listings
         .iter()
         .filter(|(listing, _)| listing.hq == hq)
-        .filter(|(listing, _)| !excluded_worlds.contains(&listing.world_id))
         .min_by_key(|(listing, _)| listing.price_per_unit)
         .cloned()
 }
@@ -267,10 +434,10 @@ fn parse_excluded_world_ids(raw: Option<&str>) -> HashSet<i32> {
 #[component]
 fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    #[prop(into)] filtered_listings: Signal<ListingRows>,
     item_id: Memo<i32>,
     realtime_status: Signal<String>,
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
-    #[prop(into, default = Signal::derive(HashSet::new))] excluded_worlds: Signal<HashSet<i32>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
@@ -312,18 +479,10 @@ fn MarketStatsPanel(
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let data = data.clone();
-                            let excluded_worlds = excluded_worlds.get();
-                            let cheapest_nq = cheapest_listing_for_quality(
-                                &data.listings,
-                                false,
-                                &excluded_worlds,
-                            );
-                            let cheapest_hq = cheapest_listing_for_quality(
-                                &data.listings,
-                                true,
-                                &excluded_worlds,
-                            );
-                            let listings_count = data.listings.len();
+                            let listings = filtered_listings.get();
+                            let cheapest_nq = cheapest_listing_for_quality(&listings, false);
+                            let cheapest_hq = cheapest_listing_for_quality(&listings, true);
+                            let listings_count = listings.len();
                             let recent_sales = data.sales.clone();
                             let avg_price = if recent_sales.is_empty() {
                                 None
@@ -368,8 +527,7 @@ fn MarketStatsPanel(
                                 None
                             };
 
-                            let latest_timestamp = data
-                                .listings
+                            let latest_timestamp = listings
                                 .iter()
                                 .map(|(listing, _)| listing.timestamp)
                                 .max();
@@ -749,6 +907,7 @@ fn MarketStatsPanel(
 #[component]
 pub fn ChartWrapper(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    #[prop(into)] filtered_listings: Signal<ListingRows>,
     item_id: Memo<i32>,
     world: Memo<String>,
 ) -> impl IntoView {
@@ -946,13 +1105,7 @@ pub fn ChartWrapper(
                                 }}
 
                                 {move || {
-                                    let no_listings = listing_resource.with(|listing| {
-                                        listing
-                                            .as_ref()
-                                            .and_then(|result| result.as_ref().ok())
-                                            .map(|listing| listing.listings.is_empty())
-                                            .unwrap_or(false)
-                                    });
+                                    let no_listings = filtered_listings.with(|listings| listings.is_empty());
                                     no_listings.then(|| view! {
                                         <div role="status" class="text-amber-200 border border-amber-500/40 rounded-xl px-3 py-2 text-sm">
                                             {move || t_string!(i18n, no_active_listings_found).to_string()}
@@ -969,9 +1122,7 @@ pub fn ChartWrapper(
 }
 
 #[component]
-fn HighQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-) -> impl IntoView {
+fn HighQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
         <div class="space-y-6">
@@ -980,22 +1131,13 @@ fn HighQualityTable(
             }>
                 {move || {
                     let hq_listings = Memo::new(move |_| {
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref()
-                                    .and_then(|l| {
-                                        l.as_ref()
-                                            .ok()
-                                            .map(|l| {
-                                                l.listings
-                                                    .iter()
-                                                    .filter(|(l, _)| l.hq)
-                                                    .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
-                                                    .collect::<Vec<_>>()
-                                            })
-                                    })
-                            })
-                            .unwrap_or_default()
+                        filtered_listings.with(|listings| {
+                            listings
+                                .iter()
+                                .filter(|(listing, _)| listing.hq)
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
                     });
                     view! {
                         <div
@@ -1016,9 +1158,7 @@ fn HighQualityTable(
 }
 
 #[component]
-fn LowQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-) -> impl IntoView {
+fn LowQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
         <div class="space-y-6">
@@ -1027,22 +1167,13 @@ fn LowQualityTable(
             }>
                 {move || {
                     let lq_listings = Memo::new(move |_| {
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref()
-                                    .and_then(|l| {
-                                        l.as_ref()
-                                            .ok()
-                                            .map(|l| {
-                                                l.listings
-                                                    .iter()
-                                                    .filter(|(l, _)| !l.hq)
-                                                    .map(|(l, r)| (l.clone(), Arc::new(r.clone())))
-                                                    .collect::<Vec<_>>()
-                                            })
-                                    })
-                            })
-                            .unwrap_or_default()
+                        filtered_listings.with(|listings| {
+                            listings
+                                .iter()
+                                .filter(|(listing, _)| !listing.hq)
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
                     });
                     view! {
                         <div
@@ -1140,6 +1271,32 @@ fn ListingsContent(
     });
     let realtime = use_realtime();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
+    let filtered_listings = Memo::new({
+        let world_data = world_data.clone();
+        move |_| {
+            let listings = listing_resource
+                .with(|listing| {
+                    listing.as_ref().and_then(|result| {
+                        result.as_ref().ok().map(|item| {
+                            item.listings
+                                .iter()
+                                .map(|(listing, retainer)| {
+                                    (listing.clone(), Arc::new(retainer.clone()))
+                                })
+                                .collect::<ListingRows>()
+                        })
+                    })
+                })
+                .unwrap_or_default();
+            filter_listing_rows(
+                listings,
+                Some(world_data.as_ref()),
+                &excluded_worlds.get(),
+                &excluded_datacenters.get(),
+            )
+        }
+    });
     let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
     Effect::new(move |_| {
         market_subscriptions.update_value(|subscriptions| subscriptions.clear());
@@ -1213,17 +1370,18 @@ fn ListingsContent(
             <div id="history" class="grid grid-cols-1 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.45fr)] gap-4 sm:gap-6">
                 <MarketStatsPanel
                     listing_resource
+                    filtered_listings
                     item_id
                     realtime_status=realtime_status.into()
                     last_update_at=last_update_at.into()
-                    excluded_worlds
                 />
-                <ChartWrapper listing_resource item_id world />
+                <ChartWrapper listing_resource filtered_listings item_id world />
             </div>
 
             <div id="listings" class="grid grid-cols-1 gap-6 mt-6">
-                <HighQualityTable listing_resource />
-                <LowQualityTable listing_resource />
+                <DatacenterExclusionControls world excluded_datacenters />
+                <HighQualityTable filtered_listings />
+                <LowQualityTable filtered_listings />
             </div>
 
             <div class="grid grid-cols-1 gap-6 mt-8">
@@ -1460,7 +1618,12 @@ pub fn ItemView() -> impl IntoView {
 mod tests {
     use super::*;
 
-    fn listing(id: i32, world_id: i32, price_per_unit: i32, hq: bool) -> (ActiveListing, Retainer) {
+    fn listing(
+        id: i32,
+        world_id: i32,
+        price_per_unit: i32,
+        hq: bool,
+    ) -> (ActiveListing, Arc<Retainer>) {
         (
             ActiveListing {
                 id,
@@ -1472,12 +1635,12 @@ mod tests {
                 hq,
                 timestamp: chrono::Utc::now().naive_utc(),
             },
-            Retainer {
+            Arc::new(Retainer {
                 id,
                 world_id,
                 name: format!("Retainer {id}"),
                 retainer_city_id: 1,
-            },
+            }),
         )
     }
 
@@ -1485,22 +1648,25 @@ mod tests {
     fn item_view_cheapest_listing_empty_exclusions_preserve_selection() {
         let listings = vec![listing(1, 100, 100, false), listing(2, 200, 200, false)];
 
-        let result = cheapest_listing_for_quality(&listings, false, &HashSet::new()).unwrap();
+        let result = cheapest_listing_for_quality(&listings, false).unwrap();
 
         assert_eq!(result.0.id, 1);
         assert_eq!(result.0.world_id, 100);
     }
 
     #[test]
-    fn item_view_cheapest_listing_filters_excluded_world_before_selection() {
+    fn item_view_cheapest_listing_uses_pre_filtered_rows() {
         let listings = vec![
             listing(1, 100, 100, false),
             listing(2, 200, 200, false),
             listing(3, 300, 50, true),
         ];
-        let excluded_worlds = HashSet::from([100]);
+        let filtered = listings
+            .into_iter()
+            .filter(|(listing, _)| listing.world_id != 100)
+            .collect::<ListingRows>();
 
-        let result = cheapest_listing_for_quality(&listings, false, &excluded_worlds).unwrap();
+        let result = cheapest_listing_for_quality(&filtered, false).unwrap();
 
         assert_eq!(result.0.id, 2);
         assert_eq!(result.0.world_id, 200);
