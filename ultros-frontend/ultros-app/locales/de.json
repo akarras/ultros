@@ -73,6 +73,8 @@
     "very_high_frequency": "Sehr hohe Frequenz",
     "not_enough_data": "Nicht genug Daten",
     "active_listings": "Aktive Angebote",
+    "item_view_savings_cheapest_on": "Cheapest on",
+    "item_view_savings_save": "save",
     "item_view_exclude_datacenters": "Exclude Datacenters",
     "item_view_exclude_datacenter_aria": "Exclude {{datacenter}}",
     "item_view_include_datacenter_aria": "Include {{datacenter}}",
