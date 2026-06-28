@@ -23,11 +23,11 @@ use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use leptos_router::location::Url;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
-use ultros_api_types::{CurrentlyShownItem, SaleHistory};
+use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 #[component]
@@ -244,12 +244,26 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     .into_any()
 }
 
+fn cheapest_listing_for_quality(
+    listings: &[(ActiveListing, Retainer)],
+    hq: bool,
+    excluded_worlds: &HashSet<i32>,
+) -> Option<(ActiveListing, Retainer)> {
+    listings
+        .iter()
+        .filter(|(listing, _)| listing.hq == hq)
+        .filter(|(listing, _)| !excluded_worlds.contains(&listing.world_id))
+        .min_by_key(|(listing, _)| listing.price_per_unit)
+        .cloned()
+}
+
 #[component]
 fn MarketStatsPanel(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     item_id: Memo<i32>,
     realtime_status: Signal<String>,
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_worlds: Signal<HashSet<i32>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let cheapest_prices = use_context::<CheapestPrices>();
@@ -291,18 +305,17 @@ fn MarketStatsPanel(
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let data = data.clone();
-                            let cheapest_nq = data
-                                .listings
-                                .iter()
-                                .filter(|(listing, _)| !listing.hq)
-                                .min_by_key(|(listing, _)| listing.price_per_unit)
-                                .cloned();
-                            let cheapest_hq = data
-                                .listings
-                                .iter()
-                                .filter(|(listing, _)| listing.hq)
-                                .min_by_key(|(listing, _)| listing.price_per_unit)
-                                .cloned();
+                            let excluded_worlds = excluded_worlds.get();
+                            let cheapest_nq = cheapest_listing_for_quality(
+                                &data.listings,
+                                false,
+                                &excluded_worlds,
+                            );
+                            let cheapest_hq = cheapest_listing_for_quality(
+                                &data.listings,
+                                true,
+                                &excluded_worlds,
+                            );
                             let listings_count = data.listings.len();
                             let recent_sales = data.sales.clone();
                             let avg_price = if recent_sales.is_empty() {
@@ -1097,7 +1110,11 @@ fn update_current_item(
 }
 
 #[component]
-fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
+fn ListingsContent(
+    item_id: Memo<i32>,
+    world: Memo<String>,
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_worlds: Signal<HashSet<i32>>,
+) -> impl IntoView {
     let (realtime_status, set_realtime_status) = signal("connecting".to_string());
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
@@ -1192,6 +1209,7 @@ fn ListingsContent(item_id: Memo<i32>, world: Memo<String>) -> impl IntoView {
                     item_id
                     realtime_status=realtime_status.into()
                     last_update_at=last_update_at.into()
+                    excluded_worlds
                 />
                 <ChartWrapper listing_resource item_id world />
             </div>
@@ -1263,6 +1281,7 @@ pub fn ItemView() -> impl IntoView {
     });
 
     let (price_zone, _) = get_price_zone();
+    let excluded_worlds = RwSignal::new(HashSet::<i32>::new());
 
     let world = Memo::new(move |_| {
         params.with(|p| {
@@ -1418,11 +1437,62 @@ pub fn ItemView() -> impl IntoView {
             <WorldMenu world_name=world item_id />
 
             <div class="main-content px-0 sm:px-4">
-                <ListingsContent item_id world />
+                <ListingsContent item_id world excluded_worlds />
                 <div class="mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>
             </div>
         </div>
     }.into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listing(id: i32, world_id: i32, price_per_unit: i32, hq: bool) -> (ActiveListing, Retainer) {
+        (
+            ActiveListing {
+                id,
+                world_id,
+                item_id: 1,
+                retainer_id: id,
+                price_per_unit,
+                quantity: 1,
+                hq,
+                timestamp: chrono::Utc::now().naive_utc(),
+            },
+            Retainer {
+                id,
+                world_id,
+                name: format!("Retainer {id}"),
+                retainer_city_id: 1,
+            },
+        )
+    }
+
+    #[test]
+    fn item_view_cheapest_listing_empty_exclusions_preserve_selection() {
+        let listings = vec![listing(1, 100, 100, false), listing(2, 200, 200, false)];
+
+        let result = cheapest_listing_for_quality(&listings, false, &HashSet::new()).unwrap();
+
+        assert_eq!(result.0.id, 1);
+        assert_eq!(result.0.world_id, 100);
+    }
+
+    #[test]
+    fn item_view_cheapest_listing_filters_excluded_world_before_selection() {
+        let listings = vec![
+            listing(1, 100, 100, false),
+            listing(2, 200, 200, false),
+            listing(3, 300, 50, true),
+        ];
+        let excluded_worlds = HashSet::from([100]);
+
+        let result = cheapest_listing_for_quality(&listings, false, &excluded_worlds).unwrap();
+
+        assert_eq!(result.0.id, 2);
+        assert_eq!(result.0.world_id, 200);
+    }
 }
