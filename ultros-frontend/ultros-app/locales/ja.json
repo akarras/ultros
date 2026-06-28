@@ -73,6 +73,8 @@
     "very_high_frequency": "非常に高頻度",
     "not_enough_data": "データ不足",
     "active_listings": "現在の出品",
+    "item_view_savings_cheapest_on": "Cheapest on",
+    "item_view_savings_save": "save",
     "item_view_exclude_datacenters": "Exclude Datacenters",
     "item_view_exclude_datacenter_aria": "Exclude {{datacenter}}",
     "item_view_include_datacenter_aria": "Include {{datacenter}}",

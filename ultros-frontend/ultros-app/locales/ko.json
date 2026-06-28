@@ -73,6 +73,8 @@
     "very_high_frequency": "매우 자주 판매",
     "not_enough_data": "데이터 부족",
     "active_listings": "현재 판매 중",
+    "item_view_savings_cheapest_on": "Cheapest on",
+    "item_view_savings_save": "save",
     "item_view_exclude_datacenters": "Exclude Datacenters",
     "item_view_exclude_datacenter_aria": "Exclude {{datacenter}}",
     "item_view_include_datacenter_aria": "Include {{datacenter}}",
