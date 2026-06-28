@@ -153,6 +153,46 @@ pub fn is_analyzer_event_relevant(
     false
 }
 
+/// Decides whether a websocket market update should refresh the analyzer.
+///
+/// Listing updates are relevant only when they match one of the currently
+/// analyzed item ids and the analyzer's sell/buy world state. `Stale` messages
+/// are scoped to the subscription that produced them, so any non-empty analyzer
+/// subscription should refetch when one arrives.
+pub fn is_analyzer_market_update_relevant(
+    message: &ServerClient,
+    viewed_item_ids: &[i32],
+    sell_world_id: i32,
+    buy_filter: Option<AnySelector>,
+    world_helper: &WorldHelper,
+) -> bool {
+    if viewed_item_ids.is_empty() || sell_world_id == 0 {
+        return false;
+    }
+
+    match message {
+        ServerClient::Listings(event) => {
+            let data = match event {
+                EventType::Added(data) | EventType::Removed(data) | EventType::Updated(data) => {
+                    data
+                }
+            };
+            viewed_item_ids.iter().any(|viewed_item_id| {
+                is_analyzer_event_relevant(
+                    data.item_id,
+                    data.world_id,
+                    *viewed_item_id,
+                    sell_world_id,
+                    buy_filter,
+                    world_helper,
+                )
+            })
+        }
+        ServerClient::Stale { .. } => true,
+        _ => false,
+    }
+}
+
 /// Decides whether a websocket market update should refresh a list view.
 ///
 /// Listing updates carry an item id and are relevant only when that item is
@@ -536,6 +576,98 @@ mod tests {
         // Verify "no item viewed" state handling (should return false)
         assert!(!is_analyzer_event_relevant(42, 100, 0, 100, None, &h));
         assert!(!is_analyzer_event_relevant(42, 100, 42, 0, None, &h));
+    }
+
+    fn analyzer_market_message(item_id: i32, world_id: i32) -> ServerClient {
+        ServerClient::Listings(EventType::Updated(ListingEventData {
+            item_id,
+            world_id,
+            listings: vec![],
+        }))
+    }
+
+    #[test]
+    fn analyzer_market_update_matches_current_item_on_sell_world() {
+        let h = helper();
+        let message = analyzer_market_message(42, 100);
+
+        assert!(is_analyzer_market_update_relevant(
+            &message,
+            &[42],
+            100,
+            None,
+            &h
+        ));
+    }
+
+    #[test]
+    fn analyzer_market_update_ignores_unrelated_item_id() {
+        let h = helper();
+        let message = analyzer_market_message(42, 100);
+
+        assert!(!is_analyzer_market_update_relevant(
+            &message,
+            &[7],
+            100,
+            None,
+            &h
+        ));
+    }
+
+    #[test]
+    fn analyzer_market_update_matches_buy_filter_world_or_datacenter() {
+        let h = helper();
+        let message = analyzer_market_message(42, 101);
+
+        assert!(is_analyzer_market_update_relevant(
+            &message,
+            &[42],
+            100,
+            Some(AnySelector::World(101)),
+            &h
+        ));
+        assert!(is_analyzer_market_update_relevant(
+            &message,
+            &[42],
+            100,
+            Some(AnySelector::Datacenter(10)),
+            &h
+        ));
+    }
+
+    #[test]
+    fn analyzer_market_update_ignores_unmatched_world_without_buy_filter() {
+        let h = helper();
+        let message = analyzer_market_message(42, 101);
+
+        assert!(!is_analyzer_market_update_relevant(
+            &message,
+            &[42],
+            100,
+            None,
+            &h
+        ));
+    }
+
+    #[test]
+    fn analyzer_market_stale_event_matches_non_empty_subscription_only() {
+        let h = helper();
+        let message = ServerClient::Stale { subscription_id: 1 };
+
+        assert!(is_analyzer_market_update_relevant(
+            &message,
+            &[42],
+            100,
+            None,
+            &h
+        ));
+        assert!(!is_analyzer_market_update_relevant(
+            &message,
+            &[],
+            100,
+            None,
+            &h
+        ));
     }
 
     fn list_market_message(item_id: i32) -> ServerClient {
