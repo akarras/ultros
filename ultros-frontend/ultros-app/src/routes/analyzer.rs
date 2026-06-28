@@ -1,4 +1,4 @@
-use crate::analysis::{SaleSummary, roi_badge_class};
+use crate::analysis::{SaleSummary, get_sales_cadence, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::use_realtime;
@@ -7,12 +7,14 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::*,
+        confidence_badge::ConfidenceBadge,
         gil::*,
         icon::Icon,
         item_icon::*,
         meta::*,
         query_button::QueryButton,
         realtime_status::RealtimeStatus,
+        sales_cadence_badge::SalesCadenceBadge,
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
@@ -1284,7 +1286,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                    <div role="columnheader" class="w-[140px] px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1336,6 +1338,8 @@ fn AnalyzerTable(
                                 .to_string();
                             let world = Signal::derive(move || world.clone());
                             let item_id = data.inner.sale_summary.item_id;
+                            let hq = data.inner.sale_summary.hq;
+                            let row_key = (item_id, hq);
                             let item = items
                                 .get(&ItemId(item_id))
                                 .map(|item| item.name.as_str())
@@ -1364,6 +1368,17 @@ fn AnalyzerTable(
                                                 <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
                                             </div>
                                             {item}
+                                            {move || {
+                                                let maps = enrichment.get();
+                                                maps.quality_for(&row_key).map(|q| {
+                                                    view! {
+                                                        <ConfidenceBadge
+                                                            band=q.confidence_band
+                                                            sample_size=q.sample_size as u32
+                                                        />
+                                                    }
+                                                })
+                                            }}
                                         </a>
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
@@ -1453,13 +1468,28 @@ fn AnalyzerTable(
                                             })}
                                             {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
                                                 let maps = enrichment.get();
-                                                let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
-                                                    (Some(q), _) => view! { {format!("{:.1}", q.sales_per_day)} }.into_any(),
-                                                    (None, true) => view! { "—" }.into_any(),
-                                                    (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
+                                                let settled = maps.is_settled(&row_key);
+                                                let quality = maps.quality_for(&row_key);
+                                                let inner = if let Some(q) = quality {
+                                                    let cadence = get_sales_cadence(q.sales_per_day, q.sample_size as usize);
+                                                    view! { <SalesCadenceBadge cadence sales_per_day=q.sales_per_day compact=true /> }.into_any()
+                                                } else if settled {
+                                                    let summary = &data.inner.sale_summary;
+                                                    if summary.num_sold > 0 {
+                                                        let spd = summary.avg_sale_duration.map(|d| {
+                                                            let secs = d.num_seconds().abs().max(1) as f32;
+                                                            86400.0 / secs
+                                                        }).unwrap_or(0.0);
+                                                        let cadence = get_sales_cadence(spd, summary.num_sold as usize);
+                                                        view! { <SalesCadenceBadge cadence sales_per_day=spd compact=true /> }.into_any()
+                                                    } else {
+                                                        view! { "—" }.into_any()
+                                                    }
+                                                } else {
+                                                    view! { <SingleLineSkeleton /> }.into_any()
                                                 };
                                                 view! {
-                                                    <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                                    <div role="cell" class="px-3 py-2 w-[140px] hidden md:flex items-center justify-center">
                                                         {inner}
                                                     </div>
                                                 }
