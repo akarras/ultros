@@ -621,7 +621,6 @@ fn VendorResaleTable(
                             } else {
                                 "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
-                            let data_clone = data.clone();
                             view! {
                                 <div class=classes role="row-group">
                                     <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
@@ -644,9 +643,7 @@ fn VendorResaleTable(
                                         <Gil amount=data.profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
-                                        <span class={
-                                            move || roi_badge_class(data_clone.return_on_investment)
-                                        }>
+                                        <span class={roi_badge_class(data.return_on_investment)}>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>

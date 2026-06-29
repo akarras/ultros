@@ -585,8 +585,6 @@ fn RecipeAnalyzerTable(
                     each=computed_data.into()
                     key=move |(index, data): &(usize, Arc<RecipeProfitData>)| (*index, data.recipe.key_id)
                     view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
-                        // Clone data for use in closures to avoid moving the Arc
-                        let data_clone = data.clone();
                         let item_id = ItemId(data.recipe.item_result);
                         let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                         let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
@@ -636,10 +634,7 @@ fn RecipeAnalyzerTable(
                                     <Gil amount=data.profit />
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
-                                     <span class={
-                                        let data = data_clone.clone();
-                                        move || roi_badge_class(data.return_on_investment)
-                                    }>
+                                     <span class={roi_badge_class(data.return_on_investment)}>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
                                 </div>
