@@ -520,7 +520,6 @@ fn FCCraftingAnalyzerTable(
                     each=computed_data.into()
                     key=move |(index, data): &(usize, Arc<FCCraftProfitData>)| (*index, data.sequence.key_id)
                     view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
-                        let data_clone = data.clone();
                         let item_id = ItemId(data.sequence.result_item);
                         let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
                         let classes = if (index % 2) == 0 {
@@ -584,10 +583,7 @@ fn FCCraftingAnalyzerTable(
                                     <Gil amount=data.profit />
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
-                                    <span class={
-                                        let data = data_clone.clone();
-                                        move || roi_badge_class(data.return_on_investment)
-                                    }>
+                                    <span class={roi_badge_class(data.return_on_investment)}>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
                                 </div>
