@@ -607,5 +607,13 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("getElementsByTagName"));
         // Category 4: empty promise rejections.
         assert!(FILTER_JS.contains("Non-Error promise rejection captured with value: undefined"));
+        // Category 5: leptos hydration-bootstrap ReferenceErrors stripped by a
+        // proxy/crawler. Removing it re-opens the #6620/#6667/#6760/#6761 flood.
+        assert!(FILTER_JS.contains("isStrippedHydrationBootstrap"));
+        // Category 6: the redundant onerror wasm `unreachable` trap dedup —
+        // drops the per-deploy duplicate of every Rust panic (the #6781–#6828
+        // rotation) via a pkg-bundle stack frame. Removing it re-opens it.
+        assert!(FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
+        assert!(FILTER_JS.contains("ULTROS_PKG_FRAME_RE"));
     }
 }

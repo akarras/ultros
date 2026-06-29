@@ -433,6 +433,114 @@ const cases = [
     expectDrop: false,
   },
 
+  // ── Category 6: redundant onerror wasm `unreachable` trap (dedup) ──
+  // The onerror "RuntimeError: unreachable" the browser captures after Rust's
+  // abort() runs the wasm `unreachable` instruction. When its stack carries one
+  // of our pkg-bundle frames it is provably OUR wasm trap — the guaranteed
+  // duplicate of the actionable RustWasmPanic the panic hook already reported —
+  // so it is dropped UNCONDITIONALLY (no font / translate / stale-Chrome
+  // fingerprint), which the gated category-3 prong above could not do. This is
+  // the #6781–#6828 per-deploy fragmenting fleet. The frameless variant above
+  // is left preserved: only an attributable-to-our-bundle trap is a known dup.
+  {
+    name: "onerror RuntimeError unreachable WITH our pkg frames is dropped on a current clean browser (real #6827)",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable",
+            mechanism: {
+              type: "auto.browser.global_handlers.onerror",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                { filename: "/pkg/2b494b1/ultros.js", function: "c" },
+                {
+                  filename:
+                    "/pkg/2b494b1/ultros.wasm:wasm-function[5501]:0x5e8bff",
+                  function: "?",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "Firefox phrasing 'unreachable executed' from our wasm frame is dropped",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable executed",
+            stacktrace: {
+              frames: [
+                {
+                  filename:
+                    "/pkg/2b494b1/ultros.wasm:wasm-function[5501]:0x5e8bff",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  {
+    name: "RuntimeError unreachable from a THIRD-PARTY wasm module (no pkg frame) is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable",
+            stacktrace: {
+              frames: [
+                {
+                  filename:
+                    "https://cdn.example.com/widget.wasm:wasm-function[12]:0x100",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "a genuine non-unreachable RuntimeError from our bundle is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "memory access out of bounds",
+            stacktrace: {
+              frames: [{ filename: "/pkg/2b494b1/ultros.js" }],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+
   // ── Category 1: WASM/bundle fetch aborts ──
   {
     name: 'TypeError "Failed to fetch dynamically imported module" of the pkg bundle is dropped',
