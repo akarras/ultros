@@ -98,6 +98,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     class="px-4 py-2 rounded-lg bg-brand-900/30 hover:bg-brand-800/40
                                     border border-white/10 hover:border-brand-300/30
                                     transition-all duration-300 text-gray-200 hover:text-brand-300"
+                                    aria-label=move || t_string!(i18n, search_character).to_string()
                                     on:click=move |_| {
                                         let _ = search_action.dispatch(character_search());
                                     }
