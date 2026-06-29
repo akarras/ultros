@@ -250,6 +250,7 @@ fn GroupCard(
                                                             }>
                                                                 <button
                                                                     class="opacity-0 group-hover:opacity-100 btn-ghost btn-xs text-red-400 hover:text-red-300"
+                                                                    aria-label=move || t_string!(i18n, groups_remove_member).to_string()
                                                                     on:click=move |_| {
                                                                         remove_member_action
                                                                             .dispatch((group.id, member_id as u64));

@@ -10,3 +10,6 @@
 ## 2026-06-17 - Toast Accessibility
 **Learning:** Found that toast close buttons were missing keyboard focus indicators making them hard to use with keyboard navigation.
 **Action:** Always add focus-visible ring styles (e.g., `focus-visible:ring-[var(--brand-ring)]`) to interactive elements like close buttons.
+## 2024-05-18 - Add ARIA Labels to Icon-Only Buttons
+**Learning:** Found multiple instances where icon-only buttons (like search or remove member buttons) were missing `aria-label` attributes across different components (`settings.rs`, `groups.rs`). This is a common accessibility issue that prevents screen readers from announcing the button's purpose.
+**Action:** When creating or reviewing components with icon-only buttons, always ensure an `aria-label` is provided using `t_string!(i18n, ...)` to maintain accessibility and internationalization.
