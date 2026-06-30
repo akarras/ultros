@@ -84,6 +84,26 @@
 //      population fingerprint needed: a real hydration bug on a current
 //      browser still reaches GlitchTip via the untouched RustWasmPanic. A
 //      frameless or third-party-framed RuntimeError is left untouched.
+//   7. The "RefCell already borrowed" panic in the wasm-bindgen-futures
+//      single-threaded executor (js-sys .../futures/task/singlethread.rs).
+//      Every Rust panic that unwinds through a running future poll re-enters
+//      that executor while its task-queue RefCell is still held, tripping a
+//      SECOND, handled "RefCell already borrowed" panic. It is therefore
+//      always the cascade of a PRIMARY panic the hook already reported (e.g.
+//      the tachys hydration unreachable! at hydration.rs, kept with its own
+//      actionable contexts.rust_panic.location and stable per-location
+//      fingerprint), and its own location — singlethread.rs — is identical
+//      for every panic, so it carries no diagnostic signal of its own. Dropped
+//      UNCONDITIONALLY (no injecting-population fingerprint) when
+//      contexts.rust_panic.location is that executor path: the actionable
+//      primary copy is always retained, so a genuine hydration bug on a clean
+//      current browser still reaches GlitchTip via the primary. This is the
+//      RefCell sibling of the category-6 RuntimeError onerror twin (PR #921);
+//      it is #6758 (23k+ events), the single largest issue. Scoped to the
+//      executor location and the exact "RefCell already borrowed" value, so an
+//      APP-code double-borrow (which panics at an app/leptos path, never
+//      singlethread.rs) and a RefCell with no rust_panic context both still
+//      report.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Like ULTROS_PKG_BUNDLE_RE but tolerant of the trailing
@@ -479,6 +499,38 @@
     return false;
   }
 
+  // Category 7: the redundant "RefCell already borrowed" executor cascade. See
+  // the header. A handled panic with value "RefCell already borrowed" whose
+  // contexts.rust_panic.location is the wasm-bindgen-futures single-threaded
+  // executor is never a primary fault: that executor RefCell only reports
+  // "already borrowed" when run() is re-entered during a panic unwind, so it is
+  // always the secondary cascade of a primary panic the hook already reported
+  // (which keeps its own actionable location). Drop it UNCONDITIONALLY — unlike
+  // the category-3 onerror prong (fingerprint-gated to preserve a possible real
+  // bug), this is safe because the actionable primary copy is retained: a clean
+  // current browser still emits, and keeps, that primary panic. Scoped to the
+  // executor location (an app-code double-borrow panics at an app/leptos path,
+  // not singlethread.rs, and is preserved) and to the exact value (other
+  // executor invariants still report). The location is set by
+  // __ultrosReportRustPanic and reliably present at client-side beforeSend.
+  function isExecutorReentryCascade(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex || typeof ex.value !== "string") return false;
+      if (ex.value !== "RefCell already borrowed") return false;
+      var ctx = event && event.contexts && event.contexts.rust_panic;
+      var loc = ctx && ctx.location;
+      return (
+        typeof loc === "string" &&
+        loc.indexOf("/usr/local/cargo/registry/src/index.crates.io-") === 0 &&
+        ULTROS_JSSYS_EXECUTOR_RE.test(loc)
+      );
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   function isEmptyPromiseRejection(event) {
     try {
       var ex = firstException(event);
@@ -508,6 +560,7 @@
       isInjectedDocumentTypeError(event) ||
       isInjectedTachysHydrationPanic(event) ||
       isRedundantWasmUnreachableTrap(event) ||
+      isExecutorReentryCascade(event) ||
       isEmptyPromiseRejection(event)
     );
   };

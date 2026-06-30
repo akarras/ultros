@@ -615,5 +615,11 @@ mod error_filter_wiring {
         // rotation) via a pkg-bundle stack frame. Removing it re-opens it.
         assert!(FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
         assert!(FILTER_JS.contains("ULTROS_PKG_FRAME_RE"));
+        // Category 7: the redundant `RefCell already borrowed` executor cascade,
+        // dropped unconditionally when its rust_panic.location is the js-sys
+        // futures executor. Deleting it silently re-opens the #6758 flood (the
+        // single largest issue).
+        assert!(FILTER_JS.contains("isExecutorReentryCascade"));
+        assert!(FILTER_JS.contains("RefCell already borrowed"));
     }
 }

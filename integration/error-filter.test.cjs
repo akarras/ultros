@@ -203,10 +203,18 @@ const cases = [
     },
     expectDrop: true,
   },
-  // Same cascade shape but on a CLEAN (untranslated) page — a genuine
-  // hydration mismatch. No injected <font>, so it must still report.
+  // Same cascade shape on a CLEAN (untranslated) page. This is NOT an
+  // independent bug: the `RefCell already borrowed` in the js-sys executor is
+  // the secondary cascade of the PRIMARY hydration panic (shown here by
+  // TACHYS_PANIC_BREADCRUMB), which is reported as its own event carrying the
+  // actionable tachys rust_panic.location and is preserved on clean browsers
+  // (see the "hydration panic on a CURRENT browser ... is preserved" case
+  // above). The executor twin points only at singlethread.rs — identical for
+  // every panic — so it adds nothing the retained primary doesn't already show.
+  // Dropped unconditionally as a redundant twin (Category 7), exactly like the
+  // RuntimeError onerror twin in Category 6 (PR #921).
   {
-    name: "RefCell-already-borrowed cascade from a genuine (untranslated) hydration mismatch is preserved",
+    name: "RefCell-already-borrowed executor cascade on a clean page is dropped (redundant twin of the retained primary)",
     ua: CURRENT_CHROME,
     document: fakeDocument(0),
     event: {
@@ -216,7 +224,7 @@ const cases = [
       },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }, TACHYS_PANIC_BREADCRUMB] },
     },
-    expectDrop: false,
+    expectDrop: true,
   },
   // The unhandled wasm trap that reaches window.onerror: type RuntimeError,
   // no rust_panic context at all — recognized via the tachys breadcrumb.
@@ -406,11 +414,18 @@ const cases = [
     },
     expectDrop: true,
   },
-  // Guard: the breadcrumb-independent recognition must NOT over-suppress a
-  // genuine cascade on a clean, current browser (no font, no translate class,
-  // no stale UA) — those are the real hydration bugs the filter must preserve.
+  // The RefCell executor cascade on a clean, current browser (no font, no
+  // translate class, no stale UA, no tachys breadcrumb) — the real #6758 shape
+  // (Chrome 131, no client-side translation fingerprint at all). It is dropped
+  // unconditionally as a redundant twin (Category 7): its rust_panic.location
+  // is the js-sys executor, so it is provably the secondary cascade, never a
+  // primary fault. The genuine hydration bug it cascades from is still reported
+  // via the PRIMARY `internal error` panic at the tachys location, which is
+  // preserved on a clean browser (see the cases above) — so nothing actionable
+  // is lost. This is the same reasoning as the Category 6 RuntimeError twin
+  // (PR #921), which drops its onerror copy even on a clean browser.
   {
-    name: "RefCell cascade (js-sys loc) on a current clean browser with no fingerprint is preserved",
+    name: "RefCell executor cascade (js-sys loc) on a current clean browser is dropped (Category 7 redundant twin)",
     ua: CURRENT_CHROME,
     document: fakeDocumentEx({ fontCount: 0 }),
     event: {
@@ -420,7 +435,7 @@ const cases = [
       },
       breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
-    expectDrop: false,
+    expectDrop: true,
   },
   {
     name: "onerror RuntimeError unreachable on a current clean browser with no fingerprint is preserved",
@@ -537,6 +552,67 @@ const cases = [
           },
         ],
       },
+    },
+    expectDrop: false,
+  },
+
+  // ── Category 7: the RefCell-already-borrowed executor cascade (dedup) ──
+  // A handled Rust panic whose value is "RefCell already borrowed" AND whose
+  // contexts.rust_panic.location is the wasm-bindgen-futures single-threaded
+  // executor (js-sys .../futures/task/singlethread.rs) is never a primary,
+  // actionable fault. That executor RefCell only trips "already borrowed" when
+  // run() is re-entered while a panic is unwinding through a future poll, so it
+  // is ALWAYS the secondary cascade of a primary panic the hook already
+  // reported with its own actionable location. Dropped UNCONDITIONALLY (no
+  // injecting-population fingerprint) — the retained primary keeps the bug
+  // visible. This is #6758 (23k+ events), the single largest issue, the
+  // RefCell twin of the per-deploy RuntimeError flood Category 6 / PR #921
+  // dedups. Scoped tightly: keyed on the executor location, so an APP-code
+  // double-borrow (which panics at an app/leptos path, NOT singlethread.rs)
+  // still reports, and a RefCell event with no rust_panic context is preserved.
+  {
+    name: "genuine APP RefCell double-borrow (leptos location, not the executor) is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: {
+        rust_panic: {
+          location:
+            "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
+            "reactive_graph-0.2.5/src/signal/guards.rs:120:14",
+        },
+      },
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "RefCell already borrowed with NO rust_panic context is preserved (cannot prove it is the executor cascade)",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [{ type: "RustWasmPanic", value: "RefCell already borrowed" }],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: false,
+  },
+  {
+    name: "a DIFFERENT panic value at the js-sys executor location is preserved (only the RefCell cascade is a known twin)",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      contexts: { rust_panic: { location: JS_SYS_SINGLETHREAD_LOC } },
+      exception: {
+        values: [
+          { type: "RustWasmPanic", value: "some other executor invariant" },
+        ],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
     },
     expectDrop: false,
   },
