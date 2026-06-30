@@ -67,8 +67,30 @@
 //      truncated the streamed bootstrap before the wasm hydrated — the same
 //      translation-proxy population behind category 3. GlitchTip issues
 //      #6620, #6667, #6760, #6761.
+//   6. The redundant "RuntimeError: unreachable" that every Rust panic
+//      emits a SECOND time. The panic hook first reports an actionable
+//      RustWasmPanic (kept — it carries contexts.rust_panic.location and a
+//      stable per-location fingerprint, so it collapses to one issue per
+//      panic site). Then Rust's abort() runs the wasm `unreachable`
+//      instruction, whose trap the browser's global onerror re-captures as
+//      a "RuntimeError: unreachable" with NO rust_panic context. That copy
+//      never gets the stable fingerprint, and its
+//      /pkg/<hash>/ultros.wasm:wasm-function[N] frame filename fragments it
+//      into a NEW issue every deploy — the per-build #67xx/#68xx rotation
+//      (#6781–#6828) that prior triage had to ignore by hand each release.
+//      When the trap's stack carries one of our own pkg-bundle frames it is
+//      provably our wasm, hence a guaranteed duplicate of the kept
+//      RustWasmPanic, so it is dropped unconditionally — no injecting-
+//      population fingerprint needed: a real hydration bug on a current
+//      browser still reaches GlitchTip via the untouched RustWasmPanic. A
+//      frameless or third-party-framed RuntimeError is left untouched.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
+  // Like ULTROS_PKG_BUNDLE_RE but tolerant of the trailing
+  // `:wasm-function[N]:0xADDR` the browser appends to a wasm trap's stack
+  // frame, so `/pkg/<hash>/ultros.wasm:wasm-function[5501]` still counts as
+  // originating in our bundle.
+  var ULTROS_PKG_FRAME_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)\b/;
   var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
   // Leptos's streaming-hydration bootstrap globals. The SSR shell ALWAYS emits
   // `window.__RESOLVED_RESOURCES = []` plus `__INCOMPLETE_CHUNKS` /
@@ -424,6 +446,39 @@
     return false;
   }
 
+  // Category 6: the redundant onerror copy of a Rust panic. See the header.
+  // An onerror "RuntimeError: unreachable" whose stack carries one of OUR
+  // pkg-bundle frames is the abort()-propagation of a panic the hook already
+  // reported as an actionable RustWasmPanic — a guaranteed duplicate that
+  // fragments per deploy. Drop it. Unlike the category-3 onerror prong (which
+  // is fingerprint-gated to preserve a possible real bug), this is safe to drop
+  // UNCONDITIONALLY because the actionable copy is retained: the panic hook is
+  // browser-agnostic, so even a clean current browser still emits the kept
+  // RustWasmPanic. Scoped to our bundle (a frameless or third-party-framed
+  // RuntimeError is preserved) and to the `unreachable` value (other wasm traps
+  // from our bundle, e.g. "memory access out of bounds", still report). The
+  // value is matched loosely so SpiderMonkey's "unreachable executed" and JSC's
+  // "Unreachable code should not be executed" are covered too.
+  function isRedundantWasmUnreachableTrap(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex) return false;
+      if (ex.type !== "RuntimeError" || typeof ex.value !== "string")
+        return false;
+      if (!/unreachable/i.test(ex.value)) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      for (var i = 0; i < frames.length; i++) {
+        var fname = frames[i] && frames[i].filename;
+        if (typeof fname === "string" && ULTROS_PKG_FRAME_RE.test(fname)) {
+          return true;
+        }
+      }
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   function isEmptyPromiseRejection(event) {
     try {
       var ex = firstException(event);
@@ -452,6 +507,7 @@
       isStrippedHydrationBootstrap(event) ||
       isInjectedDocumentTypeError(event) ||
       isInjectedTachysHydrationPanic(event) ||
+      isRedundantWasmUnreachableTrap(event) ||
       isEmptyPromiseRejection(event)
     );
   };
