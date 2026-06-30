@@ -18,37 +18,6 @@ pub enum ConfidenceTone {
     Error,
 }
 
-impl ConfidenceTone {
-    /// The full pill class string for this tone. The band is fixed per badge,
-    /// so this is a plain `&'static str` rather than a set of reactive
-    /// `class=(..)` toggles — no per-badge effects for a value that never
-    /// changes (matches the analyzer's reactive-closure cleanup, #920/#792).
-    pub fn badge_classes(&self) -> &'static str {
-        match self {
-            Self::Success => {
-                "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-                 border text-emerald-300 border-emerald-400/40 \
-                 bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]"
-            }
-            Self::Neutral => {
-                "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-                 border text-[color:var(--color-text)] border-[color:var(--color-outline)] \
-                 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
-            }
-            Self::Warning => {
-                "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-                 border text-amber-300 border-amber-400/40 \
-                 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
-            }
-            Self::Error => {
-                "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold \
-                 border text-red-300 border-red-400/40 \
-                 bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]"
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfidenceLabel {
     High,
@@ -120,10 +89,22 @@ pub fn ConfidenceBadge(
         tooltip
     };
 
-    let classes = tone.badge_classes();
-
     view! {
-        <span class=classes title=tooltip_full>
+        <span
+            class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border"
+            class=("text-emerald-300", move || tone == ConfidenceTone::Success)
+            class=("border-emerald-400/40", move || tone == ConfidenceTone::Success)
+            class=("bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]", move || tone == ConfidenceTone::Success)
+            class=("text-[color:var(--color-text)]", move || tone == ConfidenceTone::Neutral)
+            class=("border-[color:var(--color-outline)]", move || tone == ConfidenceTone::Neutral)
+            class=("bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]", move || tone == ConfidenceTone::Neutral)
+            class=("text-amber-300", move || tone == ConfidenceTone::Warning)
+            class=("border-amber-400/40", move || tone == ConfidenceTone::Warning)
+            class=("bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]", move || tone == ConfidenceTone::Warning)
+            class=("text-red-300", move || tone == ConfidenceTone::Error)
+            class=("border-red-400/40", move || tone == ConfidenceTone::Error)
+            class=("bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]", move || tone == ConfidenceTone::Error)
+            title=tooltip_full>
             {label}
         </span>
     }
@@ -164,32 +145,5 @@ mod tests {
             get_confidence_verdict_display(ConfidenceBand::Unknown),
             None
         );
-    }
-
-    #[test]
-    fn test_tone_badge_classes() {
-        // Every tone shares the same base pill classes, then layers its own
-        // color tokens — assert the discriminating token per tone so a future
-        // edit can't silently swap a tone's color.
-        let base = "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border";
-        for tone in [
-            ConfidenceTone::Success,
-            ConfidenceTone::Neutral,
-            ConfidenceTone::Warning,
-            ConfidenceTone::Error,
-        ] {
-            assert!(
-                tone.badge_classes().starts_with(base),
-                "{tone:?} must keep the shared base classes"
-            );
-        }
-        let success = ConfidenceTone::Success.badge_classes();
-        let neutral = ConfidenceTone::Neutral.badge_classes();
-        let warning = ConfidenceTone::Warning.badge_classes();
-        let error = ConfidenceTone::Error.badge_classes();
-        assert!(success.contains("text-emerald-300"));
-        assert!(neutral.contains("text-[color:var(--color-text)]"));
-        assert!(warning.contains("text-amber-300"));
-        assert!(error.contains("text-red-300"));
     }
 }
