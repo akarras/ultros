@@ -984,6 +984,153 @@ const cases = [
     expectDrop: false,
   },
 
+  // ── Category 8: third-party analytics / ads / CDN-telemetry script noise ──
+  // The Cloudflare Web Analytics beacon throwing on an ancient browser that
+  // lacks Array.prototype.at — GlitchTip #6836 (Chrome 90 / Android 5). All
+  // frames live on static.cloudflareinsights.com (host carried in absPath; the
+  // filename is path-only). Not our code, not fixable here.
+  {
+    name: "Cloudflare Web Analytics beacon TypeError (all frames third-party) is dropped",
+    ua:
+      "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) " +
+      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 " +
+      "Mobile Safari/537.36",
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "t.entries.at is not a function",
+            mechanism: {
+              type: "auto.browser.global_handlers.onerror",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e",
+                  absPath:
+                    "https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e",
+                  function: "o",
+                },
+                {
+                  filename: "/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e",
+                  absPath:
+                    "https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e",
+                  function: "B",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // A gtag / Google-Analytics onerror whose whole stack is on Google
+  // analytics hosts — likewise unactionable external noise.
+  {
+    name: "a gtag / Google-Analytics onerror (all frames third-party) is dropped",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Cannot read properties of null (reading 'v')",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/gtag/js",
+                  absPath:
+                    "https://www.googletagmanager.com/gtag/js?id=G-WYVZLM39M3",
+                  function: "?",
+                },
+                {
+                  filename: "/g/collect",
+                  absPath: "https://www.google-analytics.com/g/collect",
+                  function: "?",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: true,
+  },
+  // SAFETY: a mixed stack that reaches even one of our own frames is a real
+  // Ultros bug (a third-party callback into our code, or vice-versa) and MUST
+  // report — the all-frames-third-party gate preserves it.
+  {
+    name: "a mixed stack with even one app/pkg frame is preserved (real Ultros bug never swept up)",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "x is not a function",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/pkg/97f9168/ultros.js",
+                  absPath: "https://ultros.app/pkg/97f9168/ultros.js",
+                  function: "c",
+                },
+                {
+                  filename: "/beacon.min.js/v451",
+                  absPath:
+                    "https://static.cloudflareinsights.com/beacon.min.js/v451",
+                  function: "o",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // SAFETY: our own origin (ultros.app) is deliberately NOT on the third-party
+  // host list, so an inline page-script error still reports.
+  {
+    name: "an error from an inline ultros.app page script is preserved (our origin is not third-party)",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "boom",
+            stacktrace: {
+              frames: [
+                {
+                  filename: "/item/Excalibur/2465",
+                  absPath: "https://ultros.app/item/Excalibur/2465",
+                  function: "onclick",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  // SAFETY: a frameless error carries no proof of origin — never assume
+  // third-party, always preserve.
+  {
+    name: "a third-party-looking TypeError with NO stack frames is preserved",
+    ua: CURRENT_CHROME,
+    event: {
+      exception: {
+        values: [{ type: "TypeError", value: "t.entries.at is not a function" }],
+      },
+    },
+    expectDrop: false,
+  },
+
   // ── Genuine application errors must always survive ──
   {
     name: "a genuine application Error is preserved",
