@@ -116,3 +116,32 @@ pub fn MarketPulse(world: Signal<Option<String>>) -> impl IntoView {
         </section>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compact_number_formatting() {
+        // Less than 10k: exactly separated
+        assert_eq!(compact_number(0), "0");
+        assert_eq!(compact_number(999), "999");
+        assert_eq!(compact_number(9_999), "9,999");
+
+        // 10k to 1M: formatted in K
+        assert_eq!(compact_number(10_000), "10.0K");
+        assert_eq!(compact_number(10_500), "10.5K");
+        assert_eq!(compact_number(999_999), "1000.0K");
+
+        // 1M to 1B: formatted in M
+        assert_eq!(compact_number(1_000_000), "1.0M");
+        assert_eq!(compact_number(1_500_000), "1.5M");
+        assert_eq!(compact_number(999_999_999), "1000.0M");
+
+        // Over 1B: formatted in B
+        assert_eq!(compact_number(1_000_000_000), "1.00B");
+        assert_eq!(compact_number(1_550_000_000), "1.55B");
+        assert_eq!(compact_number(1_555_000_000), "1.55B"); // float truncation to 2 decimal places
+        assert_eq!(compact_number(1_559_000_000), "1.56B"); // rounding
+    }
+}
