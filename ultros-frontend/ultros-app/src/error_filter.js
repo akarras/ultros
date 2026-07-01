@@ -104,6 +104,17 @@
 //      APP-code double-borrow (which panics at an app/leptos path, never
 //      singlethread.rs) and a RefCell with no rust_panic context both still
 //      report.
+//   8. An error thrown entirely inside a third-party analytics / ads / consent
+//      / CDN-telemetry script that Ultros loads but does not control and cannot
+//      fix — the JS sibling of an adblocked request. Cloudflare Web Analytics'
+//      beacon.min.js throws "TypeError: t.entries.at is not a function" on
+//      ancient browsers missing Array.prototype.at (GlitchTip #6836); gtag /
+//      AdSense / funding-choices surface onerror noise the same way. The beacon
+//      URL carries a rotating version hash, so each occurrence fragments into a
+//      fresh count=1 issue. Dropped ONLY when the exception has stack frames and
+//      EVERY one is on a known third-party host — any app/pkg frame (our bundle,
+//      an inline page script, or SSR HTML on ultros.app) preserves the event, so
+//      a real Ultros bug is never swept up.
 (function () {
   var ULTROS_PKG_BUNDLE_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)(?:$|\?)/;
   // Like ULTROS_PKG_BUNDLE_RE but tolerant of the trailing
@@ -111,6 +122,16 @@
   // frame, so `/pkg/<hash>/ultros.wasm:wasm-function[5501]` still counts as
   // originating in our bundle.
   var ULTROS_PKG_FRAME_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)\b/;
+  // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
+  // scripts from these (Cloudflare Web Analytics' beacon, Google Analytics /
+  // gtag, AdSense, the funding-choices consent frame, ad-traffic-quality), but
+  // does not control their code and cannot fix a bug inside it. Matched against
+  // a frame's absPath / filename (the `//host/` in the URL). Anchored to `//`
+  // so a same-named path segment can't match; our own origin (ultros.app) and
+  // pkg bundle are deliberately absent, so any frame in our code fails the test
+  // and the whole event is preserved (see isThirdPartyScriptError).
+  var ULTROS_THIRD_PARTY_SCRIPT_HOST_RE =
+    /\/\/(?:static\.cloudflareinsights\.com|(?:www\.)?google-analytics\.com|(?:www\.)?googletagmanager\.com|pagead2\.googlesyndication\.com|[a-z0-9-]+\.googlesyndication\.com|[a-z0-9.-]*\.doubleclick\.net|fundingchoicesmessages\.google\.com|[a-z0-9.-]*\.adtrafficquality\.google|adservice\.google\.[a-z.]+)\//i;
   var ULTROS_TACHYS_HYDRATION_RE = /\/tachys-[\d.]+\/src\/hydration\.rs:/;
   // Leptos's streaming-hydration bootstrap globals. The SSR shell ALWAYS emits
   // `window.__RESOLVED_RESOURCES = []` plus `__INCOMPLETE_CHUNKS` /
@@ -531,6 +552,45 @@
     return false;
   }
 
+  // Category 8: an error thrown entirely inside a third-party analytics / ads /
+  // consent / CDN-telemetry script that Ultros loads but does not control and
+  // cannot fix — the JS sibling of an adblocked request. e.g. Cloudflare Web
+  // Analytics' beacon.min.js throwing "TypeError: t.entries.at is not a
+  // function" on an ancient browser missing Array.prototype.at (GlitchTip
+  // #6836, Chrome 90 / Android 5); gtag, AdSense, and the funding-choices
+  // consent frame surface onerror noise the same way. The beacon URL carries a
+  // rotating version hash (…/beacon.min.js/v4513226…), so each occurrence would
+  // otherwise fragment into a fresh count=1 issue — the per-hash noise the
+  // category-6 dedup was built for. Dropped ONLY when the exception carries
+  // stack frames and EVERY one originates from a known third-party host: a
+  // stack that reaches even one app / pkg frame (our bundle, an inline page
+  // script, or SSR HTML on ultros.app — none of which are on the host list)
+  // fails the check and is preserved, so a real Ultros bug can never be swept
+  // up. A frameless error is left untouched (nothing proves it third-party).
+  function isThirdPartyScriptError(event) {
+    try {
+      var ex = firstException(event);
+      if (!ex) return false;
+      var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      if (frames.length === 0) return false;
+      for (var i = 0; i < frames.length; i++) {
+        var f = frames[i] || {};
+        var abs = typeof f.absPath === "string" ? f.absPath : "";
+        var fname = typeof f.filename === "string" ? f.filename : "";
+        if (
+          !ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(abs) &&
+          !ULTROS_THIRD_PARTY_SCRIPT_HOST_RE.test(fname)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return false;
+  }
+
   function isEmptyPromiseRejection(event) {
     try {
       var ex = firstException(event);
@@ -561,6 +621,7 @@
       isInjectedTachysHydrationPanic(event) ||
       isRedundantWasmUnreachableTrap(event) ||
       isExecutorReentryCascade(event) ||
+      isThirdPartyScriptError(event) ||
       isEmptyPromiseRejection(event)
     );
   };

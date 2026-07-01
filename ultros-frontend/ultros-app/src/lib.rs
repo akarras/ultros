@@ -621,5 +621,12 @@ mod error_filter_wiring {
         // single largest issue).
         assert!(FILTER_JS.contains("isExecutorReentryCascade"));
         assert!(FILTER_JS.contains("RefCell already borrowed"));
+        // Category 8: errors thrown entirely inside a third-party analytics /
+        // ads / CDN-telemetry script (Cloudflare Insights beacon, gtag, AdSense,
+        // funding-choices). Removing it re-opens the external-script noise (the
+        // #6836 Cloudflare-beacon class). The host allowlist must NOT contain
+        // ultros.app / the pkg bundle, or a real Ultros bug could be swept up.
+        assert!(FILTER_JS.contains("isThirdPartyScriptError"));
+        assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
     }
 }
