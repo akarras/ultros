@@ -208,6 +208,7 @@ fn GroupCard(
                 <Show when=move || user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)>
                     <button
                         class=move || if confirm_delete() { "btn-danger btn-sm" } else { "btn-ghost btn-sm text-gray-400 hover:text-white" }
+                        aria-label=move || if confirm_delete() { t_string!(i18n, groups_delete_group_confirm).to_string() } else { t_string!(i18n, groups_delete_group).to_string() }
                         on:click=move |_| {
                             if confirm_delete() {
                                 delete_group_action.dispatch(group.id);
@@ -291,6 +292,7 @@ fn GroupCard(
                         />
                         <button
                             class="btn-secondary btn-sm"
+                            aria-label=move || t_string!(i18n, groups_add_member).to_string()
                             prop:disabled=move || new_member_id().is_empty()
                             on:click=move |_| {
                                 if let Ok(uid) = new_member_id().parse::<u64>() {
