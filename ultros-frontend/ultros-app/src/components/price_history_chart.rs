@@ -195,6 +195,18 @@ mod tests {
     }
 
     #[test]
+    fn test_format_timeline_ts() {
+        // 1609459200 is 2021-01-01 00:00:00 UTC
+        assert_eq!(format_timeline_ts(1609459200, 0), "01-01 00:00");
+        // offset of +60 minutes
+        assert_eq!(format_timeline_ts(1609459200, 60), "01-01 01:00");
+        // offset of -120 minutes
+        assert_eq!(format_timeline_ts(1609459200, -120), "12-31 22:00");
+        // different time 2021-07-04 15:30:00 UTC = 1625412600
+        assert_eq!(format_timeline_ts(1625412600, 0), "07-04 15:30");
+    }
+
+    #[test]
     fn timeline_quantity_buckets_sums_quantities() {
         let sales = vec![sale(3, 0), sale(7, 100)];
         let buckets = timeline_quantity_buckets(&sales, (0, 100), 2);

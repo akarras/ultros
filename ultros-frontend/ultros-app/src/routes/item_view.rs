@@ -1913,4 +1913,22 @@ mod tests {
 
         assert!(result.is_empty());
     }
+
+    #[test]
+    fn test_format_savings_percent() {
+        // Less than 10%, formatted to 1 decimal place
+        assert_eq!(format_savings_percent(0.0), "0.0");
+        assert_eq!(format_savings_percent(5.5), "5.5");
+        assert_eq!(format_savings_percent(9.9), "9.9");
+        assert_eq!(format_savings_percent(9.94), "9.9");
+        // Due to floating point formatting, 9.95 rounded to 1 decimal place might be 9.9 or 10.0.
+        // Let's test typical values.
+        assert_eq!(format_savings_percent(9.96), "10.0");
+
+        // Greater than or equal to 10%, formatted to 0 decimal places
+        assert_eq!(format_savings_percent(10.0), "10");
+        assert_eq!(format_savings_percent(15.5), "16"); // Rounds up
+        assert_eq!(format_savings_percent(15.4), "15"); // Rounds down
+        assert_eq!(format_savings_percent(99.9), "100");
+    }
 }
