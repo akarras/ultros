@@ -301,3 +301,40 @@ fn apply_to_dom(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_theme_mode_from_str() {
+        assert_eq!(ThemeMode::from_str("system").unwrap(), ThemeMode::System);
+        assert_eq!(ThemeMode::from_str("SYSTEM").unwrap(), ThemeMode::System); // case-insensitive
+        assert_eq!(ThemeMode::from_str("dark").unwrap(), ThemeMode::Dark);
+        assert_eq!(ThemeMode::from_str("light").unwrap(), ThemeMode::Light);
+        assert_eq!(ThemeMode::from_str("unknown").unwrap(), ThemeMode::Dark); // fallback
+        assert_eq!(ThemeMode::from_str("").unwrap(), ThemeMode::Dark); // empty fallback
+    }
+
+    #[test]
+    fn test_theme_palette_from_str() {
+        assert_eq!(ThemePalette::from_str("teal").unwrap(), ThemePalette::Teal);
+        assert_eq!(ThemePalette::from_str("TeAl").unwrap(), ThemePalette::Teal); // case-insensitive
+        assert_eq!(
+            ThemePalette::from_str("twin-adder").unwrap(),
+            ThemePalette::TwinAdder
+        );
+        assert_eq!(
+            ThemePalette::from_str("ultros").unwrap(),
+            ThemePalette::Ultros
+        );
+
+        // Check fallback behavior
+        assert_eq!(
+            ThemePalette::from_str("unknown").unwrap(),
+            ThemePalette::Violet
+        );
+        assert_eq!(ThemePalette::from_str("").unwrap(), ThemePalette::Violet);
+    }
+}
