@@ -871,8 +871,8 @@ mod tests {
         );
         // Ensure invalid jobs are filtered out
         assert!(
-            !visible_jobs.iter().any(|(id, _)| id.0 == 43),
-            "Job 43 should be filtered out"
+            !visible_jobs.iter().any(|(id, _)| id.0 == 99),
+            "Job 99 should be filtered out"
         );
         assert!(
             !visible_jobs.iter().any(|(id, _)| id.0 == 44),

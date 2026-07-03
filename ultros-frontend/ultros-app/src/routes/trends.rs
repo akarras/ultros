@@ -231,6 +231,23 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_volume() {
+        assert_eq!(format_volume(0), "0");
+        assert_eq!(format_volume(999), "999");
+        assert_eq!(format_volume(1_000), "1.0K");
+        assert_eq!(format_volume(10_500), "10.5K");
+        assert_eq!(format_volume(999_999), "1000.0K");
+        assert_eq!(format_volume(1_000_000), "1.0M");
+        assert_eq!(format_volume(1_500_000), "1.5M");
+        assert_eq!(format_volume(999_999_999), "1000.0M");
+    }
+}
+
 #[component]
 fn TrendsWorldNavigator() -> impl IntoView {
     let nav = use_navigate();
