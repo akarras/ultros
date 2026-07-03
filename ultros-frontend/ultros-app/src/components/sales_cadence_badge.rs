@@ -15,20 +15,20 @@ pub fn SalesCadenceBadge(
     view! {
         <span
             class="inline-flex items-center py-0.5 rounded-full text-xs font-semibold border"
-            class=("px-1.5", move || compact)
-            class=("px-2", move || !compact)
-            class=("text-emerald-300", move || display.tone == SalesCadenceTone::Success)
-            class=("border-emerald-400/40", move || display.tone == SalesCadenceTone::Success)
-            class=("bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]", move || display.tone == SalesCadenceTone::Success)
-            class=("text-amber-300", move || display.tone == SalesCadenceTone::Warning)
-            class=("border-amber-400/40", move || display.tone == SalesCadenceTone::Warning)
-            class=("bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]", move || display.tone == SalesCadenceTone::Warning)
-            class=("text-red-300", move || display.tone == SalesCadenceTone::Error)
-            class=("border-red-400/40", move || display.tone == SalesCadenceTone::Error)
-            class=("bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]", move || display.tone == SalesCadenceTone::Error)
-            class=("text-[color:var(--color-text)]", move || display.tone == SalesCadenceTone::Neutral)
-            class=("border-[color:var(--color-outline)]", move || display.tone == SalesCadenceTone::Neutral)
-            class=("bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]", move || display.tone == SalesCadenceTone::Neutral)
+            class=("px-1.5", compact)
+            class=("px-2", !compact)
+            class=("text-emerald-300", display.tone == SalesCadenceTone::Success)
+            class=("border-emerald-400/40", display.tone == SalesCadenceTone::Success)
+            class=("bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]", display.tone == SalesCadenceTone::Success)
+            class=("text-amber-300", display.tone == SalesCadenceTone::Warning)
+            class=("border-amber-400/40", display.tone == SalesCadenceTone::Warning)
+            class=("bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]", display.tone == SalesCadenceTone::Warning)
+            class=("text-red-300", display.tone == SalesCadenceTone::Error)
+            class=("border-red-400/40", display.tone == SalesCadenceTone::Error)
+            class=("bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]", display.tone == SalesCadenceTone::Error)
+            class=("text-[color:var(--color-text)]", display.tone == SalesCadenceTone::Neutral)
+            class=("border-[color:var(--color-outline)]", display.tone == SalesCadenceTone::Neutral)
+            class=("bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]", display.tone == SalesCadenceTone::Neutral)
         >
             {display.format_label(i18n)}
         </span>
