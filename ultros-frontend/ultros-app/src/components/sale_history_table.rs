@@ -326,7 +326,7 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_hq_percent)}</div>
-                <div class="mt-1 font-semibold tabular-nums">{move || format!("{}%", hq_percent())}</div>
+                <div class="mt-1 font-semibold tabular-nums">{move || hq_percent()} "%"</div>
             </div>
             <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_next_sale)}</div>
