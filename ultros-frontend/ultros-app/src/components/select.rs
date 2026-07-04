@@ -133,6 +133,12 @@ where
     let default_input_class = "input w-full";
     let default_dropdown_class =
         "absolute w-full max-h-96 overflow-y-auto top-12 panel rounded-lg shadow-lg z-[100]";
+    let combined_input_class = format!("{} {}", default_input_class, class.unwrap_or(""));
+    let combined_dropdown_class = format!(
+        "{} {}",
+        default_dropdown_class,
+        dropdown_class.unwrap_or("")
+    );
 
     let current_choice_view = move || {
         choice()
@@ -155,7 +161,7 @@ where
         <div class="relative">
             <input
                 node_ref=input
-                class=move || format!("{} {}", default_input_class, class.unwrap_or(""))
+                class=combined_input_class
                 class:cursor=move || !has_focus()
                 on:focus=move |_| set_focused(true)
                 on:focusout=move |_| set_focused(false)
@@ -187,7 +193,7 @@ where
             </div>
             <div
                 node_ref=dropdown
-                class=move || format!("{} {}", default_dropdown_class, dropdown_class.unwrap_or(""))
+                class=combined_dropdown_class
                 class:hidden=move || !has_focus() && !hovered()
                 role="listbox"
             >
