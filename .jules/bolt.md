@@ -10,3 +10,10 @@
 ## 2026-06-25 - Avoid heap allocations when parsing substrings
 **Learning:** We can write a zero-allocation string search algorithm that performs identical substring matching without the need to allocate intermediate `String` instances with `format!()` in hot parsing paths.
 **Action:** When working on parsing logic (e.g. FFXIV tags parsing), prefer manual string searches using `find` and `starts_with` rather than creating `String` using `format!()` for simple matching tasks.
+## 2024-11-20 - Memoization Over-Allocation in `BuyingView`
+
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a `Memo` creates a new array of grouped listings on every update. Previously, the code iterated over the input array using `items.clone()`, making an unnecessary copy of a large vector of items and their associated listings every time the memo ran (which could be frequently due to reactive signal updates like `excluded_datacenters`).
+
+**Action:**
+I removed the `clone()` on the `items` vector in the outer loop. Since we only need an iterative pass to calculate required listings, we can use `items.iter()` and then only `clone()` the individual inner `listings` vector (which needs to be cloned to be sorted). In addition, using `sort_unstable_by_key` instead of `sort_by_key` helps since stable sort allocates when it doesn't need to.

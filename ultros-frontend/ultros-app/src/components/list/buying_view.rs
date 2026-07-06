@@ -48,7 +48,7 @@ pub fn BuyingView(
         let mut selected_listings: Vec<(i32, GroupedListing)> = Vec::new();
 
         excluded_datacenters.with(|excluded| {
-            for (list_item, mut listings) in items.clone() {
+            for (list_item, listings) in items.iter() {
                 let quantity = list_item.quantity.unwrap_or(1);
                 let acquired = list_item.acquired.unwrap_or(0);
                 let needed = quantity.saturating_sub(acquired);
@@ -56,9 +56,10 @@ pub fn BuyingView(
                     continue;
                 }
 
-                listings.sort_by_key(|l| l.price_per_unit);
+                let mut sorted_listings: Vec<_> = listings.iter().collect();
+                sorted_listings.sort_unstable_by_key(|l| l.price_per_unit);
                 let mut remaining = needed;
-                for listing in listings {
+                for listing in sorted_listings {
                     if remaining <= 0 {
                         break;
                     }
@@ -83,7 +84,7 @@ pub fn BuyingView(
                             item_name,
                             price: listing.price_per_unit,
                             quantity: buy_quantity,
-                            list_item: list_item.clone(),
+                            list_item: (*list_item).clone(),
                             hq: listing.hq,
                             listing_id: listing.id,
                         },
