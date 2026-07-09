@@ -75,6 +75,22 @@ impl RecentItems {
     }
 }
 
+fn format_pct_change(pct_change: Option<f32>) -> (&'static str, String) {
+    let pct_class = match pct_change {
+        Some(p) if p > 0.05 => "text-emerald-300",
+        Some(p) if p < -0.05 => "text-red-300",
+        Some(_) => "text-[color:var(--color-text-muted)]",
+        None => "text-[color:var(--color-text-muted)]",
+    };
+    let pct_text = match pct_change {
+        Some(p) if p.abs() < 0.05 => "—".to_string(),
+        Some(p) if p >= 0.0 => format!("+{p:.1}%"),
+        Some(p) => format!("{p:.1}%"),
+        None => "—".to_string(),
+    };
+    (pct_class, pct_text)
+}
+
 /// One row in the Continue Tracking panel — item icon, name, current
 /// price, %change pill, and inline 24h sparkline.
 #[component]
@@ -98,18 +114,7 @@ fn TrackedRow(item_id: i32, world_name: String, series: Option<SparklineSeries>)
         None => (None, None, Vec::new()),
     };
 
-    let pct_class = match pct_change {
-        Some(p) if p > 0.05 => "text-emerald-300",
-        Some(p) if p < -0.05 => "text-red-300",
-        Some(_) => "text-[color:var(--color-text-muted)]",
-        None => "text-[color:var(--color-text-muted)]",
-    };
-    let pct_text = match pct_change {
-        Some(p) if p.abs() < 0.05 => "—".to_string(),
-        Some(p) if p >= 0.0 => format!("+{p:.1}%"),
-        Some(p) => format!("{p:.1}%"),
-        None => "—".to_string(),
-    };
+    let (pct_class, pct_text) = format_pct_change(pct_change);
 
     // The /item/{world}/{id} route is the canonical product page when we
     // have a world. Without a world, fall back to /item/{id}.
@@ -267,4 +272,52 @@ pub fn RecentlyViewed() -> impl IntoView {
             </Suspense>
         </div>
     }.into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_pct_change() {
+        // None case
+        assert_eq!(
+            format_pct_change(None),
+            ("text-[color:var(--color-text-muted)]", "—".to_string())
+        );
+
+        // Near zero (within 0.05 bounds)
+        assert_eq!(
+            format_pct_change(Some(0.0)),
+            ("text-[color:var(--color-text-muted)]", "—".to_string())
+        );
+        assert_eq!(
+            format_pct_change(Some(0.04)),
+            ("text-[color:var(--color-text-muted)]", "—".to_string())
+        );
+        assert_eq!(
+            format_pct_change(Some(-0.04)),
+            ("text-[color:var(--color-text-muted)]", "—".to_string())
+        );
+
+        // Positive delta (> 0.05)
+        assert_eq!(
+            format_pct_change(Some(0.06)),
+            ("text-emerald-300", "+0.1%".to_string()) // 0.06 rounds to 0.1
+        );
+        assert_eq!(
+            format_pct_change(Some(5.42)),
+            ("text-emerald-300", "+5.4%".to_string())
+        );
+
+        // Negative delta (< -0.05)
+        assert_eq!(
+            format_pct_change(Some(-0.06)),
+            ("text-red-300", "-0.1%".to_string())
+        );
+        assert_eq!(
+            format_pct_change(Some(-12.8)),
+            ("text-red-300", "-12.8%".to_string())
+        );
+    }
 }
