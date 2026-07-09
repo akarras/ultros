@@ -82,8 +82,14 @@
 //      provably our wasm, hence a guaranteed duplicate of the kept
 //      RustWasmPanic, so it is dropped unconditionally — no injecting-
 //      population fingerprint needed: a real hydration bug on a current
-//      browser still reaches GlitchTip via the untouched RustWasmPanic. A
-//      frameless or third-party-framed RuntimeError is left untouched.
+//      browser still reaches GlitchTip via the untouched RustWasmPanic. Some
+//      browsers and crawlers instead name every wasm frame with the engine-
+//      internal `wasm://wasm/<hash>:wasm-function[N]` scheme (the Mediapartners-
+//      Google crawler variant, #6848), so the pkg-frame test never fires; a
+//      RuntimeError "unreachable" whose stack is ENTIRELY such wasm-module
+//      frames is likewise our abort trap and is dropped too. A frameless or
+//      third-party-JS-framed RuntimeError (and a third-party wasm loaded from an
+//      https URL, which keeps its source-URL frame form) is left untouched.
 //   7. The "RefCell already borrowed" panic in the wasm-bindgen-futures
 //      single-threaded executor (js-sys .../futures/task/singlethread.rs).
 //      Every Rust panic that unwinds through a running future poll re-enters
@@ -122,6 +128,13 @@
   // frame, so `/pkg/<hash>/ultros.wasm:wasm-function[5501]` still counts as
   // originating in our bundle.
   var ULTROS_PKG_FRAME_RE = /\/pkg\/[a-f0-9]+\/ultros\.(?:js|wasm)\b/;
+  // Engine-internal wasm-module stack-frame scheme. Some browsers — and the
+  // Mediapartners-Google crawler (GlitchTip #6848) — name wasm frames
+  // `wasm://wasm/<module-hash>:wasm-function[N]:0xADDR` rather than attributing
+  // them to the /pkg/<hash>/ultros.wasm source URL, so ULTROS_PKG_FRAME_RE never
+  // matches. On an Ultros page the only wasm is our own bundle, so a stack made
+  // ENTIRELY of these frames is still ours (see isRedundantWasmUnreachableTrap).
+  var ULTROS_WASM_MODULE_FRAME_RE = /^wasm:\/\/wasm\/[^:]+:wasm-function\[\d+\]/;
   // Third-party analytics / ads / consent / CDN-telemetry hosts. Ultros loads
   // scripts from these (Cloudflare Web Analytics' beacon, Google Analytics /
   // gtag, AdSense, the funding-choices consent frame, ad-traffic-quality), but
@@ -508,12 +521,34 @@
         return false;
       if (!/unreachable/i.test(ex.value)) return false;
       var frames = (ex.stacktrace && ex.stacktrace.frames) || [];
+      if (frames.length === 0) return false;
+      // (i) Any frame attributable to our pkg bundle (the JS glue or the wasm)
+      //     proves the trap is ours — the #6781–#6828 per-deploy fleet.
+      // (ii) Otherwise fall back to the frame-scheme test: some browsers /
+      //     crawlers name wasm frames `wasm://wasm/<hash>:wasm-function[N]`
+      //     rather than /pkg/<hash>/ultros.wasm (GlitchTip #6848,
+      //     Mediapartners-Google hitting the #6831 hydration panic), so the pkg
+      //     check never fires. A RuntimeError "unreachable" whose stack is
+      //     ENTIRELY such wasm-module frames is a wasm abort trap, and the only
+      //     wasm on an Ultros page is our bundle, so it too is the guaranteed
+      //     duplicate of the kept RustWasmPanic. Requiring EVERY frame to be a
+      //     wasm-module frame preserves a stack that reaches any third-party JS
+      //     frame; and a third-party wasm loaded from an https URL keeps its
+      //     `…/foo.wasm:wasm-function[N]` source-URL form (not wasm://wasm/), so
+      //     it is not swept up either.
+      var allWasmModuleFrames = true;
       for (var i = 0; i < frames.length; i++) {
         var fname = frames[i] && frames[i].filename;
         if (typeof fname === "string" && ULTROS_PKG_FRAME_RE.test(fname)) {
           return true;
         }
+        if (
+          !(typeof fname === "string" && ULTROS_WASM_MODULE_FRAME_RE.test(fname))
+        ) {
+          allWasmModuleFrames = false;
+        }
       }
+      return allWasmModuleFrames;
     } catch (_) {
       /* never let the filter throw */
     }
