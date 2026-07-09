@@ -537,6 +537,104 @@ const cases = [
     expectDrop: false,
   },
   {
+    // GlitchTip #6848 (Mediapartners-Google crawler hitting the #6831 hydration
+    // panic on /item/Zeromus/34430, release 8ccc782). Same redundant onerror
+    // trap as #6827 above, but the browser named EVERY wasm frame with the
+    // engine-internal `wasm://wasm/<hash>:wasm-function[N]` scheme instead of the
+    // `/pkg/<hash>/ultros.wasm` source-URL form — so the pkg-frame check never
+    // fired and the twin leaked. A RuntimeError "unreachable" whose stack is
+    // ENTIRELY wasm-module frames is a wasm abort trap; the only wasm on an
+    // Ultros page is our bundle, so it is the guaranteed duplicate of the kept
+    // RustWasmPanic and safe to drop.
+    name: "onerror RuntimeError unreachable with ONLY wasm://wasm module frames is dropped (real #6848 crawler variant)",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable",
+            mechanism: {
+              type: "auto.browser.global_handlers.onerror",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  filename:
+                    "wasm://wasm/02e8784e:wasm-function[14091]:0x844cae",
+                  function: "?",
+                },
+                {
+                  filename: "wasm://wasm/02e8784e:wasm-function[5503]:0x5eaa4c",
+                  function: "?",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+    },
+    expectDrop: true,
+  },
+  {
+    // Over-drop guard: the all-wasm-module rule must require EVERY frame to be a
+    // wasm-module frame. A stack that reaches even one third-party JS frame is
+    // not provably ours (and could be a genuine error worth seeing), so it is
+    // preserved — mirroring the "any app/pkg frame preserves" spirit of the
+    // pkg-frame branch and category 8.
+    name: "RuntimeError unreachable with a wasm://wasm frame BUT also a third-party JS frame is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "unreachable",
+            stacktrace: {
+              frames: [
+                { filename: "wasm://wasm/deadbeef:wasm-function[3]:0x40" },
+                {
+                  filename: "https://cdn.example.com/widget.js",
+                  function: "w",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
+    // Value-scope guard for the wasm://wasm branch: only the `unreachable` abort
+    // signature is a known RustWasmPanic twin. Another wasm trap value (e.g.
+    // "memory access out of bounds") from wasm://wasm frames is a distinct fault
+    // with no retained copy, so it still reports.
+    name: "a non-unreachable RuntimeError from only wasm://wasm frames is preserved",
+    ua: CURRENT_CHROME,
+    document: fakeDocumentEx({ fontCount: 0 }),
+    event: {
+      exception: {
+        values: [
+          {
+            type: "RuntimeError",
+            value: "memory access out of bounds",
+            stacktrace: {
+              frames: [
+                { filename: "wasm://wasm/02e8784e:wasm-function[42]:0x1234" },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    expectDrop: false,
+  },
+  {
     name: "a genuine non-unreachable RuntimeError from our bundle is preserved",
     ua: CURRENT_CHROME,
     document: fakeDocumentEx({ fontCount: 0 }),
