@@ -5,6 +5,22 @@ use leptos::prelude::*;
 
 use crate::global_state::theme::{ThemeMode, ThemePalette, provide_theme_settings};
 
+pub fn theme_mode_icon(mode: ThemeMode) -> i::Icon {
+    match mode {
+        ThemeMode::Dark => i::BiMoonRegular,
+        ThemeMode::Light => i::BiSunRegular,
+        ThemeMode::System => i::BiLaptopRegular,
+    }
+}
+
+pub fn next_theme_mode(mode: ThemeMode) -> ThemeMode {
+    match mode {
+        ThemeMode::Dark => ThemeMode::Light,
+        ThemeMode::Light => ThemeMode::System,
+        ThemeMode::System => ThemeMode::Dark,
+    }
+}
+
 #[component]
 pub fn ThemePicker() -> impl IntoView {
     let i18n = use_i18n();
@@ -113,11 +129,7 @@ pub fn QuickThemeToggle() -> impl IntoView {
     let settings = provide_theme_settings();
     let mode = settings.mode;
 
-    let icon = Signal::derive(move || match mode.get() {
-        ThemeMode::Dark => i::BiMoonRegular,
-        ThemeMode::Light => i::BiSunRegular,
-        ThemeMode::System => i::BiLaptopRegular,
-    });
+    let icon = Signal::derive(move || theme_mode_icon(mode.get()));
 
     let label = Signal::derive(move || match mode.get() {
         ThemeMode::Dark => t_string!(i18n, theme_mode_dark).to_string(),
@@ -126,12 +138,7 @@ pub fn QuickThemeToggle() -> impl IntoView {
     });
 
     let cycle = move || {
-        let next = match mode.get_untracked() {
-            ThemeMode::Dark => ThemeMode::Light,
-            ThemeMode::Light => ThemeMode::System,
-            ThemeMode::System => ThemeMode::Dark,
-        };
-        mode.set(next);
+        mode.set(next_theme_mode(mode.get_untracked()));
     };
 
     view! {
@@ -144,5 +151,26 @@ pub fn QuickThemeToggle() -> impl IntoView {
             <Icon icon=icon />
             <span class="hidden lg:inline">{label}</span>
         </button>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_theme_mode_icon_mapping() {
+        // We ensure that each theme mode maps to the correct visual representation
+        assert_eq!(theme_mode_icon(ThemeMode::Dark), i::BiMoonRegular);
+        assert_eq!(theme_mode_icon(ThemeMode::Light), i::BiSunRegular);
+        assert_eq!(theme_mode_icon(ThemeMode::System), i::BiLaptopRegular);
+    }
+
+    #[test]
+    fn test_next_theme_mode_cycle() {
+        // We ensure the toggle cycles correctly: Dark -> Light -> System -> Dark
+        assert_eq!(next_theme_mode(ThemeMode::Dark), ThemeMode::Light);
+        assert_eq!(next_theme_mode(ThemeMode::Light), ThemeMode::System);
+        assert_eq!(next_theme_mode(ThemeMode::System), ThemeMode::Dark);
     }
 }
