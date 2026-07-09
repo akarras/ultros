@@ -14,7 +14,6 @@ pub fn ListingsTable(
     let i18n = use_i18n();
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
-    let show_click = move |_| set_show_more(true);
     // Optimization: Split sorting from slicing.
     // This memo handles the expensive sorting operation and only updates when the source `listings` signal changes.
     // Note: We use Arc<Retainer> to make cloning cheap (pointer copy vs string copy).
@@ -49,27 +48,29 @@ pub fn ListingsTable(
                 </tr>
             </thead>
             <tbody>
-                // Render `<For>` as a direct child of `<tbody>`, NOT wrapped in
-                // a redundant `{move || view! { <For/> } }` closure.
+                // #6831 — the largest GlitchTip issue by orders of magnitude —
+                // is a tachys hydration panic (`hydration.rs`
+                // `failed_to_cast_marker_node`: "expected a marker node, found
+                // <tr>") firing on essentially every `/item/*` page under
+                // production's out-of-order streaming SSR.
                 //
-                // That dynamic-block wrapper was the root cause of #6831
-                // (`RustWasmPanic: internal error: entered unreachable code` =
-                // tachys `hydration.rs` `failed_to_cast_marker_node`) — by far
-                // the largest GlitchTip issue, firing on essentially every
-                // `/item/*` page under production's out-of-order streaming SSR.
-                // A debug-build hydration harness pinned the mismatch to this
-                // table: "expected a marker node, found <tr>". The extra dynamic
-                // layer desyncs the `<For>` marker walk against the SSR DOM
-                // (`[<tr>…][<!---->][show-more <tr>]`).
+                // Root cause: a `<For>` relies on its *following sibling* to
+                // supply a marker node so the hydration walk knows where the
+                // keyed list ends. A dynamic sibling (`{ move || … }`) emits that
+                // opening marker; a plain static element does not. This `<tbody>`
+                // placed a static `<tr>` (the "show more" row) directly after the
+                // `<For>`, leaving the list's trailing edge unbounded — the walker
+                // then reads that `<tr>` where it expected a marker and panics.
                 //
-                // The sibling `SaleHistoryTable` reads the *same* resource
-                // pattern (`listing_resource.with(..).unwrap_or_default()` in a
-                // `Memo` inside a `<Transition>`), hydrates *before* this table
-                // under the same streaming, and never crashes — its only
-                // structural difference is that its `<For>` is a direct `<tbody>`
-                // child. Matching that here removes the crash. `For` is reactive
-                // to `listings` directly, so dropping the dependency-free closure
-                // is behavior-neutral.
+                // (PR #933 removed a redundant `{ move || <For/> }` *wrapper* but
+                // left this static-`<tr>`-after-`<For>` adjacency intact, so the
+                // crash survived on the deployed fix build.)
+                //
+                // Fix: render `<For>` as a direct child and the "show more" row as
+                // a *dynamic* `{ move || … }` block, exactly like the sibling
+                // `SaleHistoryTable` — which reads the same resource in the same
+                // `<Transition>` on this page and never crashes. The dynamic block
+                // supplies the marker node that bounds the `<For>`.
                 <For
                     each=listings
                     key=move |(listing, _retainer)| listing.id
@@ -103,16 +104,23 @@ pub fn ListingsTable(
                         }
                     }
                 />
-                <tr
-                    on:click=show_click
-                    class:hidden=move || { listing_count() < 10 || show_more() }
-                >
-                    <td colspan=7>
-                        <button on:click=show_click class="btn w-full">
-                            {t!(i18n, listings_show_more)}
-                        </button>
-                    </td>
-                </tr>
+                {move || {
+                    (!show_more() && listing_count() >= 10)
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan=7>
+                                        <button
+                                            class="btn w-full"
+                                            on:click=move |_| set_show_more(true)
+                                        >
+                                            {t!(i18n, listings_show_more)}
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        })
+                }}
             </tbody>
             </table>
         </div>
