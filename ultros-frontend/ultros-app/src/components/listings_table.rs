@@ -49,43 +49,60 @@ pub fn ListingsTable(
                 </tr>
             </thead>
             <tbody>
-                {move || {
-                    view! {
-                        <For
-                            each=listings
-                            key=move |(listing, _retainer)| listing.id
-                            children=move |(listing, retainer)| {
-                                let total = listing.price_per_unit * listing.quantity;
-                                view! {
-                                    <tr>
-                                        <td>
-                                            <Gil amount=listing.price_per_unit />
-                                        </td>
-                                        <td>{listing.quantity}</td>
-                                        <td>
-                                            <Gil amount=total />
-                                        </td>
-                                        <td>
-                                            <A href=format!(
-                                                "/retainers/listings/{}",
-                                                retainer.id,
-                                            )>{retainer.name.clone()}</A>
-                                        </td>
-                                        <td>
-                                            <WorldName id=AnySelector::World(listing.world_id) />
-                                        </td>
-                                        <td>
-                                            <DatacenterName world_id=listing.world_id />
-                                        </td>
-                                        <td>
-                                            <RelativeToNow timestamp=listing.timestamp />
-                                        </td>
-                                    </tr>
-                                }
-                            }
-                        />
+                // Render `<For>` as a direct child of `<tbody>`, NOT wrapped in
+                // a redundant `{move || view! { <For/> } }` closure.
+                //
+                // That dynamic-block wrapper was the root cause of #6831
+                // (`RustWasmPanic: internal error: entered unreachable code` =
+                // tachys `hydration.rs` `failed_to_cast_marker_node`) — by far
+                // the largest GlitchTip issue, firing on essentially every
+                // `/item/*` page under production's out-of-order streaming SSR.
+                // A debug-build hydration harness pinned the mismatch to this
+                // table: "expected a marker node, found <tr>". The extra dynamic
+                // layer desyncs the `<For>` marker walk against the SSR DOM
+                // (`[<tr>…][<!---->][show-more <tr>]`).
+                //
+                // The sibling `SaleHistoryTable` reads the *same* resource
+                // pattern (`listing_resource.with(..).unwrap_or_default()` in a
+                // `Memo` inside a `<Transition>`), hydrates *before* this table
+                // under the same streaming, and never crashes — its only
+                // structural difference is that its `<For>` is a direct `<tbody>`
+                // child. Matching that here removes the crash. `For` is reactive
+                // to `listings` directly, so dropping the dependency-free closure
+                // is behavior-neutral.
+                <For
+                    each=listings
+                    key=move |(listing, _retainer)| listing.id
+                    children=move |(listing, retainer)| {
+                        let total = listing.price_per_unit * listing.quantity;
+                        view! {
+                            <tr>
+                                <td>
+                                    <Gil amount=listing.price_per_unit />
+                                </td>
+                                <td>{listing.quantity}</td>
+                                <td>
+                                    <Gil amount=total />
+                                </td>
+                                <td>
+                                    <A href=format!(
+                                        "/retainers/listings/{}",
+                                        retainer.id,
+                                    )>{retainer.name.clone()}</A>
+                                </td>
+                                <td>
+                                    <WorldName id=AnySelector::World(listing.world_id) />
+                                </td>
+                                <td>
+                                    <DatacenterName world_id=listing.world_id />
+                                </td>
+                                <td>
+                                    <RelativeToNow timestamp=listing.timestamp />
+                                </td>
+                            </tr>
+                        }
                     }
-                }}
+                />
                 <tr
                     on:click=show_click
                     class:hidden=move || { listing_count() < 10 || show_more() }
