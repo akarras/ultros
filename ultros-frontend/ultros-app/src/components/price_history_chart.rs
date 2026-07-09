@@ -195,6 +195,25 @@ mod tests {
     }
 
     #[test]
+    fn test_percent_for_ts() {
+        // Normal cases within domain
+        assert_eq!(percent_for_ts(150, (100, 200)), 50.0);
+        assert_eq!(percent_for_ts(125, (100, 200)), 25.0);
+        assert_eq!(percent_for_ts(200, (100, 200)), 100.0);
+        assert_eq!(percent_for_ts(100, (100, 200)), 0.0);
+
+        // Clamping out of domain
+        assert_eq!(percent_for_ts(50, (100, 200)), 0.0);
+        assert_eq!(percent_for_ts(250, (100, 200)), 100.0);
+
+        // Zero span
+        assert_eq!(percent_for_ts(100, (100, 100)), 0.0);
+
+        // Negative span
+        assert_eq!(percent_for_ts(100, (200, 100)), 0.0);
+    }
+
+    #[test]
     fn test_format_timeline_ts() {
         // 1609459200 is 2021-01-01 00:00:00 UTC
         assert_eq!(format_timeline_ts(1609459200, 0), "01-01 00:00");
