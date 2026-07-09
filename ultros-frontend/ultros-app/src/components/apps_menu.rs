@@ -48,7 +48,7 @@ pub fn AppsMenu() -> impl IntoView {
                 class="nav-link"
                 aria-haspopup="menu"
                 aria-expanded=move || if is_open() { "true" } else { "false" }
-                aria_label=move || t_string!(i18n, apps)
+                aria-label=move || t_string!(i18n, apps)
                 // click naturally focuses the button; no explicit toggle required
             >
                 <Icon height="1.4em" width="1.4em" icon=i::MdiJellyfish />
@@ -227,7 +227,12 @@ pub fn UserMenu() -> impl IntoView {
                         Some(auth) => {
                             // logged in trigger: avatar circle + caret
                             view! {
-                                <button class="nav-link flex items-center gap-2" aria-haspopup="menu" aria-expanded=move || if is_open() { "true" } else { "false" }>
+                                <button
+                                    class="nav-link flex items-center gap-2"
+                                    aria-haspopup="menu"
+                                    aria-expanded=move || if is_open() { "true" } else { "false" }
+                                    aria-label=move || t_string!(i18n, account)
+                                >
                                     <img class="avatar" src=auth.avatar alt=auth.username />
                                     <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
                                 </button>
@@ -240,7 +245,7 @@ pub fn UserMenu() -> impl IntoView {
                                     class="nav-link flex items-center gap-2"
                                     aria-haspopup="menu"
                                     aria-expanded=move || if is_open() { "true" } else { "false" }
-                                    aria_label=move || t_string!(i18n, account)
+                                    aria-label=move || t_string!(i18n, account)
                                 >
                                     <Icon height="1.5em" width="1.5em" icon=i::BsPersonCircle />
                                     <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
