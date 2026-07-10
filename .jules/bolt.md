@@ -17,3 +17,9 @@ In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a `Memo` cre
 
 **Action:**
 I removed the `clone()` on the `items` vector in the outer loop. Since we only need an iterative pass to calculate required listings, we can use `items.iter()` and then only `clone()` the individual inner `listings` vector (which needs to be cloned to be sorted). In addition, using `sort_unstable_by_key` instead of `sort_by_key` helps since stable sort allocates when it doesn't need to.
+## 2024-11-20 - Filter before sorting to reduce O(N log N) work
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/list_summary.rs`'s `get_cheapest_listing`, we were sorting a large array of `ActiveListing`s by price *before* filtering them by location and HQ constraints. Since sorting is `O(N log N)` and `N` can be very large when fetching all listings for an item across the region, filtering out ~90% of those listings *first* massively cuts down on the work required to sort them, yielding big CPU savings during hot render loops. Additionally, `sort_unstable_by_key` provides further wins over `sort_by_key` by avoiding unneeded allocations.
+
+**Action:**
+Always make sure to filter collections as small as possible *before* running expensive operations on them like `sort_by_key` or `sort_by`, especially when the filtering criteria are strict. Also, prefer `sort_unstable_by_key` when possible over `sort_by_key` to save allocations.
