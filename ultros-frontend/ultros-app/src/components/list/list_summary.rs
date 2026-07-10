@@ -31,26 +31,29 @@ fn get_cheapest_listing(
     excluded_datacenters: &HashSet<String>,
     world_helper: Option<&WorldHelper>,
 ) -> Vec<ActiveListing> {
-    listings.sort_by_key(|listing| listing.price_per_unit);
+    // ⚡ Bolt: Filter out unwanted listings before sorting.
+    // This reduces the array size N significantly, making the O(N log N) sorting step much faster.
+    listings.retain(|listing| {
+        if listing.is_excluded(excluded_worlds) {
+            return false;
+        }
+        if let Some(world_helper) = world_helper
+            && listing.is_datacenter_excluded(excluded_datacenters, world_helper)
+        {
+            return false;
+        }
+        if let Some(hq) = hq {
+            listing.hq == hq
+        } else {
+            true
+        }
+    });
+    listings.sort_unstable_by_key(|listing| listing.price_per_unit);
+
     let quantity_needed = quantity;
     let mut current_quantity = 0;
     listings
         .into_iter()
-        .filter(|listing| {
-            if listing.is_excluded(excluded_worlds) {
-                return false;
-            }
-            if let Some(world_helper) = world_helper
-                && listing.is_datacenter_excluded(excluded_datacenters, world_helper)
-            {
-                return false;
-            }
-            if let Some(hq) = hq {
-                listing.hq == hq
-            } else {
-                true
-            }
-        })
         .take_while(|listing| {
             let needed_more = current_quantity < quantity_needed;
             current_quantity += listing.quantity;

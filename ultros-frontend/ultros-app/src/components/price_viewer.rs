@@ -15,12 +15,12 @@ fn get_cheapest_listing(
     quantity: i32,
     hq: Option<bool>,
 ) -> Vec<ActiveListing> {
-    // Optimization: Filter out unwanted quality types *before* sorting.
+    // ⚡ Bolt: Optimization: Filter out unwanted quality types *before* sorting.
     // This significantly reduces the N in O(N log N) sorting time when filtering by HQ/NQ.
     if let Some(hq) = hq {
         listings.retain(|listing| listing.hq == hq);
     }
-    listings.sort_by_key(|listing| listing.price_per_unit);
+    listings.sort_unstable_by_key(|listing| listing.price_per_unit);
 
     let quantity_needed = quantity;
     let mut current_quantity = 0;
