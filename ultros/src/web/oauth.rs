@@ -278,8 +278,15 @@ pub async fn logout(
 
     let token = AccessToken::new(token_value);
     // now try to revoke it async style
-    if let Ok(revocable_token) = config.inner.client.revoke_token(StandardRevocableToken::AccessToken(token)) {
-        if let Err(e) = revocable_token.request_async(&config.inner.http_client).await {
+    if let Ok(revocable_token) = config
+        .inner
+        .client
+        .revoke_token(StandardRevocableToken::AccessToken(token))
+    {
+        if let Err(e) = revocable_token
+            .request_async(&config.inner.http_client)
+            .await
+        {
             tracing::warn!("Failed to revoke discord token on logout: {}", e);
         }
     }
