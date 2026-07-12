@@ -158,12 +158,12 @@ impl SalesWindow {
             unit_prices_f64.push(price as f64);
         }
 
-        unit_prices.sort_unstable();
-        let median_unit_price = unit_prices[count / 2];
+        // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
+        // This reduces time complexity from O(N log N) to O(N).
+        let (_, &mut median_unit_price, _) = unit_prices.select_nth_unstable(count / 2);
         let avg_sale_price = total_sale_price as f64 / count as f64;
 
-        stack_sizes.sort_unstable();
-        let median_stack_size = stack_sizes[count / 2];
+        let (_, &mut median_stack_size, _) = stack_sizes.select_nth_unstable(count / 2);
 
         let duration = *date_range.end() - *date_range.start();
         let avg_duration = duration / count as i32;
