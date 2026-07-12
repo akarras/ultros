@@ -264,6 +264,7 @@ pub async fn redirect(
     Ok((cookies, Redirect::to(&redirect_to)))
 }
 
+#[allow(clippy::collapsible_if)]
 pub async fn logout(
     cookie_jar: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
