@@ -23,3 +23,8 @@ In `ultros-frontend/ultros-app/src/components/list/list_summary.rs`'s `get_cheap
 
 **Action:**
 Always make sure to filter collections as small as possible *before* running expensive operations on them like `sort_by_key` or `sort_by`, especially when the filtering criteria are strict. Also, prefer `sort_unstable_by_key` when possible over `sort_by_key` to save allocations.
+## 2024-11-20 - Finding Medians in O(N) instead of O(N log N)
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/sale_history_table.rs`, we computed the median unit price and median stack size by completely sorting the arrays (`sort_unstable()`) and taking the middle element. Since finding a median is a classic selection problem, fully sorting the array does O(N log N) work when only O(N) is required. Rust's slice API provides `select_nth_unstable`, which rearranges the slice so that the element at the given index is the one that would be there if the slice were fully sorted, doing it in `O(N)` average time.
+**Action:**
+When computing medians or any k-th order statistic, always use `select_nth_unstable` (or `select_nth_unstable_by_key`) rather than fully sorting the collection to save unnecessary CPU cycles.
