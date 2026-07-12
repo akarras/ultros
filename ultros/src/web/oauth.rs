@@ -267,18 +267,23 @@ pub async fn redirect(
 pub async fn logout(
     cookie_jar: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
+    State(cache): State<AuthUserCache>,
 ) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let cookie = cookie_jar
         .get("discord_auth")
         .ok_or(WebError::NotAuthenticated)?;
-    let token = AccessToken::new(cookie.value().to_string());
+
+    let token_value = cookie.value().to_string();
+    cache.remove_token(&token_value).await;
+
+    let token = AccessToken::new(token_value);
     // now try to revoke it async style
-    config
-        .inner
-        .client
-        .revoke_token(StandardRevocableToken::AccessToken(token))?
-        .request_async(&config.inner.http_client)
-        .await?;
+    if let Ok(revocable_token) = config.inner.client.revoke_token(StandardRevocableToken::AccessToken(token)) {
+        if let Err(e) = revocable_token.request_async(&config.inner.http_client).await {
+            tracing::warn!("Failed to revoke discord token on logout: {}", e);
+        }
+    }
+
     let cookie_jar = cookie_jar.remove(cookie);
     Ok((cookie_jar, Redirect::to("/")))
 }
