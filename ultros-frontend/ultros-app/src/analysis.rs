@@ -210,8 +210,8 @@ impl RealPriceBreakdown {
 /// lengths, matching the upper-middle pick used by `item_view` / `sale_history_table`.
 /// Caller guarantees non-empty.
 fn median_in_place(prices: &mut [i32]) -> i32 {
-    prices.sort_unstable();
-    prices[prices.len() / 2]
+    let (_, &mut val, _) = prices.select_nth_unstable(prices.len() / 2);
+    val
 }
 
 /// Robust price for a single quality from `(price, qty)` samples.

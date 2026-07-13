@@ -185,15 +185,18 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
 /// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
 const SNIPER_FRACTION: f64 = 0.1;
 
-fn median_i32(sorted: &[i32]) -> i32 {
+fn median_in_place_i32(sorted: &mut [i32]) -> i32 {
     if sorted.is_empty() {
         return 0;
     }
     let n = sorted.len();
     if n % 2 == 1 {
-        sorted[n / 2]
+        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
+        val
     } else {
-        ((sorted[n / 2 - 1] as i64 + sorted[n / 2] as i64) / 2) as i32
+        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
+        let left_max = *left.iter().max().unwrap();
+        ((left_max as i64 + right as i64) / 2) as i32
     }
 }
 
@@ -217,8 +220,7 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
 
     // 1. Raw-median pass for the sniper threshold.
     let mut raw: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
-    raw.sort_unstable();
-    let raw_median = median_i32(&raw);
+    let raw_median = median_in_place_i32(&mut raw);
     let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
 
     // 2. Build the clamped vector. If the clamp would remove everything, keep the raw set.
@@ -226,9 +228,9 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
     if clamped.is_empty() {
         clamped = raw;
     }
-    let median_price = median_i32(&clamped);
-    let min_price = *clamped.first().unwrap_or(&0);
-    let max_price = *clamped.last().unwrap_or(&0);
+    let min_price = clamped.iter().copied().min().unwrap_or(0);
+    let max_price = clamped.iter().copied().max().unwrap_or(0);
+    let median_price = median_in_place_i32(&mut clamped);
 
     // 3. Average price respects the existing IQR filter-outliers toggle.
     let avg_price = if filter_outliers {
@@ -2186,8 +2188,8 @@ mod tests {
     #[test]
     fn median_i32_odd_length() {
         // Direct unit test on the helper — exercises the n % 2 == 1 branch.
-        assert_eq!(median_i32(&[100, 200, 300, 400, 500]), 300);
-        assert_eq!(median_i32(&[100, 110, 120, 130, 140]), 120);
+        assert_eq!(median_in_place_i32(&mut [100, 200, 300, 400, 500]), 300);
+        assert_eq!(median_in_place_i32(&mut [100, 110, 120, 130, 140]), 120);
     }
 
     #[test]
