@@ -118,3 +118,33 @@ pub fn MarketHeat(world: Signal<Option<String>>) -> impl IntoView {
         </section>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_category_label_key() {
+        // Test standard 1-5 categories match exactly to their i18n keys
+        assert_eq!(category_label_key(1), "market_heat_cat_weapons");
+        assert_eq!(category_label_key(2), "market_heat_cat_tools");
+        assert_eq!(category_label_key(3), "market_heat_cat_armor");
+        assert_eq!(category_label_key(4), "market_heat_cat_items");
+        assert_eq!(category_label_key(5), "market_heat_cat_housing");
+
+        // Test out-of-bounds edge cases that should fallback to "other"
+        assert_eq!(category_label_key(6), "market_heat_cat_other");
+        assert_eq!(category_label_key(0), "market_heat_cat_other");
+        assert_eq!(category_label_key(99), "market_heat_cat_other");
+    }
+
+    #[test]
+    fn test_band_classes() {
+        // Verify each heat band accurately maps to its styling class and text indicator
+        assert_eq!(band_classes(HeatBand::Hot), ("text-emerald-300", "↑↑"));
+        assert_eq!(band_classes(HeatBand::Warm), ("text-emerald-200/90", "↑"));
+        assert_eq!(band_classes(HeatBand::Stable), ("text-[color:var(--color-text)]", "→"));
+        assert_eq!(band_classes(HeatBand::Cool), ("text-red-300", "↓"));
+        assert_eq!(band_classes(HeatBand::NoData), ("text-[color:var(--color-text-muted)]", "—"));
+    }
+}
