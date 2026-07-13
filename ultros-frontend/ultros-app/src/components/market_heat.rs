@@ -143,8 +143,14 @@ mod tests {
         // Verify each heat band accurately maps to its styling class and text indicator
         assert_eq!(band_classes(HeatBand::Hot), ("text-emerald-300", "↑↑"));
         assert_eq!(band_classes(HeatBand::Warm), ("text-emerald-200/90", "↑"));
-        assert_eq!(band_classes(HeatBand::Stable), ("text-[color:var(--color-text)]", "→"));
+        assert_eq!(
+            band_classes(HeatBand::Stable),
+            ("text-[color:var(--color-text)]", "→")
+        );
         assert_eq!(band_classes(HeatBand::Cool), ("text-red-300", "↓"));
-        assert_eq!(band_classes(HeatBand::NoData), ("text-[color:var(--color-text-muted)]", "—"));
+        assert_eq!(
+            band_classes(HeatBand::NoData),
+            ("text-[color:var(--color-text-muted)]", "—")
+        );
     }
 }
