@@ -21,12 +21,14 @@ pub fn median(prices: &[i32]) -> Option<i32> {
         return None;
     }
     let mut sorted: Vec<i32> = prices.to_vec();
-    sorted.sort_unstable();
     let n = sorted.len();
     if n % 2 == 1 {
-        Some(sorted[n / 2])
+        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
+        Some(val)
     } else {
-        Some((sorted[n / 2 - 1] + sorted[n / 2]) / 2)
+        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
+        let left_max = *left.iter().max().unwrap();
+        Some(((left_max as i64 + right as i64) / 2) as i32)
     }
 }
 
