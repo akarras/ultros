@@ -1678,8 +1678,8 @@ pub(crate) async fn start_web(state: WebState) {
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static("default-src 'self'; img-src 'self' data: https:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https:;"),
+            axum::http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY,
+            HeaderValue::from_static("default-src 'self'; img-src 'self' data: https:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' https://pagead2.googlesyndication.com https://www.googletagmanager.com https://browser.sentry-cdn.com *.googlesyndication.com *.doubleclick.net *.googleadservices.com *.google.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https:;"),
         ));
 
     // run our app with hyper
