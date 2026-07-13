@@ -63,7 +63,7 @@ use leptos::prelude::*;
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_meta::*;
 use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
-use leptos_router::path;
+use leptos_router::{SsrMode, path};
 use log::info;
 
 #[cfg(feature = "hydrate")]
@@ -495,8 +495,23 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                                 view=move || view! { "Choose a category to search!" }
                             />
                         </ParentRoute>
-                        <Route path=path!("item/:world/:id") view=ItemView />
-                        <Route path=path!("item/:id") view=ItemView />
+                        // #6831: the item page's data (`listing_resource`) is
+                        // slow in production, so its several `<Suspense>`/`<Transition>`
+                        // boundaries actually suspend and stream out-of-order. That OOO
+                        // template-relocation is what desyncs tachys' hydration marker
+                        // walk (`hydration.rs` `failed_to_cast_marker_node`, "expected a
+                        // marker node, found <tr>") — the single largest GlitchTip issue.
+                        // Two component-level fixes (#933, #939) that reshaped the
+                        // listings `<For>` did not stop it. Locally the resource resolves
+                        // instantly, so the page renders in document order and hydrates
+                        // cleanly — which is exactly what `InOrder` streaming reproduces
+                        // in production. Force it here so the item page never streams OOO.
+                        <Route
+                            path=path!("item/:world/:id")
+                            view=ItemView
+                            ssr=SsrMode::InOrder
+                        />
+                        <Route path=path!("item/:id") view=ItemView ssr=SsrMode::InOrder />
                         <Route path=path!("flip-finder") view=Analyzer />
                         <Route path=path!("analyzer") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
