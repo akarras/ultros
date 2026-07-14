@@ -1076,14 +1076,15 @@ impl AnalyzerService {
                 if prices.is_empty() {
                     return None;
                 }
-                prices.sort_unstable();
                 let len = prices.len();
                 // Get median. If even, pick the lower one to be conservative?
                 // Actually, let's pick the one at len / 2.
                 // 1 item: idx 0. 2 items: idx 1. 3 items: idx 1. 4 items: idx 2.
                 // This essentially picks the slightly higher one in even cases, or middle in odd.
                 // Let's pick len / 2.
-                let price = prices[len / 2];
+                // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
+                // This reduces time complexity from O(N log N) to O(N).
+                let (_, &mut price, _) = prices.select_nth_unstable(len / 2);
                 Some((*item, (price, sold_within)))
             })
             .collect();

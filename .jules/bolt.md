@@ -33,3 +33,8 @@ When computing medians or any k-th order statistic, always use `select_nth_unsta
 Using `sort_unstable` to compute median scales at `O(n log n)`, which adds unnecessary performance cost for a metric required at multiple places including analyzer reports. It's much faster to use `select_nth_unstable` which runs in linear time `O(n)`. When refactoring logic doing this optimization it is important to remember to not blindly assume the array will remain fully sorted afterwards for other functions downstream. Iterators utilizing methods like `.first()` and `.last()` need to be updated to compute their metrics linearly as well (e.g., using `.min()` and `.max()`) because `select_nth_unstable` will rearrange items without fully sorting them.
 **Action:**
 When fetching median values, use `select_nth_unstable` (handling odds/even slices correctly). Follow up by reviewing any functions reading that mutated input array. Ensure `.first()`/`.last()` occurrences are converted properly to iterator `.min()`/`.max()`.
+## 2026-06-25 - Avoid O(N log N) sorting when finding the median
+**Learning:**
+In `ultros/src/analyzer_service.rs` we were sorting an array of prices to find the median price (`prices.sort_unstable()`). This does $O(N \log N)$ work, but we only need to pick the median element. Finding an element at a given order index can be performed in $O(N)$ time by using `select_nth_unstable()`.
+**Action:**
+When computing the median of an array in Rust, always prefer `select_nth_unstable(len / 2)` over fully sorting it with `sort_unstable()` to reduce time complexity to linear time.
