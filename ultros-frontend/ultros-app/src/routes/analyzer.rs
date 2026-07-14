@@ -943,6 +943,7 @@ fn AnalyzerTable(
                 <button
                     class="btn-secondary flex items-center gap-2"
                     on:click=move |_| show_more.update(|v| *v = !*v)
+                    aria-expanded=move || show_more.get().to_string()
                 >
                     <Icon icon=i::FaFilterSolid />
                     {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
