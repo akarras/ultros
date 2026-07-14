@@ -1261,3 +1261,103 @@ for (const c of cases) {
     );
   });
 }
+
+// ── contexts.dom_injection annotation (diagnostic instrumentation) ──
+// __ultrosAnnotateEvent attaches a DOM-injection snapshot to hydration-class
+// panics (and nothing else), so the #6831 residual flood — modern-Chrome
+// injection that evades every existing fingerprint — becomes diagnosable on the
+// events that still reach GlitchTip. It must never change the drop decision.
+
+// Load the filter and return the whole fake `window`, so tests can reach
+// window.__ultrosAnnotateEvent alongside window.__ultrosShouldDropEvent.
+function loadWindow(userAgent, documentObj) {
+  const win = {};
+  if (documentObj !== undefined) win.document = documentObj;
+  // eslint-disable-next-line no-new-func
+  const factory = new Function("window", "navigator", SRC);
+  factory(win, { userAgent: userAgent || "" });
+  return win;
+}
+
+// A document stand-in exposing the surfaces domInjectionSnapshot reads: the
+// injected <font> count, <html>/<body> classes, and <body>'s direct children.
+function snapshotDocument(opts) {
+  const o = opts || {};
+  const childTags = o.bodyChildTags || [];
+  return {
+    getElementsByTagName(tag) {
+      return { length: tag === "font" ? o.fontCount || 0 : 0 };
+    },
+    documentElement: { className: o.htmlClass || "" },
+    body: {
+      className: o.bodyClass || "",
+      children: childTags.map((t) => ({ tagName: t })),
+    },
+  };
+}
+
+test("annotate attaches contexts.dom_injection to a hydration-class panic", () => {
+  const win = loadWindow(
+    CURRENT_CHROME,
+    snapshotDocument({
+      fontCount: 3,
+      htmlClass: "notranslate",
+      bodyClass: "notranslate injected-overlay",
+      bodyChildTags: ["DIV", "X-INJECT", "SCRIPT"],
+    }),
+  );
+  assert.strictEqual(typeof win.__ultrosAnnotateEvent, "function");
+  const event = rustPanic(HYDRATION_LOC, {
+    breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+  });
+  win.__ultrosAnnotateEvent(event);
+  const snap = event.contexts.dom_injection;
+  assert.ok(snap, "expected contexts.dom_injection to be attached");
+  assert.strictEqual(snap.fontCount, 3);
+  assert.strictEqual(snap.htmlClass, "notranslate");
+  assert.strictEqual(snap.bodyClass, "notranslate injected-overlay");
+  assert.deepStrictEqual(snap.bodyChildTags, ["div", "x-inject", "script"]);
+  assert.strictEqual(snap.bodyChildCount, 3);
+});
+
+test("annotate leaves non-hydration events untouched", () => {
+  const win = loadWindow(CURRENT_CHROME, snapshotDocument({ fontCount: 9 }));
+  // An ordinary application panic — not a tachys hydration path.
+  const APP_LOC =
+    "/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/" +
+    "leptos-0.8.20/src/foo.rs:10:1";
+  const event = rustPanic(APP_LOC, {});
+  win.__ultrosAnnotateEvent(event);
+  assert.strictEqual(
+    event.contexts.dom_injection,
+    undefined,
+    "non-hydration panics must not be annotated",
+  );
+});
+
+test("annotate never changes the drop decision and never throws (no document)", () => {
+  const win = loadWindow(CURRENT_CHROME); // no document
+  const event = rustPanic(HYDRATION_LOC, {
+    breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+  });
+  // Preserved before annotation (current browser, no injector fingerprint)...
+  assert.strictEqual(win.__ultrosShouldDropEvent(event), false);
+  // ...annotation runs without a document and does not throw...
+  assert.doesNotThrow(() => win.__ultrosAnnotateEvent(event));
+  assert.ok(event.contexts.dom_injection, "snapshot still attached (empty-ish)");
+  // ...and the drop decision is unchanged.
+  assert.strictEqual(win.__ultrosShouldDropEvent(event), false);
+});
+
+test("annotate is idempotent — an existing dom_injection is not overwritten", () => {
+  const win = loadWindow(CURRENT_CHROME, snapshotDocument({ fontCount: 2 }));
+  const event = rustPanic(HYDRATION_LOC, {
+    contexts: {
+      rust_panic: { location: HYDRATION_LOC },
+      dom_injection: { sentinel: true },
+    },
+    breadcrumbs: { values: [{ category: "console", message: "app run!" }] },
+  });
+  win.__ultrosAnnotateEvent(event);
+  assert.deepStrictEqual(event.contexts.dom_injection, { sentinel: true });
+});

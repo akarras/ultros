@@ -457,6 +457,71 @@
     }
   }
 
+  // Diagnostic snapshot of the live DOM at the moment a hydration-class panic is
+  // reported. #6831 — the tachys `failed_to_cast_element` hydration panic
+  // (tachys-0.2.18/src/hydration.rs:163, the release `unreachable!()` behind
+  // "the framework expected an HTML <TAG> element, but found this instead") — is
+  // the single largest issue by orders of magnitude, yet a clean, current
+  // browser hydrates the failing /item/<world>/<id> URLs with no error (verified
+  // live). The crash only fires once an external translation / injection tool
+  // mutates the SSR DOM before Leptos hydrates. The four existing injector
+  // fingerprints — a live <font>, html.translated-ltr/rtl, the page-stability
+  // breadcrumb, an implausibly stale Chrome (<=124) — all MISS the current
+  // flood: it is modern Chrome (131) carrying NONE of them, so we cannot yet
+  // write a precise fingerprint for whatever tool this population runs. This
+  // captures the DOM's injection surface — tag names and class attributes only,
+  // never any text content — onto the event as contexts.dom_injection so the
+  // injector's actual signature becomes visible on the events that still reach
+  // GlitchTip and a targeted fingerprint can follow. Diagnostic only: it changes
+  // nothing about what is dropped.
+  function domInjectionSnapshot() {
+    var snap = {};
+    try {
+      var doc = typeof window !== "undefined" && window.document;
+      if (!doc) return snap;
+      try {
+        var fonts =
+          doc.getElementsByTagName && doc.getElementsByTagName("font");
+        snap.fontCount = fonts ? fonts.length : 0;
+      } catch (_) {
+        /* ignore */
+      }
+      try {
+        var html = doc.documentElement;
+        if (html && typeof html.className === "string") {
+          snap.htmlClass = html.className.slice(0, 200);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      var body = doc.body;
+      if (body) {
+        try {
+          if (typeof body.className === "string") {
+            snap.bodyClass = body.className.slice(0, 200);
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        try {
+          var kids = body.children || [];
+          var tags = [];
+          for (var i = 0; i < kids.length && tags.length < 40; i++) {
+            var t = kids[i] && kids[i].tagName;
+            if (typeof t === "string") tags.push(t.toLowerCase());
+          }
+          snap.bodyChildTags = tags;
+          snap.bodyChildCount = kids.length;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return snap;
+  }
+
   function isInjectedTachysHydrationPanic(event) {
     try {
       if (!isTachysHydrationPanicEvent(event)) return false;
@@ -646,6 +711,27 @@
     }
     return false;
   }
+
+  // Attach the injection snapshot to hydration-class panics so the invisible
+  // injector behind the #6831 residual flood (see domInjectionSnapshot) becomes
+  // diagnosable on the events that still reach GlitchTip. Called from the
+  // Sentry beforeSend wrapper (see shell() in lib.rs) BEFORE the drop check, so
+  // the leaked-through events carry it; annotating an event that is then dropped
+  // is harmless. Scoped to the same classifier the suppression uses, so ordinary
+  // panics are never touched. Mutates the event in place and returns it.
+  window.__ultrosAnnotateEvent = function (event) {
+    try {
+      if (event && isTachysHydrationPanicEvent(event)) {
+        event.contexts = event.contexts || {};
+        if (!event.contexts.dom_injection) {
+          event.contexts.dom_injection = domInjectionSnapshot();
+        }
+      }
+    } catch (_) {
+      /* never let the filter throw */
+    }
+    return event;
+  };
 
   window.__ultrosShouldDropEvent = function (event) {
     return (
