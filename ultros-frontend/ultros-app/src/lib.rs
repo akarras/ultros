@@ -190,6 +190,12 @@ fn error_reporting_script() -> Option<String> {
     var existingBeforeSend = config && config.beforeSend;
     config = config || {{}};
     config.beforeSend = function(event, hint) {{
+        // Diagnostic-only: annotate hydration-class panics with a DOM-injection
+        // snapshot (contexts.dom_injection) BEFORE the drop check, so the
+        // #6831 events that still leak through carry the injector's signature.
+        if (window.__ultrosAnnotateEvent) {{
+            window.__ultrosAnnotateEvent(event);
+        }}
         if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
             return null;
         }}
