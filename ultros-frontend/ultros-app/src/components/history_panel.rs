@@ -65,38 +65,38 @@ pub fn HistoryPanel() -> impl IntoView {
                                                             view! {
                                                                 <button
                                                                     class="btn-ghost"
-                                                                    aria-label=move || format!("{} {}", t_string!(i18n, history_resend_button), label)
+                                                                    aria-label=move || format!("{} {}", t_string!(i18n, history_resend_button), label.clone())
                                                                     disabled=move || is_resending.get()
-                                                                    on:click=move |_| {
-                                                                        set_is_resending.set(true);
-                                                                        spawn_local(async move {
-                                                                            match resend_alert_event(event_id).await {
-                                                                                Ok(r) if r.delivered => {
-                                                                                    if let Some(t) = toasts {
-                                                                                        t.success("Resent");
-                                                                                    }
-                                                                                    version.update(|v| *v += 1);
-                                                                                }
-                                                                                Ok(r) => {
-                                                                                    if let Some(t) = toasts {
-                                                                                        t.error(r.error.unwrap_or_else(|| "Resend failed".into()));
-                                                                                    }
-                                                                                    set_is_resending.set(false);
-                                                                                }
-                                                                                Err(e) => {
-                                                                                    if let Some(t) = toasts {
-                                                                                        t.error(format!("{e}"));
-                                                                                    }
-                                                                                    set_is_resending.set(false);
-                                                                                }
+                                                            on:click=move |_| {
+                                                                set_is_resending.set(true);
+                                                                spawn_local(async move {
+                                                                    match resend_alert_event(event_id).await {
+                                                                        Ok(r) if r.delivered => {
+                                                                            if let Some(t) = toasts {
+                                                                                t.success("Resent");
                                                                             }
-                                                                        });
+                                                                            version.update(|v| *v += 1);
+                                                                        }
+                                                                        Ok(r) => {
+                                                                            if let Some(t) = toasts {
+                                                                                t.error(r.error.unwrap_or_else(|| "Resend failed".into()));
+                                                                            }
+                                                                            set_is_resending.set(false);
+                                                                        }
+                                                                        Err(e) => {
+                                                                            if let Some(t) = toasts {
+                                                                                t.error(format!("{e}"));
+                                                                            }
+                                                                            set_is_resending.set(false);
+                                                                        }
                                                                     }
-                                                                >
-                                                                    <Show when=move || !is_resending.get() fallback=|| view! { <Loading /> }>
-                                                                        <Icon icon=i::BsArrowRepeat />
-                                                                        <span class="ml-1">{t!(i18n, history_resend_button)}</span>
-                                                                    </Show>
+                                                                });
+                                                            }
+                                                        >
+                                                            <Show when=move || !is_resending.get() fallback=|| view! { <Loading /> }>
+                                                                    <Icon icon=i::BsArrowRepeat />
+                                                                    <span class="ml-1">{t!(i18n, history_resend_button)}</span>
+                                                                </Show>
                                                                 </button>
                                                             }
                                                         }

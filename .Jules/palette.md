@@ -9,6 +9,6 @@
 ## 2026-07-28 - Explicit aria-label for Image-only Menu Buttons
 **Learning:** Found that interactive elements containing only images with alt text might still need an explicit `aria-label` if the image's alt text doesn't adequately describe the element's action (e.g. 'username' vs 'Account menu button').
 **Action:** Always add an explicit `aria-label` to avatar dropdown buttons to standardize the action's description across login states.
-## 2025-02-12 - Added ARIA label to resend button
+## 2026-07-15 - Added ARIA label to resend button
 **Learning:** Screen readers will struggle to identify multiple identical buttons (like "Resend") across rows in a data table unless they have unique labels with context.
 **Action:** Always include row-specific context (like the item name) in the `aria-label` for buttons inside list/table rows to ensure accessibility.
