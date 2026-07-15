@@ -96,13 +96,19 @@ fn compute_summary(sale: SaleData) -> SaleSummary {
         .iter()
         .map(|price| price.price_per_unit)
         .collect::<Vec<_>>();
-    prices.sort_unstable();
-    let median_price = match prices.as_slice() {
+    // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
+    let median_price = match prices.as_mut_slice() {
         [] => 0,
-        values if values.len() % 2 == 1 => values[values.len() / 2],
+        values if values.len() % 2 == 1 => {
+            let len = values.len();
+            let (_, &mut median, _) = values.select_nth_unstable(len / 2);
+            median
+        }
         values => {
-            let upper = values.len() / 2;
-            ((values[upper - 1] as i64 + values[upper] as i64) / 2) as i32
+            let mid = values.len() / 2;
+            let (left, &mut mid_val, _) = values.select_nth_unstable(mid);
+            let mid_left_val = *left.iter().max().unwrap();
+            ((mid_val as i64 + mid_left_val as i64) / 2) as i32
         }
     };
     SaleSummary {
