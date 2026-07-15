@@ -8,7 +8,7 @@ use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
-use crate::i18n::{t, use_i18n};
+use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
 pub fn HistoryPanel() -> impl IntoView {
@@ -50,6 +50,7 @@ pub fn HistoryPanel() -> impl IntoView {
                                         };
                                         let event_id = e.id;
                                         let delivered = e.delivered;
+                                        let label_item_name = item_name.clone();
                                         let (is_resending, set_is_resending) = RwSignal::new(false).split();
                                         view! {
                                             <tr class="border-t">
@@ -59,9 +60,13 @@ pub fn HistoryPanel() -> impl IntoView {
                                                 <td class="p-1">{delivered_str}</td>
                                                 <td class="p-1">
                                                     <Show when=move || !delivered>
-                                                        <button
-                                                            class="btn-ghost"
-                                                            disabled=move || is_resending.get()
+                                                        {
+                                                            let label = label_item_name.clone();
+                                                            view! {
+                                                                <button
+                                                                    class="btn-ghost"
+                                                                    aria-label=move || format!("{} {}", t_string!(i18n, history_resend_button), label.clone())
+                                                                    disabled=move || is_resending.get()
                                                             on:click=move |_| {
                                                                 set_is_resending.set(true);
                                                                 spawn_local(async move {
@@ -89,10 +94,12 @@ pub fn HistoryPanel() -> impl IntoView {
                                                             }
                                                         >
                                                             <Show when=move || !is_resending.get() fallback=|| view! { <Loading /> }>
-                                                                <Icon icon=i::BsArrowRepeat />
-                                                                <span class="ml-1">{t!(i18n, history_resend_button)}</span>
-                                                            </Show>
-                                                        </button>
+                                                                    <Icon icon=i::BsArrowRepeat />
+                                                                    <span class="ml-1">{t!(i18n, history_resend_button)}</span>
+                                                                </Show>
+                                                                </button>
+                                                            }
+                                                        }
                                                     </Show>
                                                 </td>
                                             </tr>
