@@ -698,8 +698,10 @@ fn MarketStatsPanel(
                                     .iter()
                                     .map(|sale| sale.price_per_item)
                                     .collect::<Vec<_>>();
-                                prices.sort_unstable();
-                                Some(prices[prices.len() / 2])
+                                let len = prices.len();
+                                // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
+                                let (_, &mut median, _) = prices.select_nth_unstable(len / 2);
+                                Some(median)
                             };
                             let vendor_price = tracked_data()
                                 .items
