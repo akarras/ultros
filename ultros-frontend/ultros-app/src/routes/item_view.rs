@@ -1281,7 +1281,10 @@ pub fn ChartWrapper(
 }
 
 #[component]
-fn HighQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> impl IntoView {
+fn HighQualityTable(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    #[prop(into)] filtered_listings: Signal<ListingRows>,
+) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
         <div class="space-y-6">
@@ -1289,6 +1292,15 @@ fn HighQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> imp
                 view! { <BoxSkeleton /> }
             }>
                 {move || {
+                    // Read `listing_resource` inside the Transition so this section
+                    // actually suspends on it during SSR. `filtered_listings` is a Memo
+                    // created outside any Suspense boundary, so reading it alone does NOT
+                    // subscribe this Transition to the resource — the server would then
+                    // render an empty table while the client hydrates a populated one,
+                    // tripping the tachys hydration `unreachable!()` panic (GlitchTip #6831).
+                    if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
+                        return ().into_any();
+                    }
                     let hq_listings = Memo::new(move |_| {
                         filtered_listings.with(|listings| {
                             listings
@@ -1309,6 +1321,7 @@ fn HighQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> imp
                             <ListingsTable listings=hq_listings />
                         </div>
                     }
+                        .into_any()
                 }}
             </Transition>
         </div>
@@ -1317,7 +1330,10 @@ fn HighQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> imp
 }
 
 #[component]
-fn LowQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> impl IntoView {
+fn LowQualityTable(
+    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
+    #[prop(into)] filtered_listings: Signal<ListingRows>,
+) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
         <div class="space-y-6">
@@ -1325,6 +1341,12 @@ fn LowQualityTable(#[prop(into)] filtered_listings: Signal<ListingRows>) -> impl
                 view! { <BoxSkeleton /> }
             }>
                 {move || {
+                    // Suspend on `listing_resource` here too (see HighQualityTable) so the
+                    // server does not emit an empty table that the client then hydrates as
+                    // populated — the tachys hydration mismatch behind GlitchTip #6831.
+                    if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
+                        return ().into_any();
+                    }
                     let lq_listings = Memo::new(move |_| {
                         filtered_listings.with(|listings| {
                             listings
@@ -1540,8 +1562,8 @@ fn ListingsContent(
 
             <div id="listings" class="grid grid-cols-1 gap-6 mt-6">
                 <DatacenterExclusionControls world excluded_datacenters />
-                <HighQualityTable filtered_listings />
-                <LowQualityTable filtered_listings />
+                <HighQualityTable listing_resource filtered_listings />
+                <LowQualityTable listing_resource filtered_listings />
             </div>
 
             <div class="grid grid-cols-1 gap-6 mt-8">
