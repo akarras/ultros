@@ -1,0 +1,127 @@
+   Compiling slab v0.4.12
+   Compiling futures-io v0.3.32
+   Compiling serde v1.0.228
+   Compiling yoke v0.8.3
+   Compiling smallvec v1.15.2
+   Compiling futures-util v0.3.32
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling serde_json v1.0.150
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling icu_locale_core v2.2.0
+   Compiling icu_collections v2.2.0
+   Compiling crossbeam-utils v0.8.22
+   Compiling either v1.16.0
+   Compiling concurrent-queue v2.5.0
+   Compiling itertools v0.14.0
+   Compiling event-listener v5.4.1
+   Compiling icu_provider v2.2.0
+   Compiling js-sys v0.3.103
+   Compiling futures-executor v0.3.32
+   Compiling icu_properties v2.2.0
+   Compiling futures v0.3.32
+   Compiling icu_normalizer v2.2.0
+   Compiling event-listener-strategy v0.5.4
+   Compiling async-lock v3.4.2
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling getrandom v0.2.17
+   Compiling oco_ref v0.2.1
+   Compiling regex-automata v0.4.15
+   Compiling url v2.5.8
+   Compiling tokio v1.52.3
+   Compiling serde_qs v0.15.0
+   Compiling codee v0.3.5
+   Compiling leptos_hot_reload v0.8.6
+   Compiling regex v1.13.0
+   Compiling wasm-bindgen-futures v0.4.76
+   Compiling web-sys v0.3.103
+   Compiling any_spawner v0.3.0
+   Compiling hydration_context v0.3.1
+   Compiling leptos_config v0.8.10
+   Compiling reactive_graph v0.2.14
+   Compiling chrono v0.4.45
+   Compiling ring v0.17.14
+   Compiling reactive_stores v0.4.3
+   Compiling simdutf8 v0.1.5
+   Compiling bytecheck v0.6.12
+   Compiling ahash v0.7.8
+   Compiling rustls-webpki v0.103.13
+   Compiling deranged v0.5.8
+   Compiling hyper v1.10.1
+   Compiling rustls v0.23.41
+   Compiling time v0.3.53
+   Compiling tracing v0.1.44
+   Compiling rend v0.4.2
+   Compiling xiv-gen v0.1.0 (/app/xiv-gen)
+   Compiling hashbrown v0.12.3
+   Compiling unic-langid-impl v0.9.6
+   Compiling hyper-util v0.1.20
+   Compiling tower v0.5.3
+   Compiling rkyv v0.7.46
+   Compiling unic-langid v0.9.6
+   Compiling tokio-rustls v0.26.4
+   Compiling cookie v0.18.1
+   Compiling gloo-utils v0.2.0
+   Compiling gloo-net v0.6.0
+   Compiling tachys v0.2.18
+   Compiling async-compression v0.4.42
+   Compiling tokio-util v0.7.18
+   Compiling gloo-timers v0.3.0
+   Compiling derive_more v2.1.1
+   Compiling tower-http v0.6.11
+   Compiling wasm-streams v0.5.0
+   Compiling server_fn v0.8.13
+   Compiling hyper-rustls v0.27.9
+   Compiling gloo-utils v0.3.0
+   Compiling ultros-app v0.1.0 (/app/ultros-frontend/ultros-app)
+   Compiling ultros-api-types v0.1.0 (/app/ultros-api-types)
+   Compiling serde_urlencoded v0.7.1
+   Compiling serde-wasm-bindgen v0.6.5
+   Compiling icu_locale v2.2.0
+   Compiling reqwest v0.12.28
+   Compiling xiv-gen-db v0.1.0 (/app/xiv-gen-db)
+   Compiling leptos_server v0.8.7
+   Compiling leptos_dom v0.8.8
+   Compiling gloo-net v0.7.0
+   Compiling leptos v0.8.20
+   Compiling timeago v0.6.1
+   Compiling uuid v1.23.5
+   Compiling gloo-timers v0.4.0
+   Compiling leptos-use v0.18.3
+   Compiling leptos_meta v0.8.6
+   Compiling leptos_hotkeys v0.3.0 (https://github.com/slowtec/leptos-hotkeys.git?branch=leptos-0.8#8ecd67c9)
+   Compiling ultros-charts v0.1.0 (/app/ultros-frontend/ultros-charts)
+   Compiling leptos_i18n v0.6.2
+   Compiling leptos_router v0.8.14
+error[E0425]: cannot find function `data_for` in crate `xiv_gen_db`
+    --> ultros-frontend/ultros-app/src/routes/currency_exchange.rs:1107:30
+     |
+1107 |         let cn = xiv_gen_db::data_for(xiv_gen::Language::Cn);
+     |                              ^^^^^^^^ not found in `xiv_gen_db`
+     |
+note: found an item that was configured out
+    --> xiv-gen-db/src/lib.rs:87:8
+     |
+  86 | #[cfg(feature = "embed")]
+     |       ----------------- the item is gated behind the `embed` feature
+  87 | pub fn data_for(lang: Language) -> &'static xiv_gen::Data {
+     |        ^^^^^^^^
+
+warning: unused import: `super::ItemSortKey`
+   --> ultros-frontend/ultros-app/src/routes/retainers.rs:484:9
+    |
+484 |     use super::ItemSortKey;
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0425`.
+warning: `ultros-app` (lib test) generated 1 warning
+error: could not compile `ultros-app` (lib test) due to 1 previous error; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ultros-app` (lib)
+
+Caused by:
+  process didn't exit successfully: `/home/jules/.rustup/toolchains/nightly-2026-01-06-x86_64-unknown-linux-gnu/bin/rustc --crate-name ultros_app --edition=2024 ultros-frontend/ultros-app/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --cfg 'feature="gloo-net"' --cfg 'feature="hydrate"' --cfg 'feature="js-sys"' --cfg 'feature="wasm-bindgen"' --cfg 'feature="wasm-bindgen-futures"' --cfg 'feature="web-sys"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("axum", "default", "gloo-net", "hydrate", "js-sys", "leptos_axum", "ssr", "ultros-db", "wasm-bindgen", "wasm-bindgen-futures", "web-sys"))' -C metadata=4864381712e28d47 -C extra-filename=-c9bfec5bb709ed2b --out-dir /app/target/debug/deps -C incremental=/app/target/debug/incremental -L dependency=/app/target/debug/deps --extern anyhow=/app/target/debug/deps/libanyhow-c3ce012cbf6d8801.rmeta --extern cfg_if=/app/target/debug/deps/libcfg_if-a7902f1678e0500f.rmeta --extern chrono=/app/target/debug/deps/libchrono-1b79760a814934c6.rmeta --extern codee=/app/target/debug/deps/libcodee-52400de45ee46abc.rmeta --extern colorsys=/app/target/debug/deps/libcolorsys-41139dec7c565384.rmeta --extern cookie=/app/target/debug/deps/libcookie-95d18a0ed29a0cba.rmeta --extern field_iterator=/app/target/debug/deps/libfield_iterator-98621ff6de6af52e.rmeta --extern flume=/app/target/debug/deps/libflume-ad4b857ba95a1a63.rmeta --extern futures=/app/target/debug/deps/libfutures-7fb9de08d5877df5.rmeta --extern gloo_net=/app/target/debug/deps/libgloo_net-3684261477c901be.rmeta --extern gloo_timers=/app/target/debug/deps/libgloo_timers-d656a47c374cd0b1.rmeta --extern humantime=/app/target/debug/deps/libhumantime-44290f9f0ab7c973.rmeta --extern icondata=/app/target/debug/deps/libicondata-2a973840e75b68b7.rmeta --extern icondata_core=/app/target/debug/deps/libicondata_core-0bc5fbfd8440cc06.rmeta --extern itertools=/app/target/debug/deps/libitertools-7d1f1ae96dff4717.rmeta --extern js_sys=/app/target/debug/deps/libjs_sys-716f86d34a8c96e9.rmeta --extern leptos=/app/target/debug/deps/libleptos-43bd4680f60554fb.rmeta --extern leptos_use=/app/target/debug/deps/libleptos_use-f1c1ae59fc6dca94.rmeta --extern leptos_hotkeys=/app/target/debug/deps/libleptos_hotkeys-12051b5170c3c0bf.rmeta --extern leptos_i18n=/app/target/debug/deps/libleptos_i18n-61f7339fb1cdc839.rmeta --extern leptos_meta=/app/target/debug/deps/libleptos_meta-0ffac82912821c15.rmeta --extern leptos_router=/app/target/debug/deps/libleptos_router-6b7206c00260e828.rmeta --extern linregress=/app/target/debug/deps/liblinregress-a5c09e8024b2be7e.rmeta --extern log=/app/target/debug/deps/liblog-55369e920c67fcd0.rmeta --extern paginate=/app/target/debug/deps/libpaginate-d58ae503dc67926c.rmeta --extern percent_encoding=/app/target/debug/deps/libpercent_encoding-a95fde24d2dd79d6.rmeta --extern reqwest=/app/target/debug/deps/libreqwest-9af08f9391ada5dd.rmeta --extern send_wrapper=/app/target/debug/deps/libsend_wrapper-5e949ccf365d713d.rmeta --extern serde=/app/target/debug/deps/libserde-4e0d4c73905c240f.rmeta --extern serde_json=/app/target/debug/deps/libserde_json-d683ff2b7fa8c17a.rmeta --extern thiserror=/app/target/debug/deps/libthiserror-4cd288de7e59ea38.rmeta --extern thousands=/app/target/debug/deps/libthousands-b4f4c0527c9aaa3d.rmeta --extern time=/app/target/debug/deps/libtime-d9f85fcfe9cdba71.rmeta --extern timeago=/app/target/debug/deps/libtimeago-48ed06f963e6f5c1.rmeta --extern tracing=/app/target/debug/deps/libtracing-948be4c55a0a428a.rmeta --extern ultros_api_types=/app/target/debug/deps/libultros_api_types-5f79cae02ab3c8cb.rmeta --extern ultros_charts=/app/target/debug/deps/libultros_charts-ce4832a242cfdb1c.rmeta --extern uuid=/app/target/debug/deps/libuuid-21fa1bf4ae52818a.rmeta --extern wasm_bindgen=/app/target/debug/deps/libwasm_bindgen-35c4346f079779dd.rmeta --extern wasm_bindgen_futures=/app/target/debug/deps/libwasm_bindgen_futures-7ee7afb5409cb420.rmeta --extern web_sys=/app/target/debug/deps/libweb_sys-132e6f27e03c3181.rmeta --extern xiv_gen=/app/target/debug/deps/libxiv_gen-9863e0d7b7ecc3fd.rmeta --extern xiv_gen_db=/app/target/debug/deps/libxiv_gen_db-1f9fbae6dcadb12c.rmeta --cfg=web_sys_unstable_apis -C target-cpu=x86-64-v3 -L native=/app/target/debug/build/ring-33f06e0bccfa5e8c/out -L native=/app/target/debug/build/zstd-sys-06e9260dda9c8dc6/out` (signal: 9, SIGKILL: kill)
