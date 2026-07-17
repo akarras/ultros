@@ -259,6 +259,7 @@ pub async fn redirect(
     cookie.set_secure(true);
     cookie.set_same_site(SameSite::Lax);
     cookie.set_http_only(true);
+    cookie.set_path("/");
     cookie.make_permanent();
     cookies = cookies.add(cookie);
     Ok((cookies, Redirect::to(&redirect_to)))
