@@ -38,3 +38,8 @@ When fetching median values, use `select_nth_unstable` (handling odds/even slice
 In `ultros/src/analyzer_service.rs` we were sorting an array of prices to find the median price (`prices.sort_unstable()`). This does $O(N \log N)$ work, but we only need to pick the median element. Finding an element at a given order index can be performed in $O(N)$ time by using `select_nth_unstable()`.
 **Action:**
 When computing the median of an array in Rust, always prefer `select_nth_unstable(len / 2)` over fully sorting it with `sort_unstable()` to reduce time complexity to linear time.
+## 2024-11-20 - In-place filtering and truncation for Top N lists
+**Learning:**
+In `ultros/src/discord/ffxiv/helpers.rs`, `top_n_cheapest_listings` originally sorted the entire vector of listings by price using `sort_by_key`, then used `.into_iter().filter(...).take(limit).collect()` to return the top results. This caused unnecessary work by sorting the entire array including elements that were destined to be filtered out, and then performed memory allocations to collect the final vector.
+**Action:**
+When returning the top N items from a collection, apply filtering *before* sorting using `.retain()` to significantly reduce the size of $N$ for the $O(N \log N)$ sorting step. Then, use `sort_unstable_by_key` to sort the remaining elements in place without allocating extra memory. Finally, use `.truncate(limit)` to slice the top N items in place instead of creating a new Vector iterator chain with `.take().collect()`.
