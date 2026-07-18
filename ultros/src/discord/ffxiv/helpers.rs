@@ -58,12 +58,13 @@ pub(crate) fn top_n_cheapest_listings(
     hq_filter: Option<bool>,
     limit: usize,
 ) -> Vec<active_listing::Model> {
-    listings.sort_by_key(|l| l.price_per_unit);
+    // ⚡ Bolt: Optimization: Filter before sorting to reduce O(N log N) work.
+    if let Some(hq) = hq_filter {
+        listings.retain(|l| l.hq == hq);
+    }
+    listings.sort_unstable_by_key(|l| l.price_per_unit);
+    listings.truncate(limit);
     listings
-        .into_iter()
-        .filter(|l| hq_filter.map(|hq| l.hq == hq).unwrap_or(true))
-        .take(limit)
-        .collect()
 }
 
 /// Map Discord's locale string (e.g. "ja", "de", "zh-CN") to the closest
