@@ -3,7 +3,9 @@ use futures::{Stream, future::try_join_all};
 use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
-use sea_orm::{ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, Statement};
+use sea_orm::{
+    ColumnTrait, DbBackend, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, Statement,
+};
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     time::Instant,
