@@ -383,6 +383,37 @@ pub fn hydrate() {
             return;
         }
 
+        // The SSR response can end early — a stalled render, a dropped
+        // connection, a proxy cutting the stream — and the browser still
+        // reports `readyState === "complete"` for whatever it managed to
+        // parse. The bootstrap `HydrationScripts` emits is a deferred module
+        // script in `<head>`, so it fires on that truncated document just the
+        // same, and `hydrate_body` then walks a DOM missing nearly everything
+        // it expects: tachys hits `failed_to_cast_element` and panics at
+        // `hydration.rs:163`, which cascades into `RefCell already borrowed`
+        // from the wasm-bindgen-futures executor. That is GlitchTip #6831 —
+        // measured on prod, every panicking load hydrated with 2 body children
+        // where a healthy load has 9-12, and serving a deliberately truncated
+        // copy of the same page reproduced it 4/4 against an intact-page
+        // control of 0/4.
+        //
+        // `shell()` renders `SSR_END_SENTINEL_ID` as the last child of
+        // `<body>`, so its absence means the document we were handed is
+        // incomplete. There is nothing coherent to hydrate against; keep the
+        // partial server-rendered markup rather than panicking on it.
+        if document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
+            error!(
+                "SSR document truncated (missing #{SSR_END_SENTINEL_ID}); \
+                 skipping hydration to avoid a tachys hydration panic"
+            );
+            // Deliberately *not* dispatching "ultros:hydrated": this page is
+            // genuinely broken, and letting the boot-progress watchdog surface
+            // its existing "taking longer than expected — reload" affordance
+            // gives the reader a way out. A truncated response is transient,
+            // so a reload almost always succeeds.
+            return;
+        }
+
         info!("hydrating body");
         let world_data = match worlds {
             Ok(worlds) => LocalWorldData(Ok(worlds)),

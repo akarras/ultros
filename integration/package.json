@@ -21,7 +21,9 @@
     "test:dashboard": "node ./dashboard.cjs",
     "test:group-shared-list": "node ./group-shared-list.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs",
-    "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs"
+    "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs",
+    "diag:hydrate-timing": "node ./hydrate-timing.cjs",
+    "diag:truncation-proxy": "node ./truncation-proxy.mjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
