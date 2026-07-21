@@ -36,6 +36,36 @@ type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
 
 const MEANINGFUL_CROSS_WORLD_SAVINGS_GIL: i32 = 1_000;
 
+/// Applies `fun` to a reactive value that may already have been disposed,
+/// falling back to `fallback` instead of panicking.
+///
+/// The `<Suspense>`/`<Transition>` bodies on this page are walked by tachys'
+/// `dry_resolve` twice: once inline, and again from the detached
+/// `Effect::new_isomorphic` leptos keeps alive until the boundary resolves.
+/// That second walk can outlive the owner that created props like
+/// `filtered_listings`, and `With::with` on a disposed signal panics.
+///
+/// A panic there aborts `to_html_async` partway through the body, so the
+/// server ships a *truncated* document and the browser hydrates a half-written
+/// DOM — the tachys `unreachable!()` flood in GlitchTip #6831. The request is
+/// already being torn down whenever this fires, so degrading to `fallback`
+/// costs nothing user-visible and keeps the response whole.
+fn with_or<S, U>(signal: &S, fallback: U, fun: impl FnOnce(&S::Value) -> U) -> U
+where
+    S: With,
+{
+    signal.try_with(fun).unwrap_or(fallback)
+}
+
+/// [`Get`] counterpart to [`with_or`] for values that are cloned out anyway.
+fn get_or_default<S>(signal: &S) -> S::Value
+where
+    S: Get,
+    S::Value: Default,
+{
+    signal.try_get().unwrap_or_default()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct SavingsVerdict {
     cheapest_listing: ActiveListing,
@@ -522,7 +552,7 @@ fn DecisionHeader(
                 listing_resource
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
-                            let listings = filtered_listings.get();
+                            let listings = get_or_default(&filtered_listings);
                             let current_world_id = {
                                 let world_name = Url::unescape(&world());
                                 world_data
@@ -675,7 +705,7 @@ fn MarketStatsPanel(
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let data = data.clone();
-                            let listings = filtered_listings.get();
+                            let listings = get_or_default(&filtered_listings);
                             let cheapest_nq = cheapest_listing_for_quality(&listings, false);
                             let cheapest_hq = cheapest_listing_for_quality(&listings, true);
                             let listings_count = listings.len();
@@ -1264,7 +1294,11 @@ pub fn ChartWrapper(
                                 }}
 
                                 {move || {
-                                    let no_listings = filtered_listings.with(|listings| listings.is_empty());
+                                    let no_listings = with_or(
+                                        &filtered_listings,
+                                        true,
+                                        |listings| listings.is_empty(),
+                                    );
                                     no_listings.then(|| view! {
                                         <div role="status" class="text-amber-200 border border-amber-500/40 rounded-xl px-3 py-2 text-sm">
                                             {move || t_string!(i18n, no_active_listings_found).to_string()}
@@ -1302,7 +1336,7 @@ fn HighQualityTable(
                         return ().into_any();
                     }
                     let hq_listings = Memo::new(move |_| {
-                        filtered_listings.with(|listings| {
+                        with_or(&filtered_listings, Vec::new(), |listings| {
                             listings
                                 .iter()
                                 .filter(|(listing, _)| listing.hq)
@@ -1348,7 +1382,7 @@ fn LowQualityTable(
                         return ().into_any();
                     }
                     let lq_listings = Memo::new(move |_| {
-                        filtered_listings.with(|listings| {
+                        with_or(&filtered_listings, Vec::new(), |listings| {
                             listings
                                 .iter()
                                 .filter(|(listing, _)| !listing.hq)
@@ -1455,26 +1489,31 @@ fn ListingsContent(
     let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
     let filtered_listings = Memo::new({
         let world_data = world_data.clone();
+        // Every read in here goes through a `try_*` accessor. `ArcMemo` `take()`s
+        // its cached value before running this closure, so a panic in the body
+        // leaves the memo permanently holding `None` — every later read then dies
+        // on the `t.as_ref().unwrap()` inside `try_read_untracked` (GlitchTip
+        // #6865), including reads that go through `try_get`. Keeping the body
+        // infallible is what stops that cascade.
         move |_| {
-            let listings = listing_resource
-                .with(|listing| {
-                    listing.as_ref().and_then(|result| {
-                        result.as_ref().ok().map(|item| {
-                            item.listings
-                                .iter()
-                                .map(|(listing, retainer)| {
-                                    (listing.clone(), Arc::new(retainer.clone()))
-                                })
-                                .collect::<ListingRows>()
-                        })
+            let listings = with_or(&listing_resource, None, |listing| {
+                listing.as_ref().and_then(|result| {
+                    result.as_ref().ok().map(|item| {
+                        item.listings
+                            .iter()
+                            .map(|(listing, retainer)| {
+                                (listing.clone(), Arc::new(retainer.clone()))
+                            })
+                            .collect::<ListingRows>()
                     })
                 })
-                .unwrap_or_default();
+            })
+            .unwrap_or_default();
             filter_listing_rows(
                 listings,
                 Some(world_data.as_ref()),
-                &excluded_worlds.get(),
-                &excluded_datacenters.get(),
+                &get_or_default(&excluded_worlds),
+                &get_or_default(&excluded_datacenters),
             )
         }
     });
@@ -1954,5 +1993,28 @@ mod tests {
         assert_eq!(format_savings_percent(15.5), "16"); // Rounds up
         assert_eq!(format_savings_percent(15.4), "15"); // Rounds down
         assert_eq!(format_savings_percent(99.9), "100");
+    }
+
+    /// Reproduces GlitchTip #6864/#6867: the server walks a `<Transition>`
+    /// body after the owner that created the `filtered_listings` prop has been
+    /// cleaned up. A bare `.with()`/`.get()` panics there and truncates the SSR
+    /// response; the accessors used on this page must degrade instead.
+    #[test]
+    fn item_view_listing_reads_survive_a_disposed_owner() {
+        let owner = Owner::new();
+        let filtered_listings: Signal<ListingRows> = owner.with(|| {
+            let rows = RwSignal::new(vec![listing(1, 100, 100, false)]);
+            Memo::new(move |_| rows.get()).into()
+        });
+
+        // While the owner is alive the reads behave exactly like `.with()`/`.get()`.
+        assert!(!with_or(&filtered_listings, true, |listings| listings.is_empty()));
+        assert_eq!(get_or_default(&filtered_listings).len(), 1);
+
+        owner.cleanup();
+
+        // Once it is disposed they must fall back rather than panic.
+        assert!(with_or(&filtered_listings, true, |listings| listings.is_empty()));
+        assert!(get_or_default(&filtered_listings).is_empty());
     }
 }
