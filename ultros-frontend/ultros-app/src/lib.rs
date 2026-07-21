@@ -66,6 +66,15 @@ use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
 use leptos_router::{SsrMode, path};
 use log::info;
 
+/// Id of the sentinel element `shell()` renders as the final child of `<body>`.
+///
+/// Its presence in the parsed document is the client's proof that the SSR
+/// response arrived complete rather than truncated mid-stream. Shared between
+/// the server-rendered shell and the client's pre-hydration guard so the two
+/// can never drift apart. See the sentinel in `shell()` and the guard in
+/// `ultros-client`'s `hydrate()` for the full story (GlitchTip #6831).
+pub const SSR_END_SENTINEL_ID: &str = "ultros-ssr-end";
+
 #[cfg(feature = "hydrate")]
 mod sentry_tags {
     use wasm_bindgen::{JsCast, JsValue};
@@ -323,6 +332,21 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
             </head>
             <body translate="no" class="notranslate">
                 <App />
+                // End-of-document sentinel for the client's truncation guard
+                // (GlitchTip #6831). The wasm bootstrap `HydrationScripts`
+                // emits is a *deferred module script in `<head>`*, so it runs
+                // as soon as parsing finishes — and a stalled or cut-off SSR
+                // response still "finishes" parsing, just with most of the
+                // body missing (`document.readyState === "complete"` with two
+                // body children instead of ~10). Hydrating that partial DOM
+                // walks tachys straight into `failed_to_cast_element` and
+                // panics at `hydration.rs:163`. This element streams last, so
+                // the client can tell a complete document from a truncated one
+                // by asking whether it arrived. See `hydrate()` in
+                // ultros-client. Item routes are `SsrMode::InOrder`, so
+                // "sentinel present" really does mean "everything before it
+                // arrived".
+                <div id=SSR_END_SENTINEL_ID hidden></div>
             </body>
         </html>
     }
