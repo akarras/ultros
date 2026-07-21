@@ -12,8 +12,8 @@ use anyhow::Result;
 use anyhow::anyhow;
 use futures::future::try_join_all;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, IntoActiveModel, JoinType,
-    ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ExprTrait, IntoActiveModel,
+    JoinType, ModelTrait, QueryFilter, QueryOrder, QuerySelect, RelationTrait, TransactionTrait,
     sea_query::Expr,
 };
 use std::{
