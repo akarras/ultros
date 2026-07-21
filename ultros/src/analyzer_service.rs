@@ -1044,9 +1044,8 @@ impl AnalyzerService {
         // initial view ("what's actually moving"). FE applies further
         // sort/filter locally.
         // ⚡ Bolt: Optimization: Use select_nth_unstable_by to avoid O(N log N) sorting.
-        let cmp_unit_volume = |a: &SalesVolumeItem, b: &SalesVolumeItem| {
-            b.unit_volume_window.cmp(&a.unit_volume_window)
-        };
+        let cmp_unit_volume =
+            |a: &TrendItem, b: &TrendItem| b.unit_volume_window.cmp(&a.unit_volume_window);
         if items.len() > 500 {
             items.select_nth_unstable_by(500, cmp_unit_volume);
             items.truncate(500);
