@@ -792,25 +792,43 @@ impl AnalyzerService {
             }
         }
 
-        high_velocity.sort_by(|a, b| {
+        // ⚡ Bolt: Optimization: Use select_nth_unstable_by before sorting to extract the top N elements.
+        // This reduces time complexity from O(N log N) (full sort) to O(N) (partial select) + O(k log k)
+        // (sorting the selected subset, where k=50).
+        let cmp_velocity = |a: &TrendItem, b: &TrendItem| {
             b.sales_per_week
                 .partial_cmp(&a.sales_per_week)
                 .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        rising_price.sort_by(|a, b| {
+        };
+        if high_velocity.len() > 50 {
+            high_velocity.select_nth_unstable_by(50, cmp_velocity);
+            high_velocity.truncate(50);
+        }
+        high_velocity.sort_unstable_by(cmp_velocity);
+
+        // ⚡ Bolt: Optimization: Use select_nth_unstable_by to avoid O(N log N) sorting.
+        let cmp_rising = |a: &TrendItem, b: &TrendItem| {
             (b.price as f32 / b.average_sale_price)
                 .partial_cmp(&(a.price as f32 / a.average_sale_price))
                 .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        falling_price.sort_by(|a, b| {
+        };
+        if rising_price.len() > 50 {
+            rising_price.select_nth_unstable_by(50, cmp_rising);
+            rising_price.truncate(50);
+        }
+        rising_price.sort_unstable_by(cmp_rising);
+
+        // ⚡ Bolt: Optimization: Use select_nth_unstable_by to avoid O(N log N) sorting.
+        let cmp_falling = |a: &TrendItem, b: &TrendItem| {
             (a.price as f32 / a.average_sale_price)
                 .partial_cmp(&(b.price as f32 / b.average_sale_price))
                 .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        high_velocity.truncate(50);
-        rising_price.truncate(50);
-        falling_price.truncate(50);
+        };
+        if falling_price.len() > 50 {
+            falling_price.select_nth_unstable_by(50, cmp_falling);
+            falling_price.truncate(50);
+        }
+        falling_price.sort_unstable_by(cmp_falling);
 
         // === Phase 2 deep-scan enrichment for trends ===
         //
@@ -1025,8 +1043,14 @@ impl AnalyzerService {
         // Default sort: units traded descending — the most useful
         // initial view ("what's actually moving"). FE applies further
         // sort/filter locally.
-        items.sort_by(|a, b| b.unit_volume_window.cmp(&a.unit_volume_window));
-        items.truncate(500);
+        // ⚡ Bolt: Optimization: Use select_nth_unstable_by to avoid O(N log N) sorting.
+        let cmp_unit_volume =
+            |a: &TrendItem, b: &TrendItem| b.unit_volume_window.cmp(&a.unit_volume_window);
+        if items.len() > 500 {
+            items.select_nth_unstable_by(500, cmp_unit_volume);
+            items.truncate(500);
+        }
+        items.sort_unstable_by(cmp_unit_volume);
 
         Some(items)
     }
@@ -1164,8 +1188,13 @@ impl AnalyzerService {
         // caller. We sort by profit first so the deep-scan only fires for
         // the N candidates a user would actually see.
         const DEEP_SCAN_TOP_N: usize = 200;
-        possible_sales.sort_by_key(|s| std::cmp::Reverse(s.profit));
-        possible_sales.truncate(DEEP_SCAN_TOP_N);
+        // ⚡ Bolt: Optimization: Use select_nth_unstable_by_key to avoid O(N log N) sorting.
+        if possible_sales.len() > DEEP_SCAN_TOP_N {
+            possible_sales
+                .select_nth_unstable_by_key(DEEP_SCAN_TOP_N, |s| std::cmp::Reverse(s.profit));
+            possible_sales.truncate(DEEP_SCAN_TOP_N);
+        }
+        possible_sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.profit));
 
         // Read the sale_world_id off `world_id` arg — `s.world_id` on the
         // stats is the *source* world (where the cheapest listing is), but
