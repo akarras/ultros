@@ -196,12 +196,10 @@ fn GroupCard(
     );
 
     let (new_member_id, set_new_member_id) = signal(String::new());
+    let group_id = group.id;
 
     view! {
         <div class="panel p-4 rounded-xl flex flex-col gap-4">
-            {
-                let group_id = group.id;
-                view! {
             <div class="flex justify-between items-start gap-2">
                 <div class="flex flex-col gap-1 overflow-hidden">
                     <span class="text-xl font-bold truncate text-[color:var(--brand-fg)]">
@@ -310,8 +308,6 @@ fn GroupCard(
                     </div>
                 </div>
             </Show>
-                }
-            }
         </div>
     }
 }
