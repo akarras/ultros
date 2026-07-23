@@ -199,6 +199,9 @@ fn GroupCard(
 
     view! {
         <div class="panel p-4 rounded-xl flex flex-col gap-4">
+            {
+                let group_id = group.id;
+                view! {
             <div class="flex justify-between items-start gap-2">
                 <div class="flex flex-col gap-1 overflow-hidden">
                     <span class="text-xl font-bold truncate text-[color:var(--brand-fg)]">
@@ -282,9 +285,10 @@ fn GroupCard(
 
             <Show when=move || user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)>
                 <div class="flex flex-col gap-2 pt-2 border-t border-gray-700/50">
-                    <label class="text-xs font-semibold text-gray-400">{t!(i18n, groups_add_member)}</label>
+                    <label for=format!("add-member-{}", group_id) class="text-xs font-semibold text-gray-400">{t!(i18n, groups_add_member)}</label>
                     <div class="flex gap-2">
                         <input
+                            id=format!("add-member-{}", group_id)
                             class="input input-sm flex-1"
                             placeholder=t_string!(i18n, groups_discord_id_placeholder)
                             prop:value=new_member_id
@@ -296,7 +300,7 @@ fn GroupCard(
                             prop:disabled=move || new_member_id().is_empty()
                             on:click=move |_| {
                                 if let Ok(uid) = new_member_id().parse::<u64>() {
-                                    add_member_action.dispatch((group.id, uid));
+                                    add_member_action.dispatch((group_id, uid));
                                     set_new_member_id(String::new());
                                 }
                             }
@@ -306,6 +310,8 @@ fn GroupCard(
                     </div>
                 </div>
             </Show>
+                }
+            }
         </div>
     }
 }
