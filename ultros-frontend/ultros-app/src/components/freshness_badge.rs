@@ -15,6 +15,7 @@ pub fn FreshnessBadge(
 
     view! {
         <span
+            title=display.tooltip(i18n)
             class="inline-flex items-center py-0.5 rounded-full text-xs font-semibold border"
             class=("px-1.5", move || compact)
             class=("px-2", move || !compact)

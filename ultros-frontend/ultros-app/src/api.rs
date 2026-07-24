@@ -49,7 +49,7 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
 }
 
 /// Pull a larger window of sales than the default listings endpoint returns.
-/// Server caps `limit` at 5000.
+/// Server caps `limit` at 10000.
 pub(crate) async fn get_extended_sale_history(
     item_id: i32,
     world: &str,
