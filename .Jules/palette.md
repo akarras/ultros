@@ -12,3 +12,6 @@
 ## 2025-02-12 - Added ARIA label to resend button
 **Learning:** Screen readers will struggle to identify multiple identical buttons (like "Resend") across rows in a data table unless they have unique labels with context.
 **Action:** Always include row-specific context (like the item name) in the `aria-label` for buttons inside list/table rows to ensure accessibility.
+## 2024-07-23 - Add explicit input associations
+**Learning:** In Leptos, when defining `for` and `id` attributes that need dynamic values within `move ||` closures, ensure you do not inadvertently move an entire struct (like `group`) multiple times, which causes E0382. Instead, extract the required value (e.g. `let group_id = group.id;`) beforehand so it can be copied into the closures.
+**Action:** Always extract and copy small values before using them inside Leptos closures to avoid ownership issues.

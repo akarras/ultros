@@ -432,6 +432,7 @@ pub fn EditLists() -> impl IntoView {
                 </div>
                 <input
                     class="input w-full pl-10"
+                    aria-label=move || t_string!(i18n, search_your_lists).to_string()
                     placeholder=move || t_string!(i18n, search_your_lists).to_string()
                     prop:value=filter
                     on:input=move |ev| set_filter(event_target_value(&ev))
@@ -440,8 +441,9 @@ pub fn EditLists() -> impl IntoView {
 
             <div class="panel p-4 rounded-xl flex flex-col md:flex-row gap-3 md:items-end">
                 <div class="flex-1">
-                    <label class="label text-sm font-semibold">{t!(i18n, lists_redeem_invite_label)}</label>
+                    <label for="invite-code-input" class="label text-sm font-semibold">{t!(i18n, lists_redeem_invite_label)}</label>
                     <input
+                        id="invite-code-input"
                         class="input w-full"
                         placeholder=t_string!(i18n, lists_invite_code_placeholder)
                         prop:value=invite_id
