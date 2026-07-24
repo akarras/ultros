@@ -51,6 +51,17 @@ impl SalesCadenceVerdictDisplay {
             label_text
         }
     }
+
+    /// Short single-line form for tight table cells: just the velocity
+    /// ("0.2/day") when known, otherwise the label. The full label belongs
+    /// in the badge's `title` so no information is lost.
+    pub fn format_compact(&self, i18n: I18nContext<Locale, I18nKeys>) -> String {
+        if let Some(velocity) = &self.velocity_formatted {
+            t_string!(i18n, sales_cadence_compact, velocity = velocity).to_string()
+        } else {
+            self.label.get_text(i18n)
+        }
+    }
 }
 
 pub fn get_sales_cadence_display(

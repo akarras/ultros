@@ -61,6 +61,7 @@
     "sales_cadence_slow": "Slow mover",
     "sales_cadence_not_enough_data": "Not enough data",
     "sales_cadence_label_with_velocity": "{{label}} ({{velocity}}/day)",
+    "sales_cadence_compact": "{{velocity}}/日",
     "recent_average": "直近の平均",
     "real_price": "実勢価格",
     "real_price_basis": "{{used}}/{{total}} 件 · {{excluded}} 件除外",
