@@ -30,7 +30,7 @@ async fn main() {
                 .expect("Unable to find a world matching name specfied")
         })
         .map(|w| w.id);
-    let mut ws = WebsocketClient::connect().await;
+    let mut ws = WebsocketClient::connect("ultros-universalis-examples").await;
     ws.update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, world)
         .await;
     ws.update_subscription(
