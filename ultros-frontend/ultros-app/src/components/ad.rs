@@ -104,9 +104,14 @@ mod adsense {
             .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
         match push {
             Some(push) => {
-                if push.call1(&ads, &js_sys::Object::new()).is_err() {
-                    unfilled.try_set(true);
-                }
+                // Ignore push() errors. AdSense throws `TagError: … already
+                // have ads` when its loader (requested with ?client= page-level
+                // auto ads) has already filled this <ins> before our explicit
+                // push runs — which means the ad IS present, so setting
+                // `unfilled` here would HIDE a real, rendered ad. The mutation
+                // observer on `data-ad-status` is the authoritative
+                // filled/unfilled signal and already drives `unfilled`.
+                let _ = push.call1(&ads, &js_sys::Object::new());
             }
             None => {
                 unfilled.try_set(true);
