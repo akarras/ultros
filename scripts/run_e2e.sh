@@ -98,9 +98,11 @@ else
     BASE_URL="http://127.0.0.1:$port"
     log "spawning fresh server on port $port"
 
+    # `${arr[@]}` on an empty array trips `set -u` under macOS's stock
+    # bash 3.2 — the `+` expansion guard is the portable idiom.
     if [ "${SKIP_BUILD:-0}" != "1" ]; then
         log "cargo leptos build (set SKIP_BUILD=1 to skip)"
-        cargo leptos build "${bin_feature_args[@]}"
+        cargo leptos build ${bin_feature_args[@]+"${bin_feature_args[@]}"}
     fi
 
     set -m
@@ -108,7 +110,7 @@ else
         HOSTNAME="$BASE_URL" \
         LEPTOS_SITE_ADDR="127.0.0.1:$port" \
         cargo leptos serve \
-        "${bin_feature_args[@]}" \
+        ${bin_feature_args[@]+"${bin_feature_args[@]}"} \
         >/tmp/ultros-e2e-server.log 2>&1 &
     server_pid=$!
     set +m

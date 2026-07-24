@@ -520,10 +520,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             <Route path=path!("jobset/:jobset/set/:ilvl") view=JobSetDetail />
                             <Route path=path!("jobset/:jobset") view=JobItems />
                             <Route path=path!("category/:category") view=CategoryItems />
-                            <Route
-                                path=path!("")
-                                view=move || view! { "Choose a category to search!" }
-                            />
+                            <Route path=path!("") view=DefaultItems />
                         </ParentRoute>
                         // #6831: the item page's data (`listing_resource`) is
                         // slow in production, so its several `<Suspense>`/`<Transition>`
