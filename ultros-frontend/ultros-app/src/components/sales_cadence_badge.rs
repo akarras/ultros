@@ -11,10 +11,17 @@ pub fn SalesCadenceBadge(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let display = get_sales_cadence_display(cadence, sales_per_day);
+    let full_label = display.format_label(i18n);
+    let text = if compact {
+        display.format_compact(i18n)
+    } else {
+        full_label.clone()
+    };
 
     view! {
         <span
-            class="inline-flex items-center py-0.5 rounded-full text-xs font-semibold border"
+            title=compact.then(|| full_label.clone())
+            class="inline-flex items-center py-0.5 rounded-full text-xs font-semibold border whitespace-nowrap max-w-full overflow-hidden"
             class=("px-1.5", compact)
             class=("px-2", !compact)
             class=("text-emerald-300", display.tone == SalesCadenceTone::Success)
@@ -30,7 +37,7 @@ pub fn SalesCadenceBadge(
             class=("border-[color:var(--color-outline)]", display.tone == SalesCadenceTone::Neutral)
             class=("bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]", display.tone == SalesCadenceTone::Neutral)
         >
-            {display.format_label(i18n)}
+            {text}
         </span>
     }
 }

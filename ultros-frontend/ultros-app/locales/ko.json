@@ -61,6 +61,7 @@
     "sales_cadence_slow": "Slow mover",
     "sales_cadence_not_enough_data": "Not enough data",
     "sales_cadence_label_with_velocity": "{{label}} ({{velocity}}/day)",
+    "sales_cadence_compact": "{{velocity}}/일",
     "recent_average": "최근 평균",
     "real_price": "실거래가",
     "real_price_basis": "{{used}}/{{total}}건 · {{excluded}}건 제외",

@@ -135,7 +135,17 @@ pub async fn sparklines_batch(
                 SELECT g.item_id, g.hq, g.world_id, g.slot,
                        coalesce(s.vwap, 0) AS vwap
                 FROM grid g
-                LEFT JOIN sales_hourly s FINAL
+                -- Pre-filter the join side to the requested tuples + window.
+                -- A bare `LEFT JOIN sales_hourly FINAL` hashes the ENTIRE
+                -- rollup table (every item x world x hour) on every request;
+                -- the filtered subquery prunes by the table's primary key
+                -- (item_id, hq, world_id, bucket) instead.
+                LEFT JOIN (
+                    SELECT item_id, hq, world_id, bucket, vwap
+                    FROM sales_hourly FINAL
+                    WHERE (item_id, hq, world_id) IN ({tuples})
+                      AND bucket >= toStartOfInterval(now() - INTERVAL ? HOUR, INTERVAL 1 HOUR)
+                ) s
                   ON g.item_id = s.item_id
                  AND g.hq = s.hq
                  AND g.world_id = s.world_id
@@ -164,6 +174,7 @@ pub async fn sparklines_batch(
     let rows: Vec<SparklineRow> = ch
         .client()
         .query(&sql)
+        .bind(hours as u32)
         .bind(hours as u32)
         .bind(hours as u32)
         .fetch_all()
@@ -492,7 +503,12 @@ pub async fn deep_scan_batch(
                 if(q.computed_at > 0, q.launder_suspicion_pct, toFloat32(0))
                     AS launder_suspicion_pct
          FROM item_stats_window w FINAL
-         LEFT JOIN item_quality_score q FINAL
+         LEFT JOIN (
+             SELECT item_id, hq, world_id, computed_at, quality_score,
+                    confidence_band, launder_suspicion_pct
+             FROM item_quality_score FINAL
+             WHERE (item_id, hq, world_id) IN ({tuples})
+         ) q
            ON w.item_id = q.item_id AND w.hq = q.hq AND w.world_id = q.world_id
          WHERE (w.item_id, w.hq, w.world_id) IN ({tuples})
            AND w.window_days = ?"

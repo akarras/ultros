@@ -61,6 +61,7 @@
     "sales_cadence_slow": "Slow mover",
     "sales_cadence_not_enough_data": "Not enough data",
     "sales_cadence_label_with_velocity": "{{label}} ({{velocity}}/day)",
+    "sales_cadence_compact": "{{velocity}}/Tag",
     "recent_average": "Letzter Durchschnitt",
     "real_price": "Realer Preis",
     "real_price_basis": "{{used}}/{{total}} Verkäufe · {{excluded}} gefiltert",

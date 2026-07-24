@@ -61,6 +61,7 @@
     "sales_cadence_slow": "Slow mover",
     "sales_cadence_not_enough_data": "Not enough data",
     "sales_cadence_label_with_velocity": "{{label}} ({{velocity}}/day)",
+    "sales_cadence_compact": "{{velocity}}/天",
     "recent_average": "近期均價",
     "real_price": "真實價格",
     "real_price_basis": "{{used}}/{{total}} 筆 · 已過濾 {{excluded}} 筆",

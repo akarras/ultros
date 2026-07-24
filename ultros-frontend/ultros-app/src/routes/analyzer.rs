@@ -1425,7 +1425,7 @@ fn AnalyzerTable(
                             };
                             view! {
                                 <div class=classes role="row-group">
-                                    <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
+                                    <div role="cell" class="px-2 py-2 w-[44px] flex items-center justify-center">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
@@ -1434,7 +1434,7 @@ fn AnalyzerTable(
                                     </div>
                                     <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
                                         <a
-                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=format!("/item/{}/{item_id}", world())
                                         >
                                             <div class="shrink-0">
@@ -1453,8 +1453,8 @@ fn AnalyzerTable(
                                                 })
                                             }}
                                         </a>
-                                        <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
+                                        <AddToList item_id />
                                     </div>
                                     <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
