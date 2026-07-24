@@ -60,6 +60,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
     let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
     let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
+    let is_empty = listings.is_empty();
     let listings: Vec<_> = listings
         .into_iter()
         .map(|undercut_data| {
@@ -126,7 +127,18 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                         <th scope="col">{t!(i18n, retainers_undercut_by_one)}</th>
                     </tr>
                 </thead>
-                <tbody>{listings}</tbody>
+                <tbody>
+                    {is_empty
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan="6" class="p-4 text-center opacity-70">
+                                        {t!(i18n, retainers_undercuts_empty)}
+                                    </td>
+                                </tr>
+                            }
+                        })} {listings}
+                </tbody>
             </table>
         </div>
     }
@@ -144,6 +156,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
     let worlds = world_data.0.unwrap();
     let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
     let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
+    let is_empty = listings.is_empty();
     let listings: Vec<_> = listings
         .into_iter()
         .map(|listing| {
@@ -201,7 +214,18 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         <th scope="col">{t!(i18n, retainers_total)}</th>
                     </tr>
                 </thead>
-                <tbody>{listings}</tbody>
+                <tbody>
+                    {is_empty
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan="5" class="p-4 text-center opacity-70">
+                                        {t!(i18n, retainers_listings_empty)}
+                                    </td>
+                                </tr>
+                            }
+                        })} {listings}
+                </tbody>
             </table>
         </div>
     }

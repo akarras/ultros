@@ -582,6 +582,8 @@
     "retainers_all_listings_title": "全部在售",
     "retainers_all_listings_desc": "不必把它當成第二份工作，也能查看雇員的所有在售物品！",
     "retainers_add_to_start": "新增一個雇員開始使用！",
+    "retainers_undercuts_empty": "沒有被壓價的物品——該雇員的在售物品仍是最低價。",
+    "retainers_listings_empty": "該雇員目前沒有在售物品。",
     "retainers_edit_tab": "編輯",
     "retainers_all_listings_tab": "全部在售",
     "retainers_undercuts_tab": "壓價",

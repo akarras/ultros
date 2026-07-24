@@ -582,6 +582,8 @@
     "retainers_all_listings_title": "Alle Angebote",
     "retainers_all_listings_desc": "Sieh die Angebote deiner Gehilfen ein, ohne dass es zum zweiten Job wird!",
     "retainers_add_to_start": "Füge einen Gehilfen hinzu, um loszulegen!",
+    "retainers_undercuts_empty": "Keine Unterbietungen — die Angebote dieses Gehilfen sind weiterhin die günstigsten.",
+    "retainers_listings_empty": "Dieser Gehilfe hat keine aktiven Angebote.",
     "retainers_edit_tab": "Bearbeiten",
     "retainers_all_listings_tab": "Alle Angebote",
     "retainers_undercuts_tab": "Unterboten",
