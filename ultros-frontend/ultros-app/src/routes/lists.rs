@@ -12,7 +12,6 @@ use crate::api::{
     create_list, delete_list, edit_list, get_lists_with_permissions, get_login, leave_list,
     use_list_invite,
 };
-use crate::components::ad::Ad;
 use crate::components::list::share_list_modal::ShareListModal;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
@@ -573,16 +572,8 @@ pub fn Lists() -> impl IntoView {
     view! {
         <div class="mx-auto">
             <div class="main-content">
-                <div class="container mx-auto flex flex-col xl:flex-row items-start gap-4">
-                    <div class="flex flex-col grow w-full">
-                         <div class="w-full mb-4">
-                            <Ad class="h-20 w-full" />
-                        </div>
-                        <Outlet />
-                    </div>
-                    <div class="shrink-0 xl:w-80">
-                         <Ad class="h-96 w-96 xl:h-[600px] xl:w-80" />
-                    </div>
+                <div class="container mx-auto flex flex-col w-full">
+                    <Outlet />
                 </div>
             </div>
         </div>
