@@ -581,6 +581,8 @@
     "retainers_all_listings_title": "すべての出品",
     "retainers_all_listings_desc": "リテイナーの出品を、もう一つの仕事にせずまとめて確認！",
     "retainers_add_to_start": "リテイナーを追加してはじめましょう！",
+    "retainers_undercuts_empty": "値下げされた出品はありません。このリテイナーの出品はすべて最安値です。",
+    "retainers_listings_empty": "このリテイナーには出品中のアイテムがありません。",
     "retainers_edit_tab": "編集",
     "retainers_all_listings_tab": "すべての出品",
     "retainers_undercuts_tab": "値下げ",

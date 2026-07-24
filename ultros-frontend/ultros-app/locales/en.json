@@ -584,6 +584,8 @@
     "retainers_all_listings_title": "All Listings",
     "retainers_all_listings_desc": "View your retainer's listings without making it a second job!",
     "retainers_add_to_start": "Add a retainer to get started!",
+    "retainers_undercuts_empty": "No undercut listings — this retainer still has the lowest prices.",
+    "retainers_listings_empty": "This retainer has no active listings.",
     "retainers_edit_tab": "Edit",
     "retainers_all_listings_tab": "All Listings",
     "retainers_undercuts_tab": "Undercuts",

@@ -581,6 +581,8 @@
     "retainers_all_listings_title": "모든 판매 목록",
     "retainers_all_listings_desc": "친구상인 판매 목록을 두 번째 일거리로 만들지 않고 편하게 확인하세요!",
     "retainers_add_to_start": "친구상인을 추가해 시작하세요!",
+    "retainers_undercuts_empty": "가격이 인하된 판매품이 없습니다. 이 친구상인의 판매품이 모두 최저가입니다.",
+    "retainers_listings_empty": "이 친구상인은 판매 중인 물품이 없습니다.",
     "retainers_edit_tab": "편집",
     "retainers_all_listings_tab": "모든 판매 목록",
     "retainers_undercuts_tab": "가격 인하",

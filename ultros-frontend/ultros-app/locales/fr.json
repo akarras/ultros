@@ -581,6 +581,8 @@
     "retainers_all_listings_title": "Toutes les annonces",
     "retainers_all_listings_desc": "Consultez les annonces de vos servants sans que ça devienne un second métier !",
     "retainers_add_to_start": "Ajoutez un servant pour commencer !",
+    "retainers_undercuts_empty": "Aucune sous-cote — les annonces de ce servant sont toujours les moins chères.",
+    "retainers_listings_empty": "Ce servant n’a aucune annonce en cours.",
     "retainers_edit_tab": "Modifier",
     "retainers_all_listings_tab": "Toutes les annonces",
     "retainers_undercuts_tab": "Sous-cotes",
