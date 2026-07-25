@@ -106,7 +106,18 @@ define_error_enum!(ApiError {
 impl ApiError {
     fn as_status_code(&self) -> StatusCode {
         match self {
-            ApiError::NoAuthCookie => StatusCode::OK, // In this case I don't want a real error.
+            // Auth failures are 401 — the same status `WebError::NotAuthenticated`
+            // already uses for page routes. This used to answer `200` to avoid
+            // "a real error", but a 401 achieves that intent without lying about
+            // the status: it's a *client* error, so it never trips the
+            // `is_server_error()` branches below that log at error level.
+            //
+            // Answering 200 made an auth failure indistinguishable from success
+            // at the HTTP layer, so the SSR fetch helper took its
+            // `status.is_success()` branch and reported the structured
+            // `{"ApiError":"NotAuthenticated"}` body as a *deserialization*
+            // failure at error level (the GlitchTip 2218/2210 lineage).
+            ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
@@ -180,7 +191,11 @@ impl IntoResponse for ApiError {
             // remove the discord user cookie
             info!("Removed invalid Discord token");
             cookies = cookies.remove(Cookie::from("discord_auth"));
+            // An expired/revoked token is an auth failure like any other, so it
+            // gets the same 401. Without an explicit status this tuple response
+            // defaulted to `200`.
             return (
+                StatusCode::UNAUTHORIZED,
                 cookies,
                 Json(JsonErrorWrapper::ApiError(
                     ultros_api_types::result::ApiError::NotAuthenticated,
@@ -255,5 +270,70 @@ impl IntoResponse for WebError {
             tracing::debug!(error = %self, %status, "Returning web error");
         }
         (status, message).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An unauthenticated request must answer `401`, not `200`.
+    ///
+    /// `AuthDiscordUser`'s extractor rejection is `ApiError::NoAuthCookie`, so
+    /// this is the status every logged-out request to every authenticated API
+    /// route gets. Answering `200` with an `{"ApiError":"NotAuthenticated"}`
+    /// body makes an auth failure indistinguishable from success at the HTTP
+    /// layer: the SSR fetch helper takes its `status.is_success()` branch, the
+    /// structured error then looks like a *deserialization* failure, and it
+    /// gets reported at error level (the GlitchTip 2218 / 2210 lineage that
+    /// `ultros-app/src/api.rs` carries two separate workaround comments for).
+    #[test]
+    fn no_auth_cookie_is_unauthorized_not_ok() {
+        let err = ApiError::NoAuthCookie;
+        assert_eq!(err.as_status_code(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.into_response().status(),
+            StatusCode::UNAUTHORIZED,
+            "the response status must match as_status_code()"
+        );
+    }
+
+    /// An expired/revoked Discord token is also an auth failure, so it gets the
+    /// same `401`. This arm returns early in `into_response` to attach the
+    /// cookie removal, and previously returned no status at all — which axum
+    /// defaults to `200`.
+    ///
+    /// Only the status is asserted: the cookie-clearing behaviour is untouched
+    /// by this change, and an empty test jar can't reproduce it anyway —
+    /// `CookieJar::remove` only emits a removal `Set-Cookie` when the name is
+    /// already in `original_cookies`, which in production it is (we only reach
+    /// this variant when a `discord_auth` cookie was present but Discord
+    /// rejected the token).
+    #[test]
+    fn discord_token_invalid_is_unauthorized() {
+        let jar = PrivateCookieJar::new(Key::generate());
+        let response = ApiError::DiscordTokenInvalid(jar).into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// The wire body is unchanged — clients match on `NotAuthenticated` (e.g.
+    /// the list-invite login redirect in `ultros-app/src/routes/lists.rs`), so
+    /// only the status moves.
+    #[test]
+    fn auth_failures_keep_their_structured_body() {
+        assert_eq!(
+            ApiError::NoAuthCookie.as_api_error(),
+            ultros_api_types::result::ApiError::NotAuthenticated
+        );
+    }
+
+    /// 401 is a *client* error, so it must not trip the `is_server_error()`
+    /// paths that log at error level and replace the message with a generic
+    /// "Internal server error". This is what preserves the original intent of
+    /// the `NoAuthCookie => OK` mapping ("I don't want a real error") without
+    /// lying about the status.
+    #[test]
+    fn auth_failure_is_not_reported_as_a_server_error() {
+        assert!(!ApiError::NoAuthCookie.as_status_code().is_server_error());
     }
 }
