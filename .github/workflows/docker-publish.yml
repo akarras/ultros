@@ -20,6 +20,17 @@ on:
             - ".github/workflows/book.yml"
             - ".github/workflows/book-check.yml"
 
+# Serialize builds per ref. Batched merges used to fire three ~90-minute main
+# builds at once, all exporting `type=gha,mode=max` into the same 10GB Actions
+# cache; they evicted each other's blobs mid-build and buildx died with
+# `failed to solve: not_found` (plus occasional runner disk exhaustion).
+# Queueing them keeps every merged commit's image published, one at a time.
+# PR re-pushes cancel instead of queueing — only the tip of a PR is worth
+# building, and queueing there would slow PR feedback.
+concurrency:
+    group: docker-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
     # Use ghcr.io for GitHub Container Registry
     REGISTRY: ghcr.io
