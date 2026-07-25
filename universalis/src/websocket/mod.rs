@@ -6,6 +6,9 @@ use crate::websocket::event_types::{
 };
 use async_tungstenite::tokio::{ConnectStream, connect_async};
 use async_tungstenite::tungstenite::Message;
+use async_tungstenite::tungstenite::client::IntoClientRequest;
+use async_tungstenite::tungstenite::http::HeaderValue;
+use async_tungstenite::tungstenite::http::header::USER_AGENT;
 
 use bson::Document;
 use futures::future::Either;
@@ -60,7 +63,7 @@ impl WebsocketClient {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let socket_client = WebsocketClient::connect().await;
+    ///     let socket_client = WebsocketClient::connect("my-app/1.0 (contact@example.com)").await;
     ///     socket_client.update_subscription(SubscribeMode::Subscribe, EventChannel::SalesAdd, None).await;
     ///
     /// }
@@ -123,11 +126,13 @@ impl WebsocketClient {
         &mut self.listing_receiver
     }
 
-    pub async fn connect() -> Self {
-        let mut websocket: Option<WebSocketStream<ConnectStream>> = Self::start_websocket()
-            .await
-            .map_err(|e| error!("{e:?}"))
-            .ok();
+    pub async fn connect(user_agent: impl Into<String>) -> Self {
+        let user_agent: String = user_agent.into();
+        let mut websocket: Option<WebSocketStream<ConnectStream>> =
+            Self::start_websocket(&user_agent)
+                .await
+                .map_err(|e| error!("{e:?}"))
+                .ok();
         let (socket_sender, mut socket_receiver) = channel(100);
         let (listing_sender, listing_receiver) = channel(100);
         let sender = socket_sender.clone();
@@ -164,7 +169,7 @@ impl WebsocketClient {
                         .unwrap_or(2);
                     warn!("Socket terminated, waiting {cooldown_seconds} seconds and retrying.");
                     tokio::time::sleep(Duration::from_secs(cooldown_seconds)).await;
-                    websocket = Self::start_websocket()
+                    websocket = Self::start_websocket(&user_agent)
                         .await
                         .map_err(|e| error!("Error restarting socket? {e:?}"))
                         .ok();
@@ -282,8 +287,17 @@ impl WebsocketClient {
         }
     }
 
-    async fn start_websocket() -> Result<WebSocketStream<ConnectStream>, crate::Error> {
-        let (websocket, response) = connect_async("wss://universalis.app/api/ws").await?;
+    async fn start_websocket(
+        user_agent: &str,
+    ) -> Result<WebSocketStream<ConnectStream>, crate::Error> {
+        let mut request = "wss://universalis.app/api/ws".into_client_request()?;
+        match HeaderValue::from_str(user_agent) {
+            Ok(value) => {
+                request.headers_mut().insert(USER_AGENT, value);
+            }
+            Err(e) => warn!("Invalid websocket user-agent {user_agent:?}, connecting without: {e}"),
+        }
+        let (websocket, response) = connect_async(request).await?;
         info!("Connected Websocket. {} status", response.status());
         info!("Headers: ");
         for (ref header, _value) in response.headers() {

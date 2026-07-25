@@ -296,6 +296,7 @@ async fn refresh_world_item_listings(
     State(senders): State<EventSenders>,
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
+    State(universalis): State<UniversalisClient>,
 ) -> Result<Redirect, WebError> {
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
@@ -303,8 +304,7 @@ async fn refresh_world_item_listings(
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let world_clone = world.clone();
     let future = tokio::spawn(async move {
-        let client = UniversalisClient::new("ultros");
-        let current_data = client
+        let current_data = universalis
             .marketboard_current_data(&world_clone, &[item_id])
             .await?;
         // we can potentially get listings from multiple worlds from this call so we should group listings by world

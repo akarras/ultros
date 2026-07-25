@@ -52,6 +52,14 @@ static GLOBAL: Jemalloc = Jemalloc;
 #[export_name = "malloc_conf"]
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
+/// User-Agent sent on every Universalis request (REST + websocket), per their
+/// guidance that scripted consumers identify themselves with version + contact.
+pub(crate) const UNIVERSALIS_USER_AGENT: &str = concat!(
+    "ultros/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://ultros.app)"
+);
+
 #[derive(Debug, serde::Deserialize, Clone)]
 struct Config {
     hostname: String,
@@ -67,7 +75,7 @@ async fn run_socket_listener(
     sales_tx: EventProducer<SaleEventData>,
     token: CancellationToken,
 ) {
-    let mut socket = WebsocketClient::connect().await;
+    let mut socket = WebsocketClient::connect(UNIVERSALIS_USER_AGENT).await;
     socket
         .update_subscription(SubscribeMode::Subscribe, EventChannel::ListingsAdd, None)
         .await;
@@ -279,7 +287,8 @@ async fn main() -> Result<()> {
     info!("Connecting DB");
     let db = UltrosDb::connect().await?;
     info!("Fetching datacenters/worlds from universalis");
-    let universalis_client = UniversalisClient::new("ultros");
+    let universalis_client = UniversalisClient::new(UNIVERSALIS_USER_AGENT);
+    let startup_client = universalis_client.clone();
     let init = db.clone();
     let (senders, receivers) = create_event_busses();
     let listings_sender = senders.listings.clone();
@@ -288,8 +297,8 @@ async fn main() -> Result<()> {
     let socket_token = token.clone();
     tokio::spawn(async move {
         let (datacenters, worlds) = futures::future::join(
-            universalis_client.get_data_centers(),
-            universalis_client.get_worlds(),
+            startup_client.get_data_centers(),
+            startup_client.get_worlds(),
         )
         .await;
         info!("Initializing database with worlds/datacenters");
@@ -340,9 +349,10 @@ async fn main() -> Result<()> {
     let update_service = Arc::new(UpdateService {
         db: db.clone(),
         world_cache: world_cache.clone(),
-        universalis: UniversalisClient::new("ultros"),
+        universalis: universalis_client.clone(),
         listings: senders.listings.clone(),
         sales: senders.history.clone(),
+        full_sweep_cooldowns: Default::default(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
     // begin listening to universalis events
@@ -431,6 +441,7 @@ async fn main() -> Result<()> {
         search_service,
         token: token.clone(),
         ch_client,
+        universalis: universalis_client,
     };
     let web_task = tokio::spawn(web::start_web(web_state));
     tokio::select! {
