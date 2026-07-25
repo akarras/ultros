@@ -142,7 +142,14 @@ fn WorldButton(
                     "rounded-md flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap border border-transparent",
                     size_styles,
                     if is_selected.get() {
-                        "font-bold rounded-full bg-[color:var(--brand-bg)] text-[color:var(--brand-fg)]"
+                        // `!` important is required: the global anchor rule in
+                        // style/tailwind.css
+                        //   a:not(.nav-link):not(.btn):not(.btn-primary)...
+                        // has specificity (0,5,1) and hard-sets
+                        // `background-color: transparent` + `rounded-md`, which
+                        // beats a plain (0,1,0) utility class. Same idiom as the
+                        // analyzer tabs' `active_classes`.
+                        "font-bold !rounded-full !bg-[color:var(--brand-bg)] !text-[color:var(--brand-fg)]"
                     } else {
                         color_styles
                     },
