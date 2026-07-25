@@ -42,8 +42,13 @@ pub fn CheapestPrice(
     item_id: ItemId,
     #[prop(optional)] show_hq: Option<bool>,
     #[prop(optional, into)] label: Option<String>,
+    /// Set to `Some(false)` to render the price without the listing's
+    /// world name — for layouts that show the world in a separate column.
+    #[prop(optional)]
+    show_world: Option<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let show_world = show_world.unwrap_or(true);
     let cheapest = use_context::<CheapestPrices>().unwrap().read_listings;
     let hydrated = RwSignal::new(false);
     Effect::new(move |_| {
@@ -81,7 +86,9 @@ pub fn CheapestPrice(
                                                          <div class="flex flex-row items-center gap-1.5">
                                                             <Gil amount=listing.price />
                                                             <span>
-                                                                <WorldName id=AnySelector::World(listing.world_id) />
+                                                                {show_world.then(|| view! {
+                                                                    <WorldName id=AnySelector::World(listing.world_id) />
+                                                                })}
                                                             </span>
                                                         </div>
                                                     </div>
@@ -91,7 +98,9 @@ pub fn CheapestPrice(
                                                     <div class="flex flex-row items-center gap-1.5">
                                                         {internal_label} <Gil amount=listing.price />
                                                         <span>
-                                                            <WorldName id=AnySelector::World(listing.world_id) />
+                                                            {show_world.then(|| view! {
+                                                                <WorldName id=AnySelector::World(listing.world_id) />
+                                                            })}
                                                         </span>
                                                     </div>
                                                 }.into_any()

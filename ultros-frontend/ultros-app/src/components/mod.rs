@@ -19,6 +19,7 @@ pub mod filter_card;
 pub mod fonts;
 pub mod freshness_badge;
 pub mod gil;
+pub mod grouped_nav_popover;
 pub mod history_panel;
 pub mod icon;
 pub mod item_icon;
