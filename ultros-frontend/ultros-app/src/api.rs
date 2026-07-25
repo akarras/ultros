@@ -1028,4 +1028,40 @@ mod ssr_response_tests {
             .expect_err("garbage on a 200 is an error");
         assert!(matches!(err, AppError::Json(_)), "got {err:?}");
     }
+
+    /// An unauthenticated response must surface as `NotAuthenticated` so
+    /// callers can act on it — e.g. the list-invite login redirect in
+    /// `routes/lists.rs` matches this exact variant.
+    #[test]
+    fn unauthenticated_401_maps_to_not_authenticated() {
+        let body =
+            serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotAuthenticated)).unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::UNAUTHORIZED, &body)
+            .expect_err("a 401 must be an error");
+        assert_eq!(err, AppError::ApiError(ApiError::NotAuthenticated));
+    }
+
+    /// Safety proof for moving `ApiError::NoAuthCookie` from `200` to `401`
+    /// server-side (`ultros/src/web/error.rs`): callers see the *same*
+    /// `AppError` either way, because the 200 path recovers the wrapper through
+    /// `deserialize`'s fallback and the 401 path maps the status explicitly.
+    ///
+    /// The difference is only in how it gets *reported*: on a 200 the SSR fetch
+    /// helper takes its `status.is_success()` branch and logs
+    /// "Error deserializing text" at error level (GlitchTip noise), while a 401
+    /// is a plain expected error response.
+    #[test]
+    fn unauthenticated_200_and_401_produce_the_same_app_error() {
+        let body =
+            serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotAuthenticated)).unwrap();
+        let legacy_200 = parse_internal_api_response::<i32>(StatusCode::OK, &body)
+            .expect_err("an auth failure is always an error");
+        let fixed_401 = parse_internal_api_response::<i32>(StatusCode::UNAUTHORIZED, &body)
+            .expect_err("an auth failure is always an error");
+        assert_eq!(
+            legacy_200, fixed_401,
+            "changing the status must not change what callers observe"
+        );
+        assert_eq!(fixed_401, AppError::ApiError(ApiError::NotAuthenticated));
+    }
 }
