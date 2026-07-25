@@ -250,8 +250,8 @@ async fn world_item_listings(
 }
 
 /// Compact extended sale history for charting. Returns up to `limit` rows (default
-/// 1000, capped at 5000) of price/quantity/timestamp/world/hq — no buyer metadata.
-/// Aimed at the "Load extended history" affordance on the price chart.
+/// 1000, capped at 10000) of price/quantity/timestamp/world/hq — no buyer metadata.
+/// Auto-loaded by the price chart on the client after hydration.
 #[tracing::instrument(skip(db, world_cache))]
 async fn extended_sale_history(
     State(db): State<UltrosDb>,
@@ -260,7 +260,7 @@ async fn extended_sale_history(
     axum::extract::Query(query): axum::extract::Query<ExtendedHistoryQuery>,
 ) -> Result<axum::Json<ExtendedSaleHistory>, WebError> {
     const DEFAULT_LIMIT: u64 = 1_000;
-    const MAX_LIMIT: u64 = 5_000;
+    const MAX_LIMIT: u64 = 10_000;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
     let selected_value = world_cache.lookup_value_by_name(&world)?;

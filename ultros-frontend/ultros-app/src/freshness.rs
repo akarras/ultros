@@ -45,18 +45,24 @@ pub struct FreshnessVerdictDisplay {
 impl FreshnessVerdictDisplay {
     #[allow(dead_code)]
     pub fn format_label(&self, i18n: I18nContext<Locale, I18nKeys>) -> String {
-        let label_text = self.label.get_text(i18n);
         if let Some(age) = &self.age_formatted {
-            t_string!(
-                i18n,
-                freshness_label_with_age,
-                label = label_text,
-                age = age
-            )
-            .to_string()
+            t_string!(i18n, freshness_data_age, age = age).to_string()
         } else {
-            label_text
+            self.label.get_text(i18n)
         }
+    }
+
+    /// Tooltip explaining the verdict, since the visible label only shows the
+    /// data age. Composes "{verdict}: {explanation}".
+    #[allow(dead_code)]
+    pub fn tooltip(&self, i18n: I18nContext<Locale, I18nKeys>) -> String {
+        let explanation = match self.label {
+            FreshnessLabel::Fresh => t_string!(i18n, freshness_tooltip_fresh),
+            FreshnessLabel::Caution => t_string!(i18n, freshness_tooltip_caution),
+            FreshnessLabel::VerifyInGame => t_string!(i18n, freshness_tooltip_verify),
+            FreshnessLabel::NoData => t_string!(i18n, freshness_tooltip_no_data),
+        };
+        format!("{}: {}", self.label.get_text(i18n), explanation)
     }
 }
 
