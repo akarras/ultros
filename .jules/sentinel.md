@@ -12,7 +12,7 @@
 **Vulnerability:** Incomplete Cookie Scope Configuration
 **Learning:** The `discord_auth` cookie was being set during a `/redirect` endpoint without an explicitly set `Path=/`. This scopes the cookie to the `/redirect` path, meaning the browser wouldn't send the auth cookie to other paths (like `/api/v1/user`), effectively breaking authentication outside that route. Other cookies in the same file were properly using `cookie.set_path("/")` or `CookieBuilder` with `.path("/")`.
 **Prevention:** Always explicitly set `cookie.set_path("/")` for application-wide authentication or session cookies to ensure they are sent to all relevant routes.
-## 2024-05-24 - [Fix Open Redirect Bypass via Whitespace]
+## 2026-07-26 - [Fix Open Redirect Bypass via Whitespace]
 **Vulnerability:** Open Redirect bypass
 **Learning:** Browsers sometimes normalize or ignore whitespace characters like tabs (`\t`) and spaces (` `) in URL paths. A URL like `/\t/evil.com` or `/ /evil.com` starts with `/` and thus bypasses a strict `starts_with("//")` protocol-relative check, but the browser may resolve it to `//evil.com` and redirect the user.
 **Prevention:** Always strip or reject raw whitespace characters (like spaces and tabs) when validating relative redirect URLs to prevent open redirect vulnerabilities.
