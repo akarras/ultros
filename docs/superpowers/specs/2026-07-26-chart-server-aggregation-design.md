@@ -257,10 +257,17 @@ Consequences inside `ultros-charts`:
   than silently changing what the toggle means. Making outlier filtering a
   server-side predicate is deferred and noted as an open question.
 
-The item card PNG path (`/itemcard/{world}/{id}`) keeps its current raw-sales
-code path in this spec. It renders at a fixed size with a bounded window, so it
-is not affected by the problems above, and migrating it can happen once the new
-path has proven out.
+The item card PNG path (`/itemcard/{world}/{id}`) migrates too. It is not
+affected by the problems this spec solves — fixed size, bounded window — so
+leaving it alone would have been preferable, but it calls
+`build_price_history_scene`, which shares `build_price_history_chart`'s
+signature. Keeping it on raw sales would mean maintaining two layout code paths
+that must produce identical output, which is exactly the drift the crate's
+module docs say the shared scene graph exists to prevent.
+
+So the server grows one internal helper that builds a `PriceSeries`, and both
+the JSON endpoint and the card call it. The card requests a 30-day window at
+`SeriesGroup::World`.
 
 ### Frontend changes
 
