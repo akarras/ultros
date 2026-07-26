@@ -9,6 +9,7 @@ mod market_heat;
 mod market_pulse;
 mod movers;
 pub(crate) mod push;
+mod query;
 pub(crate) mod real_time_data;
 mod recent_sales;
 mod resale_quality;

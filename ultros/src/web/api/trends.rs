@@ -20,6 +20,7 @@ pub struct TrendsQuery {
     pub window: Option<u16>,
     /// `1` / `true` bypasses the cross-cutting `ResaleQualityFilter` so
     /// suspicious rows surface with a chip. Default false.
+    #[serde(default, deserialize_with = "super::query::optional_flag")]
     pub show_suspicious: Option<bool>,
 }
 
@@ -79,4 +80,62 @@ pub async fn get_trends(
     });
 
     Ok(Json(trends))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TrendsQuery;
+    use axum::extract::Query;
+    use axum::http::Uri;
+
+    fn extract(query: &str) -> Result<TrendsQuery, String> {
+        let uri: Uri = format!("http://ultros.app/api/v1/trends/Sargatanas?{query}")
+            .parse()
+            .expect("test URI should parse");
+        Query::<TrendsQuery>::try_from_uri(&uri)
+            .map(|Query(q)| q)
+            .map_err(|rejection| rejection.body_text())
+    }
+
+    /// The frontend sends `show_suspicious=0|1`, which `serde_urlencoded`
+    /// rejects for a bare `Option<bool>` — and a `Query` rejection is a 400
+    /// for the entire request, so the Trends page rendered nothing at all.
+    #[test]
+    fn numeric_show_suspicious_is_accepted() {
+        let off = extract("window=30&show_suspicious=0").expect("`0` must extract");
+        assert_eq!(off.window, Some(30));
+        assert_eq!(off.show_suspicious, Some(false));
+
+        let on = extract("window=30&show_suspicious=1").expect("`1` must extract");
+        assert_eq!(on.show_suspicious, Some(true));
+    }
+
+    #[test]
+    fn literal_show_suspicious_still_works() {
+        assert_eq!(
+            extract("window=7&show_suspicious=true")
+                .expect("`true` must extract")
+                .show_suspicious,
+            Some(true)
+        );
+        assert_eq!(
+            extract("window=90&show_suspicious=false")
+                .expect("`false` must extract")
+                .show_suspicious,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn omitted_flag_defaults_to_none() {
+        let q = extract("window=30").expect("omitted flag must extract");
+        assert_eq!(q.show_suspicious, None);
+        // The handler treats `None` as "filter suspicious rows out".
+        assert!(!q.show_suspicious.unwrap_or(false));
+    }
+
+    #[test]
+    fn nonsense_flag_is_still_rejected() {
+        assert!(extract("window=30&show_suspicious=banana").is_err());
+    }
 }
