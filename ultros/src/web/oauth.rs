@@ -145,6 +145,8 @@ fn safe_login_next(next: Option<&str>) -> Option<String> {
         || next.contains('\\')
         || next.contains('\n')
         || next.contains('\r')
+        || next.contains('\t')
+        || next.contains(' ')
         || next.contains("://")
     {
         return None;
@@ -476,6 +478,8 @@ mod tests {
             safe_login_next(Some("/path\r\nLocation: //evil.example")),
             None
         );
+        assert_eq!(safe_login_next(Some("/\t/evil.example")), None);
+        assert_eq!(safe_login_next(Some("/ /evil.example")), None);
     }
 }
 
