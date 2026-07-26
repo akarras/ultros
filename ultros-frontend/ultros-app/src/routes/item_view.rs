@@ -1638,8 +1638,6 @@ fn ListingsContent(
             <div id="history" class="scroll-mt-16 mt-4 sm:mt-6">
                 <ChartWrapper listing_resource filtered_listings item_id world />
             </div>
-            <WorldMarketShare listing_resource filtered_listings world />
-
             <div id="listings" class="scroll-mt-16 mt-6">
                 <ListingsPanel
                     listing_resource
@@ -1651,6 +1649,13 @@ fn ListingsContent(
 
             <div class="grid grid-cols-1 gap-6 mt-8">
                 <SalesDetails listing_resource />
+            </div>
+
+            // Per-world supply distribution answers a research question, not
+            // something every visitor should scroll past on the way to the
+            // chart. It sits below the sale history for that reason.
+            <div class="mt-6">
+                <WorldMarketShare listing_resource filtered_listings world />
             </div>
 
             <div class="mt-6 mx-auto">
