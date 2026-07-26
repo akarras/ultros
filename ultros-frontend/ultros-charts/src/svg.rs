@@ -69,6 +69,29 @@ pub(crate) fn area_path_d(points: &[(f32, f32)], baseline_y: f32) -> Option<Stri
     Some(d)
 }
 
+/// Path data drawing a filled circle of radius `r` at each point, as one
+/// path with one subpath per dot. Two half-arcs per circle is the standard
+/// way to express a circle in path syntax, and usvg handles it fine.
+/// `None` for an empty input (an empty `d` attribute is invalid SVG).
+// Not yet wired up: will be called by the price chart when rendering batched
+// sale dots in a follow-up change; remove this allow once that lands.
+#[allow(dead_code)]
+pub(crate) fn dots_path_d(points: &[(f32, f32)], r: f32) -> Option<String> {
+    if points.is_empty() {
+        return None;
+    }
+    let mut d = String::with_capacity(points.len() * 40);
+    for (x, y) in points {
+        let left = x - r;
+        let diameter = r * 2.0;
+        let _ = write!(
+            d,
+            "M{left:.1} {y:.1}a{r:.1},{r:.1} 0 1,0 {diameter:.1},0a{r:.1},{r:.1} 0 1,0 -{diameter:.1},0"
+        );
+    }
+    Some(d)
+}
+
 fn escape_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -344,5 +367,13 @@ mod tests {
         let svg = scene_to_svg(&scene);
         assert!(svg.starts_with("<svg "));
         assert!(svg.ends_with("</svg>"));
+    }
+
+    #[test]
+    fn dots_path_emits_one_subpath_per_point() {
+        let d = dots_path_d(&[(10.0, 20.0), (30.0, 40.0)], 2.0).unwrap();
+        assert_eq!(d.matches('M').count(), 2, "one move per dot: {d}");
+        assert!(d.starts_with("M8.0 20.0a2.0,2.0"), "{d}");
+        assert_eq!(dots_path_d(&[], 2.0), None);
     }
 }
