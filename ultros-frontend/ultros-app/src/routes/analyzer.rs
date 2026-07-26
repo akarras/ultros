@@ -29,6 +29,7 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
+    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
 };
 use ultros_api_types::{
     resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
@@ -451,7 +452,10 @@ fn AnalyzerTable(
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
+    // Seeded to 1d by AnalyzerWorldView so a first-time visitor isn't shown
+    // items that sell once a month. The field sits in the primary toolbar and
+    // the chip has an X, so the default is visible and one click from gone.
+    let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
@@ -868,6 +872,18 @@ fn AnalyzerTable(
                         }
                     />
                 </ToolbarField>
+                <ToolbarField label=t_string!(i18n, analyzer_filter_max_sale_time_label).to_string()>
+                    <input
+                        class="input input-sm w-32"
+                        placeholder=t_string!(i18n, analyzer_placeholder_7d_12h)
+                        title=t_string!(i18n, analyzer_tooltip_duration_format)
+                        prop:value=move || max_predicted_time().unwrap_or_default()
+                        on:input=move |input| {
+                            let value = event_target_value(&input);
+                            set_max_predicted_time(Some(value));
+                        }
+                    />
+                </ToolbarField>
                 <ToolbarField label=t_string!(i18n, analyzer_filter_buy_max_label).to_string()>
                     <input
                         class="input input-sm w-32"
@@ -1043,18 +1059,6 @@ fn AnalyzerTable(
                                 } else if value.is_empty() {
                                     set_min_buy_price(None);
                                 }
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_max_sale_time_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            placeholder=t_string!(i18n, analyzer_placeholder_7d_12h)
-                            title=t_string!(i18n, analyzer_tooltip_duration_format)
-                            prop:value=move || max_predicted_time().unwrap_or_default()
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value));
                             }
                         />
                     </ToolbarField>
@@ -1613,6 +1617,10 @@ fn AnalyzerTable(
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
+    // closure and remounts on every market refetch, which would keep undoing a
+    // filter the user had cleared.
+    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
     let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
