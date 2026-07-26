@@ -8,8 +8,8 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
+    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_panel::ListingsPanel,
+    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
     sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
@@ -61,7 +61,7 @@ where
 }
 
 /// [`Get`] counterpart to [`with_or`] for values that are cloned out anyway.
-fn get_or_default<S>(signal: &S) -> S::Value
+pub(crate) fn get_or_default<S>(signal: &S) -> S::Value
 where
     S: Get,
     S::Value: Default,
@@ -337,7 +337,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-fn DatacenterExclusionControls(
+pub fn DatacenterExclusionControls(
     world: Memo<String>,
     excluded_datacenters: RwSignal<HashSet<String>>,
 ) -> impl IntoView {
@@ -1129,7 +1129,7 @@ fn WorldMarketShare(
     view! {
         <Transition fallback=move || ()>
             {move || {
-                // Suspend on `listing_resource` here too (see HighQualityTable) so the
+                // Suspend on `listing_resource` here too (see ListingsPanel) so the
                 // server and the hydrating client agree on the rendered structure —
                 // the tachys hydration mismatch behind GlitchTip #6831.
                 if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
@@ -1434,101 +1434,6 @@ pub fn ChartWrapper(
 }
 
 #[component]
-fn HighQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] filtered_listings: Signal<ListingRows>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    view! {
-        <div class="space-y-6">
-            <Transition fallback=move || {
-                view! { <BoxSkeleton /> }
-            }>
-                {move || {
-                    // Read `listing_resource` inside the Transition so this section
-                    // actually suspends on it during SSR. `filtered_listings` is a Memo
-                    // created outside any Suspense boundary, so reading it alone does NOT
-                    // subscribe this Transition to the resource — the server would then
-                    // render an empty table while the client hydrates a populated one,
-                    // tripping the tachys hydration `unreachable!()` panic (GlitchTip #6831).
-                    if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
-                        return ().into_any();
-                    }
-                    let hq_listings = Memo::new(move |_| {
-                        with_or(&filtered_listings, Vec::new(), |listings| {
-                            listings
-                                .iter()
-                                .filter(|(listing, _)| listing.hq)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        })
-                    });
-                    view! {
-                        <div
-                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || hq_listings.with(|l| l.is_empty())
-                        >
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, high_quality_listings).to_string()}
-                            </h2>
-                            <ListingsTable listings=hq_listings />
-                        </div>
-                    }
-                        .into_any()
-                }}
-            </Transition>
-        </div>
-    }
-    .into_any()
-}
-
-#[component]
-fn LowQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] filtered_listings: Signal<ListingRows>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    view! {
-        <div class="space-y-6">
-            <Transition fallback=move || {
-                view! { <BoxSkeleton /> }
-            }>
-                {move || {
-                    // Suspend on `listing_resource` here too (see HighQualityTable) so the
-                    // server does not emit an empty table that the client then hydrates as
-                    // populated — the tachys hydration mismatch behind GlitchTip #6831.
-                    if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
-                        return ().into_any();
-                    }
-                    let lq_listings = Memo::new(move |_| {
-                        with_or(&filtered_listings, Vec::new(), |listings| {
-                            listings
-                                .iter()
-                                .filter(|(listing, _)| !listing.hq)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        })
-                    });
-                    view! {
-                        <div
-                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || lq_listings.with(|l| l.is_empty())
-                        >
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, low_quality_listings).to_string()}
-                            </h2>
-                            <ListingsTable listings=lq_listings />
-                        </div>
-                    }
-                        .into_any()
-                }}
-            </Transition>
-        </div>
-    }
-    .into_any()
-}
-
-#[component]
 fn SalesDetails(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
@@ -1721,10 +1626,13 @@ fn ListingsContent(
                 </div>
             </div>
 
-            <div id="listings" class="grid grid-cols-1 gap-6 mt-6">
-                <DatacenterExclusionControls world excluded_datacenters />
-                <HighQualityTable listing_resource filtered_listings />
-                <LowQualityTable listing_resource filtered_listings />
+            <div id="listings" class="scroll-mt-16 mt-6">
+                <ListingsPanel
+                    listing_resource
+                    filtered_listings
+                    world
+                    excluded_datacenters
+                />
             </div>
 
             <div class="grid grid-cols-1 gap-6 mt-8">

@@ -29,6 +29,8 @@ pub mod language_picker;
 pub mod list;
 pub mod list_subscribe_drawer;
 pub(crate) mod listing_filters;
+pub(crate) mod listing_quality;
+pub mod listings_panel;
 pub mod listings_table;
 pub mod live_sale_ticker;
 pub mod loading;
