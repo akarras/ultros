@@ -44,26 +44,61 @@ uninitialized (leading `-`).
 
 **Files:** none (working tree setup)
 
-- [ ] **Step 1: Init the two straightforward submodules**
+**Corrected after execution.** The original version of this task said to run
+`git submodule update --init --recursive` for the first two. That does not
+work: `ffxiv-datamining` dies partway through with
+`RPC failed; curl 56 Recv failure: Connection reset by peer`, the abort is
+command-wide, and `classjob-icons` is then left registered but containing zero
+files while `git submodule status` still reports it clean. Initialize every
+module by `--reference` instead.
+
+- [ ] **Step 1: Init all top-level submodules by reference**
 
 ```bash
-git submodule update --init --recursive xiv-gen/ffxiv-datamining ultros/static/classjob-icons
+MAIN=/Users/aaronkarras/code/ffxiv-playground
+git submodule update --init --reference $MAIN/.git/modules/ultros-frontend/universalis-assets ultros-frontend/ultros-xiv-icons/universalis-assets
+git submodule update --init --reference $MAIN/.git/modules/xiv-gen/ffxiv-datamining xiv-gen/ffxiv-datamining
+git submodule update --init --force ultros/static/classjob-icons
 ```
 
-- [ ] **Step 2: Init universalis-assets against the main clone**
-
-Do **not** use `--depth=1` here. The shallow fetch does not contain the pinned
-commit; git aborts with `fatal: Unable to find current revision in submodule
-path ...`, leaves the directory empty, and leaves a broken per-worktree gitdir
-that makes every later attempt fail until it is removed.
+Do **not** use `--depth=1`. The shallow fetch does not contain the pinned
+commit for `universalis-assets`; git aborts, leaves the directory empty, and
+leaves a broken per-worktree gitdir that makes every later attempt fail until
+it is removed:
 
 ```bash
-rm -rf /Users/aaronkarras/code/ffxiv-playground/.git/worktrees/item-view-page-layout-8cfce2/modules/ultros-frontend/universalis-assets
+rm -rf $MAIN/.git/worktrees/item-view-page-layout-8cfce2/modules/ultros-frontend/universalis-assets
 rm -f ultros-frontend/ultros-xiv-icons/universalis-assets/.git
-git submodule update --init --reference /Users/aaronkarras/code/ffxiv-playground/.git/modules/ultros-frontend/universalis-assets ultros-frontend/ultros-xiv-icons/universalis-assets
 ```
 
 Never delete `.git/modules/...` itself — that is the main checkout's shared clone.
+
+- [ ] **Step 2: Init the nested cn/ko/tc submodules**
+
+`csv/cn`, `csv/ko` and `csv/tc` are nested submodules of `ffxiv-datamining`, so
+the step above does not reach them and the build panics on `cn/Item.csv`.
+
+```bash
+M=$MAIN/.git/modules/xiv-gen/ffxiv-datamining/modules/csv
+for s in cn ko tc; do
+  git -C xiv-gen/ffxiv-datamining submodule update --init --reference "$M/$s" "csv/$s"
+done
+```
+
+- [ ] **Step 2b: Verify, don't trust exit codes**
+
+Several of these fail silently, and `git submodule status` reports an empty
+checkout as clean.
+
+```bash
+ls xiv-gen/ffxiv-datamining/csv/{en,cn,tc}/Item.csv xiv-gen/ffxiv-datamining/csv/ko/csv/Item.csv
+ls ultros-frontend/ultros-xiv-icons/universalis-assets/icon2x | head -1
+ls ultros/static/classjob-icons | wc -l   # must be non-zero
+git status --short                        # no submodule may show as modified
+```
+
+`csv/ko` nests one level deeper than its siblings (`csv/ko/csv/Item.csv`) — that
+is the ko repo's own layout, not a broken checkout.
 
 - [ ] **Step 3: Verify the build works**
 
