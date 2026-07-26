@@ -147,6 +147,17 @@ pub fn scene_to_svg(scene: &Scene) -> String {
                 push_fill(&mut out, fill);
                 out.push_str("/>");
             }
+            Node::Path { d, fill, stroke } => {
+                let _ = write!(out, r#"<path d="{d}""#);
+                match fill {
+                    Some(fill) => push_fill(&mut out, fill),
+                    None => out.push_str(r#" fill="none""#),
+                }
+                if let Some(stroke) = stroke {
+                    push_stroke(&mut out, stroke);
+                }
+                out.push_str("/>");
+            }
             Node::Circle { cx, cy, r, fill } => {
                 let _ = write!(out, r#"<circle cx="{cx:.1}" cy="{cy:.1}" r="{r:.1}""#);
                 push_fill(&mut out, fill);
@@ -277,6 +288,35 @@ mod tests {
         assert!(svg.contains(r#"text-anchor="middle""#));
         assert!(svg.contains(r#"font-weight="bold""#));
         assert!(svg.contains(r#"xlink:href="data:image/png;base64,AAAA""#));
+    }
+
+    #[test]
+    fn serializes_path_with_fill_and_stroke() {
+        let scene = Scene {
+            width: 10.0,
+            height: 10.0,
+            background: None,
+            font_family: "sans-serif".to_string(),
+            nodes: vec![
+                Node::Path {
+                    d: "M0 0L5 5".to_string(),
+                    fill: Some(Color::rgb(1, 2, 3).with_alpha(0.5)),
+                    stroke: None,
+                },
+                Node::Path {
+                    d: "M1 1L2 2".to_string(),
+                    fill: None,
+                    stroke: Some(Stroke {
+                        color: Color::rgb(4, 5, 6),
+                        width: 2.0,
+                        dash: None,
+                    }),
+                },
+            ],
+        };
+        let svg = scene_to_svg(&scene);
+        assert!(svg.contains(r##"<path d="M0 0L5 5" fill="#010203" fill-opacity="0.500""##));
+        assert!(svg.contains(r##"<path d="M1 1L2 2" fill="none" stroke="#040506""##));
     }
 
     #[test]
