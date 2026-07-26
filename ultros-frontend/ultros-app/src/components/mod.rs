@@ -56,6 +56,7 @@ pub mod reorderable_list;
 pub mod sale_history_table;
 pub mod sales_cadence_badge;
 pub mod search_box;
+pub mod section_nav;
 pub mod select;
 pub mod side_nav;
 pub mod skeleton;

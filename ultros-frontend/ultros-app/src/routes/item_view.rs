@@ -10,7 +10,8 @@ use crate::components::world_name::WorldName;
 use crate::components::{
     ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_panel::ListingsPanel,
     meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
+    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
+    toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -272,7 +273,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
 
     view! {
-        <div class="sticky top-0 z-10 backdrop-blur bg-[color:color-mix(in_srgb,var(--color-background)_85%,transparent)] border-y border-[color:var(--color-outline)]">
+        <div class="border-y border-[color:var(--color-outline)]">
             <div class="w-full px-3 sm:px-4">
                 <div class="flex flex-col gap-2 py-2">
                         {move || {
@@ -1624,8 +1625,8 @@ fn ListingsContent(
     });
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
-            <DecisionHeader listing_resource filtered_listings world />
-            <div class="flex flex-col gap-4 sm:gap-6">
+            <div id="overview" class="scroll-mt-16">
+                <DecisionHeader listing_resource filtered_listings world />
                 <MarketStatsPanel
                     listing_resource
                     filtered_listings
@@ -1633,11 +1634,11 @@ fn ListingsContent(
                     realtime_status=realtime_status.into()
                     last_update_at=last_update_at.into()
                 />
-                <WorldMarketShare listing_resource filtered_listings world />
-                <div id="history">
-                    <ChartWrapper listing_resource filtered_listings item_id world />
-                </div>
             </div>
+            <div id="history" class="scroll-mt-16 mt-4 sm:mt-6">
+                <ChartWrapper listing_resource filtered_listings item_id world />
+            </div>
+            <WorldMarketShare listing_resource filtered_listings world />
 
             <div id="listings" class="scroll-mt-16 mt-6">
                 <ListingsPanel
@@ -1868,9 +1869,15 @@ pub fn ItemView() -> impl IntoView {
 
             <WorldMenu world_name=world item_id />
 
+            <SectionNav>
+                <span class="text-sm font-bold text-brand-200 whitespace-nowrap">
+                    {move || Url::unescape(&world())}
+                </span>
+            </SectionNav>
+
             <div class="main-content px-0 sm:px-4">
                 <ListingsContent item_id world excluded_worlds />
-                <div class="mt-6">
+                <div id="related" class="scroll-mt-16 mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>
             </div>
