@@ -10,20 +10,20 @@
 ## 2026-06-25 - Avoid heap allocations when parsing substrings
 **Learning:** We can write a zero-allocation string search algorithm that performs identical substring matching without the need to allocate intermediate `String` instances with `format!()` in hot parsing paths.
 **Action:** When working on parsing logic (e.g. FFXIV tags parsing), prefer manual string searches using `find` and `starts_with` rather than creating `String` using `format!()` for simple matching tasks.
-## 2024-11-20 - Memoization Over-Allocation in `BuyingView`
+## 2026-07-26 - Memoization Over-Allocation in `BuyingView`
 
 **Learning:**
 In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a `Memo` creates a new array of grouped listings on every update. Previously, the code iterated over the input array using `items.clone()`, making an unnecessary copy of a large vector of items and their associated listings every time the memo ran (which could be frequently due to reactive signal updates like `excluded_datacenters`).
 
 **Action:**
 I removed the `clone()` on the `items` vector in the outer loop. Since we only need an iterative pass to calculate required listings, we can use `items.iter()` and then only `clone()` the individual inner `listings` vector (which needs to be cloned to be sorted). In addition, using `sort_unstable_by_key` instead of `sort_by_key` helps since stable sort allocates when it doesn't need to.
-## 2024-11-20 - Filter before sorting to reduce O(N log N) work
+## 2026-07-26 - Filter before sorting to reduce O(N log N) work
 **Learning:**
 In `ultros-frontend/ultros-app/src/components/list/list_summary.rs`'s `get_cheapest_listing`, we were sorting a large array of `ActiveListing`s by price *before* filtering them by location and HQ constraints. Since sorting is `O(N log N)` and `N` can be very large when fetching all listings for an item across the region, filtering out ~90% of those listings *first* massively cuts down on the work required to sort them, yielding big CPU savings during hot render loops. Additionally, `sort_unstable_by_key` provides further wins over `sort_by_key` by avoiding unneeded allocations.
 
 **Action:**
 Always make sure to filter collections as small as possible *before* running expensive operations on them like `sort_by_key` or `sort_by`, especially when the filtering criteria are strict. Also, prefer `sort_unstable_by_key` when possible over `sort_by_key` to save allocations.
-## 2024-11-20 - Finding Medians in O(N) instead of O(N log N)
+## 2026-07-26 - Finding Medians in O(N) instead of O(N log N)
 **Learning:**
 In `ultros-frontend/ultros-app/src/components/sale_history_table.rs`, we computed the median unit price and median stack size by completely sorting the arrays (`sort_unstable()`) and taking the middle element. Since finding a median is a classic selection problem, fully sorting the array does O(N log N) work when only O(N) is required. Rust's slice API provides `select_nth_unstable`, which rearranges the slice so that the element at the given index is the one that would be there if the slice were fully sorted, doing it in `O(N)` average time.
 **Action:**
@@ -38,8 +38,14 @@ When fetching median values, use `select_nth_unstable` (handling odds/even slice
 In `ultros/src/analyzer_service.rs` we were sorting an array of prices to find the median price (`prices.sort_unstable()`). This does $O(N \log N)$ work, but we only need to pick the median element. Finding an element at a given order index can be performed in $O(N)$ time by using `select_nth_unstable()`.
 **Action:**
 When computing the median of an array in Rust, always prefer `select_nth_unstable(len / 2)` over fully sorting it with `sort_unstable()` to reduce time complexity to linear time.
-## 2024-11-20 - In-place filtering and truncation for Top N lists
+## 2026-07-26 - In-place filtering and truncation for Top N lists
 **Learning:**
 In `ultros/src/discord/ffxiv/helpers.rs`, `top_n_cheapest_listings` originally sorted the entire vector of listings by price using `sort_by_key`, then used `.into_iter().filter(...).take(limit).collect()` to return the top results. This caused unnecessary work by sorting the entire array including elements that were destined to be filtered out, and then performed memory allocations to collect the final vector.
 **Action:**
 When returning the top N items from a collection, apply filtering *before* sorting using `.retain()` to significantly reduce the size of $N$ for the $O(N \log N)$ sorting step. Then, use `sort_unstable_by_key` to sort the remaining elements in place without allocating extra memory. Finally, use `.truncate(limit)` to slice the top N items in place instead of creating a new Vector iterator chain with `.take().collect()`.
+## 2026-07-26 - Filter before sorting to reduce O(N log N) work
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a list of active listings was sorted using `sort_unstable_by_key` before being filtered for HQ constraints and excluded datacenters. Because sorting is an `O(N log N)` operation and filtering is an `O(N)` operation, filtering the array *before* sorting reduces the N elements that must be processed, yielding significant CPU savings during reactive view updates, similar to an optimization already logged in `list_summary.rs`.
+
+**Action:**
+When fetching and filtering lists, always apply strict filters *before* expensive operations such as `sort_by_key` or `sort_by` to save allocations and CPU cycles.
