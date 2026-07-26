@@ -7,6 +7,7 @@ use crate::components::related_items::is_shard_item;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{SalesStats, analyze_sales, roi_badge_class},
@@ -129,7 +130,10 @@ fn RecipeAnalyzerTable(
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (use_subcrafts, set_use_subcrafts) = query_signal::<bool>("subcrafts");
-    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
+    // Seeded by RecipeAnalyzer so a first-time visitor isn't shown recipes
+    // whose output sells once a month. Same velocity floor as the analyzer's
+    // 1d default.
+    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
     let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
@@ -713,6 +717,10 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in RecipeAnalyzerTable: that lives inside the
+    // Suspense closure and remounts whenever its resources change, which would
+    // keep undoing a filter the user had cleared.
+    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 

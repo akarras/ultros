@@ -36,9 +36,22 @@ scope. No filter logic changes; no new locale keys.
 ### Seeding the default
 
 New module `ultros-frontend/ultros-app/src/query_defaults.rs`, a sibling of
-`math.rs` and `freshness.rs`, exposing one helper. On mount, if the query
-parameter is absent from the URL, the helper writes the default value. Each of
-the four routes calls it once, next to its existing `query_signal` declaration.
+`math.rs` and `freshness.rs`, exposing two helpers:
+
+- `filter_query_signal(key)` — a `query_signal` carrying the nav options below.
+  Used wherever a filter is read or written.
+- `seed_query_default(key, default)` — writes `default` into the URL if `key` is
+  absent when it mounts.
+
+**Seeding belongs to the route component, not the filter's own component.** The
+filter toolbars live in `AnalyzerTable`, `VendorResaleTable`,
+`RecipeAnalyzerTable`, and `FCCraftingAnalyzerTable`, all of which are rendered
+inside a `Suspense` closure that re-runs whenever its resources change — a world
+switch, or a live market refetch on the analyzer pages. Seeding there would
+remount and re-seed on every refresh, silently reinstating a filter the user had
+just cleared. `seed_query_default` is therefore called from `AnalyzerWorldView`,
+`VendorWorldView`, `RecipeAnalyzer`, and `FCCraftingAnalyzer`, which mount once
+per navigation — the granularity a default wants.
 
 Everything downstream is untouched. The input box, the `Next Sale ≤ 1d` chip and
 its X button, and Clear All all keep operating on the same query signal, and the

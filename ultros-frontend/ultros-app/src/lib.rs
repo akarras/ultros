@@ -6,6 +6,7 @@ pub(crate) mod error;
 pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) mod math;
+pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
 pub(crate) mod ws;

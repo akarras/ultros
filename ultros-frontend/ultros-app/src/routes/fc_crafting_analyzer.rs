@@ -8,6 +8,7 @@ use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -212,7 +213,10 @@ fn FCCraftingAnalyzerTable(
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
+    // Seeded by FCCraftingAnalyzer so a first-time visitor isn't shown recipes
+    // whose output sells once a month. Same velocity floor as the analyzer's
+    // 1d default.
+    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
     let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
     let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
     let cookies = use_context::<Cookies>().unwrap();
@@ -613,6 +617,10 @@ fn FCCraftingAnalyzerTable(
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in FCCraftingAnalyzerTable: that lives inside the
+    // Suspense closure and remounts whenever its resources change, which would
+    // keep undoing a filter the user had cleared.
+    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 
