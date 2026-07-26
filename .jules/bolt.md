@@ -43,3 +43,9 @@ When computing the median of an array in Rust, always prefer `select_nth_unstabl
 In `ultros/src/discord/ffxiv/helpers.rs`, `top_n_cheapest_listings` originally sorted the entire vector of listings by price using `sort_by_key`, then used `.into_iter().filter(...).take(limit).collect()` to return the top results. This caused unnecessary work by sorting the entire array including elements that were destined to be filtered out, and then performed memory allocations to collect the final vector.
 **Action:**
 When returning the top N items from a collection, apply filtering *before* sorting using `.retain()` to significantly reduce the size of $N$ for the $O(N \log N)$ sorting step. Then, use `sort_unstable_by_key` to sort the remaining elements in place without allocating extra memory. Finally, use `.truncate(limit)` to slice the top N items in place instead of creating a new Vector iterator chain with `.take().collect()`.
+## 2024-11-20 - Filter before sorting to reduce O(N log N) work
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a list of active listings was sorted using `sort_unstable_by_key` before being filtered for HQ constraints and excluded datacenters. Because sorting is an `O(N log N)` operation and filtering is an `O(N)` operation, filtering the array *before* sorting reduces the N elements that must be processed, yielding significant CPU savings during reactive view updates, similar to an optimization already logged in `list_summary.rs`.
+
+**Action:**
+When fetching and filtering lists, always apply strict filters *before* expensive operations such as `sort_by_key` or `sort_by` to save allocations and CPU cycles.

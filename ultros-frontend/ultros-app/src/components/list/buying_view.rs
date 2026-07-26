@@ -56,19 +56,20 @@ pub fn BuyingView(
                     continue;
                 }
 
-                let mut sorted_listings: Vec<_> = listings.iter().collect();
+                let mut sorted_listings: Vec<_> = listings
+                    .iter()
+                    .filter(|listing| {
+                        !matches!(list_item.hq, Some(hq) if listing.hq != hq)
+                            && !listing.is_datacenter_excluded(excluded, &world_data_1)
+                    })
+                    .collect();
+                // ⚡ Bolt: Optimization: Filter before sorting to reduce O(N log N) work.
                 sorted_listings.sort_unstable_by_key(|l| l.price_per_unit);
+
                 let mut remaining = needed;
                 for listing in sorted_listings {
                     if remaining <= 0 {
                         break;
-                    }
-                    if matches!(list_item.hq, Some(hq) if listing.hq != hq) {
-                        continue;
-                    }
-
-                    if listing.is_datacenter_excluded(excluded, &world_data_1) {
-                        continue;
                     }
 
                     let buy_quantity = remaining.min(listing.quantity);
