@@ -1509,5 +1509,14 @@
     "groups_member_added": "Member added",
     "groups_member_removed": "Member removed",
     "groups_group_created": "Group created",
-    "groups_group_deleted": "Group deleted"
+    "groups_group_deleted": "Group deleted",
+    "item_view_nav_aria": "Jump to section",
+    "item_view_nav_overview": "Overview",
+    "item_view_nav_listings": "Listings",
+    "item_view_nav_history": "History",
+    "item_view_nav_sources": "Sources",
+    "item_view_nav_related": "Related",
+    "item_view_listings_count": "{{count}} listings",
+    "item_view_quality_filter_aria": "Filter listings by quality",
+    "item_view_quality_all": "All"
 }
