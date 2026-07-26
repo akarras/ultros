@@ -186,6 +186,30 @@ mod tests {
     }
 
     #[test]
+    fn renders_path_nodes_with_stroke() {
+        let scene = Scene {
+            width: 10.0,
+            height: 10.0,
+            background: None,
+            font_family: "sans-serif".to_string(),
+            nodes: vec![Node::Path {
+                d: "M1 1L2 2".to_string(),
+                fill: None,
+                stroke: Some(Stroke {
+                    color: Color::rgb(4, 5, 6),
+                    width: 2.0,
+                    dash: Some((2.0, 4.0)),
+                }),
+            }],
+        };
+        let html = scene_view(&scene).to_html();
+        assert!(html.contains(r#"d="M1 1L2 2""#), "{html}");
+        assert!(html.contains("stroke=\"#040506\""), "{html}");
+        assert!(html.contains("stroke-width=\"2.0\""), "{html}");
+        assert!(html.contains("stroke-dasharray=\"2.0 4.0\""), "{html}");
+    }
+
+    #[test]
     fn renders_scene_nodes_as_svg_markup() {
         let scene = Scene {
             width: 100.0,

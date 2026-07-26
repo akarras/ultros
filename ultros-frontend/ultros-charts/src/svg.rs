@@ -4,9 +4,10 @@
 //! usvg supports: no CSS classes, no `rgba()` colors (use `*-opacity`
 //! attributes), `xlink:href` for images.
 //!
-//! **Attribute escaping:** attribute values (`font_family`, `Image::href`) are
-//! not escaped — callers must supply attribute-safe values (today they're
-//! internal constants / data URIs).
+//! **Attribute escaping:** attribute values (`font_family`, `Image::href`,
+//! `Node::Path::d`) are not escaped — callers must supply attribute-safe
+//! values (today they're internal constants / data URIs / machine-generated
+//! path data).
 
 use std::fmt::Write;
 
@@ -312,11 +313,23 @@ mod tests {
                         dash: None,
                     }),
                 },
+                Node::Path {
+                    d: "M3 3L4 4".to_string(),
+                    fill: Some(Color::rgb(7, 8, 9)),
+                    stroke: Some(Stroke {
+                        color: Color::rgb(10, 11, 12),
+                        width: 1.0,
+                        dash: None,
+                    }),
+                },
             ],
         };
         let svg = scene_to_svg(&scene);
         assert!(svg.contains(r##"<path d="M0 0L5 5" fill="#010203" fill-opacity="0.500""##));
         assert!(svg.contains(r##"<path d="M1 1L2 2" fill="none" stroke="#040506""##));
+        assert!(svg.contains(
+            r##"<path d="M3 3L4 4" fill="#070809" stroke="#0a0b0c" stroke-width="1.00""##
+        ));
     }
 
     #[test]
