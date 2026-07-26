@@ -14,6 +14,7 @@ pub mod item_explorer_roles;
 pub mod item_explorer_scope;
 pub mod item_explorer_toolbar;
 pub mod item_view;
+pub mod item_view_scope;
 pub mod job_set_detail;
 pub mod leve_analyzer;
 pub mod list_view;

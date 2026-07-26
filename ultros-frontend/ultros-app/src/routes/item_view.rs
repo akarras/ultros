@@ -18,6 +18,7 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
+use crate::routes::item_view_scope::item_href;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
@@ -109,6 +110,18 @@ fn WorldButton(
 ) -> impl IntoView {
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
+    let label = world_name.clone();
+    let query = use_query_map();
+    // Only the params this route actually owns are carried forward, so a
+    // stale or hostile query key can't be reflected back into a link.
+    let search = Signal::derive(move || {
+        query.with(|query| match query.get("exclude-worlds") {
+            Some(worlds) if !worlds.is_empty() => {
+                format!("exclude-worlds={}", Url::escape(&worlds))
+            }
+            _ => String::new(),
+        })
+    });
     let world_2 = world_name.clone();
     let world_3 = world_name.clone();
     let is_home_world = Signal::derive({
@@ -163,7 +176,7 @@ fn WorldButton(
                     .join(" ")
             }
                 attr:aria-current=move || is_selected.get().then_some("page")
-                href=format!("/item/{}/{item_id}", Url::escape(&world_name))
+                href=move || search.with(|search| item_href(&world_name, item_id, search))
             >
                 {move || {
                     is_home_world
@@ -175,7 +188,7 @@ fn WorldButton(
                             }
                         })
                 }}
-                {world_name}
+                {label}
             </A>
     }.into_any()
 }
