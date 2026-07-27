@@ -16,10 +16,18 @@ pub enum FreshnessTone {
 impl FreshnessTone {
     pub fn css_classes(&self) -> &'static str {
         match self {
-            Self::Success => "text-emerald-300 border-emerald-400/40 bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]",
-            Self::Warning => "text-amber-300 border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]",
-            Self::Error => "text-red-300 border-red-400/40 bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]",
-            Self::Neutral => "text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]",
+            Self::Success => {
+                "text-emerald-300 border-emerald-400/40 bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]"
+            }
+            Self::Warning => {
+                "text-amber-300 border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
+            }
+            Self::Error => {
+                "text-red-300 border-red-400/40 bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]"
+            }
+            Self::Neutral => {
+                "text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+            }
         }
     }
 }
