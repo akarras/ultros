@@ -31,13 +31,31 @@ impl UltrosDb {
     #[instrument(skip(self, sales))]
     pub async fn update_sales(
         &self,
-        mut sales: Vec<SaleView>,
+        sales: Vec<SaleView>,
         item_id: ItemId,
         world_id: WorldId,
     ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
         let instant = Instant::now();
-        use sale_history::*;
+        let recorded_sales = self
+            .insert_unrecorded_sales(sales, item_id, world_id)
+            .await?;
+        // Only claim the item as ingested once the sales have actually landed.
+        // `listing_last_updated` is the marker the catch-up service diffs against
+        // Universalis' recently-updated feed, so bumping it ahead of a write that
+        // then fails makes the resulting gap invisible to every later catch-up
+        // pass -- the item looks fresher than their upload and is never retried.
         self.set_last_updated(world_id, item_id).await?;
+        histogram!("ultrso_db_update_sales_duration_seconds").record(instant.elapsed());
+        Ok(recorded_sales)
+    }
+
+    async fn insert_unrecorded_sales(
+        &self,
+        mut sales: Vec<SaleView>,
+        item_id: ItemId,
+        world_id: WorldId,
+    ) -> Result<Vec<(SaleHistory, UnknownCharacter)>> {
+        use sale_history::*;
         // check if the sales have already been logged
         if sales.is_empty() {
             return Ok(vec![]);
@@ -102,7 +120,6 @@ impl UltrosDb {
         }))
         .exec_without_returning(&self.db)
         .await?;
-        histogram!("ultrso_db_update_sales_duration_seconds").record(instant.elapsed());
         Ok(recorded_sales)
     }
 
