@@ -1,4 +1,4 @@
-use crate::freshness::{FreshnessTone, get_freshness_verdict_display};
+use crate::freshness::get_freshness_verdict_display;
 use crate::i18n::*;
 use chrono::Duration;
 use leptos::prelude::*;
@@ -16,31 +16,10 @@ pub fn FreshnessBadge(
     view! {
         <span
             title=display.tooltip(i18n)
-            class="inline-flex items-center py-0.5 rounded-full text-xs font-semibold border"
-            class=("px-1.5", move || compact)
-            class=("px-2", move || !compact)
-            class=("text-emerald-300", move || display.tone == FreshnessTone::Success)
-            class=("border-emerald-400/40", move || display.tone == FreshnessTone::Success)
-            class=("bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]", move || {
-                display.tone == FreshnessTone::Success
-            })
-            class=("text-amber-300", move || display.tone == FreshnessTone::Warning)
-            class=("border-amber-400/40", move || display.tone == FreshnessTone::Warning)
-            class=("bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]", move || {
-                display.tone == FreshnessTone::Warning
-            })
-            class=("text-red-300", move || display.tone == FreshnessTone::Error)
-            class=("border-red-400/40", move || display.tone == FreshnessTone::Error)
-            class=("bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]", move || {
-                display.tone == FreshnessTone::Error
-            })
-            class=("text-[color:var(--color-text)]", move || display.tone == FreshnessTone::Neutral)
-            class=("border-[color:var(--color-outline)]", move || {
-                display.tone == FreshnessTone::Neutral
-            })
-            class=("bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]", move || {
-                display.tone == FreshnessTone::Neutral
-            })
+            class=move || {
+                let padding = if compact { "px-1.5" } else { "px-2" };
+                format!("inline-flex items-center py-0.5 rounded-full text-xs font-semibold border {} {}", padding, display.tone.css_classes())
+            }
         >
             {display.format_label(i18n)}
         </span>
