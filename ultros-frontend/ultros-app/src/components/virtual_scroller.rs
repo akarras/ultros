@@ -562,6 +562,17 @@ where
                             .into_any()
                     }
                 })}
+            // Row area. `overflow-y: hidden` forces the visible x-axis to
+            // compute to `auto`, so this box is also the list's horizontal
+            // scrollport (see `list_ref` / `row_min_width`).
+            //
+            // Note for anyone tidying a caller's header later: this box is as
+            // tall as the *whole* virtual list, so its horizontal scrollbar
+            // sits at the bottom of all of it — hundreds of thousands of px
+            // down, i.e. never on screen. It scrolls by wheel, trackpad and
+            // touch, but a scrollbar on the caller's sticky header is the only
+            // affordance a user can actually see. Removing that header
+            // scrollbar makes off-screen columns unreachable in practice.
             <div
                 node_ref=list
                 class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"

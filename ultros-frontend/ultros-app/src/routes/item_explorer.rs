@@ -549,7 +549,11 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         <Suspense fallback=move || view! { <div class="flex justify-center p-10"><Loading /></div> }>
         <div class="flex flex-col gap-6">
             // Sort and Direction Controls - Floating / Sticky Bar
-            <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-[72px] lg:top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
+            // `top-4` at every width: the old `top-[72px]` below `lg` was an
+            // offset for chrome that is not there — the app shell's top bar
+            // scrolls away with the page — so it pinned the toolbar with a
+            // 72px strip of content scrolling above it.
+            <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
                 <div class="flex flex-row flex-wrap gap-2 items-center">
                     <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">{t!(i18n, item_explorer_sort_by)}</span>
                     <QueryButton

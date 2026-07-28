@@ -1567,6 +1567,15 @@ fn AnalyzerTable(
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
+                        // The header row's own height. The rendered element is
+                        // up to ~15px taller, because `.analyzer-hscroll`
+                        // reserves a horizontal scrollbar, but that height
+                        // depends on the platform's scrollbar and on whether
+                        // the grid currently overflows — neither of which is
+                        // knowable here. The row math only uses this to offset
+                        // the scroll position, and `overscan=8` (320px) covers
+                        // the error many times over, so the content height is
+                        // deliberately the value passed.
                         header_height=56.0
                         variable_height=false
                         visible_range=visible_range
