@@ -561,6 +561,14 @@ pub struct PriceSeriesRow {
 /// world list rather than joining a lookup table — the world set is small
 /// (at most a region's worth) and a join would take this query off the
 /// `sales` primary-key prefix.
+///
+/// The `transform()` default of `0` is unreachable *only* because the same
+/// `world_to_group` list also builds the `world_id IN (…)` filter, so every
+/// row reaching the transform has a mapped key. Nothing enforces that
+/// structurally — if a caller ever narrows the filter without narrowing this
+/// map, unmapped worlds collapse into a bogus series with id 0. Callers must
+/// also pass distinct world ids: a duplicate key makes `transform()`'s
+/// tie-breaking unspecified.
 fn group_expr(group: SeriesGroup, world_to_group: &[(i32, i32)]) -> String {
     if group == SeriesGroup::World {
         return "world_id".to_string();
