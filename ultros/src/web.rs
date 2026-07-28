@@ -311,10 +311,15 @@ struct PriceSeriesQuery {
 /// than a default — which is the entire point of this endpoint.
 const RAW_SALE_LIMIT: u64 = 2_000;
 
-/// Hard ceiling on buckets across all series in one response. Exceeding it
+/// Target ceiling on buckets across all series in one response. Exceeding it
 /// widens the bucket a ladder step and retries rather than truncating —
 /// truncation would silently drop the oldest data, which is the data the
-/// caller asked for.
+/// caller asked for. This is enforced only while the widening ladder has
+/// room: once `widen_bucket` can't widen any further (the widest step is
+/// already in use), the loop ships the oversized response as-is instead of
+/// truncating or erroring. Reaching that point needs a pathological request
+/// — decades of range fanned out across many series — but when it happens,
+/// a large response beats 400ing a legitimate request.
 const MAX_BUCKETS: usize = 20_000;
 
 /// Map every world in scope to its series key at `group`.
@@ -407,7 +412,6 @@ fn fold_price_series_rows(rows: &[PriceSeriesRow]) -> Vec<PriceSeriesEntry> {
 /// (`ultros_clickhouse::queries::price_series`); calls into that function are
 /// fully qualified to disambiguate.
 async fn price_series(
-    State(db): State<UltrosDb>,
     State(world_cache): State<Arc<WorldCache>>,
     State(ch): State<ClickHouseClient>,
     Path((world, item_id)): Path<(String, i32)>,
@@ -482,21 +486,38 @@ async fn price_series(
     let series = fold_price_series_rows(&rows);
 
     let raw = if total_sales > 0 && total_sales <= RAW_SALE_LIMIT {
-        let sales = db
-            .get_compact_sale_history(worlds.iter().copied(), item_id, RAW_SALE_LIMIT)
-            .await
-            .inspect_err(
-                |e| tracing::error!(error = ?e, "Error getting compact sale history for price_series"),
-            )?;
+        // Sourced from ClickHouse, not `UltrosDb::get_compact_sale_history`:
+        // that Postgres query has no date bound (most recent `limit` sales
+        // per world *as of now*), so filtering it to an arbitrary [from, to)
+        // window client-side silently comes back empty whenever `to` isn't
+        // near "now" — exactly what this endpoint's `from`/`to` query params
+        // support. `raw_sales` uses the identical WHERE shape as the bucket
+        // query above (same item/worlds/window/hq), so the dots can never
+        // disagree with the buckets about what's in the window. This also
+        // means `hq` now filters raw sales too, matching the buckets (it
+        // previously didn't).
+        let sales = ultros_clickhouse::queries::raw_sales(
+            &ch,
+            item_id,
+            &worlds,
+            hq,
+            from,
+            to,
+            RAW_SALE_LIMIT,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = ?e, item_id, "price_series raw_sales CH query failed");
+            anyhow::anyhow!("ClickHouse raw_sales query failed: {e}")
+        })?;
         Some(
             sales
                 .into_iter()
-                .filter(|s| s.sold_date >= from.naive_utc() && s.sold_date < to.naive_utc())
                 .map(|s| CompactSale {
-                    quantity: s.quantity,
-                    price_per_item: s.price_per_item,
-                    hq: s.hq,
-                    sold_date: s.sold_date,
+                    quantity: s.quantity as i32,
+                    price_per_item: s.price_per_item as i32,
+                    hq: s.hq != 0,
+                    sold_date: s.sold_date.naive_utc(),
                     world_id: s.world_id,
                 })
                 .collect(),

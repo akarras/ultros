@@ -206,3 +206,52 @@ async fn hq_filter_narrows_the_result() {
     assert_eq!(rows[0].sales, 1);
     assert_eq!(rows[0].open, 200);
 }
+
+/// Regression guard for the bug where the price_series web handler fetched
+/// raw sales from Postgres (no date bound, filtered client-side) instead of
+/// from ClickHouse: a window that doesn't reach "now" silently came back
+/// empty even though sales existed in range. `raw_sales` sources from the
+/// same `sales` table as `price_series`, with the same `WHERE` shape, so
+/// this asserts it actually respects `[from, to)` instead of returning
+/// everything (or nothing).
+#[tokio::test]
+async fn raw_sales_respects_the_requested_window() {
+    if !integration_enabled() {
+        eprintln!("skipped: set ULTROS_CH_INTEGRATION=1 to run");
+        return;
+    }
+    load_env();
+    let ch = ClickHouseClient::from_env();
+    ch.migrate().await.expect("migrate");
+    seed(&ch).await;
+
+    // Fixture rows are at offsets 0, 1_800, 3_600, 7_200. A window of
+    // [T0 + 1_800, T0 + 7_200) should include the offset-1_800 and
+    // offset-3_600 rows but exclude offset-0 (before `from`) and offset-7_200
+    // (at `to`, which is exclusive).
+    let rows = queries::raw_sales(
+        &ch,
+        FIXTURE_ITEM,
+        &[1, 2],
+        HqFilter::Any,
+        ts(T0 + 1_800),
+        ts(T0 + 7_200),
+        2_000,
+    )
+    .await
+    .expect("query");
+
+    assert_eq!(rows.len(), 2, "only the two in-window rows come back");
+    assert!(
+        rows.iter()
+            .all(|r| r.sold_date >= ts(T0 + 1_800) && r.sold_date < ts(T0 + 7_200)),
+        "every row falls inside [from, to)"
+    );
+    let mut prices: Vec<u32> = rows.iter().map(|r| r.price_per_item).collect();
+    prices.sort_unstable();
+    assert_eq!(
+        prices,
+        vec![300, 500],
+        "the offset-0 and offset-7_200 rows are excluded"
+    );
+}

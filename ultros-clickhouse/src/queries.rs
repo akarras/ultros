@@ -594,6 +594,30 @@ fn hq_predicate(hq: HqFilter) -> &'static str {
     }
 }
 
+/// The `WHERE` clause shared by [`price_series`] and [`raw_sales`].
+///
+/// Both queries scope `sales` to the same item, world set, half-open
+/// `[from, to)` window, and HQ filter. Building that shape in one place
+/// (rather than duplicating it in two `format!`s) makes the two queries
+/// agree on "what's in the window" by construction — the whole point of
+/// sourcing raw sales from ClickHouse instead of a separately-filtered
+/// Postgres query. `worlds` and `hq_filter` are pre-rendered fragments
+/// (`hq_filter` comes from [`hq_predicate`]) so this stays a pure string
+/// assembly, same as `group_expr`/`hq_predicate` above.
+fn window_predicate(
+    item_id: i32,
+    worlds: &str,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    hq_filter: &str,
+) -> String {
+    format!(
+        "item_id = {item_id} AND world_id IN ({worlds}) AND sold_date >= toDateTime({from_ts}) AND sold_date < toDateTime({to_ts}){hq_filter}",
+        from_ts = from.timestamp(),
+        to_ts = to.timestamp(),
+    )
+}
+
 /// Aggregate `sales` into fixed-width buckets for one item.
 ///
 /// `world_to_group` maps every world in scope to its series key at `group`;
@@ -636,6 +660,7 @@ pub async fn price_series(
         .join(",");
     let key = group_expr(group, world_to_group);
     let hq_filter = hq_predicate(hq);
+    let predicate = window_predicate(item_id, &worlds, from, to, hq_filter);
 
     let sql = format!(
         r#"
@@ -653,15 +678,10 @@ pub async fn price_series(
             toUInt32(quantileExact(0.50)(price_per_item)) AS p50,
             toUInt32(quantileExact(0.75)(price_per_item)) AS p75
         FROM sales
-        WHERE item_id = {item_id}
-          AND world_id IN ({worlds})
-          AND sold_date >= toDateTime({from_ts})
-          AND sold_date <  toDateTime({to_ts}){hq_filter}
+        WHERE {predicate}
         GROUP BY series_id, bucket
         ORDER BY series_id, bucket
-        "#,
-        from_ts = from.timestamp(),
-        to_ts = to.timestamp(),
+        "#
     );
 
     Ok(ch
@@ -669,6 +689,76 @@ pub async fn price_series(
         .query(&sql)
         .fetch_all::<PriceSeriesRow>()
         .await?)
+}
+
+/// One raw sale row backing the price_series endpoint's zoomed-in dot
+/// overlay. Mirrors the columns [`ultros_api_types::CompactSale`] needs.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct RawSaleRow {
+    pub quantity: u16,
+    pub price_per_item: u32,
+    pub hq: u8,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub sold_date: chrono::DateTime<chrono::Utc>,
+    pub world_id: i32,
+}
+
+/// Fetch the individual raw sale rows backing the price_series endpoint's
+/// zoomed-in dot overlay, from the same `sales` table [`price_series`]
+/// aggregates — deliberately **not** from Postgres.
+///
+/// `UltrosDb::get_compact_sale_history` has no date bound: it fetches the
+/// most recent `limit` sales *as of now*, per world, merges, and truncates.
+/// Filtering that client-side to an arbitrary `[from, to)` window silently
+/// produces an empty result whenever `to` isn't close to "now" — exactly the
+/// shape of request this endpoint supports (`from` defaults to 12 years
+/// back). Sourcing both the aggregate and the raw rows from ClickHouse with
+/// the identical `WHERE` shape ([`window_predicate`], shared with
+/// [`price_series`]) makes the two agree on "what's in the window" by
+/// construction instead of by convention across two separate data stores.
+///
+/// `world_ids` is a plain list, not a `(world, group)` map: raw sales are
+/// never grouped, so there is no `transform()` here.
+///
+/// Same conventions as `price_series`: deliberately no `FINAL` (an
+/// accuracy-for-cost trade against unmerged `ReplacingMergeTree`
+/// duplicates), no join, and only numeric interpolation into the SQL string
+/// (never string/user data) — see the doc comment on `price_series` for why.
+pub async fn raw_sales(
+    ch: &ClickHouseClient,
+    item_id: i32,
+    world_ids: &[i32],
+    hq: HqFilter,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    limit: u64,
+) -> Result<Vec<RawSaleRow>, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let predicate = window_predicate(item_id, &worlds, from, to, hq_predicate(hq));
+
+    let sql = format!(
+        r#"
+        SELECT
+            quantity,
+            price_per_item,
+            hq,
+            sold_date,
+            world_id
+        FROM sales
+        WHERE {predicate}
+        ORDER BY sold_date
+        LIMIT {limit}
+        "#
+    );
+
+    Ok(ch.client().query(&sql).fetch_all::<RawSaleRow>().await?)
 }
 
 #[cfg(test)]
@@ -697,6 +787,40 @@ mod tests {
         assert_eq!(hq_predicate(HqFilter::Any), "");
         assert_eq!(hq_predicate(HqFilter::Hq), " AND hq = 1");
         assert_eq!(hq_predicate(HqFilter::Nq), " AND hq = 0");
+    }
+
+    #[test]
+    fn window_predicate_assembles_item_worlds_window_and_hq() {
+        let from = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let to = chrono::DateTime::from_timestamp(1_700_086_400, 0).unwrap();
+        assert_eq!(
+            window_predicate(42, "1,2,3", from, to, hq_predicate(HqFilter::Any)),
+            "item_id = 42 AND world_id IN (1,2,3) AND sold_date >= toDateTime(1700000000) \
+             AND sold_date < toDateTime(1700086400)"
+        );
+    }
+
+    #[test]
+    fn window_predicate_appends_the_hq_filter() {
+        let from = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        let to = chrono::DateTime::from_timestamp(1, 0).unwrap();
+        assert_eq!(
+            window_predicate(1, "1", from, to, hq_predicate(HqFilter::Hq)),
+            "item_id = 1 AND world_id IN (1) AND sold_date >= toDateTime(0) \
+             AND sold_date < toDateTime(1) AND hq = 1"
+        );
+    }
+
+    #[test]
+    fn window_predicate_is_shared_shape_between_price_series_and_raw_sales() {
+        // Pin the invariant the doc comments on `price_series` and
+        // `raw_sales` both call out: same item/worlds/window/hq produces the
+        // exact same predicate string regardless of which query calls it.
+        let from = chrono::DateTime::from_timestamp(100, 0).unwrap();
+        let to = chrono::DateTime::from_timestamp(200, 0).unwrap();
+        let a = window_predicate(7, "10,20", from, to, hq_predicate(HqFilter::Nq));
+        let b = window_predicate(7, "10,20", from, to, hq_predicate(HqFilter::Nq));
+        assert_eq!(a, b);
     }
 
     fn fixture() -> DeepScan {
