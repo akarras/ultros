@@ -313,6 +313,44 @@ a dedicated saved view per character.
 
 Sharing is copying the URL; that already works and needs no new surface.
 
+#### Built-in views
+
+The existing preset buttons become the built-in entries in the saved-views menu —
+same data shape, not user-deletable. All six move to `last-sold=1d`.
+
+| view | query |
+| --- | --- |
+| Realistic flips | `?min-buy=5000&last-sold=1d&roi=30&sort=profit-per-day` |
+| Big ticket | `?min-buy=100000&last-sold=1d&roi=20&sort=profit` |
+| Volume | `?min-buy=1000&last-sold=1d&sort=profit-per-day` |
+| 300% return | `?min-buy=1000&last-sold=1d&roi=300&profit=0&sort=profit` |
+| 500% return | `?min-buy=10000&last-sold=1d&roi=500&profit=200000` |
+| 100k profit | `?min-buy=1000&last-sold=1d&profit=100000` |
+
+Previously these ranged from 3d to 1M. A sale seven days old is weak evidence that
+anyone is buying the item today, which is the question a flip actually turns on, so
+every view now requires a sale within 24 hours.
+
+Measured against live Gilgamesh data (23,174 rows passing the troll guard), no view
+collapses under the tighter window:
+
+| view | at current window | at 1d | at 1d + velocity floor |
+| --- | --- | --- | --- |
+| Realistic flips | 1,718 (7d) | 324 | 280 |
+| Big ticket | 371 (14d) | 77 | 68 |
+| Volume | 2,025 (3d) | 701 | 623 |
+| 300% return | 1,030 (7d) | 143 | 119 |
+| 500% return | 60 (30d) | 9 | 9 |
+| 100k profit | 714 (30d) | 91 | 82 |
+
+"500% return" is the thinnest at 9 rows. That is acceptable for a rare-opportunity
+scan — the cut removes stale rows, not competitive ones — but it is the view to
+re-check if a world with lower liquidity than Gilgamesh reports an empty result.
+
+The two views that set no `sort` inherit the new default (`profit-per-day`) rather
+than the old one (`roi`). Views that filter on `roi` keep working with the ROI
+column hidden; the filter chip still renders.
+
 ### 7. Copy removal
 
 Deleted:
@@ -325,9 +363,9 @@ Deleted:
 
 Retained:
 
-- Preset buttons, reframed as seed saved-views. They are the discovery path for new
-  users and cost nothing once views exist as a concept — presets become the
-  built-in entries in the same menu.
+- Preset buttons, reframed as built-in saved views (see Built-in views above). They
+  are the discovery path for new users and cost nothing once views exist as a
+  concept.
 - `/help/flip-finder`, which is where prose belongs.
 
 ### 8. i18n
