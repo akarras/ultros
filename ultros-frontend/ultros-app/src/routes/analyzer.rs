@@ -9,6 +9,7 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::*,
+        filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -18,7 +19,6 @@ use crate::{
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         tooltip::*,
         virtual_scroller::*,
         world_picker::*,
@@ -126,7 +126,7 @@ fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> 
 }
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
-use humantime::{format_duration, parse_duration};
+use humantime::parse_duration;
 use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
@@ -485,6 +485,76 @@ fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -
     ch_rate.or(derived).map(|v| v >= min).unwrap_or(false)
 }
 
+// --- Filter registry -------------------------------------------------------
+// Each id is the `query_signal` key it drives, so the list doubles as the
+// URL contract. The sticky bar renders one chip per *set* filter and the
+// `+ Filter` menu offers the rest — no filter is ever drawn twice.
+const FILTER_PROFIT: &str = "profit";
+const FILTER_PROFIT_PER_DAY: &str = "ppd";
+const FILTER_ROI: &str = "roi";
+const FILTER_SALES: &str = "sales";
+const FILTER_VELOCITY: &str = "vel";
+const FILTER_MIN_BUY: &str = "min-buy";
+const FILTER_MAX_PRICE: &str = "max-price";
+const FILTER_NEXT_SALE: &str = "next-sale";
+const FILTER_LAST_SOLD: &str = "last-sold";
+const FILTER_PRE_TAX: &str = "tax";
+const FILTER_SHOW_SUSPICIOUS: &str = "show-suspicious";
+// Chip-only filters: picked from a list or off a row rather than typed, so
+// they are never offered by the `+ Filter` menu.
+const FILTER_CATEGORY: &str = "category";
+const FILTER_WORLD: &str = "world";
+const FILTER_DATACENTER: &str = "datacenter";
+
+/// Filters the `+ Filter` menu can add, in menu order.
+const ADDABLE_FILTERS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_PROFIT_PER_DAY,
+    FILTER_ROI,
+    FILTER_SALES,
+    FILTER_VELOCITY,
+    FILTER_MIN_BUY,
+    FILTER_MAX_PRICE,
+    FILTER_NEXT_SALE,
+    FILTER_LAST_SOLD,
+    FILTER_PRE_TAX,
+    FILTER_SHOW_SUSPICIOUS,
+];
+
+/// Value a filter takes when it is added from the `+ Filter` menu.
+///
+/// A filter with no starting value would render a chip with nothing in it,
+/// so every entry in [`ADDABLE_FILTERS`] must have one. These mirror the
+/// example values the old toolbar carried as input placeholders.
+fn default_filter_value(id: &str) -> &'static str {
+    match id {
+        FILTER_PROFIT => "100000",
+        FILTER_PROFIT_PER_DAY => "10000",
+        FILTER_ROI => "200",
+        FILTER_SALES => "2",
+        FILTER_VELOCITY => "0.2",
+        FILTER_MIN_BUY => "5000",
+        FILTER_MAX_PRICE => "500000",
+        FILTER_NEXT_SALE => "7d",
+        FILTER_LAST_SOLD => "1d",
+        // Booleans: the chip's presence *is* the value, so `x` restores the
+        // default (post-tax, suspicious rows hidden).
+        FILTER_PRE_TAX => "false",
+        FILTER_SHOW_SUSPICIOUS => "true",
+        _ => "",
+    }
+}
+
+/// Filters the `+ Filter` menu should offer: everything addable that is not
+/// already on screen as a chip.
+fn available_filters(active: &[&str]) -> Vec<&'static str> {
+    ADDABLE_FILTERS
+        .iter()
+        .copied()
+        .filter(|id| !active.contains(id))
+        .collect()
+}
+
 #[component]
 fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
     view! {
@@ -539,6 +609,7 @@ fn AnalyzerTable(
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
+    let show_filter_menu = RwSignal::new(false);
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -560,21 +631,96 @@ fn AnalyzerTable(
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
-    let predicted_time_string = Memo::new(move |_| {
-        predicted_time()
-            .map(|duration| format_duration(duration).to_string())
-            .unwrap_or("---".to_string())
-    });
 
     let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
-    let show_more = RwSignal::new(false);
     let last_sold_duration =
         Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
-    let last_sold_string = Memo::new(move |_| {
-        last_sold_duration()
-            .map(|d| format_duration(d).to_string())
-            .unwrap_or("---".to_string())
+
+    // Filters currently drawn as a chip. Drives the "no active filters"
+    // hint and keeps `+ Filter` from offering a second copy of something
+    // the user can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        let mut push_if = |set: bool, id: &'static str| {
+            if set {
+                active.push(id);
+            }
+        };
+        push_if(minimum_profit().is_some(), FILTER_PROFIT);
+        push_if(minimum_profit_per_day().is_some(), FILTER_PROFIT_PER_DAY);
+        push_if(minimum_roi().is_some(), FILTER_ROI);
+        push_if(minimum_sales().is_some(), FILTER_SALES);
+        push_if(velocity_floor().is_some(), FILTER_VELOCITY);
+        push_if(min_buy_price().is_some(), FILTER_MIN_BUY);
+        push_if(max_purchase_price().is_some(), FILTER_MAX_PRICE);
+        push_if(max_predicted_time().is_some(), FILTER_NEXT_SALE);
+        push_if(last_sold_within().is_some(), FILTER_LAST_SOLD);
+        push_if(tax_enabled() == Some(false), FILTER_PRE_TAX);
+        push_if(show_suspicious_active(), FILTER_SHOW_SUSPICIOUS);
+        push_if(category_filter().is_some(), FILTER_CATEGORY);
+        push_if(world_filter().is_some(), FILTER_WORLD);
+        push_if(datacenter_filter().is_some(), FILTER_DATACENTER);
+        active
     });
+
+    // Menu label for a filter. Reuses the labels the old toolbar fields
+    // carried, which are longer and more explanatory than the chip labels —
+    // the menu is where a filter has to be recognized, not just recalled.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, analyzer_filter_profit_min_label).to_string(),
+            FILTER_PROFIT_PER_DAY => {
+                t_string!(i18n, analyzer_filter_profit_per_day_min_label).to_string()
+            }
+            FILTER_ROI => t_string!(i18n, analyzer_filter_roi_min_label).to_string(),
+            FILTER_SALES => t_string!(i18n, analyzer_filter_sales_min_label).to_string(),
+            FILTER_VELOCITY => t_string!(i18n, analyzer_filter_velocity_min_label).to_string(),
+            FILTER_MIN_BUY => t_string!(i18n, analyzer_filter_min_buy_label).to_string(),
+            FILTER_MAX_PRICE => t_string!(i18n, analyzer_filter_buy_max_label).to_string(),
+            FILTER_NEXT_SALE => t_string!(i18n, analyzer_filter_max_sale_time_label).to_string(),
+            FILTER_LAST_SOLD => t_string!(i18n, analyzer_last_sold_within).to_string(),
+            FILTER_PRE_TAX => t_string!(i18n, analyzer_pre_tax).to_string(),
+            FILTER_SHOW_SUSPICIOUS => t_string!(i18n, analyzer_show_suspicious).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // Adding a filter seeds it with `default_filter_value` so the chip has
+    // something to show; the user edits it in place from there.
+    let add_filter = move |id: &str| {
+        let value = default_filter_value(id);
+        match id {
+            FILTER_PROFIT => set_minimum_profit(value.parse().ok()),
+            FILTER_PROFIT_PER_DAY => set_minimum_profit_per_day(value.parse().ok()),
+            FILTER_ROI => set_minimum_roi(value.parse().ok()),
+            FILTER_SALES => set_minimum_sales(value.parse().ok()),
+            FILTER_VELOCITY => set_min_velocity(value.parse().ok()),
+            FILTER_MIN_BUY => set_min_buy_price(value.parse().ok()),
+            FILTER_MAX_PRICE => set_max_purchase_price(value.parse().ok()),
+            FILTER_NEXT_SALE => set_max_predicted_time(Some(value.to_string())),
+            FILTER_LAST_SOLD => set_last_sold_within(Some(value.to_string())),
+            FILTER_PRE_TAX => set_tax_enabled(Some(false)),
+            FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
+            _ => {}
+        }
+    };
+
+    let clear_all_filters = move || {
+        set_minimum_profit(None);
+        set_minimum_profit_per_day(None);
+        set_minimum_roi(None);
+        set_max_predicted_time(None);
+        set_world_filter(None);
+        set_datacenter_filter(None);
+        set_minimum_sales(None);
+        set_min_velocity(None);
+        set_category_filter(None);
+        set_max_purchase_price(None);
+        set_min_buy_price(None);
+        set_last_sold_within(None);
+        set_show_suspicious(None);
+        set_tax_enabled(None);
+    };
 
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
     // visible-window fetch effect below; never wholesale-replaced (except on a
@@ -829,462 +975,449 @@ fn AnalyzerTable(
     });
 
     view! {
-        <div class="flex flex-col gap-6">
-            // Primary filter toolbar
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        max=100000
-                        step=1000
-                        placeholder=t_string!(i18n, analyzer_placeholder_100000)
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit));
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
-                            }
+        <div class="flex flex-col gap-4">
+            // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
+            // header sticks directly beneath it at that offset, so a bar that
+            // grew with its content would cover its own column headers.
+            <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1">
+                // Row 1 — result count and view-level controls.
+                <div class="h-8 flex items-center gap-3 min-w-0">
+                    <span class="text-sm text-[color:var(--brand-fg)] font-semibold whitespace-nowrap">
+                        {move || {
+                            t_string!(i18n, analyzer_rows_count)
+                                .to_string()
+                                .replace("%count%", &sorted_data().len().to_string())
+                        }}
+                    </span>
+                    <div class="flex-1" />
+                    <button
+                        class="sticky-bar-button"
+                        aria-expanded=move || show_columns_picker.get().to_string()
+                        on:click=move |_| {
+                            show_filter_menu.set(false);
+                            show_columns_picker.update(|v| *v = !*v);
                         }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_roi_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        max=100000
-                        step=10
-                        placeholder=t_string!(i18n, analyzer_placeholder_200)
-                        type="number"
-                        prop:value=minimum_roi
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(roi) = value.parse::<i32>() {
-                                set_minimum_roi(Some(roi));
-                            } else if value.is_empty() {
-                                set_minimum_roi(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_sales_min_label).to_string()>
-                    <input
-                        class="input input-sm w-24"
-                        min=0
-                        max=6
-                        step=1
-                        placeholder=t_string!(i18n, analyzer_placeholder_0_to_6)
-                        title=t_string!(i18n, analyzer_tooltip_sales_min)
-                        type="number"
-                        prop:value=minimum_sales
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(sales) = value.parse::<usize>() {
-                                set_minimum_sales(Some(sales.min(6)));
-                            } else if value.is_empty() {
-                                set_minimum_sales(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_velocity_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        step="0.5"
-                        type="number"
-                        prop:value=velocity_floor
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(v) = value.parse::<f32>() {
-                                set_min_velocity(Some(v));
-                            } else if value.is_empty() {
-                                set_min_velocity(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_buy_max_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        step=1000
-                        placeholder=t_string!(i18n, analyzer_placeholder_500000)
-                        type="number"
-                        prop:value=max_purchase_price
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(p) = value.parse::<i32>() {
-                                set_max_purchase_price(Some(p));
-                            } else if value.is_empty() {
-                                set_max_purchase_price(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_category_label).to_string()>
-                    <select
-                        class="input input-sm"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if let Ok(id) = val.parse::<i32>() {
-                                set_category_filter(Some(id));
-                            } else {
-                                set_category_filter(None);
-                            }
-                        }
-                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
                     >
-                        <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                        {
-                            let mut categories = tracked_data().item_search_categorys
-                                .iter()
-                                .filter(|(_, cat)| !cat.name.is_empty())
-                                .map(|(id, cat)| (id.0, cat.name.clone()))
-                                .collect::<Vec<_>>();
-                            categories.sort_by(|a, b| a.1.cmp(&b.1));
-                            categories.into_iter().map(|(id, name)| {
-                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                            }).collect_view()
-                        }
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_prices_label).to_string()>
-                    // tax_enabled semantics: Some(true) = post-tax (5% deducted), None/Some(false) = pre-tax
-                    // Default unwrap_or(true) means post-tax is the default
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "false" } else { "true" }
-                            on:click=move |_| set_tax_enabled(Some(false))
-                        >
-                            "Pre-tax"
-                        </button>
-                        <button
-                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "true" } else { "false" }
-                            on:click=move |_| set_tax_enabled(Some(true))
-                        >
-                            "Post-tax"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarSpacer />
-                <button
-                    class="btn-secondary flex items-center gap-2"
-                    on:click=move |_| show_columns_picker.update(|v| *v = !*v)
-                    aria-expanded=move || show_columns_picker.get().to_string()
-                >
-                    <Icon icon=i::FaTableColumnsSolid />
-                    {t!(i18n, analyzer_columns_button)}
-                </button>
-                <button
-                    class="btn-secondary flex items-center gap-2"
-                    on:click=move |_| show_more.update(|v| *v = !*v)
-                >
-                    <Icon icon=i::FaFilterSolid />
-                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
-                </button>
-            </Toolbar>
+                        <Icon icon=i::FaTableColumnsSolid />
+                        {t!(i18n, analyzer_columns_button)}
+                    </button>
+                    <button
+                        class="sticky-bar-button"
+                        aria-label=t_string!(i18n, aria_clear_all_filters)
+                        on:click=move |_| clear_all_filters()
+                    >
+                        {t!(i18n, analyzer_clear_all)}
+                    </button>
+                </div>
 
-            // Columns picker (URL-persisted via ?cols=)
-            {move || show_columns_picker.get().then(|| {
-                let make_toggle = move |col: &'static str| {
-                    move |_| {
-                        let mut set = visible_cols.get_untracked();
-                        if set.contains(col) {
-                            set.remove(col);
-                        } else {
-                            set.insert(col);
-                        }
-                        set_cols_param.set(Some(serialize_visible_cols(&set)));
-                    }
-                };
-                let col_label = move |col: &'static str| -> String {
-                    match col {
-                        c if c == COL_PROFIT_PER_DAY => t_string!(i18n, analyzer_col_profit_per_day).to_string(),
-                        c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
-                        c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
-                        c if c == COL_CONFIDENCE => t_string!(i18n, analyzer_col_confidence).to_string(),
-                        c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
-                        c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
-                        c if c == COL_DATACENTER => t_string!(i18n, analyzer_col_datacenter).to_string(),
-                        c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
-                        c if c == COL_SALES_PER_DAY => t_string!(i18n, analyzer_col_sales_per_day).to_string(),
-                        c if c == COL_VOLUME_30D => t_string!(i18n, analyzer_col_volume_30d).to_string(),
-                        c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
-                        _ => String::new(),
-                    }
-                };
-                view! {
-                    <div class="panel px-4 py-3 rounded-lg flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                        <span class="font-semibold text-[color:var(--brand-fg)]">
-                            {t!(i18n, analyzer_columns_picker_label)}
-                        </span>
-                        {ALL_OPTIONAL_COLS.iter().map(|col| {
-                            let col = *col;
-                            let label = col_label(col);
-                            let on_change = make_toggle(col);
-                            view! {
-                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                                    <input
-                                        type="checkbox"
-                                        class="accent-brand-300"
-                                        prop:checked=move || visible_cols().contains(col)
-                                        on:change=on_change
-                                    />
-                                    <span>{label}</span>
-                                </label>
-                            }
-                        }).collect_view()}
-                        <button
-                            class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                            on:click=move |_| set_cols_param.set(None)
-                        >
-                            {t!(i18n, analyzer_columns_picker_reset)}
-                        </button>
+                // Row 2 — the filters themselves. One chip per active filter,
+                // and nothing at all for the ones that are not in use.
+                <div class="h-8 flex items-center gap-2 min-w-0">
+                    <div class="filter-chip-row">
+                        {move || {
+                            active_filters()
+                                .is_empty()
+                                .then(|| {
+                                    view! {
+                                        <span class="text-sm text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                            {t!(i18n, analyzer_no_active_filters)}
+                                        </span>
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_profit()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_profit_gte).to_string()
+                                            value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_profit(v.and_then(|s| s.parse::<i32>().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_profit_per_day()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_profit_per_day_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                minimum_profit_per_day().map(|v| v.to_string())
+                                            })
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_profit_per_day(v.and_then(|s| s.parse::<i32>().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_roi()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_roi_gte).to_string()
+                                            value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_roi(v.and_then(|s| s.parse::<i32>().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_sales()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_sales_gte).to_string()
+                                            value=Signal::derive(move || minimum_sales().map(|v| v.to_string()))
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_sales(
+                                                    v.and_then(|s| s.parse::<usize>().ok()).map(|s| s.min(6)),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            velocity_floor()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_velocity_gte).to_string()
+                                            value=Signal::derive(move || velocity_floor().map(|v| v.to_string()))
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_velocity(v.and_then(|s| s.parse::<f32>().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            min_buy_price()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_min_buy_gte).to_string()
+                                            value=Signal::derive(move || min_buy_price().map(|v| v.to_string()))
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_buy_price(v.and_then(|s| s.parse::<i32>().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            max_purchase_price()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_budget_lte).to_string()
+                                            value=Signal::derive(move || max_purchase_price().map(|v| v.to_string()))
+                                            numeric=true
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_max_purchase_price(v.and_then(|s| s.parse::<i32>().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            max_predicted_time()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_next_sale_lte).to_string()
+                                            value=Signal::derive(max_predicted_time)
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_max_predicted_time(v);
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            last_sold_within()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_last_sold_lte).to_string()
+                                            value=Signal::derive(last_sold_within)
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_last_sold_within(v);
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            category_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_category_label).to_string()
+                                            readonly=true
+                                            value=Signal::derive(move || {
+                                                let cat_id = category_filter()?;
+                                                Some(
+                                                    tracked_data()
+                                                        .item_search_categorys
+                                                        .get(&xiv_gen::ItemSearchCategoryId(cat_id))
+                                                        .map(|c| c.name.clone())
+                                                        .unwrap_or_else(|| cat_id.to_string()),
+                                                )
+                                            })
+                                            on_commit=Callback::new(move |_| set_category_filter(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            world_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_world_label).to_string()
+                                            readonly=true
+                                            value=Signal::derive(world_filter)
+                                            on_commit=Callback::new(move |_| set_world_filter(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            datacenter_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_datacenter_label).to_string()
+                                            readonly=true
+                                            value=Signal::derive(datacenter_filter)
+                                            on_commit=Callback::new(move |_| set_datacenter_filter(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        // Post-tax is the default, so only the opt-out is a chip.
+                        {move || {
+                            (tax_enabled() == Some(false))
+                                .then(|| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_pre_tax).to_string()
+                                            readonly=true
+                                            value=Signal::derive(|| None::<String>)
+                                            on_commit=Callback::new(move |_| set_tax_enabled(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            show_suspicious_active()
+                                .then(|| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_show_suspicious).to_string()
+                                            readonly=true
+                                            value=Signal::derive(|| None::<String>)
+                                            on_commit=Callback::new(move |_| set_show_suspicious(None))
+                                        />
+                                    }
+                                })
+                        }}
                     </div>
-                }
-            })}
-
-            // Secondary filter toolbar (expanded)
-            {move || show_more.get().then(|| view! {
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_profit_per_day_min_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            min=0
-                            max=100000
-                            step=1000
-                            placeholder=t_string!(i18n, placeholder_eg_10000)
-                            type="number"
-                            prop:value=minimum_profit_per_day
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit_per_day(Some(profit));
-                                } else if value.is_empty() {
-                                    set_minimum_profit_per_day(None);
-                                }
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_min_buy_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            min=0
-                            step=1000
-                            placeholder=t_string!(i18n, analyzer_placeholder_5000)
-                            type="number"
-                            prop:value=min_buy_price
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(p) = value.parse::<i32>() {
-                                    set_min_buy_price(Some(p));
-                                } else if value.is_empty() {
-                                    set_min_buy_price(None);
-                                }
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_max_sale_time_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            placeholder=t_string!(i18n, analyzer_placeholder_7d_12h)
-                            title=t_string!(i18n, analyzer_tooltip_duration_format)
-                            prop:value=move || max_predicted_time().unwrap_or_default()
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value));
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_last_sold_within).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            placeholder=t_string!(i18n, analyzer_placeholder_7d)
-                            title=t_string!(i18n, analyzer_tooltip_duration_format)
-                            prop:value=move || last_sold_within().unwrap_or_default()
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                set_last_sold_within(Some(value));
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_show_suspicious).to_string()>
-                        <Toggle
-                            checked=Signal::derive(move || show_suspicious_active.get())
-                            set_checked=SignalSetter::map(move |v: bool| set_show_suspicious(v.then_some(true)))
-                            checked_label=Oco::Owned(t_string!(i18n, analyzer_show_suspicious).to_string())
-                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_show_suspicious).to_string())
-                        />
-                    </ToolbarField>
-                </Toolbar>
-            })}
-
-            // Results summary
-            <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> {t!(i18n, analyzer_results)}
+                    <button
+                        class="sticky-bar-button"
+                        aria-expanded=move || show_filter_menu.get().to_string()
+                        on:click=move |_| {
+                            show_columns_picker.set(false);
+                            show_filter_menu.update(|v| *v = !*v);
+                        }
+                    >
+                        <Icon icon=i::FaFilterSolid />
+                        {t!(i18n, analyzer_add_filter)}
+                    </button>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    {move || {
-                        let mut chips: Vec<_> = Vec::new();
-                        if let Some(p) = minimum_profit() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_profit_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
-                                        <Icon icon=icondata::MdiClose />
+
+                // `+ Filter` menu. Unset filters live here, so the bar's height
+                // tracks the filters in use rather than the filters that exist.
+                {move || {
+                    show_filter_menu
+                        .get()
+                        .then(|| {
+                            view! {
+                                <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
+                                    {move || {
+                                        available_filters(&active_filters())
+                                            .into_iter()
+                                            .map(|id| {
+                                                let label = filter_label(id);
+                                                view! {
+                                                    <button
+                                                        class="text-left px-2 py-1 rounded-sm text-[color:var(--color-text)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]"
+                                                        on:click=move |_| {
+                                                            add_filter(id);
+                                                            show_filter_menu.set(false);
+                                                        }
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                }
+                                            })
+                                            .collect_view()
+                                    }}
+                                    // Category is chosen from a list rather than
+                                    // typed, so its chip is read-only and this is
+                                    // where it is picked.
+                                    <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
+                                        <span class="text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, analyzer_filter_category_label)}
+                                        </span>
+                                        <select
+                                            class="input input-sm"
+                                            on:change=move |ev| {
+                                                let val = event_target_value(&ev);
+                                                if let Ok(id) = val.parse::<i32>() {
+                                                    set_category_filter(Some(id));
+                                                } else {
+                                                    set_category_filter(None);
+                                                }
+                                                show_filter_menu.set(false);
+                                            }
+                                            prop:value=move || {
+                                                category_filter().map(|c| c.to_string()).unwrap_or_default()
+                                            }
+                                        >
+                                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                                            {
+                                                let mut categories = tracked_data()
+                                                    .item_search_categorys
+                                                    .iter()
+                                                    .filter(|(_, cat)| !cat.name.is_empty())
+                                                    .map(|(id, cat)| (id.0, cat.name.clone()))
+                                                    .collect::<Vec<_>>();
+                                                categories.sort_by(|a, b| a.1.cmp(&b.1));
+                                                categories
+                                                    .into_iter()
+                                                    .map(|(id, name)| {
+                                                        view! {
+                                                            <option
+                                                                value=id.to_string()
+                                                                selected=move || category_filter() == Some(id)
+                                                            >
+                                                                {name}
+                                                            </option>
+                                                        }
+                                                    })
+                                                    .collect_view()
+                                            }
+                                        </select>
+                                    </label>
+                                </div>
+                            }
+                        })
+                }}
+
+                // Columns picker (URL-persisted via ?cols=). A popover rather
+                // than a panel so opening it cannot change the bar's height.
+                {move || {
+                    show_columns_picker
+                        .get()
+                        .then(|| {
+                            let make_toggle = move |col: &'static str| {
+                                move |_| {
+                                    let mut set = visible_cols.get_untracked();
+                                    if set.contains(col) {
+                                        set.remove(col);
+                                    } else {
+                                        set.insert(col);
+                                    }
+                                    set_cols_param.set(Some(serialize_visible_cols(&set)));
+                                }
+                            };
+                            let col_label = move |col: &'static str| -> String {
+                                match col {
+                                    c if c == COL_PROFIT_PER_DAY => {
+                                        t_string!(i18n, analyzer_col_profit_per_day).to_string()
+                                    }
+                                    c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
+                                    c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
+                                    c if c == COL_CONFIDENCE => {
+                                        t_string!(i18n, analyzer_col_confidence).to_string()
+                                    }
+                                    c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
+                                    c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
+                                    c if c == COL_DATACENTER => {
+                                        t_string!(i18n, analyzer_col_datacenter).to_string()
+                                    }
+                                    c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
+                                    c if c == COL_SALES_PER_DAY => {
+                                        t_string!(i18n, analyzer_col_sales_per_day).to_string()
+                                    }
+                                    c if c == COL_VOLUME_30D => {
+                                        t_string!(i18n, analyzer_col_volume_30d).to_string()
+                                    }
+                                    c if c == COL_LAST_SOLD => {
+                                        t_string!(i18n, analyzer_col_last_sold).to_string()
+                                    }
+                                    _ => String::new(),
+                                }
+                            };
+                            view! {
+                                <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                                    <span class="font-semibold text-[color:var(--brand-fg)]">
+                                        {t!(i18n, analyzer_columns_picker_label)}
+                                    </span>
+                                    {ALL_OPTIONAL_COLS
+                                        .iter()
+                                        .map(|col| {
+                                            let col = *col;
+                                            let label = col_label(col);
+                                            let on_change = make_toggle(col);
+                                            view! {
+                                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
+                                                    <input
+                                                        type="checkbox"
+                                                        class="accent-brand-300"
+                                                        prop:checked=move || visible_cols().contains(col)
+                                                        on:change=on_change
+                                                    />
+                                                    <span>{label}</span>
+                                                </label>
+                                            }
+                                        })
+                                        .collect_view()}
+                                    <button
+                                        class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                        on:click=move |_| set_cols_param.set(None)
+                                    >
+                                        {t!(i18n, analyzer_columns_picker_reset)}
                                     </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(p) = minimum_profit_per_day() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_profit_per_day_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(cat_id) = category_filter() {
-                            let cat_name = tracked_data()
-                                .item_search_categorys
-                                .get(&xiv_gen::ItemSearchCategoryId(cat_id))
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| format!("Category {}", cat_id));
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_category_label)} {cat_name}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(sales) = minimum_sales() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_sales_gte)} {sales}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(v) = velocity_floor() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_velocity_gte)} {format!("{v:.1}")}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_velocity(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(roi) = minimum_roi() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_roi_gte)} {format!("{roi}%")}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(p) = max_purchase_price() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Budget ≤ " <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(p) = min_buy_price() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_min_buy_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_buy_price(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(_ns) = max_predicted_time() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_next_sale_lte)} {predicted_time_string()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if last_sold_within().is_some() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_last_sold_lte)} {last_sold_string()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_last_sold_within(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(w) = world_filter() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_world_label)} {w.clone()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(dc) = datacenter_filter() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_datacenter_label)} {dc.clone()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if chips.is_empty() {
-                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, analyzer_no_active_filters)}</span> })
-                        } else {
-                            Either::Right(view! { <>{chips}</> })
-                        }
-                    }}
-                </div>
-                <button aria-label=t_string!(i18n, aria_clear_all_filters) class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
-                    set_minimum_profit(None);
-                    set_minimum_profit_per_day(None);
-                    set_minimum_roi(None);
-                    set_max_predicted_time(None);
-                    set_world_filter(None);
-                    set_datacenter_filter(None);
-                    set_minimum_sales(None);
-                    set_min_velocity(None);
-                    set_category_filter(None);
-                    set_max_purchase_price(None);
-                    set_min_buy_price(None);
-                    set_last_sold_within(None);
-                    set_show_suspicious(None);
-                }>
-                    {t!(i18n, analyzer_clear_all)}
-                </button>
+                                </div>
+                            }
+                        })
+                }}
             </div>
 
-            // Results table
-            <div class="rounded-lg overflow-x-auto border border-[color:var(--color-outline)] content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            // Results table. Deliberately no `overflow` on this wrapper: in
+            // window mode an overflow on any ancestor of the sticky table
+            // header re-parents its scrollport away from the viewport, which
+            // silently defeats `sticky_offset`.
+            <div class="border border-[color:var(--color-outline)]">
                 <VirtualScroller
+                        scroll_source=ScrollSource::Window { sticky_offset: STICKY_BAR_HEIGHT }
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
@@ -1915,8 +2048,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         </div>
                     </div>
 
-                    // Main Content
-                    <div class="min-h-screen">
+                    // Main Content. No `min-h-screen` and no scroll container:
+                    // the table virtualizes against the window, so the page
+                    // itself is what scrolls.
+                    <div>
                         <Suspense fallback=BoxSkeleton>
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
@@ -2528,6 +2663,77 @@ mod tests {
         let table = ProfitTable::new(sales, region, world, vec![], false);
         assert_eq!(table.0.len(), 1);
         assert_eq!(table.0[0].prices, vec![90, 95, 100, 300, 110, 105]);
+    }
+
+    #[test]
+    fn filter_menu_omits_filters_that_already_have_a_chip() {
+        // Offering a filter that is already a chip would put two editable
+        // representations of one value back on the page — the exact thing
+        // the sticky bar exists to delete.
+        let available = available_filters(&[FILTER_PROFIT, FILTER_VELOCITY]);
+        assert!(!available.contains(&FILTER_PROFIT));
+        assert!(!available.contains(&FILTER_VELOCITY));
+        let expected = ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| *id != FILTER_PROFIT && *id != FILTER_VELOCITY)
+            .collect::<Vec<_>>();
+        assert_eq!(available, expected, "menu order must be stable");
+    }
+
+    #[test]
+    fn filter_menu_offers_everything_when_nothing_is_set() {
+        assert_eq!(available_filters(&[]), ADDABLE_FILTERS.to_vec());
+    }
+
+    #[test]
+    fn addable_filter_ids_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for id in ADDABLE_FILTERS {
+            assert!(seen.insert(*id), "{id} is listed twice in ADDABLE_FILTERS");
+        }
+    }
+
+    #[test]
+    fn every_addable_filter_has_a_starting_value() {
+        for id in ADDABLE_FILTERS {
+            assert!(
+                !default_filter_value(id).is_empty(),
+                "{id} has no default, so the + Filter menu would add an empty chip"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_filter_defaults_are_parseable() {
+        // These feed `"...".parse::<i32/usize/f32>()`; an unparseable default
+        // silently adds nothing at all when picked from the menu.
+        for id in [
+            FILTER_PROFIT,
+            FILTER_PROFIT_PER_DAY,
+            FILTER_ROI,
+            FILTER_SALES,
+            FILTER_VELOCITY,
+            FILTER_MIN_BUY,
+            FILTER_MAX_PRICE,
+        ] {
+            let raw = default_filter_value(id);
+            assert!(
+                raw.parse::<f64>().is_ok(),
+                "{id} default {raw:?} does not parse as a number"
+            );
+        }
+    }
+
+    #[test]
+    fn duration_filter_defaults_parse_as_durations() {
+        for id in [FILTER_NEXT_SALE, FILTER_LAST_SOLD] {
+            let raw = default_filter_value(id);
+            assert!(
+                parse_duration(raw).is_ok(),
+                "{id} default {raw:?} is not a duration humantime accepts"
+            );
+        }
     }
 
     #[test]

@@ -63,10 +63,6 @@ pub enum ScrollSource {
     /// scrollport instead of the viewport, which would silently defeat the
     /// sticky header. A caller that needs horizontal scrolling must put
     /// `overflow-x-auto` *inside* the header/row views, not around the list.
-    // The component matches this variant but never constructs it, and no call
-    // site opts into window mode yet, so `dead_code` fires on the plain lib
-    // target. Drop this attribute together with the first window-mode caller.
-    #[allow(dead_code)]
     Window { sticky_offset: f64 },
 }
 
