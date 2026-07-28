@@ -1,4 +1,4 @@
-use crate::analysis::{SaleSummary, roi_badge_class};
+use crate::analysis::{SaleSummary, return_on_investment, roi_badge_class};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::{
@@ -497,11 +497,7 @@ fn AnalyzerTable(
                     data.estimated_sale_price
                 };
                 let profit = estimated - data.cheapest_price;
-                let return_on_investment = if data.cheapest_price > 0 {
-                    ((profit as f32 / data.cheapest_price as f32) * 100.0) as i32
-                } else {
-                    0
-                };
+                let return_on_investment = return_on_investment(profit, data.cheapest_price);
                 let profit_per_day = data
                     .sale_summary
                     .avg_sale_duration
