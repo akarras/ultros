@@ -8,6 +8,7 @@
 
 use clickhouse::Row;
 use serde::Deserialize;
+use ultros_api_types::price_series::{HqFilter, SeriesGroup};
 use ultros_api_types::trends::ConfidenceBand;
 
 use crate::{ClickHouseClient, ClickHouseError};
@@ -535,9 +536,160 @@ pub async fn deep_scan_one(
     Ok(rows.into_iter().next())
 }
 
+/// One aggregated bucket for one series. Column order matches the SELECT.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct PriceSeriesRow {
+    /// Selector id at the requested grouping.
+    pub series_id: i32,
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub bucket: chrono::DateTime<chrono::Utc>,
+    pub open: u32,
+    pub high: u32,
+    pub low: u32,
+    pub close: u32,
+    pub gil: u64,
+    pub units: u64,
+    pub sales: u64,
+    pub p25: u32,
+    pub p50: u32,
+    pub p75: u32,
+}
+
+/// SQL expression producing the series key.
+///
+/// For coarser groupings we inline a `transform()` map from the caller's
+/// world list rather than joining a lookup table — the world set is small
+/// (at most a region's worth) and a join would take this query off the
+/// `sales` primary-key prefix.
+fn group_expr(group: SeriesGroup, world_to_group: &[(i32, i32)]) -> String {
+    if group == SeriesGroup::World {
+        return "world_id".to_string();
+    }
+    let from = world_to_group
+        .iter()
+        .map(|(w, _)| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let to = world_to_group
+        .iter()
+        .map(|(_, g)| g.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("transform(world_id, [{from}], [{to}], 0)")
+}
+
+fn hq_predicate(hq: HqFilter) -> &'static str {
+    match hq {
+        HqFilter::Any => "",
+        HqFilter::Hq => " AND hq = 1",
+        HqFilter::Nq => " AND hq = 0",
+    }
+}
+
+/// Aggregate `sales` into fixed-width buckets for one item.
+///
+/// `world_to_group` maps every world in scope to its series key at `group`;
+/// for `SeriesGroup::World` the mapped value is ignored.
+///
+/// Deliberately no `FINAL`. `sales` is a `ReplacingMergeTree` whose duplicates
+/// are exact repeats of the same sale, and at aggregate scale an unmerged
+/// duplicate shifts a bucket's VWAP imperceptibly — whereas `FINAL` over a
+/// full-history scan is expensive. This is an accuracy-for-cost trade.
+///
+/// Deliberately no join: `item_id` is filtered first so the read stays on the
+/// table's `(item_id, hq, world_id, sold_date, pg_id)` prefix. See the comment
+/// in [`sparklines_batch`] for what happens when a large table is joined
+/// unfiltered.
+///
+/// Takes 8 parameters (over clippy's default threshold of 7): `ch` is the
+/// connection handle every query fn here takes, and the other 7 are all
+/// independent, mandatory pieces of the query (item, scope, grouping, filter,
+/// window, resolution) — there's no natural sub-grouping that would make a
+/// parameter struct clearer than the argument list, so we allow rather than
+/// introduce a single-use struct.
+#[allow(clippy::too_many_arguments)]
+pub async fn price_series(
+    ch: &ClickHouseClient,
+    item_id: i32,
+    world_to_group: &[(i32, i32)],
+    group: SeriesGroup,
+    hq: HqFilter,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    bucket_seconds: i64,
+) -> Result<Vec<PriceSeriesRow>, ClickHouseError> {
+    if world_to_group.is_empty() {
+        return Ok(Vec::new());
+    }
+    let worlds = world_to_group
+        .iter()
+        .map(|(w, _)| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let key = group_expr(group, world_to_group);
+    let hq_filter = hq_predicate(hq);
+
+    let sql = format!(
+        r#"
+        SELECT
+            toInt32({key})                              AS series_id,
+            toStartOfInterval(sold_date, INTERVAL {bucket_seconds} SECOND) AS bucket,
+            toUInt32(argMin(price_per_item, sold_date)) AS open,
+            toUInt32(max(price_per_item))               AS high,
+            toUInt32(min(price_per_item))                AS low,
+            toUInt32(argMax(price_per_item, sold_date)) AS close,
+            toUInt64(sum(total_gil))                    AS gil,
+            toUInt64(sum(quantity))                     AS units,
+            toUInt64(count())                           AS sales,
+            toUInt32(quantileExact(0.25)(price_per_item)) AS p25,
+            toUInt32(quantileExact(0.50)(price_per_item)) AS p50,
+            toUInt32(quantileExact(0.75)(price_per_item)) AS p75
+        FROM sales
+        WHERE item_id = {item_id}
+          AND world_id IN ({worlds})
+          AND sold_date >= toDateTime({from_ts})
+          AND sold_date <  toDateTime({to_ts}){hq_filter}
+        GROUP BY series_id, bucket
+        ORDER BY series_id, bucket
+        "#,
+        from_ts = from.timestamp(),
+        to_ts = to.timestamp(),
+    );
+
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<PriceSeriesRow>()
+        .await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ultros_api_types::price_series::SeriesGroup;
+
+    #[test]
+    fn world_group_selects_the_column_directly() {
+        assert_eq!(
+            group_expr(SeriesGroup::World, &[(1, 10), (2, 10)]),
+            "world_id"
+        );
+    }
+
+    #[test]
+    fn coarser_groups_build_a_transform_map() {
+        assert_eq!(
+            group_expr(SeriesGroup::Datacenter, &[(1, 10), (2, 10), (3, 20)]),
+            "transform(world_id, [1,2,3], [10,10,20], 0)"
+        );
+    }
+
+    #[test]
+    fn hq_predicate_is_empty_for_any() {
+        assert_eq!(hq_predicate(HqFilter::Any), "");
+        assert_eq!(hq_predicate(HqFilter::Hq), " AND hq = 1");
+        assert_eq!(hq_predicate(HqFilter::Nq), " AND hq = 0");
+    }
 
     fn fixture() -> DeepScan {
         DeepScan {
