@@ -2,28 +2,32 @@
 //! the raw sales as dimmed dots behind it, and a volume lane along the
 //! bottom. One function builds the whole picture so the server PNG and the
 //! web chart (PR 2) can never drift apart.
+//!
+//! All bucketing and world-hierarchy grouping happens server-side now (see
+//! `ultros_api_types::price_series`); this layout only resolves series ids
+//! to display names, lays out geometry, and draws.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use chrono::TimeDelta;
+use chrono::{NaiveDateTime, TimeDelta};
 use itertools::Itertools;
-use ultros_api_types::SaleHistory;
-use ultros_api_types::world_helper::WorldHelper;
+use ultros_api_types::price_series::{PriceBucket, PriceSeries, SeriesGroup};
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
-use crate::data::buckets::{bucket_seconds, volume_buckets_from_points, vwap_buckets};
-use crate::data::grouping::{GroupLevel, auto_group_level, group_sales_by_level};
-use crate::data::outliers::filter_outliers;
-use crate::data::stats::{median, vwap};
+use crate::data::grouping::GroupLevel;
+use crate::data::stats::median;
 use crate::data::trend::least_squares;
 use crate::scale::{LinearScale, TimeScale, short_number};
 use crate::scene::{Color, Node, Scene, Stroke, TextAnchor};
+use crate::svg::dots_path_d;
 use crate::theme::Theme;
 
 #[derive(Clone, Debug)]
 pub struct PriceChartOptions {
     pub width: f32,
     pub height: f32,
+    /// Ignored: outlier filtering now happens server-side (or not at all —
+    /// the caller gates the toggle before requesting data).
     pub remove_outliers: bool,
     pub show_market_average: bool,
     pub show_trendline: bool,
@@ -38,8 +42,10 @@ pub struct PriceChartOptions {
     pub icon_data_uri: Option<String>,
     /// User-selected day window (7/30/90); `None`/0 = derive from data span.
     pub days_range: Option<i32>,
-    /// Grouping level for series; `None` = pick automatically from the data
-    /// scope (what the PNG path wants).
+    /// Ignored: grouping is now decided server-side and carried on the
+    /// `PriceSeries` payload (`series.group`), which is authoritative. Kept
+    /// on the struct because the frontend still sets it (Task 13 wires the
+    /// request, not this layout).
     pub group_level: Option<GroupLevel>,
     /// Shift applied to axis/tooltip LABELS so the browser can show
     /// viewer-local times. Bucket boundaries and geometry stay UTC-aligned;
@@ -161,13 +167,48 @@ pub struct PriceChartModel {
     pub hover: HoverModel,
     pub series: Vec<SeriesInfo>,
     pub stats: Option<ChartStats>,
-    /// The level actually used (resolves `group_level: None`).
+    /// The level the server actually grouped at (`series.group`, mapped).
     pub group_level: GroupLevel,
+}
+
+/// One `PriceSeriesEntry` resolved to a display name, dropping ids the
+/// world helper doesn't recognize.
+struct ResolvedSeries {
+    id: i32,
+    name: String,
+    buckets: Vec<PriceBucket>,
+}
+
+/// Map a raw sale's world id up to the id space of `group` (world id
+/// unchanged; datacenter/region id of the world it belongs to) — the same
+/// hierarchy walk the server used to build `series.series`, needed here only
+/// to bucket `series.raw` sales back onto their series for the dot layer.
+fn series_id_for_world(
+    world_helper: &WorldHelper,
+    group: SeriesGroup,
+    world_id: i32,
+) -> Option<i32> {
+    match group {
+        SeriesGroup::World => Some(world_id),
+        SeriesGroup::Datacenter => world_helper
+            .lookup_selector(AnySelector::World(world_id))
+            .and_then(|r| r.as_world())
+            .map(|w| w.datacenter_id),
+        SeriesGroup::Region => {
+            let world = world_helper
+                .lookup_selector(AnySelector::World(world_id))
+                .and_then(|r| r.as_world())?;
+            let datacenter = world_helper
+                .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                .and_then(|r| r.as_datacenter())?;
+            Some(datacenter.region_id)
+        }
+    }
 }
 
 pub fn build_price_history_chart(
     world_helper: &WorldHelper,
-    sales: &[SaleHistory],
+    series: &PriceSeries,
     options: &PriceChartOptions,
 ) -> PriceChartModel {
     let theme = &options.theme;
@@ -179,34 +220,53 @@ pub fn build_price_history_chart(
         nodes: Vec::new(),
     };
 
-    let sales = if options.remove_outliers {
-        filter_outliers(sales)
-    } else {
-        Cow::Borrowed(sales)
-    };
-    let level = options
-        .group_level
-        .unwrap_or_else(|| auto_group_level(world_helper, &sales));
-    let series = group_sales_by_level(world_helper, &sales, level);
-    let is_hidden = |name: &str| options.hidden_series.iter().any(|h| h == name);
-    let series_info: Vec<SeriesInfo> = series
+    let group_level = GroupLevel::from(series.group);
+    let bucket_secs = series.bucket_seconds;
+
+    let mut resolved: Vec<ResolvedSeries> = series
+        .series
         .iter()
-        .enumerate()
-        .map(|(index, group)| SeriesInfo {
-            name: group.name.clone(),
-            color: theme.palette[index % theme.palette.len()],
-            hidden: is_hidden(&group.name),
+        .filter_map(|entry| {
+            let selector = match series.group {
+                SeriesGroup::Region => AnySelector::Region(entry.id),
+                SeriesGroup::Datacenter => AnySelector::Datacenter(entry.id),
+                SeriesGroup::World => AnySelector::World(entry.id),
+            };
+            let name = world_helper
+                .lookup_selector(selector)?
+                .get_name()
+                .to_string();
+            Some(ResolvedSeries {
+                id: entry.id,
+                name,
+                buckets: entry.buckets.clone(),
+            })
         })
         .collect();
-    let all_points = || {
-        series
+    resolved.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let is_hidden = |name: &str| options.hidden_series.iter().any(|h| h == name);
+    let series_info: Vec<SeriesInfo> = resolved
+        .iter()
+        .enumerate()
+        .map(|(index, s)| SeriesInfo {
+            name: s.name.clone(),
+            color: theme.palette[index % theme.palette.len()],
+            hidden: is_hidden(&s.name),
+        })
+        .collect();
+    let series_color = |index: usize| theme.palette[index % theme.palette.len()];
+    let visible_count = resolved.iter().filter(|s| !is_hidden(&s.name)).count();
+
+    let all_visible_buckets = || {
+        resolved
             .iter()
             .filter(|s| !is_hidden(&s.name))
-            .flat_map(|s| s.points.iter())
+            .flat_map(|s| s.buckets.iter())
     };
-    let visible_count = series.iter().filter(|s| !is_hidden(&s.name)).count();
 
-    let Some((first_ts, last_ts)) = all_points().map(|p| p.ts).minmax().into_option() else {
+    let Some((first_ts, last_ts)) = all_visible_buckets().map(|b| b.ts).minmax().into_option()
+    else {
         scene.nodes.push(Node::Text {
             x: options.width / 2.0,
             y: options.height / 2.0,
@@ -225,22 +285,25 @@ pub fn build_price_history_chart(
             },
             series: series_info,
             stats: None,
-            group_level: level,
+            group_level,
         };
     };
-    let (min_price, max_price) = all_points()
-        .map(|p| p.price)
+    let (min_price, max_price) = all_visible_buckets()
+        .flat_map(|b| [b.low, b.high])
         .minmax()
         .into_option()
         .expect("non-empty by the timestamp check above");
 
     let stats = {
-        let prices: Vec<i32> = all_points().map(|p| p.price).collect();
-        let pairs: Vec<(i32, i32)> = all_points().map(|p| (p.price, p.quantity)).collect();
+        let n: usize = all_visible_buckets().map(|b| b.sales as usize).sum();
+        let total_gil: i64 = all_visible_buckets().map(|b| b.gil).sum();
+        let total_units: i64 = all_visible_buckets().map(|b| b.units).sum();
+        let market_average = (total_units > 0).then(|| (total_gil / total_units) as i32);
+        let p50s: Vec<i32> = all_visible_buckets().map(|b| b.p50).collect();
         Some(ChartStats {
-            n: prices.len(),
-            market_average: vwap(&pairs),
-            median: median(&prices),
+            n,
+            market_average,
+            median: median(&p50s),
             min: min_price,
             max: max_price,
         })
@@ -317,25 +380,26 @@ pub fn build_price_history_chart(
     }
 
     // ── Volume lane ─────────────────────────────────────────────────────
-    let span_days = (last_ts - first_ts).num_days();
-    let bucket_secs = bucket_seconds(options.days_range, span_days);
-    let volumes = volume_buckets_from_points(all_points(), bucket_secs);
+    let mut volume_by_bucket: BTreeMap<NaiveDateTime, i64> = BTreeMap::new();
+    for bucket in all_visible_buckets() {
+        *volume_by_bucket.entry(bucket.ts).or_insert(0) += bucket.units;
+    }
     if options.show_volume
-        && let Some(max_volume) = volumes.iter().map(|v| v.quantity).max()
+        && let Some(max_volume) = volume_by_bucket.values().copied().max()
     {
         let volume = LinearScale::new((0.0, max_volume as f64), (plot_bottom, volume_top));
         let bucket_px =
             time.scale(first_ts + TimeDelta::seconds(bucket_secs)) - time.scale(first_ts);
         let bar_width = (bucket_px * 0.8).max(1.0);
-        for bucket in &volumes {
-            let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
+        for (&start, &quantity) in &volume_by_bucket {
+            let center = start + TimeDelta::seconds(bucket_secs / 2);
             let x = time.scale(center);
             let left = (x - bar_width / 2.0).max(plot_left);
             let right = (x + bar_width / 2.0).min(plot_right);
             if right <= left {
                 continue;
             }
-            let top = volume.scale(bucket.quantity as f64);
+            let top = volume.scale(quantity as f64);
             scene.nodes.push(Node::Rect {
                 x: left,
                 y: top,
@@ -348,42 +412,55 @@ pub fn build_price_history_chart(
     }
 
     // ── Raw sale dots (under the lines) ─────────────────────────────────
-    let series_color = |index: usize| theme.palette[index % theme.palette.len()];
-    for (index, group) in series.iter().enumerate() {
-        if series_info[index].hidden {
-            continue;
-        }
-        let color = series_color(index);
-        for point in &group.points {
-            scene.nodes.push(Node::Circle {
-                cx: time.scale(point.ts),
-                cy: price.scale(point.price as f64),
-                r: 2.0,
-                fill: color.with_alpha(0.35),
-            });
+    // Only drawn when the payload carries individual sales — dense windows
+    // omit `raw` and show only the VWAP lines.
+    if let Some(raw) = &series.raw {
+        for (index, s) in resolved.iter().enumerate() {
+            if series_info[index].hidden {
+                continue;
+            }
+            let color = series_color(index);
+            let points: Vec<(f32, f32)> = raw
+                .iter()
+                .filter(|sale| {
+                    series_id_for_world(world_helper, series.group, sale.world_id) == Some(s.id)
+                })
+                .map(|sale| {
+                    (
+                        time.scale(sale.sold_date),
+                        price.scale(sale.price_per_item as f64),
+                    )
+                })
+                .collect();
+            if let Some(d) = dots_path_d(&points, 2.0) {
+                scene.nodes.push(Node::Path {
+                    d,
+                    fill: Some(color.with_alpha(0.35)),
+                    stroke: None,
+                });
+            }
         }
     }
 
     // ── VWAP lines (the primary visual) ─────────────────────────────────
-    let mut hover_map: BTreeMap<i64, Vec<Option<(f32, f64)>>> = BTreeMap::new();
-    for (index, group) in series.iter().enumerate() {
+    let mut hover_map: BTreeMap<NaiveDateTime, Vec<Option<(f32, f64)>>> = BTreeMap::new();
+    for (index, s) in resolved.iter().enumerate() {
         if series_info[index].hidden {
             continue;
         }
         let color = series_color(index);
-        let buckets = vwap_buckets(&group.points, bucket_secs);
-        for point in &buckets {
-            // key by bucket START so it aligns with the volume buckets
-            let key = point.ts.and_utc().timestamp() - bucket_secs / 2;
+        let mut line: Vec<(f32, f32)> = Vec::new();
+        for bucket in &s.buckets {
+            let Some(vwap) = bucket.vwap() else {
+                continue;
+            };
             hover_map
-                .entry(key)
-                .or_insert_with(|| vec![None; series.len()])[index] =
-                Some((price.scale(point.vwap), point.vwap));
+                .entry(bucket.ts)
+                .or_insert_with(|| vec![None; resolved.len()])[index] =
+                Some((price.scale(vwap), vwap));
+            let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
+            line.push((time.scale(center), price.scale(vwap)));
         }
-        let line: Vec<(f32, f32)> = buckets
-            .into_iter()
-            .map(|p| (time.scale(p.ts), price.scale(p.vwap)))
-            .collect();
         if line.len() > 1 {
             if visible_count == 1 {
                 scene.nodes.push(Node::Area {
@@ -404,26 +481,30 @@ pub fn build_price_history_chart(
     }
 
     // ── Overlays ────────────────────────────────────────────────────────
-    if options.show_market_average {
-        let pairs: Vec<(i32, i32)> = all_points().map(|p| (p.price, p.quantity)).collect();
-        if let Some(market_average) = vwap(&pairs) {
-            let y = price.scale(market_average as f64);
-            scene.nodes.push(Node::Line {
-                x1: plot_left,
-                y1: y,
-                x2: plot_right,
-                y2: y,
-                stroke: Stroke {
-                    color: theme.market_average.with_alpha(0.9),
-                    width: 1.5,
-                    dash: Some((2.0, 4.0)),
-                },
-            });
-        }
+    if options.show_market_average
+        && let Some(market_average) = stats.as_ref().and_then(|s| s.market_average)
+    {
+        let y = price.scale(market_average as f64);
+        scene.nodes.push(Node::Line {
+            x1: plot_left,
+            y1: y,
+            x2: plot_right,
+            y2: y,
+            stroke: Stroke {
+                color: theme.market_average.with_alpha(0.9),
+                width: 1.5,
+                dash: Some((2.0, 4.0)),
+            },
+        });
     }
     if options.show_trendline {
-        let points: Vec<(f64, f64)> = all_points()
-            .map(|p| (p.ts.and_utc().timestamp() as f64, p.price as f64))
+        let points: Vec<(f64, f64)> = all_visible_buckets()
+            .filter_map(|b| {
+                b.vwap().map(|vwap| {
+                    let center_ts = b.ts.and_utc().timestamp() as f64 + bucket_secs as f64 / 2.0;
+                    (center_ts, vwap)
+                })
+            })
             .collect();
         if let Some((slope, intercept)) = least_squares(&points) {
             let x1 = first_ts.and_utc().timestamp() as f64;
@@ -471,16 +552,16 @@ pub fn build_price_history_chart(
             bold: true,
         });
     }
-    if options.show_legend && options.title.is_some() && series.len() > 1 {
+    if options.show_legend && options.title.is_some() && resolved.len() > 1 {
         // Right-aligned row of "● Name" chips. 7px per char approximates
         // Jaldi at 13px — close enough for a legend.
         let mut x = plot_right;
-        for (index, group) in series.iter().enumerate().rev() {
-            x -= group.name.len() as f32 * 7.0;
+        for (index, s) in resolved.iter().enumerate().rev() {
+            x -= s.name.len() as f32 * 7.0;
             scene.nodes.push(Node::Text {
                 x,
                 y: 32.0,
-                content: group.name.clone(),
+                content: s.name.clone(),
                 size: 13.0,
                 color: theme.text,
                 anchor: TextAnchor::Start,
@@ -497,10 +578,6 @@ pub fn build_price_history_chart(
         }
     }
 
-    let mut volume_by_bucket: BTreeMap<i64, i64> = volumes
-        .iter()
-        .map(|v| (v.ts.and_utc().timestamp(), v.quantity))
-        .collect();
     let label_format = if bucket_secs < 86_400 {
         "%m-%d %H:%M"
     } else {
@@ -508,15 +585,15 @@ pub fn build_price_history_chart(
     };
     let hover_buckets: Vec<HoverBucket> = hover_map
         .into_iter()
-        .filter_map(|(start, series_values)| {
-            let center = chrono::DateTime::from_timestamp(start + bucket_secs / 2, 0)?.naive_utc();
+        .map(|(start, series_values)| {
+            let center = start + TimeDelta::seconds(bucket_secs / 2);
             let display = center + TimeDelta::minutes(options.utc_offset_minutes as i64);
-            Some(HoverBucket {
+            HoverBucket {
                 x: time.scale(center),
                 label: display.format(label_format).to_string(),
                 series_values,
-                volume: volume_by_bucket.remove(&start).unwrap_or(0),
-            })
+                volume: volume_by_bucket.get(&start).copied().unwrap_or(0),
+            }
         })
         .collect();
 
@@ -529,48 +606,35 @@ pub fn build_price_history_chart(
         },
         series: series_info,
         stats,
-        group_level: level,
+        group_level,
     }
 }
 
 pub fn build_price_history_scene(
     world_helper: &WorldHelper,
-    sales: &[SaleHistory],
+    series: &PriceSeries,
     options: &PriceChartOptions,
 ) -> Scene {
-    build_price_history_chart(world_helper, sales, options).scene
+    build_price_history_chart(world_helper, series, options).scene
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::scene::Node;
-    use crate::test_util::{sale, ts, world_helper};
-    use ultros_api_types::SaleHistory;
+    use crate::test_util::{bucket, two_world_series, world_helper};
+    use ultros_api_types::CompactSale;
+    use ultros_api_types::price_series::PriceSeriesEntry;
 
     fn count(scene: &crate::scene::Scene, predicate: impl Fn(&Node) -> bool) -> usize {
         scene.nodes.iter().filter(|n| predicate(n)).count()
     }
 
-    fn two_world_sales() -> Vec<SaleHistory> {
-        // 20 sales over ~10 days alternating between two worlds of one DC
-        (0..20)
-            .map(|i| {
-                sale(
-                    1_000 + i * 10,
-                    2,
-                    1 + (i % 2),
-                    ts(1_700_000_000 + i as i64 * 43_200),
-                )
-            })
-            .collect()
-    }
-
     #[test]
-    fn renders_lines_dots_volume_and_labels() {
+    fn renders_lines_volume_and_labels() {
         let scene = build_price_history_scene(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions {
                 title: Some("Test Item".to_string()),
                 ..Default::default()
@@ -578,8 +642,6 @@ mod tests {
         );
         let polylines = count(&scene, |n| matches!(n, Node::Polyline { .. }));
         assert_eq!(polylines, 2, "one VWAP line per world series");
-        let circles = count(&scene, |n| matches!(n, Node::Circle { .. }));
-        assert!(circles >= 20, "raw sale dots (plus legend chips)");
         let bars = count(&scene, |n| matches!(n, Node::Rect { .. }));
         assert!(bars >= 1, "volume lane bars");
         let texts: Vec<_> = scene
@@ -595,24 +657,79 @@ mod tests {
     }
 
     #[test]
-    fn single_series_gets_area_fill() {
-        let sales: Vec<_> = (0..20)
-            .map(|i| sale(1_000 + i * 10, 2, 1, ts(1_700_000_000 + i as i64 * 43_200)))
+    fn raw_sales_present_draw_one_path_per_visible_series_and_no_circles() {
+        let mut series = two_world_series();
+        let raw: Vec<CompactSale> = (0..500)
+            .map(|i| CompactSale {
+                quantity: 1,
+                price_per_item: 1_000 + i % 50,
+                hq: false,
+                sold_date: crate::test_util::ts(1_700_006_400 + (i as i64 * 1_000) % 864_000),
+                world_id: 1 + (i % 2),
+            })
             .collect();
+        series.raw = Some(raw);
         let scene =
-            build_price_history_scene(&world_helper(), &sales, &PriceChartOptions::default());
+            build_price_history_scene(&world_helper(), &series, &PriceChartOptions::default());
+        let paths = count(&scene, |n| matches!(n, Node::Path { .. }));
+        assert_eq!(paths, 2, "one dot-path per visible series");
+        let circles = count(&scene, |n| matches!(n, Node::Circle { .. }));
+        assert_eq!(circles, 0, "raw sales must not emit per-sale Circle nodes");
+    }
+
+    #[test]
+    fn raw_absent_draws_no_dot_paths() {
+        let series = two_world_series();
+        assert!(series.raw.is_none());
+        let scene =
+            build_price_history_scene(&world_helper(), &series, &PriceChartOptions::default());
+        assert_eq!(count(&scene, |n| matches!(n, Node::Path { .. })), 0);
+    }
+
+    #[test]
+    fn single_series_gets_area_fill() {
+        let mut series = two_world_series();
+        series.series.truncate(1);
+        let scene =
+            build_price_history_scene(&world_helper(), &series, &PriceChartOptions::default());
         assert_eq!(count(&scene, |n| matches!(n, Node::Area { .. })), 1);
         assert_eq!(count(&scene, |n| matches!(n, Node::Polyline { .. })), 1);
     }
 
     #[test]
-    fn empty_sales_renders_no_data_card() {
-        let scene = build_price_history_scene(&world_helper(), &[], &PriceChartOptions::default());
+    fn empty_series_renders_no_data_card() {
+        let empty = PriceSeries {
+            bucket_seconds: 86_400,
+            group: SeriesGroup::World,
+            from: crate::test_util::ts(0),
+            to: crate::test_util::ts(0),
+            series: Vec::new(),
+            raw: None,
+        };
+        let scene =
+            build_price_history_scene(&world_helper(), &empty, &PriceChartOptions::default());
         let has_no_data_text = scene
             .nodes
             .iter()
             .any(|n| matches!(n, Node::Text { content, .. } if content == "No recent sales"));
         assert!(has_no_data_text);
+    }
+
+    #[test]
+    fn unresolvable_series_ids_are_dropped_not_shown_as_numbers() {
+        let mut series = two_world_series();
+        series.series.push(PriceSeriesEntry {
+            id: 999,
+            buckets: vec![bucket(1_700_006_400, 100, 120, 90, 105, 2)],
+        });
+        let model =
+            build_price_history_chart(&world_helper(), &series, &PriceChartOptions::default());
+        assert_eq!(
+            model.series.len(),
+            2,
+            "unknown world id 999 must be dropped"
+        );
+        assert!(model.series.iter().all(|s| s.name != "999"));
     }
 
     #[test]
@@ -638,7 +755,7 @@ mod tests {
     fn volume_bars_stay_inside_plot_bounds() {
         let scene = build_price_history_scene(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions::default(),
         );
         for node in &scene.nodes {
@@ -653,7 +770,7 @@ mod tests {
     fn hiding_volume_emits_no_bars() {
         let scene = build_price_history_scene(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions {
                 show_volume: false,
                 ..Default::default()
@@ -667,7 +784,7 @@ mod tests {
     fn trendline_stays_inside_the_price_lane() {
         let scene = build_price_history_scene(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions {
                 show_trendline: true,
                 show_market_average: false,
@@ -701,7 +818,7 @@ mod tests {
     fn model_exposes_hover_buckets_series_and_stats() {
         let model = build_price_history_chart(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions::default(),
         );
         assert_eq!(model.series.len(), 2);
@@ -712,8 +829,8 @@ mod tests {
         }
         // sorted by x
         assert!(model.hover.buckets.windows(2).all(|w| w[0].x <= w[1].x));
-        let stats = model.stats.expect("stats for non-empty sales");
-        assert_eq!(stats.n, 20);
+        let stats = model.stats.expect("stats for non-empty series");
+        assert_eq!(stats.n, 60, "10 buckets x 2 series x 3 sales/bucket");
         assert!(stats.min <= stats.max);
         assert!(stats.market_average.is_some());
     }
@@ -749,12 +866,12 @@ mod tests {
     fn scene_function_delegates_to_the_model() {
         let scene = build_price_history_scene(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions::default(),
         );
         let model = build_price_history_chart(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions::default(),
         );
         assert_eq!(scene, model.scene);
@@ -764,7 +881,7 @@ mod tests {
     fn hidden_series_are_excluded_from_drawing_but_kept_in_metadata() {
         let model = build_price_history_chart(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions {
                 hidden_series: vec!["Gilgamesh".to_string()],
                 ..Default::default()
@@ -803,7 +920,7 @@ mod tests {
     fn hiding_every_series_yields_the_no_data_card_but_keeps_metadata() {
         let model = build_price_history_chart(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions {
                 hidden_series: vec!["Gilgamesh".to_string(), "Adamantoise".to_string()],
                 ..Default::default()
@@ -817,14 +934,13 @@ mod tests {
     fn hover_volume_corresponds_to_bucket_sales() {
         let model = build_price_history_chart(
             &world_helper(),
-            &two_world_sales(),
+            &two_world_series(),
             &PriceChartOptions::default(),
         );
-        // Every hover bucket was created from at least one VWAP point, and the
-        // volume lane keys by the same bucket start — so each bucket with any
-        // series value must carry that bucket's quantity sum.
+        // Every bucket in the fixture carries 2 units per series, 2 series,
+        // 10 buckets each -> 40 total units across the hover buckets.
         let total: i64 = model.hover.buckets.iter().map(|b| b.volume).sum();
-        assert_eq!(total, 40, "20 sales x quantity 2 all land in hover buckets");
+        assert_eq!(total, 40);
         for bucket in &model.hover.buckets {
             assert!(
                 bucket.series_values.iter().any(|v| v.is_some()),
@@ -838,8 +954,42 @@ mod tests {
     }
 
     #[test]
-    fn empty_sales_yield_empty_model_with_no_data_scene() {
-        let model = build_price_history_chart(&world_helper(), &[], &PriceChartOptions::default());
+    fn buckets_with_zero_units_are_skipped_as_vwap_gaps() {
+        let mut series = two_world_series();
+        // Zero out units on one bucket of the first series: vwap() is None,
+        // so it must be skipped as a gap, not rendered as a zero.
+        series.series[0].buckets[0].units = 0;
+        series.series[0].buckets[0].gil = 0;
+        let model =
+            build_price_history_chart(&world_helper(), &series, &PriceChartOptions::default());
+        // 9 remaining buckets from series[0] (Gilgamesh) plus 10 from
+        // series[1] (Adamantoise) union to 10 hover buckets (the gap bucket
+        // is still populated by the other series).
+        assert_eq!(model.hover.buckets.len(), 10);
+        let gap_bucket = model
+            .hover
+            .buckets
+            .iter()
+            .min_by(|a, b| a.x.partial_cmp(&b.x).unwrap())
+            .unwrap();
+        // Gilgamesh sorts after Adamantoise (index 1); its slot is None at
+        // the gap timestamp.
+        assert!(gap_bucket.series_values[1].is_none());
+        assert!(gap_bucket.series_values[0].is_some());
+    }
+
+    #[test]
+    fn empty_series_yield_empty_model_with_no_data_scene() {
+        let empty = PriceSeries {
+            bucket_seconds: 86_400,
+            group: SeriesGroup::World,
+            from: crate::test_util::ts(0),
+            to: crate::test_util::ts(0),
+            series: Vec::new(),
+            raw: None,
+        };
+        let model =
+            build_price_history_chart(&world_helper(), &empty, &PriceChartOptions::default());
         assert!(model.hover.buckets.is_empty());
         assert!(model.stats.is_none());
         assert!(
@@ -849,5 +999,25 @@ mod tests {
                 .iter()
                 .any(|n| matches!(n, Node::Text { content, .. } if content == "No recent sales"))
         );
+    }
+
+    #[test]
+    fn group_level_reflects_the_payloads_group_not_options() {
+        let mut series = two_world_series();
+        series.group = SeriesGroup::Datacenter;
+        series.series = vec![PriceSeriesEntry {
+            id: 1,
+            buckets: vec![bucket(1_700_006_400, 100, 120, 90, 105, 2)],
+        }];
+        let model = build_price_history_chart(
+            &world_helper(),
+            &series,
+            &PriceChartOptions {
+                // Deliberately mismatched with `series.group` — must be ignored.
+                group_level: Some(GroupLevel::World),
+                ..Default::default()
+            },
+        );
+        assert_eq!(model.group_level, GroupLevel::Datacenter);
     }
 }
