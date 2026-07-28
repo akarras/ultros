@@ -30,6 +30,8 @@ web-sys = { version = "0.3", optional = true, features = [
     "HtmlDocument",
     "Document",
     "Element",
+    # VirtualScroller window-scroll mode reads Element::get_bounding_client_rect.
+    "DomRect",
     "PointerEvent",
     "ResizeObserver",
     "WebSocket",
