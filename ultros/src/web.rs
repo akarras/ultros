@@ -6,6 +6,7 @@ pub(crate) mod error;
 pub(crate) mod item_card;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
+pub(crate) mod price_series_cache;
 pub(crate) mod sitemap;
 pub(crate) mod state;
 pub(crate) mod static_files;
@@ -414,9 +415,10 @@ fn fold_price_series_rows(rows: &[PriceSeriesRow]) -> Vec<PriceSeriesEntry> {
 async fn price_series(
     State(world_cache): State<Arc<WorldCache>>,
     State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
     Path((world, item_id)): Path<(String, i32)>,
     axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
-) -> Result<axum::Json<PriceSeries>, WebError> {
+) -> Result<axum::response::Response, WebError> {
     let selected_value = world_cache.lookup_value_by_name(&world)?;
     let worlds = world_cache
         .get_all_worlds_in(&selected_value)
@@ -453,6 +455,53 @@ async fn price_series(
         Some(requested) if requested > 0 => snap_bucket_seconds(requested),
         _ => bucket_seconds_for_span(span_secs),
     };
+
+    // Snap an open-ended `to` down to the current bucket boundary so live
+    // views share a cache entry instead of minting a unique key per second.
+    let to = if query.to.is_none() {
+        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
+        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    } else {
+        to
+    };
+
+    // The cache key is built from the *pre-widening* `bucket_seconds` — the
+    // value resolved above from the request, before the loop below
+    // potentially widens it in response to how much data comes back. This is
+    // deliberate: checking the cache has to happen before running the query
+    // at all (that's the entire point — skip the CH scan on a hit), and the
+    // widened bucket is only known *after* the query runs. Building the key
+    // post-loop would mean always querying first, defeating the cache.
+    //
+    // The tradeoff: if a client takes the `bucket_seconds` reported in a
+    // widened response and re-requests with that as an explicit `bucket=`
+    // query param, it computes a different cache key than the original
+    // request and misses even though the same rows are cached under the
+    // pre-widen key. This is a pure cache miss, not a correctness bug — the
+    // re-request still runs the same query, widens to the same bucket, and
+    // produces the same (correct) answer, just without benefiting from the
+    // cache. Given widening only triggers on pathologically large requests
+    // (see `MAX_BUCKETS`), this is rare enough not to be worth doubling the
+    // number of cache entries written per request to cover it.
+    let cache_key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: from.timestamp(),
+        to: to.timestamp(),
+        bucket: bucket_seconds,
+        group: group.as_str(),
+        hq: hq.as_str(),
+    };
+    // A closed window is immutable; an open one only changes when the current
+    // bucket rolls over.
+    let ttl = if query.to.is_some() {
+        std::time::Duration::from_secs(3_600)
+    } else {
+        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
+    };
+    if let Some(hit) = cache.get(&cache_key) {
+        return Ok(cached_json(hit, ttl));
+    }
 
     let rows = loop {
         let rows = ultros_clickhouse::queries::price_series(
@@ -541,14 +590,36 @@ async fn price_series(
         .max()
         .unwrap_or_else(|| to.naive_utc());
 
-    Ok(axum::Json(PriceSeries {
+    let payload = PriceSeries {
         bucket_seconds,
         group,
         from: domain_from,
         to: domain_to,
         series,
         raw,
-    }))
+    };
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(cache_key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
+/// JSON response carrying a `Cache-Control` matching the in-process TTL, so
+/// the browser and any CDN absorb repeats too.
+fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Response {
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json".to_string(),
+            ),
+            (
+                axum::http::header::CACHE_CONTROL,
+                format!("public, max-age={}", ttl.as_secs()),
+            ),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 #[cfg(test)]
