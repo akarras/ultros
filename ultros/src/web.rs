@@ -417,30 +417,47 @@ fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
     }
 }
 
-/// Resolves a `PriceSeries` for `item_id` within `[from, to)` at `group`
-/// granularity, filtered by `hq`, scoped to the worlds `world` (a world,
-/// datacenter, or region name) expands to.
+/// Request shape for [`build_price_series`], bundled into one struct so the
+/// function stays under clippy's argument-count lint — `ch`/`world_cache`
+/// stay separate since they're handles, not request data.
+pub(crate) struct PriceSeriesArgs<'a> {
+    /// A world, datacenter, or region name; expanded to its constituent
+    /// worlds via `world_cache`.
+    pub world: &'a str,
+    pub item_id: i32,
+    pub from: chrono::DateTime<chrono::Utc>,
+    pub to: chrono::DateTime<chrono::Utc>,
+    pub group: SeriesGroup,
+    pub hq: HqFilter,
+    /// Mirrors the JSON endpoint's `bucket` query param: `Some(n)` with
+    /// `n > 0` snaps `n` onto the ladder and starts the widening loop there;
+    /// anything else (including `None`) lets [`bucket_seconds_for_span`]
+    /// pick from `[from, to)`.
+    pub bucket: Option<i64>,
+}
+
+/// Resolves a `PriceSeries` for `args.item_id` within `[args.from, args.to)`
+/// at `args.group` granularity, filtered by `args.hq`, scoped to the worlds
+/// `args.world` (a world, datacenter, or region name) expands to.
 ///
 /// Shared by the `/api/v1/price_series` JSON endpoint and the item-card PNG
 /// so the two can never disagree about what the chart shows: same world
 /// resolution, same bucket-widening ladder, same raw-sale cutoff
 /// ([`RAW_SALE_LIMIT`]), same response-domain calculation.
-///
-/// `bucket` mirrors the JSON endpoint's `bucket` query param: `Some(n)` with
-/// `n > 0` snaps `n` onto the ladder and starts the widening loop there;
-/// anything else (including `None`) lets [`bucket_seconds_for_span`] pick
-/// from `[from, to)`.
 pub(crate) async fn build_price_series(
     ch: &ClickHouseClient,
     world_cache: &WorldCache,
-    world: &str,
-    item_id: i32,
-    from: chrono::DateTime<chrono::Utc>,
-    to: chrono::DateTime<chrono::Utc>,
-    group: SeriesGroup,
-    hq: HqFilter,
-    bucket: Option<i64>,
+    args: PriceSeriesArgs<'_>,
 ) -> Result<PriceSeries, WebError> {
+    let PriceSeriesArgs {
+        world,
+        item_id,
+        from,
+        to,
+        group,
+        hq,
+        bucket,
+    } = args;
     if from >= to {
         return Err(WebError::BadRequest);
     }
@@ -647,13 +664,15 @@ async fn price_series(
     let payload = build_price_series(
         &ch,
         &world_cache,
-        &world,
-        item_id,
-        from,
-        to,
-        group,
-        hq,
-        Some(bucket_seconds),
+        PriceSeriesArgs {
+            world: &world,
+            item_id,
+            from,
+            to,
+            group,
+            hq,
+            bucket: Some(bucket_seconds),
+        },
     )
     .await?;
 

@@ -1,6 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
-use super::{WebState, build_price_series, error::WebError};
+use super::{PriceSeriesArgs, WebState, build_price_series, error::WebError};
 use anyhow::{Result, anyhow};
 use axum::{
     body::Body,
@@ -40,13 +40,15 @@ pub(crate) async fn generate_image(
     let series = build_price_series(
         ch,
         world_cache,
-        world,
-        item.key_id.0,
-        from,
-        to,
-        SeriesGroup::World,
-        HqFilter::Any,
-        None,
+        PriceSeriesArgs {
+            world,
+            item_id: item.key_id.0,
+            from,
+            to,
+            group: SeriesGroup::World,
+            hq: HqFilter::Any,
+            bucket: None,
+        },
     )
     .await?;
     let scene = build_price_history_scene(

@@ -20,6 +20,7 @@ use ultros_api_types::{
     },
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
+    price_series::{HqFilter, PriceSeries, SeriesGroup},
     recent_sales::RecentSales,
     resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
     result::JsonErrorWrapper,
@@ -50,6 +51,12 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
 
 /// Pull a larger window of sales than the default listings endpoint returns.
 /// Server caps `limit` at 10000.
+///
+/// No longer called from the item chart (see `get_price_series`), which now
+/// fetches pre-bucketed data instead of raw sales. Left in place: this is a
+/// public API endpoint the frontend may want again (e.g. a raw sales export)
+/// and removing the client wrapper is out of scope for that migration.
+#[allow(dead_code)]
 pub(crate) async fn get_extended_sale_history(
     item_id: i32,
     world: &str,
@@ -62,6 +69,30 @@ pub(crate) async fn get_extended_sale_history(
         "/api/v1/extended_history/{world}/{item_id}?limit={limit}"
     ))
     .await
+}
+
+/// Pre-bucketed price series for the item chart. Unlike
+/// [`get_extended_sale_history`] the payload size tracks the requested window
+/// rather than the item's sale count, so this is safe at full history.
+pub(crate) async fn get_price_series(
+    item_id: i32,
+    world: &str,
+    group: SeriesGroup,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+) -> AppResult<PriceSeries> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    let mut url = format!(
+        "/api/v1/price_series/{world}/{item_id}?group={}&hq={}",
+        group.as_str(),
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
 }
 
 /// This is okay because the client will send our login cookie.
