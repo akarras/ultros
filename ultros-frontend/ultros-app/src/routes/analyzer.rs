@@ -19,7 +19,6 @@ use crate::{
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
-        tool_help::*,
         tooltip::*,
         virtual_scroller::*,
         world_picker::*,
@@ -614,6 +613,13 @@ fn available_filters(active: &[&str]) -> Vec<&'static str> {
         .collect()
 }
 
+/// Regions whose cross-region listings can be pulled in alongside the
+/// current world's own region. Shared between the cross-region toggle's
+/// resource (in `AnalyzerWorldView`) and the per-region opt-out checkboxes
+/// rendered in the Columns popover (in `AnalyzerTable`) — both need the same
+/// list, and only one of them may query it.
+const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
+
 #[component]
 fn AnalyzerTable(
     sales: RecentSales,
@@ -623,6 +629,19 @@ fn AnalyzerTable(
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
     filter_outliers: bool,
+    /// Current world's region name, if resolvable. Only used to exclude the
+    /// current region from the cross-region opt-out list in the Columns
+    /// popover — a plain value like `filter_outliers`, not a reactive prop,
+    /// since this component remounts whenever the caller's region changes.
+    region: Option<String>,
+    /// Current state of the cross-region toggle, mirroring `filter_outliers`.
+    cross_region_enabled: bool,
+    /// The caller's own `query_signal` setters for `?cross=` / `?filter-outliers=`.
+    /// Threaded through as props rather than re-derived here so there is a
+    /// single `query_signal` per URL key instead of two independent ones
+    /// drifting in and out of the router's query-mutation queue.
+    set_cross_region_enabled: SignalSetter<Option<bool>>,
+    set_filter_outliers: SignalSetter<Option<bool>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let profits = ProfitTable::new(
@@ -1536,6 +1555,61 @@ fn AnalyzerTable(
                                     >
                                         {t!(i18n, analyzer_columns_picker_reset)}
                                     </button>
+
+                                    // Cross-region + outlier-filtering, formerly the controls
+                                    // panel above the table. `w-full` forces its own row inside
+                                    // the wrapping flex container above.
+                                    <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
+                                        <Toggle
+                                            checked=Signal::derive(move || cross_region_enabled)
+                                            set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
+                                                val.then_some(true),
+                                            ))
+                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
+                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
+                                        />
+                                        <Toggle
+                                            checked=Signal::derive(move || filter_outliers)
+                                            set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
+                                                val.then_some(true),
+                                            ))
+                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
+                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
+                                        />
+                                        <div
+                                            class="flex flex-wrap gap-2"
+                                            class:hidden=move || !cross_region_enabled
+                                        >
+                                            {
+                                                let region = region.clone();
+                                                move || {
+                                                    let region = region.clone();
+                                                    region
+                                                        .map(|region| {
+                                                            CONNECTED_REGIONS
+                                                                .iter()
+                                                                .filter(move |r| **r != region.as_str())
+                                                                .map(|region_name| {
+                                                                    let (enabled, set_enabled) = query_signal::<
+                                                                        bool,
+                                                                    >(region_name.to_string());
+                                                                    view! {
+                                                                        <Toggle
+                                                                            checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                                            set_checked=SignalSetter::map(move |checked: bool| {
+                                                                                set_enabled(Some(checked));
+                                                                            })
+                                                                            checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
+                                                                            unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
+                                                                        />
+                                                                    }
+                                                                })
+                                                                .collect::<Vec<_>>()
+                                                        })
+                                                }
+                                            }
+                                        </div>
+                                    </div>
                                 </div>
                             }
                         })
@@ -2038,7 +2112,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
-    let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
+    let connected_regions = CONNECTED_REGIONS;
     let query = use_query_map();
 
     let enabled_regions = move || {
@@ -2074,100 +2148,23 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
-            <div class="flex flex-col gap-8">
-                    <ToolHeader
-                        title=t_string!(i18n, flip_finder).to_string()
-                        summary=t_string!(i18n, analyzer_tool_summary).to_string()
-                        context=t_string!(i18n, analyzer_tool_context).to_string()
-                        help_href="/help/flip-finder"
-                        help_body=t_string!(i18n, analyzer_tool_help).to_string()
-                    />
-
-                    // Controls Section
-                    <div class="panel p-4 sm:p-6 rounded-2xl">
-                        <div class="flex flex-col gap-4">
-                            <MetaDescription text=move || {
-                                t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
-                            } />
-
-                            // World Navigator
-                            <div class="flex flex-col md:flex-row gap-4 items-center">
-                                <AnalyzerWorldNavigator />
-                                <div class="flex flex-col gap-2">
-                                    <Toggle
-                                        checked=Signal::derive(move || {
-                                            cross_region_enabled().unwrap_or_default()
-                                        })
-                                        set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                            val.then_some(true),
-                                        ))
-                                        checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
-                                        unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
-                                    />
-                                    <Toggle
-                                        checked=Signal::derive(move || {
-                                            filter_outliers().unwrap_or_default()
-                                        })
-                                        set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
-                                            val.then_some(true),
-                                        ))
-                                        checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
-                                        unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
-                                    />
-
-                                    <div
-                                        class="flex flex-wrap gap-2"
-                                        class:hidden=move || {
-                                            !cross_region_enabled().unwrap_or_default()
-                                        }
-                                    >
-                                        {move || {
-                                            region()
-                                                .map(|region| move || {
-                                                    connected_regions
-                                                        .iter()
-                                                        .filter(|r| **r != region.as_str())
-                                                        .map(|region| {
-                                                            let (enabled, set_enabled) = query_signal::<
-                                                                bool,
-                                                            >(region.to_string());
-                                                            view! {
-                                                                <Toggle
-                                                                    checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                                    set_checked=SignalSetter::map(move |checked: bool| {
-                                                                        set_enabled(Some(checked));
-                                                                    })
-                                                                    checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region)
-                                                                    unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region)
-                                                                />
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                })
-                                                .ok()
-                                        }}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <details class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)] open:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
-                                <summary class="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[color:var(--brand-fg)] hover:text-[color:var(--color-text)]">
-                                    {t!(i18n, analyzer_calc_title)}
-                                </summary>
-                                <div class="px-3 pb-3 pt-1 flex flex-col gap-2">
-                                    <code class="text-sm text-brand-300 whitespace-normal break-words">
-                                        {t!(i18n, analyzer_calc_formula)}
-                                    </code>
-                                    <p class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">
-                                        {t!(i18n, analyzer_calc_details)}
-                                    </p>
-                                    <div class="flex flex-wrap gap-2 pt-1">
-                                        <AssumptionBadge text=t_string!(i18n, analyzer_assumption_cross_region).to_string() />
-                                        <AssumptionBadge text=t_string!(i18n, analyzer_assumption_hq_nq).to_string() />
-                                    </div>
-                                </div>
-                            </details>
-                        </div>
+            <MetaDescription text=move || {
+                t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
+            } />
+            <div class="flex flex-col gap-3">
+                    // Title + world picker. Deliberately kept OUTSIDE the
+                    // `<Suspense>` below: `AnalyzerTable` (and the sticky bar
+                    // it renders) only exists once every resource has
+                    // resolved, so a control placed there vanishes behind
+                    // `BoxSkeleton` on every load — including a world change,
+                    // which is exactly when a user most needs to be able to
+                    // change worlds again. Keeping it here means it is always
+                    // on screen, load or no load.
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, flip_finder)}
+                        </h1>
+                        <AnalyzerWorldNavigator />
                     </div>
 
                     // Main Content. No `min-h-screen` and no scroll container:
@@ -2200,6 +2197,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     worlds
                                                     world=world.into()
                                                     filter_outliers=filter_outliers().unwrap_or(false)
+                                                    region=region().ok()
+                                                    cross_region_enabled=cross_region_enabled().unwrap_or_default()
+                                                    set_cross_region_enabled=set_cross_region_enabled
+                                                    set_filter_outliers=set_filter_outliers
                                                 />
                                             },
                                         )
@@ -2303,65 +2304,6 @@ pub fn Analyzer() -> impl IntoView {
                             </h2>
                             <AnalyzerWorldNavigator />
                         </div>
-                    </div>
-
-                    // Features Grid
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaMoneyBillTrendUpSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_profit_tracking)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, analyzer_feature_profit_tracking_desc)}
-                            </p>
-                        </div>
-
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaChartLineSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_market_analysis)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, analyzer_feature_market_analysis_desc)}
-                            </p>
-                        </div>
-
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaFilterSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_custom_filters)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, analyzer_feature_custom_filters_desc)}
-                            </p>
-                        </div>
-                    </div>
-
-                    // Tips Section
-                    <div class="panel p-6 rounded-2xl">
-                        <h2 class="text-xl font-bold text-brand-300 mb-4">{t!(i18n, analyzer_tips_title)}</h2>
-                        <ul class="list-disc list-inside text-gray-300 space-y-2">
-                            <li>
-                                {t!(i18n, analyzer_tip_1)}
-                            </li>
-                            <li>
-                                {t!(i18n, analyzer_tip_2)}
-                            </li>
-                            <li>{t!(i18n, analyzer_tip_3)}</li>
-                            <li>
-                                {t!(i18n, analyzer_tip_4)}
-                            </li>
-                        </ul>
                     </div>
                 </div>
         </div>
