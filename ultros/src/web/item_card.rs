@@ -1,6 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
-use super::{WebState, error::WebError};
+use super::{WebState, build_price_series, error::WebError};
 use anyhow::{Result, anyhow};
 use axum::{
     body::Body,
@@ -13,32 +13,46 @@ use resvg::{
     usvg::{self, Options},
 };
 use ultros_api_types::{
-    SaleHistory,
-    world_helper::{AnyResult, WorldHelper},
+    price_series::{HqFilter, SeriesGroup},
+    world_helper::WorldHelper,
 };
 use ultros_charts::charts::price_history::{PriceChartOptions, build_price_history_scene};
 use ultros_charts::svg::scene_to_svg;
-use ultros_db::UltrosDb;
+use ultros_clickhouse::ClickHouseClient;
+use ultros_db::world_data::world_cache::WorldCache;
 use xiv_gen::{Item, ItemId};
 
+/// Window shown on the item card: the last 30 days, ending now. The card is
+/// a single static snapshot (Discord embed / PNG download) with no
+/// timeline-slicer UI, so there's no "requested range" to preserve — this
+/// picks a fixed, reasonable default.
+const CARD_WINDOW_DAYS: i64 = 30;
+
 pub(crate) async fn generate_image(
-    db: &UltrosDb,
+    ch: &ClickHouseClient,
+    world_cache: &WorldCache,
     world_helper: &WorldHelper,
     item: &'static Item,
-    world: &AnyResult<'_>,
+    world: &str,
 ) -> Result<Vec<u8>> {
-    let world_ids: Vec<_> = world.all_worlds().map(|w| w.id).collect();
-    let sales: Vec<SaleHistory> = db
-        .get_sale_history_from_multiple_worlds(world_ids.into_iter(), item.key_id.0, 200)
-        .await?
-        .into_iter()
-        .map(SaleHistory::from)
-        .collect();
+    let to = chrono::Utc::now();
+    let from = to - chrono::Duration::days(CARD_WINDOW_DAYS);
+    let series = build_price_series(
+        ch,
+        world_cache,
+        world,
+        item.key_id.0,
+        from,
+        to,
+        SeriesGroup::World,
+        HqFilter::Any,
+        None,
+    )
+    .await?;
     let scene = build_price_history_scene(
         world_helper,
-        &sales,
+        &series,
         &PriceChartOptions {
-            remove_outliers: true,
             title: Some(format!("{} - Sale History", item.name)),
             icon_data_uri: ultros_charts::item_icon_data_uri(item.key_id.0),
             ..Default::default()
@@ -74,17 +88,22 @@ fn svg_to_png(svg: &str) -> Result<Vec<u8>> {
 #[axum_macros::debug_handler(state = WebState)]
 pub(crate) async fn item_card(
     Path((world, item_id)): Path<(String, i32)>,
-    State(db): State<UltrosDb>,
+    State(ch): State<ClickHouseClient>,
+    State(world_cache): State<Arc<WorldCache>>,
     State(world_helper): State<Arc<WorldHelper>>,
 ) -> Result<impl IntoResponse, WebError> {
     let item = xiv_gen_db::data()
         .items
         .get(&ItemId(item_id))
         .ok_or(WebError::InvalidItemId(item_id))?;
-    let world = world_helper
-        .lookup_world_by_name(&world)
-        .ok_or_else(|| WebError::WorldNotFound(world))?;
-    let bytes = generate_image(&db, &world_helper, item, &world).await?;
+    // Validated up front against `WorldHelper` (cheap, in-memory) so an
+    // unknown world name 400s immediately rather than after a ClickHouse
+    // round trip — `build_price_series` would otherwise still catch it via
+    // `WorldCache::lookup_value_by_name`, just as a 404 instead.
+    if world_helper.lookup_world_by_name(&world).is_none() {
+        return Err(WebError::WorldNotFound(world));
+    }
+    let bytes = generate_image(&ch, &world_cache, &world_helper, item, &world).await?;
     let mime_type = mime_guess::from_path("icon.png").first_or_text_plain();
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, mime_type.as_ref())

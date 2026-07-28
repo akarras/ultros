@@ -406,6 +406,7 @@ async fn main() -> Result<()> {
         update_service,
         discord_token,
         token.clone(),
+        ch_client.clone(),
     ));
 
     let character_verification = CharacterVerifierService {

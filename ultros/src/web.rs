@@ -405,107 +405,59 @@ fn fold_price_series_rows(rows: &[PriceSeriesRow]) -> Vec<PriceSeriesEntry> {
     entries
 }
 
-/// `GET /api/v1/price_series/{world}/{itemid}` — server-bucketed price/volume
-/// series backing the item page chart, replacing the browser-side bucketing
-/// of up to 10,000 raw rows from `extended_sale_history`.
+/// Resolve the bucket width to query at: an explicit, valid request wins
+/// (snapped onto the ladder), otherwise the ladder picks one from the span.
+/// Shared by the handler (which needs this *before* the widening loop, to
+/// build a stable cache key) and [`build_price_series`] (which needs it as
+/// the loop's starting point) so the two can't drift apart.
+fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
+    match bucket {
+        Some(requested) if requested > 0 => snap_bucket_seconds(requested),
+        _ => bucket_seconds_for_span(span_secs),
+    }
+}
+
+/// Resolves a `PriceSeries` for `item_id` within `[from, to)` at `group`
+/// granularity, filtered by `hq`, scoped to the worlds `world` (a world,
+/// datacenter, or region name) expands to.
 ///
-/// Named `price_series` like the query function it wraps
-/// (`ultros_clickhouse::queries::price_series`); calls into that function are
-/// fully qualified to disambiguate.
-async fn price_series(
-    State(world_cache): State<Arc<WorldCache>>,
-    State(ch): State<ClickHouseClient>,
-    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
-    Path((world, item_id)): Path<(String, i32)>,
-    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
-) -> Result<axum::response::Response, WebError> {
-    let selected_value = world_cache.lookup_value_by_name(&world)?;
-    let worlds = world_cache
-        .get_all_worlds_in(&selected_value)
-        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
-
-    let group = match query.group.as_deref() {
-        Some("region") => SeriesGroup::Region,
-        Some("datacenter") => SeriesGroup::Datacenter,
-        _ => SeriesGroup::World,
-    };
-    let hq = match query.hq.as_deref() {
-        Some("hq") => HqFilter::Hq,
-        Some("nq") => HqFilter::Nq,
-        _ => HqFilter::Any,
-    };
-
-    let now = chrono::Utc::now();
-    let to = query
-        .to
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .unwrap_or(now);
-    let from = query
-        .from
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+/// Shared by the `/api/v1/price_series` JSON endpoint and the item-card PNG
+/// so the two can never disagree about what the chart shows: same world
+/// resolution, same bucket-widening ladder, same raw-sale cutoff
+/// ([`RAW_SALE_LIMIT`]), same response-domain calculation.
+///
+/// `bucket` mirrors the JSON endpoint's `bucket` query param: `Some(n)` with
+/// `n > 0` snaps `n` onto the ladder and starts the widening loop there;
+/// anything else (including `None`) lets [`bucket_seconds_for_span`] pick
+/// from `[from, to)`.
+pub(crate) async fn build_price_series(
+    ch: &ClickHouseClient,
+    world_cache: &WorldCache,
+    world: &str,
+    item_id: i32,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    group: SeriesGroup,
+    hq: HqFilter,
+    bucket: Option<i64>,
+) -> Result<PriceSeries, WebError> {
     if from >= to {
         return Err(WebError::BadRequest);
     }
 
-    let world_to_group = world_group_map(&world_cache, &worlds, group);
+    let selected_value = world_cache.lookup_value_by_name(world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+
+    let world_to_group = world_group_map(world_cache, &worlds, group);
 
     let span_secs = (to - from).num_seconds().max(1);
-    let mut bucket_seconds = match query.bucket {
-        Some(requested) if requested > 0 => snap_bucket_seconds(requested),
-        _ => bucket_seconds_for_span(span_secs),
-    };
-
-    // Snap an open-ended `to` down to the current bucket boundary so live
-    // views share a cache entry instead of minting a unique key per second.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
-    } else {
-        to
-    };
-
-    // The cache key is built from the *pre-widening* `bucket_seconds` — the
-    // value resolved above from the request, before the loop below
-    // potentially widens it in response to how much data comes back. This is
-    // deliberate: checking the cache has to happen before running the query
-    // at all (that's the entire point — skip the CH scan on a hit), and the
-    // widened bucket is only known *after* the query runs. Building the key
-    // post-loop would mean always querying first, defeating the cache.
-    //
-    // The tradeoff: if a client takes the `bucket_seconds` reported in a
-    // widened response and re-requests with that as an explicit `bucket=`
-    // query param, it computes a different cache key than the original
-    // request and misses even though the same rows are cached under the
-    // pre-widen key. This is a pure cache miss, not a correctness bug — the
-    // re-request still runs the same query, widens to the same bucket, and
-    // produces the same (correct) answer, just without benefiting from the
-    // cache. Given widening only triggers on pathologically large requests
-    // (see `MAX_BUCKETS`), this is rare enough not to be worth doubling the
-    // number of cache entries written per request to cover it.
-    let cache_key = crate::web::price_series_cache::CacheKey {
-        item_id,
-        scope: world.clone(),
-        from: from.timestamp(),
-        to: to.timestamp(),
-        bucket: bucket_seconds,
-        group: group.as_str(),
-        hq: hq.as_str(),
-    };
-    // A closed window is immutable; an open one only changes when the current
-    // bucket rolls over.
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
-    };
-    if let Some(hit) = cache.get(&cache_key) {
-        return Ok(cached_json(hit, ttl));
-    }
+    let mut bucket_seconds = resolve_bucket_seconds(bucket, span_secs);
 
     let rows = loop {
         let rows = ultros_clickhouse::queries::price_series(
-            &ch,
+            ch,
             item_id,
             &world_to_group,
             group,
@@ -546,7 +498,7 @@ async fn price_series(
         // means `hq` now filters raw sales too, matching the buckets (it
         // previously didn't).
         let sales = ultros_clickhouse::queries::raw_sales(
-            &ch,
+            ch,
             item_id,
             &worlds,
             hq,
@@ -590,14 +542,121 @@ async fn price_series(
         .max()
         .unwrap_or_else(|| to.naive_utc());
 
-    let payload = PriceSeries {
+    Ok(PriceSeries {
         bucket_seconds,
         group,
         from: domain_from,
         to: domain_to,
         series,
         raw,
+    })
+}
+
+/// `GET /api/v1/price_series/{world}/{itemid}` — server-bucketed price/volume
+/// series backing the item page chart, replacing the browser-side bucketing
+/// of up to 10,000 raw rows from `extended_sale_history`.
+///
+/// Named `price_series` like the query function it wraps
+/// (`ultros_clickhouse::queries::price_series`); calls into that function are
+/// fully qualified to disambiguate.
+///
+/// Caching and serialization live here; the actual series construction is
+/// [`build_price_series`], shared with the item-card PNG handler.
+async fn price_series(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+) -> Result<axum::response::Response, WebError> {
+    let group = match query.group.as_deref() {
+        Some("region") => SeriesGroup::Region,
+        Some("datacenter") => SeriesGroup::Datacenter,
+        _ => SeriesGroup::World,
     };
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+
+    let now = chrono::Utc::now();
+    let to = query
+        .to
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or(now);
+    let from = query
+        .from
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    if from >= to {
+        return Err(WebError::BadRequest);
+    }
+
+    let span_secs = (to - from).num_seconds().max(1);
+    let bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
+
+    // Snap an open-ended `to` down to the current bucket boundary so live
+    // views share a cache entry instead of minting a unique key per second.
+    let to = if query.to.is_none() {
+        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
+        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    } else {
+        to
+    };
+
+    // The cache key is built from the *pre-widening* `bucket_seconds` — the
+    // value resolved above from the request, before `build_price_series`'s
+    // internal loop potentially widens it in response to how much data comes
+    // back. This is deliberate: checking the cache has to happen before
+    // running the query at all (that's the entire point — skip the CH scan
+    // on a hit), and the widened bucket is only known *after* the query
+    // runs. Building the key post-query would mean always querying first,
+    // defeating the cache.
+    //
+    // The tradeoff: if a client takes the `bucket_seconds` reported in a
+    // widened response and re-requests with that as an explicit `bucket=`
+    // query param, it computes a different cache key than the original
+    // request and misses even though the same rows are cached under the
+    // pre-widen key. This is a pure cache miss, not a correctness bug — the
+    // re-request still runs the same query, widens to the same bucket, and
+    // produces the same (correct) answer, just without benefiting from the
+    // cache. Given widening only triggers on pathologically large requests
+    // (see `MAX_BUCKETS`), this is rare enough not to be worth doubling the
+    // number of cache entries written per request to cover it.
+    let cache_key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: from.timestamp(),
+        to: to.timestamp(),
+        bucket: bucket_seconds,
+        group: group.as_str(),
+        hq: hq.as_str(),
+    };
+    // A closed window is immutable; an open one only changes when the current
+    // bucket rolls over.
+    let ttl = if query.to.is_some() {
+        std::time::Duration::from_secs(3_600)
+    } else {
+        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
+    };
+    if let Some(hit) = cache.get(&cache_key) {
+        return Ok(cached_json(hit, ttl));
+    }
+
+    let payload = build_price_series(
+        &ch,
+        &world_cache,
+        &world,
+        item_id,
+        from,
+        to,
+        group,
+        hq,
+        Some(bucket_seconds),
+    )
+    .await?;
+
     let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
     cache.insert(cache_key, body.clone(), ttl);
     Ok(cached_json(body, ttl))
