@@ -49,6 +49,7 @@ pub mod related_items;
 pub mod relative_time;
 pub mod reorderable_list;
 pub mod sale_history_table;
+pub mod saved_views;
 pub mod search_box;
 pub mod select;
 pub mod side_nav;

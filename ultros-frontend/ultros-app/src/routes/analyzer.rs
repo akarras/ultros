@@ -15,6 +15,7 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
+        saved_views::SavedViewsMenu,
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
@@ -614,18 +615,6 @@ fn available_filters(active: &[&str]) -> Vec<&'static str> {
 }
 
 #[component]
-fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
-    view! {
-        <a
-            href=href
-            class="btn-secondary"
-        >
-            {label}
-        </a>
-    }
-}
-
-#[component]
 fn AnalyzerTable(
     sales: RecentSales,
     global_cheapest_listings: CheapestListings,
@@ -1097,6 +1086,7 @@ fn AnalyzerTable(
                         }}
                     </span>
                     <div class="flex-1" />
+                    <SavedViewsMenu current_world=world />
                     <button
                         class="sticky-bar-button"
                         aria-expanded=move || show_columns_picker.get().to_string()
@@ -2160,33 +2150,6 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                 </div>
                             </div>
 
-                            // Preset Filters
-                            <div class="flex flex-wrap gap-4">
-                                <PresetFilterButton
-                                    href="?min-buy=5000&last-sold=7d&roi=30&sort=profit-per-day"
-                                    label=t_string!(i18n, analyzer_preset_realistic).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=100000&last-sold=14d&roi=20&sort=profit"
-                                    label=t_string!(i18n, analyzer_preset_big_ticket).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=1000&last-sold=3d&sort=profit-per-day"
-                                    label=t_string!(i18n, analyzer_preset_volume).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=1000&last-sold=7d&roi=300&profit=0&sort=profit"
-                                    label=t_string!(i18n, analyzer_preset_300_return).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=10000&last-sold=1M&roi=500&profit=200000"
-                                    label=t_string!(i18n, analyzer_preset_500_return).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=1000&last-sold=30d&profit=100000"
-                                    label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
-                                />
-                            </div>
                             <details class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)] open:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                 <summary class="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[color:var(--brand-fg)] hover:text-[color:var(--color-text)]">
                                     {t!(i18n, analyzer_calc_title)}
