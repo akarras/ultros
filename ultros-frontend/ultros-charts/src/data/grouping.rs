@@ -46,6 +46,27 @@ impl GroupLevel {
     }
 }
 
+impl From<GroupLevel> for ultros_api_types::price_series::SeriesGroup {
+    fn from(level: GroupLevel) -> Self {
+        match level {
+            GroupLevel::Region => Self::Region,
+            GroupLevel::Datacenter => Self::Datacenter,
+            GroupLevel::World => Self::World,
+        }
+    }
+}
+
+impl From<ultros_api_types::price_series::SeriesGroup> for GroupLevel {
+    fn from(group: ultros_api_types::price_series::SeriesGroup) -> Self {
+        use ultros_api_types::price_series::SeriesGroup;
+        match group {
+            SeriesGroup::Region => Self::Region,
+            SeriesGroup::Datacenter => Self::Datacenter,
+            SeriesGroup::World => Self::World,
+        }
+    }
+}
+
 /// Group sales at an explicit hierarchy level. Sales whose world id isn't in
 /// the helper are dropped. Series sort by name; points by timestamp.
 pub fn group_sales_by_level(
@@ -161,6 +182,7 @@ pub fn group_sales_by_scope(world_helper: &WorldHelper, sales: &[SaleHistory]) -
 mod tests {
     use super::*;
     use crate::test_util::{sale, ts, world_helper};
+    use ultros_api_types::price_series::SeriesGroup;
 
     fn names(series: &[Series]) -> Vec<&str> {
         series.iter().map(|s| s.name.as_str()).collect()
@@ -301,5 +323,32 @@ mod tests {
                 GroupLevel::World
             ]
         );
+    }
+
+    #[test]
+    fn group_level_round_trips_through_series_group() {
+        for level in [
+            GroupLevel::Region,
+            GroupLevel::Datacenter,
+            GroupLevel::World,
+        ] {
+            assert_eq!(GroupLevel::from(SeriesGroup::from(level)), level);
+        }
+    }
+
+    // A round trip alone can't catch a *symmetric* mis-mapping: if
+    // `From<GroupLevel>` sent `Region => Datacenter` while `From<SeriesGroup>`
+    // sent `Datacenter => Region`, `group_level_round_trips_through_series_group`
+    // above would still pass (Region -> Datacenter -> Region), even though every
+    // API request would carry the wrong grouping. Pin the forward mapping
+    // absolutely so that class of bug can't hide behind the round trip.
+    #[test]
+    fn group_level_maps_to_the_matching_series_group() {
+        assert_eq!(SeriesGroup::from(GroupLevel::Region), SeriesGroup::Region);
+        assert_eq!(
+            SeriesGroup::from(GroupLevel::Datacenter),
+            SeriesGroup::Datacenter
+        );
+        assert_eq!(SeriesGroup::from(GroupLevel::World), SeriesGroup::World);
     }
 }
