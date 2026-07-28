@@ -9,6 +9,7 @@ pub mod list;
 mod listings;
 pub mod market_heat;
 pub mod market_pulse;
+pub mod price_series;
 pub mod recent_sales;
 pub mod resale_quality;
 pub mod result;
@@ -24,6 +25,7 @@ pub mod world_helper;
 
 pub use ffxiv_character::*;
 pub use listings::ActiveListing;
+pub use price_series::{HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup};
 pub use retainer::Retainer;
 pub use sale_history::{CompactSale, ExtendedSaleHistory, SaleHistory};
 
