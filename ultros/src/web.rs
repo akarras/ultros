@@ -41,6 +41,9 @@ use ultros_api_types::list::{
     CreateInvite, CreateList, List, ListActivity, ListActivityKind, ListInvite, ListItem,
     ListSharedGroup, ListSharedUser, ListWithPermission, ShareListGroup, ShareListUser,
 };
+use ultros_api_types::price_series::{
+    HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup,
+};
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
 use ultros_api_types::user::{
@@ -53,8 +56,11 @@ use ultros_api_types::{
     FfxivCharacterVerification, Retainer,
 };
 use ultros_app::{LocalWorldData, shell};
+use ultros_charts::data::buckets::{bucket_seconds_for_span, snap_bucket_seconds, widen_bucket};
+use ultros_clickhouse::ClickHouseClient;
+use ultros_clickhouse::queries::PriceSeriesRow;
 use ultros_db::ActiveValue;
-use ultros_db::world_data::world_cache::AnySelector;
+use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
@@ -289,6 +295,327 @@ async fn extended_sale_history(
 #[derive(serde::Deserialize, Debug)]
 struct ExtendedHistoryQuery {
     limit: Option<u64>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct PriceSeriesQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+    bucket: Option<i64>,
+    group: Option<String>,
+    hq: Option<String>,
+}
+
+/// Above this many sales in the window we stop shipping raw rows and the
+/// chart draws buckets only. Raw dots become a zoomed-in affordance rather
+/// than a default — which is the entire point of this endpoint.
+const RAW_SALE_LIMIT: u64 = 2_000;
+
+/// Hard ceiling on buckets across all series in one response. Exceeding it
+/// widens the bucket a ladder step and retries rather than truncating —
+/// truncation would silently drop the oldest data, which is the data the
+/// caller asked for.
+const MAX_BUCKETS: usize = 20_000;
+
+/// Map every world in scope to its series key at `group`.
+///
+/// `WorldCache::get_all_worlds_in` yields bare world ids, so coarser groupings
+/// resolve each one through the cache. Worlds that fail to resolve are dropped
+/// rather than mapped to a sentinel — a sentinel would silently merge them into
+/// one bogus series. This list must stay in sync with the `world_id IN (...)`
+/// filter the query builds from it; see the invariant note on `group_expr` in
+/// `ultros_clickhouse::queries`.
+fn world_group_map(
+    world_cache: &WorldCache,
+    world_ids: &[i32],
+    group: SeriesGroup,
+) -> Vec<(i32, i32)> {
+    if group == SeriesGroup::World {
+        return world_ids.iter().map(|&id| (id, id)).collect();
+    }
+    world_ids
+        .iter()
+        .filter_map(|&world_id| {
+            let result = world_cache
+                .lookup_selector(&AnySelector::World(world_id))
+                .ok()?;
+            let world = result.as_world().ok()?;
+            let key = match group {
+                SeriesGroup::World => world.id,
+                SeriesGroup::Datacenter => world.datacenter_id,
+                SeriesGroup::Region => {
+                    match world_cache
+                        .lookup_selector(&AnySelector::Datacenter(world.datacenter_id))
+                        .ok()?
+                    {
+                        AnyResult::Datacenter(dc) => dc.region_id,
+                        // `lookup_selector(&AnySelector::Datacenter(_))` always
+                        // returns `AnyResult::Datacenter` or an `Err` (handled
+                        // by the `?` above); this arm is unreachable but kept
+                        // exhaustive rather than matched with an `unwrap`.
+                        _ => return None,
+                    }
+                }
+            };
+            Some((world_id, key))
+        })
+        .collect()
+}
+
+/// Groups consecutive rows sharing `series_id` into one [`PriceSeriesEntry`]
+/// each.
+///
+/// This relies on `ultros_clickhouse::queries::price_series` returning rows
+/// ordered by `(series_id, bucket)` — a single linear pass appending to the
+/// last entry is only correct because rows for the same series are
+/// guaranteed contiguous. It does **not** re-sort or group by a `HashMap`.
+/// If the query's `ORDER BY` is ever changed, this function must change
+/// with it (or be rewritten to group defensively), otherwise interleaved
+/// rows for one series would silently split into multiple entries.
+fn fold_price_series_rows(rows: &[PriceSeriesRow]) -> Vec<PriceSeriesEntry> {
+    let mut entries: Vec<PriceSeriesEntry> = Vec::new();
+    for row in rows {
+        let bucket = PriceBucket {
+            ts: row.bucket.naive_utc(),
+            open: row.open as i32,
+            high: row.high as i32,
+            low: row.low as i32,
+            close: row.close as i32,
+            gil: row.gil as i64,
+            units: row.units as i64,
+            sales: row.sales as u32,
+            p25: row.p25 as i32,
+            p50: row.p50 as i32,
+            p75: row.p75 as i32,
+        };
+        match entries.last_mut() {
+            Some(entry) if entry.id == row.series_id => entry.buckets.push(bucket),
+            _ => entries.push(PriceSeriesEntry {
+                id: row.series_id,
+                buckets: vec![bucket],
+            }),
+        }
+    }
+    entries
+}
+
+/// `GET /api/v1/price_series/{world}/{itemid}` — server-bucketed price/volume
+/// series backing the item page chart, replacing the browser-side bucketing
+/// of up to 10,000 raw rows from `extended_sale_history`.
+///
+/// Named `price_series` like the query function it wraps
+/// (`ultros_clickhouse::queries::price_series`); calls into that function are
+/// fully qualified to disambiguate.
+async fn price_series(
+    State(db): State<UltrosDb>,
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceSeriesQuery>,
+) -> Result<axum::Json<PriceSeries>, WebError> {
+    let selected_value = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+
+    let group = match query.group.as_deref() {
+        Some("region") => SeriesGroup::Region,
+        Some("datacenter") => SeriesGroup::Datacenter,
+        _ => SeriesGroup::World,
+    };
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+
+    let now = chrono::Utc::now();
+    let to = query
+        .to
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or(now);
+    let from = query
+        .from
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    if from >= to {
+        return Err(WebError::BadRequest);
+    }
+
+    let world_to_group = world_group_map(&world_cache, &worlds, group);
+
+    let span_secs = (to - from).num_seconds().max(1);
+    let mut bucket_seconds = match query.bucket {
+        Some(requested) if requested > 0 => snap_bucket_seconds(requested),
+        _ => bucket_seconds_for_span(span_secs),
+    };
+
+    let rows = loop {
+        let rows = ultros_clickhouse::queries::price_series(
+            &ch,
+            item_id,
+            &world_to_group,
+            group,
+            hq,
+            from,
+            to,
+            bucket_seconds,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = ?e, item_id, "price_series CH query failed");
+            anyhow::anyhow!("ClickHouse price_series query failed: {e}")
+        })?;
+
+        if rows.len() <= MAX_BUCKETS {
+            break rows;
+        }
+        match widen_bucket(bucket_seconds) {
+            Some(wider) => bucket_seconds = wider,
+            // Already at the top of the ladder: ship what we have rather
+            // than looping forever.
+            None => break rows,
+        }
+    };
+
+    let total_sales: u64 = rows.iter().map(|r| r.sales).sum();
+    let series = fold_price_series_rows(&rows);
+
+    let raw = if total_sales > 0 && total_sales <= RAW_SALE_LIMIT {
+        let sales = db
+            .get_compact_sale_history(worlds.iter().copied(), item_id, RAW_SALE_LIMIT)
+            .await
+            .inspect_err(
+                |e| tracing::error!(error = ?e, "Error getting compact sale history for price_series"),
+            )?;
+        Some(
+            sales
+                .into_iter()
+                .filter(|s| s.sold_date >= from.naive_utc() && s.sold_date < to.naive_utc())
+                .map(|s| CompactSale {
+                    quantity: s.quantity,
+                    price_per_item: s.price_per_item,
+                    hq: s.hq,
+                    sold_date: s.sold_date,
+                    world_id: s.world_id,
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    // The response domain is the actual data span, not the requested one —
+    // falls back to the requested bounds when there are no rows at all.
+    let domain_from = series
+        .iter()
+        .flat_map(|e| e.buckets.iter())
+        .map(|b| b.ts)
+        .min()
+        .unwrap_or_else(|| from.naive_utc());
+    let domain_to = series
+        .iter()
+        .flat_map(|e| e.buckets.iter())
+        .map(|b| b.ts)
+        .max()
+        .unwrap_or_else(|| to.naive_utc());
+
+    Ok(axum::Json(PriceSeries {
+        bucket_seconds,
+        group,
+        from: domain_from,
+        to: domain_to,
+        series,
+        raw,
+    }))
+}
+
+#[cfg(test)]
+mod price_series_tests {
+    use super::*;
+
+    // `world_group_map` at `SeriesGroup::World` is intentionally not tested
+    // here: it short-circuits before touching `world_cache` (see the
+    // `if group == SeriesGroup::World` early return), so an identity-pairs
+    // test wouldn't exercise the cache at all — but the only way to build a
+    // real `&WorldCache` is `WorldCache::new(&UltrosDb)`, which is async and
+    // needs a live database connection. Contorting the handler to accept a
+    // trait object or a fake cache just to cover a function that ignores its
+    // argument isn't worth it; the fold logic below is where the real risk
+    // (silent data corruption) lives, so it gets the coverage instead.
+
+    fn row(series_id: i32, bucket_offset_secs: i64) -> PriceSeriesRow {
+        PriceSeriesRow {
+            series_id,
+            bucket: chrono::DateTime::from_timestamp(bucket_offset_secs, 0).unwrap(),
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 105,
+            gil: 1_000,
+            units: 10,
+            sales: 1,
+            p25: 95,
+            p50: 100,
+            p75: 105,
+        }
+    }
+
+    /// A single series with many buckets folds into one entry carrying every
+    /// bucket, in the order the rows arrived.
+    #[test]
+    fn fold_groups_many_buckets_of_one_series_into_one_entry() {
+        let rows: Vec<PriceSeriesRow> = (0..50).map(|i| row(7, i * 3_600)).collect();
+        let entries = fold_price_series_rows(&rows);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, 7);
+        assert_eq!(entries[0].buckets.len(), 50);
+        // Order is preserved, not re-sorted.
+        for (i, bucket) in entries[0].buckets.iter().enumerate() {
+            let expected = chrono::DateTime::from_timestamp(i as i64 * 3_600, 0)
+                .unwrap()
+                .naive_utc();
+            assert_eq!(bucket.ts, expected);
+        }
+    }
+
+    /// Two series, each internally contiguous (the shape the query's
+    /// `ORDER BY (series_id, bucket)` actually produces), fold into exactly
+    /// two entries with the right buckets in each.
+    #[test]
+    fn fold_splits_contiguous_series_into_separate_entries() {
+        let rows = vec![
+            row(1, 0),
+            row(1, 3_600),
+            row(1, 7_200),
+            row(2, 0),
+            row(2, 3_600),
+        ];
+        let entries = fold_price_series_rows(&rows);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, 1);
+        assert_eq!(entries[0].buckets.len(), 3);
+        assert_eq!(entries[1].id, 2);
+        assert_eq!(entries[1].buckets.len(), 2);
+    }
+
+    /// Documents the fold's reliance on the query's `ORDER BY (series_id,
+    /// bucket)`: it does a single linear pass and only merges a row into the
+    /// *last* entry when the series id matches, so out-of-order (interleaved)
+    /// rows for the same series split into multiple entries instead of
+    /// merging. This is intentional — see the doc comment on
+    /// `fold_price_series_rows` — but is pinned here so a future change to
+    /// either the query's ORDER BY or this fold doesn't silently start
+    /// producing merged results (or silently start relying on merging).
+    #[test]
+    fn fold_does_not_merge_interleaved_rows_of_the_same_series() {
+        let rows = vec![row(1, 0), row(2, 0), row(1, 3_600)];
+        let entries = fold_price_series_rows(&rows);
+        assert_eq!(entries.len(), 3, "interleaved rows are not re-grouped");
+        assert_eq!(entries[0].id, 1);
+        assert_eq!(entries[1].id, 2);
+        assert_eq!(entries[2].id, 1);
+    }
 }
 
 async fn refresh_world_item_listings(
@@ -1514,6 +1841,7 @@ pub(crate) async fn start_web(state: WebState) {
             "/api/v1/extended_history/{world}/{itemid}",
             get(extended_sale_history),
         )
+        .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),
