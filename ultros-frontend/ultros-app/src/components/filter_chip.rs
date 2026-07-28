@@ -42,6 +42,13 @@ pub fn FilterChip(
     /// chip and still clear with `x`, but the value is not an input.
     #[prop(optional)]
     readonly: bool,
+    /// `min` / `max` / `step` for the inline input, carried over from the
+    /// toolbar fields these chips replaced. They are what stops the spinner
+    /// walking a count-of-6 filter to 40 or a gil figure to -1.
+    #[prop(optional, into)]
+    min: Option<String>,
+    #[prop(optional, into)] max: Option<String>,
+    #[prop(optional, into)] step: Option<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let editing = RwSignal::new(false);
@@ -58,6 +65,18 @@ pub fn FilterChip(
         }
     });
 
+    // A `type=number` input reports content it cannot parse (`1e`, `--`, a
+    // pasted word) as an *empty* value, which is indistinguishable from a
+    // deliberate clear and would delete the filter the user is editing.
+    // `badInput` is the only way to tell the two apart; when it is set, leave
+    // the filter exactly as it was.
+    let commit_from = move |el: &web_sys::HtmlInputElement| {
+        if !el.validity().bad_input() {
+            on_commit.run(committed_value(&el.value()));
+        }
+        editing.set(false);
+    };
+
     // Enter and Escape both tear the input down, which can raise a trailing
     // blur. Committing again there would re-commit on Enter (harmless) and
     // *defeat* Escape (not harmless), so blur only commits while the chip
@@ -66,8 +85,7 @@ pub fn FilterChip(
         if !editing.get_untracked() {
             return;
         }
-        on_commit.run(committed_value(&event_target_value(&ev)));
-        editing.set(false);
+        commit_from(&event_target::<web_sys::HtmlInputElement>(&ev));
     };
 
     view! {
@@ -114,12 +132,16 @@ pub fn FilterChip(
                     node_ref=input_ref
                     class="input input-sm w-24"
                     type=if numeric { "number" } else { "text" }
+                    // Cloned, not moved: `Show`'s children is an `Fn`, so the
+                    // block has to stay callable after the first toggle.
+                    min=min.clone()
+                    max=max.clone()
+                    step=step.clone()
                     prop:value=move || value.get().unwrap_or_default()
                     on:blur=commit_from_blur
                     on:keydown=move |ev| {
                         if ev.key() == "Enter" {
-                            on_commit.run(committed_value(&event_target_value(&ev)));
-                            editing.set(false);
+                            commit_from(&event_target::<web_sys::HtmlInputElement>(&ev));
                         } else if ev.key() == "Escape" {
                             editing.set(false);
                         }

@@ -2045,6 +2045,41 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .filter-chip-row::-webkit-scrollbar {
     display: none;
 }
+/* ----- Flip Finder grid: horizontal scrollports -----
+   The grid is wider than the viewport at every breakpoint, and `html`/`body`
+   are `overflow-x: hidden`, so something has to scroll or the right-hand
+   columns are simply unreachable. It cannot be a wrapper around the list: in
+   window-scroll mode that wrapper becomes the nearest scrollport for the
+   sticky table header (an `overflow-x` forces `overflow-y` to compute to
+   `auto`), and since it never scrolls vertically the header would never
+   stick. So the header and the row area are two *sibling* scrollports of
+   equal width whose scrollLeft is synchronized in analyzer.rs. */
+.analyzer-hscroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Rows scroll underneath the sticky header, so it cannot be
+       semi-transparent. */
+    background-color: var(--color-background-panel);
+    scrollbar-width: thin;
+}
+/* Common width for the header row and every data row, so the two scrollports
+   scroll through the same range and the row striping covers it. Tracks the
+   columns the breakpoint actually reveals; enabling optional columns widens
+   the rows past this via `shrink-0`, which still scrolls. */
+.analyzer-grid-row {
+    min-width: 38rem;
+}
+@media (min-width: 768px) {
+    .analyzer-grid-row {
+        min-width: 61rem;
+    }
+}
+@media (min-width: 1024px) {
+    .analyzer-grid-row {
+        min-width: 68rem;
+    }
+}
+
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the
    standard .btn-secondary padding would overflow them. */
 .sticky-bar-button {

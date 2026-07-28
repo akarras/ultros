@@ -144,6 +144,8 @@ use ultros_api_types::{
     recent_sales::{RecentSales, SaleData},
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
+use web_sys::wasm_bindgen::JsCast;
+use web_sys::wasm_bindgen::closure::Closure;
 use xiv_gen::ItemId;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -545,6 +547,38 @@ fn default_filter_value(id: &str) -> &'static str {
     }
 }
 
+/// Apply an edited chip value to a numeric filter.
+///
+/// A parse failure keeps `current`. The toolbar these chips replaced did the
+/// same (`if let Ok(v) = … { set } else if value.is_empty() { clear }`), and
+/// the alternative is worse than it sounds: `set(raw.parse().ok())` deletes
+/// the filter the user is in the middle of editing the moment they type
+/// something the target type rejects — `-5` into a `usize` count, say — with
+/// no message and no undo. Only an explicit clear removes a filter, and by
+/// the time a value reaches here `committed_value` has already mapped blank
+/// input to `None`.
+fn commit_numeric<T: FromStr>(current: Option<T>, raw: Option<String>) -> Option<T> {
+    match raw {
+        None => None,
+        Some(s) => s.parse::<T>().ok().or(current),
+    }
+}
+
+/// Render a velocity floor for the chip's resting state.
+///
+/// `f32::to_string` prints the round-tripped `?vel=0.2` as
+/// `0.20000000298023224`. Two decimals is finer than the filter's own
+/// resolution, and the result parses back to the same value, so the input
+/// shows this too rather than a second, uglier spelling of the same number.
+fn format_velocity_floor(v: f32) -> String {
+    let s = format!("{v:.2}");
+    match s.contains('.') {
+        // `trim_end_matches('0')` alone would turn "10.00" into "1".
+        true => s.trim_end_matches('0').trim_end_matches('.').to_string(),
+        false => s,
+    }
+}
+
 /// Filters the `+ Filter` menu should offer: everything addable that is not
 /// already on screen as a chip.
 fn available_filters(active: &[&str]) -> Vec<&'static str> {
@@ -704,6 +738,55 @@ fn AnalyzerTable(
             _ => {}
         }
     };
+
+    // --- Horizontal scroll sync ---------------------------------------------
+    // Two sibling scrollports: one on the sticky header, one on the row area
+    // (the list's own row container, which already computes to
+    // `overflow-x: auto`). A single scrollport wrapping the list is not an
+    // option — it would become the nearest scrollport for the sticky header
+    // and stop it sticking to the viewport — and no scrollport at all leaves
+    // the right-hand columns clipped by `html { overflow-x: hidden }` with no
+    // way to reach them.
+    let header_scroll = NodeRef::<leptos::html::Div>::new();
+    let list_scroll = NodeRef::<leptos::html::Div>::new();
+    // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
+    // firing after the component is disposed.
+    let hscroll_listeners =
+        StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
+    on_cleanup(move || {
+        hscroll_listeners.update_value(|listeners| {
+            for (el, cb) in listeners.drain(..) {
+                let _ =
+                    el.remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
+            }
+        });
+    });
+    Effect::new(move |_| {
+        // Re-runs when the refs are populated; the guard keeps a second run
+        // from double-registering.
+        let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
+            return;
+        };
+        if hscroll_listeners.with_value(|l| !l.is_empty()) {
+            return;
+        }
+        // Mirroring writes `scrollLeft` on the other element, which fires its
+        // scroll event in turn; the equality check is what keeps that from
+        // ping-ponging.
+        let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
+            Closure::wrap(Box::new(move || {
+                let x = from.scroll_left();
+                if to.scroll_left() != x {
+                    to.set_scroll_left(x);
+                }
+            }) as Box<dyn FnMut()>)
+        };
+        let head_cb = mirror(head.clone(), body.clone());
+        let body_cb = mirror(body.clone(), head.clone());
+        let _ = head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
+        let _ = body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
+        hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
+    });
 
     let clear_all_filters = move || {
         set_minimum_profit(None);
@@ -1033,8 +1116,12 @@ fn AnalyzerTable(
                                             label=t_string!(i18n, analyzer_profit_gte).to_string()
                                             value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
                                             numeric=true
+                                            min="0"
+                                            step="1000"
                                             on_commit=Callback::new(move |v: Option<String>| {
-                                                set_minimum_profit(v.and_then(|s| s.parse::<i32>().ok()));
+                                                set_minimum_profit(
+                                                    commit_numeric(minimum_profit.get_untracked(), v),
+                                                );
                                             })
                                         />
                                     }
@@ -1050,8 +1137,12 @@ fn AnalyzerTable(
                                                 minimum_profit_per_day().map(|v| v.to_string())
                                             })
                                             numeric=true
+                                            min="0"
+                                            step="1000"
                                             on_commit=Callback::new(move |v: Option<String>| {
-                                                set_minimum_profit_per_day(v.and_then(|s| s.parse::<i32>().ok()));
+                                                set_minimum_profit_per_day(
+                                                    commit_numeric(minimum_profit_per_day.get_untracked(), v),
+                                                );
                                             })
                                         />
                                     }
@@ -1065,8 +1156,10 @@ fn AnalyzerTable(
                                             label=t_string!(i18n, analyzer_roi_gte).to_string()
                                             value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
                                             numeric=true
+                                            min="0"
+                                            step="10"
                                             on_commit=Callback::new(move |v: Option<String>| {
-                                                set_minimum_roi(v.and_then(|s| s.parse::<i32>().ok()));
+                                                set_minimum_roi(commit_numeric(minimum_roi.get_untracked(), v));
                                             })
                                         />
                                     }
@@ -1080,9 +1173,15 @@ fn AnalyzerTable(
                                             label=t_string!(i18n, analyzer_sales_gte).to_string()
                                             value=Signal::derive(move || minimum_sales().map(|v| v.to_string()))
                                             numeric=true
+                                            min="0"
+                                            max="6"
+                                            step="1"
                                             on_commit=Callback::new(move |v: Option<String>| {
+                                                // Only 6 sales ship per item, so a larger floor
+                                                // silently empties the table.
                                                 set_minimum_sales(
-                                                    v.and_then(|s| s.parse::<usize>().ok()).map(|s| s.min(6)),
+                                                    commit_numeric(minimum_sales.get_untracked(), v)
+                                                        .map(|s: usize| s.min(6)),
                                                 );
                                             })
                                         />
@@ -1095,10 +1194,16 @@ fn AnalyzerTable(
                                     view! {
                                         <FilterChip
                                             label=t_string!(i18n, analyzer_velocity_gte).to_string()
-                                            value=Signal::derive(move || velocity_floor().map(|v| v.to_string()))
+                                            value=Signal::derive(move || {
+                                                velocity_floor().map(format_velocity_floor)
+                                            })
                                             numeric=true
+                                            min="0"
+                                            step="0.5"
                                             on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_velocity(v.and_then(|s| s.parse::<f32>().ok()));
+                                                set_min_velocity(
+                                                    commit_numeric(velocity_floor.get_untracked(), v),
+                                                );
                                             })
                                         />
                                     }
@@ -1112,8 +1217,12 @@ fn AnalyzerTable(
                                             label=t_string!(i18n, analyzer_min_buy_gte).to_string()
                                             value=Signal::derive(move || min_buy_price().map(|v| v.to_string()))
                                             numeric=true
+                                            min="0"
+                                            step="1000"
                                             on_commit=Callback::new(move |v: Option<String>| {
-                                                set_min_buy_price(v.and_then(|s| s.parse::<i32>().ok()));
+                                                set_min_buy_price(
+                                                    commit_numeric(min_buy_price.get_untracked(), v),
+                                                );
                                             })
                                         />
                                     }
@@ -1127,8 +1236,12 @@ fn AnalyzerTable(
                                             label=t_string!(i18n, analyzer_budget_lte).to_string()
                                             value=Signal::derive(move || max_purchase_price().map(|v| v.to_string()))
                                             numeric=true
+                                            min="0"
+                                            step="1000"
                                             on_commit=Callback::new(move |v: Option<String>| {
-                                                set_max_purchase_price(v.and_then(|s| s.parse::<i32>().ok()));
+                                                set_max_purchase_price(
+                                                    commit_numeric(max_purchase_price.get_untracked(), v),
+                                                );
                                             })
                                         />
                                     }
@@ -1280,7 +1393,10 @@ fn AnalyzerTable(
                                     }}
                                     // Category is chosen from a list rather than
                                     // typed, so its chip is read-only and this is
-                                    // where it is picked.
+                                    // where it is picked. Hidden once a category
+                                    // is set: leaving it up would echo the chip,
+                                    // which is the duplication this bar deletes.
+                                    {move || category_filter().is_none().then(|| view! {
                                     <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
                                         <span class="text-[color:var(--color-text-muted)]">
                                             {t!(i18n, analyzer_filter_category_label)}
@@ -1325,6 +1441,7 @@ fn AnalyzerTable(
                                             }
                                         </select>
                                     </label>
+                                    })}
                                 </div>
                             }
                         })
@@ -1424,15 +1541,18 @@ fn AnalyzerTable(
                         header_height=56.0
                         variable_height=false
                         visible_range=visible_range
+                        list_ref=list_scroll
+                        row_overflow_x=true
                         header=view! {
-                            <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[44px] px-2 text-center">
+                            <div class="analyzer-hscroll" node_ref=header_scroll>
+                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                                <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
                                 <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
                                     {t!(i18n, analyzer_col_item)}
                                 </div>
-                                <div role="columnheader" class="w-28 px-3 text-right">
+                                <div role="columnheader" class="w-28 shrink-0 px-3 text-right">
                                     <QueryButton
                                         class="!text-brand-300 hover:text-brand-200"
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -1449,7 +1569,7 @@ fn AnalyzerTable(
                                     </QueryButton>
                                 </div>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
                                         <QueryButton
                                             class="!text-brand-300 hover:text-brand-200"
                                             active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -1468,22 +1588,22 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex items-center justify-end">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
                                         {t!(i18n, analyzer_col_velocity)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex items-center justify-end">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
                                         {t!(i18n, analyzer_col_drift)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <div role="columnheader" class="w-[72px] px-3 py-2 hidden md:flex items-center justify-center">
+                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center">
                                         {t!(i18n, analyzer_col_confidence)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
                                         <QueryButton
                                             class="!text-brand-300 hover:text-brand-200"
                                             active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
@@ -1500,11 +1620,11 @@ fn AnalyzerTable(
                                         </QueryButton>
                                     </div>
                                 })}
-                                <div role="columnheader" class="w-28 px-3 py-2">
+                                <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -1526,7 +1646,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -1548,7 +1668,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1556,7 +1676,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1564,7 +1684,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1572,13 +1692,14 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2 hidden md:flex flex-col leading-tight">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 hidden md:flex flex-col leading-tight">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
                                     </div>
                                 })}
+                            </div>
                             </div>
                         }.into_any()
                         each=sorted_data.into()
@@ -1624,13 +1745,13 @@ fn AnalyzerTable(
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
                             let classes = if (index % 2) == 0 {
-                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                             } else {
-                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
                             view! {
                                 <div class=classes role="row-group">
-                                    <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
+                                    <div role="cell" class="px-2 py-2 w-[44px] shrink-0 flex items-center justify-center">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
@@ -1650,11 +1771,11 @@ fn AnalyzerTable(
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
                                     </div>
-                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
                                     {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                             <Gil amount=data.profit_per_day />
                                         </div>
                                     })}
@@ -1674,7 +1795,7 @@ fn AnalyzerTable(
                                             None => "—".to_string(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums">
                                                 {text}
                                             </div>
                                         }
@@ -1696,7 +1817,7 @@ fn AnalyzerTable(
                                             <div
                                                 role="cell"
                                                 title=title
-                                                class=format!("px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums {class}")
+                                                class=format!("px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums {class}")
                                             >
                                                 {text}
                                             </div>
@@ -1717,23 +1838,23 @@ fn AnalyzerTable(
                                             },
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[72px] hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center">
                                                 <span class=format!("text-xs font-semibold {class}")>{label}</span>
                                             </div>
                                         }
                                     })}
                                     {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                             <span class=roi_badge_class(row_roi)>
                                                 {format!("{row_roi}%")}
                                             </span>
                                         </div>
                                     })}
-                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden lg:block flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                             })>
@@ -1750,7 +1871,7 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden xl:block flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                             })>
@@ -2663,6 +2784,67 @@ mod tests {
         let table = ProfitTable::new(sales, region, world, vec![], false);
         assert_eq!(table.0.len(), 1);
         assert_eq!(table.0[0].prices, vec![90, 95, 100, 300, 110, 105]);
+    }
+
+    #[test]
+    fn a_bad_entry_leaves_the_filter_alone() {
+        // The prod-facing bug this guards: `set(raw.parse().ok())` deletes the
+        // filter the user is editing the moment the target type rejects what
+        // they typed. `-5` is a legal number, so `type=number` hands it over
+        // intact; `usize` then refuses it.
+        assert_eq!(
+            commit_numeric(Some(3usize), Some("-5".to_string())),
+            Some(3)
+        );
+        assert_eq!(
+            commit_numeric(Some(100_000i32), Some("abc".to_string())),
+            Some(100_000)
+        );
+    }
+
+    #[test]
+    fn an_explicit_clear_removes_the_filter() {
+        // `None` is the `x` button, and `committed_value` has already mapped
+        // blank input to `None` by this point.
+        assert_eq!(commit_numeric(Some(3usize), None), None);
+    }
+
+    #[test]
+    fn a_valid_entry_replaces_the_value() {
+        assert_eq!(commit_numeric(Some(3usize), Some("6".to_string())), Some(6));
+        assert_eq!(
+            commit_numeric(None, Some("0.25".to_string())),
+            Some(0.25f32)
+        );
+    }
+
+    #[test]
+    fn a_bad_entry_with_nothing_to_keep_stays_unset() {
+        assert_eq!(commit_numeric(None::<i32>, Some("abc".to_string())), None);
+    }
+
+    #[test]
+    fn velocity_floor_renders_without_float_noise() {
+        // `?vel=0.2` round-trips through f32 as 0.20000000298023224.
+        assert_eq!(format_velocity_floor(0.2), "0.2");
+        assert_eq!(format_velocity_floor(1.0), "1");
+        assert_eq!(format_velocity_floor(2.5), "2.5");
+        // Guards the naive `trim_end_matches('0')`, which reads "10.00" as "1".
+        assert_eq!(format_velocity_floor(10.0), "10");
+    }
+
+    #[test]
+    fn a_rendered_velocity_floor_parses_back_to_itself() {
+        // The chip shows this string *and* edits it, so it has to survive a
+        // round trip or opening the chip would change the filter.
+        for v in [0.2f32, 0.25, 1.0, 10.0, 0.05] {
+            let rendered = format_velocity_floor(v);
+            assert_eq!(
+                rendered.parse::<f32>(),
+                Ok(v),
+                "{v} rendered as {rendered:?} did not parse back"
+            );
+        }
     }
 
     #[test]

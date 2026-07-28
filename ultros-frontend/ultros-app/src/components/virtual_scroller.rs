@@ -140,6 +140,26 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional)] variable_height: bool,
     #[prop(optional, into)] scroll_to_index: Option<Signal<Option<usize>>>,
     #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
+    /// Handle on the element that holds the rows.
+    ///
+    /// That element already computes to `overflow-x: auto` (it declares
+    /// `overflow-y: hidden`, which forces the visible axis to `auto`), so it
+    /// is the list's horizontal scrollport. A caller rendering a grid wider
+    /// than the viewport needs this handle to keep its own header scrollport
+    /// in sync with it — the list itself cannot be wrapped in a scrollport
+    /// without stealing the sticky header's (see [`ScrollSource::Window`]).
+    #[prop(optional)]
+    list_ref: Option<NodeRef<leptos::html::Div>>,
+    /// Let row content overflow horizontally into the list's scrollport
+    /// instead of being clipped at the row box.
+    ///
+    /// Rows are normally `overflow: hidden`, which contains a too-tall row but
+    /// also clips a too-wide one. `overflow-y: clip` keeps the vertical
+    /// containment; unlike `hidden` it does not force `overflow-x` to compute
+    /// to `auto`, so it does not turn every row into its own scroll container.
+    /// Off by default, so every existing call site keeps `overflow: hidden`.
+    #[prop(optional)]
+    row_overflow_x: bool,
     /// Optional writeback of the rendered row range `(start, end)` (end
     /// exclusive, includes overscan). Lets a parent fetch data only for
     /// rows in view. When omitted, no extra work is done.
@@ -198,6 +218,10 @@ where
 
     // dataset reset handled by length change effect
     let scroller: NodeRef<leptos::html::Div> = match scroller_ref {
+        Some(r) => r,
+        None => NodeRef::<leptos::html::Div>::new(),
+    };
+    let list: NodeRef<leptos::html::Div> = match list_ref {
         Some(r) => r,
         None => NodeRef::<leptos::html::Div>::new(),
     };
@@ -537,6 +561,7 @@ where
                     }
                 })}
             <div
+                node_ref=list
                 class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
                 style=move || {
                     format!(
@@ -625,6 +650,8 @@ where
                                     class=move || {
                                         if variable_height {
                                             "content-auto contain-layout will-change-transform".to_string()
+                                        } else if row_overflow_x {
+                                            "content-visible contain-layout will-change-transform overflow-y-clip".to_string()
                                         } else {
                                             "content-visible contain-layout will-change-transform overflow-hidden".to_string()
                                         }
