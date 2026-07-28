@@ -116,7 +116,14 @@
         background-color: var(--color-background);
         color: var(--text-color);
         position: relative;
-        overflow-x: hidden;
+        /* Deliberately no `overflow-x` here. Declaring it makes BODY itself a
+           scroll container (the hidden x-axis forces y to compute to `auto`),
+           and every `position: sticky` descendant then resolves against
+           BODY's scrollport instead of the viewport — which never scrolls, so
+           nothing ever sticks. That silently kills the Flip Finder's sticky
+           control bar and table header. Horizontal page scroll is already
+           suppressed by `overflow-x: hidden` on `html`, which the UA
+           propagates to the viewport. */
     }
 
     :focus-visible {
@@ -2062,22 +2069,29 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     background-color: var(--color-background-panel);
     scrollbar-width: thin;
 }
-/* Common width for the header row and every data row, so the two scrollports
-   scroll through the same range and the row striping covers it. Tracks the
-   columns the breakpoint actually reveals; enabling optional columns widens
-   the rows past this via `shrink-0`, which still scrolls. */
-.analyzer-grid-row {
-    min-width: 38rem;
+/* One width for the header row, every data row, and the spacer that holds the
+   rows, so the two scrollports scroll through the same range and the row
+   striping covers it.
+
+   The base value tracks the columns each breakpoint actually reveals (several
+   are `hidden md:flex` / `lg:flex`). `--analyzer-extra-cols` is set inline by
+   the route and carries the optional columns the user has switched on beyond
+   the default set — the stylesheet cannot know those. */
+.analyzer-table {
+    --analyzer-row-min-width: calc(38rem + var(--analyzer-extra-cols, 0px));
 }
 @media (min-width: 768px) {
-    .analyzer-grid-row {
-        min-width: 61rem;
+    .analyzer-table {
+        --analyzer-row-min-width: calc(61rem + var(--analyzer-extra-cols, 0px));
     }
 }
 @media (min-width: 1024px) {
-    .analyzer-grid-row {
-        min-width: 68rem;
+    .analyzer-table {
+        --analyzer-row-min-width: calc(68rem + var(--analyzer-extra-cols, 0px));
     }
+}
+.analyzer-grid-row {
+    min-width: var(--analyzer-row-min-width, 0px);
 }
 
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the

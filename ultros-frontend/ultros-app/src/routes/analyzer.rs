@@ -579,6 +579,30 @@ fn format_velocity_floor(v: f32) -> String {
     }
 }
 
+/// Rendered width of the optional columns that are *not* in the default set,
+/// in px.
+///
+/// The grid's base width lives in the stylesheet, which is the only place that
+/// can know which columns a breakpoint hides. What it cannot know is which
+/// optional columns the user switched on, so that part is measured here and
+/// handed over as `--analyzer-extra-cols`. Under-reserving is the failure that
+/// matters: the two scrollports would stop short of the last column and it
+/// would be unreachable.
+fn extra_column_width_px(visible: &std::collections::HashSet<&'static str>) -> u32 {
+    const EXTRA_COLUMN_WIDTHS: &[(&str, u32)] = &[
+        (COL_ROI, 112),
+        (COL_DATACENTER, 112),
+        (COL_TREND, 100),
+        (COL_SALES_PER_DAY, 88),
+        (COL_VOLUME_30D, 88),
+    ];
+    EXTRA_COLUMN_WIDTHS
+        .iter()
+        .filter(|(col, _)| visible.contains(col))
+        .map(|(_, w)| w)
+        .sum()
+}
+
 /// Filters the `+ Filter` menu should offer: everything addable that is not
 /// already on screen as a chip.
 fn available_filters(active: &[&str]) -> Vec<&'static str> {
@@ -1532,7 +1556,12 @@ fn AnalyzerTable(
             // window mode an overflow on any ancestor of the sticky table
             // header re-parents its scrollport away from the viewport, which
             // silently defeats `sticky_offset`.
-            <div class="border border-[color:var(--color-outline)]">
+            <div
+                class="analyzer-table border border-[color:var(--color-outline)]"
+                style=move || {
+                    format!("--analyzer-extra-cols: {}px;", extra_column_width_px(&visible_cols()))
+                }
+            >
                 <VirtualScroller
                         scroll_source=ScrollSource::Window { sticky_offset: STICKY_BAR_HEIGHT }
                         viewport_height=720.0
@@ -1542,7 +1571,7 @@ fn AnalyzerTable(
                         variable_height=false
                         visible_range=visible_range
                         list_ref=list_scroll
-                        row_overflow_x=true
+                        row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
                             <div class="analyzer-hscroll" node_ref=header_scroll>
                             <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
@@ -2784,6 +2813,35 @@ mod tests {
         let table = ProfitTable::new(sales, region, world, vec![], false);
         assert_eq!(table.0.len(), 1);
         assert_eq!(table.0[0].prices, vec![90, 95, 100, 300, 110, 105]);
+    }
+
+    #[test]
+    fn the_default_column_set_adds_no_extra_width() {
+        // The stylesheet's per-breakpoint baseline already covers these, so
+        // counting them here would reserve the width twice and leave the grid
+        // scrolling into empty space.
+        let defaults: std::collections::HashSet<&'static str> =
+            DEFAULT_VISIBLE_COLS.iter().copied().collect();
+        assert_eq!(extra_column_width_px(&defaults), 0);
+        assert_eq!(extra_column_width_px(&std::collections::HashSet::new()), 0);
+    }
+
+    #[test]
+    fn every_opt_in_column_reserves_width() {
+        // A column that neither the CSS baseline nor this function accounts
+        // for is one the scrollports stop short of — the column renders and
+        // cannot be reached, which is the bug this whole mechanism exists to
+        // prevent.
+        for col in ALL_OPTIONAL_COLS {
+            if DEFAULT_VISIBLE_COLS.contains(col) {
+                continue;
+            }
+            let set: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
+            assert!(
+                extra_column_width_px(&set) > 0,
+                "{col} reserves no width, so the grid would stop short of it"
+            );
+        }
     }
 
     #[test]

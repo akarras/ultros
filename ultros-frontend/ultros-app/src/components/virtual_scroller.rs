@@ -150,16 +150,18 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     /// without stealing the sticky header's (see [`ScrollSource::Window`]).
     #[prop(optional)]
     list_ref: Option<NodeRef<leptos::html::Div>>,
-    /// Let row content overflow horizontally into the list's scrollport
-    /// instead of being clipped at the row box.
+    /// CSS `min-width` for the column of rows, for a caller whose grid is
+    /// wider than the viewport.
     ///
-    /// Rows are normally `overflow: hidden`, which contains a too-tall row but
-    /// also clips a too-wide one. `overflow-y: clip` keeps the vertical
-    /// containment; unlike `hidden` it does not force `overflow-x` to compute
-    /// to `auto`, so it does not turn every row into its own scroll container.
-    /// Off by default, so every existing call site keeps `overflow: hidden`.
-    #[prop(optional)]
-    row_overflow_x: bool,
+    /// Widening the rows alone is not enough to make the list scroll: the row
+    /// box carries `contain: layout`, which stops its overflow reaching the
+    /// list's scrollable overflow region (measured in Chrome — the rows
+    /// overflow, `scrollWidth` on the list does not move). Sizing the spacer
+    /// that holds the rows is what actually gives the list something to
+    /// scroll. Takes any CSS length, so a `var()` can keep a responsive value
+    /// in the stylesheet where it belongs.
+    #[prop(optional, into)]
+    row_min_width: Option<String>,
     /// Optional writeback of the rendered row range `(start, end)` (end
     /// exclusive, includes overscan). Lets a parent fetch data only for
     /// rows in view. When omitted, no extra work is done.
@@ -579,6 +581,7 @@ where
                     format!(
                         "
             transform: translateY({}px);
+            {}
           ",
                         {
                             let start = child_start() as usize;
@@ -586,6 +589,10 @@ where
                             let val = child_start() as f64 * row_height + delta_before;
                             val.max(0.0).round() as i32
                         },
+                        row_min_width
+                            .as_ref()
+                            .map(|w| format!("min-width: {w};"))
+                            .unwrap_or_default(),
                     )
                 }>
                     <For
@@ -650,8 +657,6 @@ where
                                     class=move || {
                                         if variable_height {
                                             "content-auto contain-layout will-change-transform".to_string()
-                                        } else if row_overflow_x {
-                                            "content-visible contain-layout will-change-transform overflow-y-clip".to_string()
                                         } else {
                                             "content-visible contain-layout will-change-transform overflow-hidden".to_string()
                                         }
