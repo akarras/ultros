@@ -38,9 +38,13 @@ pub fn view_href(view: &SavedView, current_world: &str) -> String {
 /// The former preset buttons, now the built-in entries of the same menu.
 /// All six require a sale within 24 hours: a sale a week old is weak
 /// evidence anyone is buying the item today, which is the question a flip
-/// turns on. Verified against live Gilgamesh data — no view collapses
-/// under the tighter window, the thinnest being "500% return" at 9 rows
-/// down from 60.
+/// turns on. Measured against live Gilgamesh data (23,174 rows passing the
+/// troll guard) before this change: no view collapses under the tighter
+/// window, the thinnest being "500% return" at 9 rows down from 60. Full
+/// per-view before/after table in
+/// `docs/superpowers/specs/2026-07-27-flip-finder-redesign-design.md`
+/// ("Built-in views"). Re-check that view first if a world with lower
+/// liquidity than Gilgamesh reports an empty result.
 ///
 /// `name` is an i18n key, not a display string — the menu resolves it at
 /// render time (see `SavedViewsMenu`'s `built_in_label`). User-saved views
