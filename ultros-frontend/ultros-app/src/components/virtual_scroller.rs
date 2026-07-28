@@ -219,7 +219,21 @@ where
         // component is disposed and writes into dead signals on the next
         // route change.
         let window_cb = StoredValue::new_local(None::<Closure<dyn FnMut()>>);
+        // Handle of a frame that has been requested but has not fired yet.
+        let raf_handle = StoredValue::new(None::<i32>);
         on_cleanup(move || {
+            // Cancel an in-flight frame *before* dropping the closures. A
+            // scroll immediately followed by a route change leaves a frame
+            // already scheduled against the rAF closure; dropping it first
+            // would have the browser invoke a freed wasm-bindgen closure
+            // ("closure invoked recursively or after being dropped"), and even
+            // surviving that it would run `sync()` into disposed signals.
+            if let Some(handle) = raf_handle.get_value()
+                && let Some(w) = window()
+            {
+                let _ = w.cancel_animation_frame(handle);
+            }
+            raf_handle.set_value(None);
             window_cb.update_value(|slot| {
                 if let Some(cb) = slot.take()
                     && let Some(w) = window()
@@ -266,6 +280,9 @@ where
             type RafCallback = Closure<dyn FnMut(f64)>;
             let raf_cb: Rc<RefCell<Option<RafCallback>>> = Rc::new(RefCell::new(None));
             *raf_cb.borrow_mut() = Some(Closure::wrap(Box::new(move |_: f64| {
+                // The frame has fired, so the handle is spent; clearing it
+                // keeps `on_cleanup` from cancelling a stale id.
+                raf_handle.set_value(None);
                 sync();
                 raf_pending.set(false);
             }) as Box<dyn FnMut(f64)>));
@@ -275,12 +292,18 @@ where
                     return;
                 }
                 raf_pending.set(true);
-                match window() {
-                    Some(w) => {
-                        if let Some(c) = raf_cb.borrow().as_ref() {
-                            let _ = w.request_animation_frame(c.as_ref().unchecked_ref());
-                        }
+                // Every path that fails to actually schedule a frame has to
+                // clear the flag again, otherwise nothing will ever set it back
+                // to false and this listener is dead for the rest of the
+                // component's life.
+                let scheduled = match (window(), raf_cb.borrow().as_ref()) {
+                    (Some(w), Some(c)) => {
+                        w.request_animation_frame(c.as_ref().unchecked_ref()).ok()
                     }
+                    _ => None,
+                };
+                match scheduled {
+                    Some(handle) => raf_handle.set_value(Some(handle)),
                     None => raf_pending.set(false),
                 }
             }) as Box<dyn FnMut()>);
