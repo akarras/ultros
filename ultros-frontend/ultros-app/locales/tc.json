@@ -897,8 +897,6 @@
     "nq": "NQ",
     "median_label": "中位數",
     "chart_range_90d": "90日",
-    "filtering_outliers": "篩除離群值",
-    "no_filter": "無篩選",
     "item_view_meta_description": "{{name}} 於 {{world}} 的目前市場上架資訊。找出你所在區域的最低價格。",
     "item_view_meta_title": "{{name}} - 🌍{{world}} - 市場 - Ultros",
     "open_universalis_aria_label": "在新分頁開啟 Universalis 市場頁面",

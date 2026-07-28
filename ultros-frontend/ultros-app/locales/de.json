@@ -897,8 +897,6 @@
     "nq": "NQ",
     "median_label": "Median",
     "chart_range_90d": "90T",
-    "filtering_outliers": "Ausreißer filtern",
-    "no_filter": "Kein Filter",
     "item_view_meta_description": "Aktuelle Marktbrett-Angebote für {{name}} auf {{world}}. Finde die niedrigsten Preise in deiner Region.",
     "item_view_meta_title": "{{name}} - 🌍{{world}} - Marktbrett - Ultros",
     "open_universalis_aria_label": "Universalis-Marktseite in neuem Tab öffnen",

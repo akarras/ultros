@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
         CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
@@ -49,31 +48,11 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
-/// Pull a larger window of sales than the default listings endpoint returns.
-/// Server caps `limit` at 10000.
-///
-/// No longer called from the item chart (see `get_price_series`), which now
-/// fetches pre-bucketed data instead of raw sales. Left in place: this is a
-/// public API endpoint the frontend may want again (e.g. a raw sales export)
-/// and removing the client wrapper is out of scope for that migration.
-#[allow(dead_code)]
-pub(crate) async fn get_extended_sale_history(
-    item_id: i32,
-    world: &str,
-    limit: u32,
-) -> AppResult<ExtendedSaleHistory> {
-    if item_id == 0 {
-        return Err(AppError::NoItem);
-    }
-    fetch_api(&format!(
-        "/api/v1/extended_history/{world}/{item_id}?limit={limit}"
-    ))
-    .await
-}
-
-/// Pre-bucketed price series for the item chart. Unlike
-/// [`get_extended_sale_history`] the payload size tracks the requested window
-/// rather than the item's sale count, so this is safe at full history.
+/// Pre-bucketed price series for the item chart. The payload size tracks the
+/// requested window rather than the item's sale count, so this is safe at
+/// full history. (The raw-sales client wrapper for `/api/v1/extended_history`
+/// was removed when the chart moved to this endpoint — the HTTP route is
+/// still registered server-side, just no longer called from here.)
 pub(crate) async fn get_price_series(
     item_id: i32,
     world: &str,
