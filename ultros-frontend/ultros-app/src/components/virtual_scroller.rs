@@ -46,6 +46,45 @@ impl Fenwick {
     }
 }
 
+/// Where a [`VirtualScroller`] reads its scroll position and viewport size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScrollSource {
+    /// The component owns a fixed-height `overflow-y-auto` container.
+    /// This is the historical behavior and remains the default.
+    Container { viewport_height: f64 },
+    /// The page scrolls; the list measures against the window. Keeps
+    /// native scrolling on mobile (no nested scroll trap, browser chrome
+    /// auto-hides). `sticky_offset` is the height of sticky chrome above
+    /// the list, so rows hidden behind it are not counted as visible.
+    ///
+    /// Note: in this mode the scroller element deliberately carries **no**
+    /// `overflow` of its own. Any overflow on an ancestor of a
+    /// `position: sticky` header makes that header stick to the ancestor's
+    /// scrollport instead of the viewport, which would silently defeat the
+    /// sticky header. A caller that needs horizontal scrolling must put
+    /// `overflow-x-auto` *inside* the header/row views, not around the list.
+    Window { sticky_offset: f64 },
+}
+
+/// Rows rendered during SSR and on the first client render in
+/// [`ScrollSource::Window`] mode.
+///
+/// Window mode cannot measure `innerHeight` on the server. Rendering a
+/// measured count on the client while the server rendered a different one
+/// is an SSR/CSR mismatch, which surfaces as the tachys `hydration.rs`
+/// panic this repo has hit repeatedly. Both sides therefore render exactly
+/// this many rows until an `Effect` flips the `hydrated` flag.
+pub const SSR_FALLBACK_ROWS: usize = 20;
+
+/// Usable viewport height for a scroll source. Extracted so the geometry
+/// is testable without a browser.
+fn effective_viewport_for(source: ScrollSource, measured_window_height: f64) -> f64 {
+    match source {
+        ScrollSource::Container { viewport_height } => viewport_height,
+        ScrollSource::Window { sticky_offset } => (measured_window_height - sticky_offset).max(0.0),
+    }
+}
+
 /// Virtual scroller currently mimics the API of the ForEach components, but adds a row_height and viewport_height.
 /// It might be possible to not have a fixed row height in the future, but for now it's good enough!
 ///
@@ -395,4 +434,42 @@ where
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_viewport_ignores_window_height() {
+        let s = ScrollSource::Container {
+            viewport_height: 720.0,
+        };
+        assert_eq!(effective_viewport_for(s, 1080.0), 720.0);
+    }
+
+    #[test]
+    fn window_viewport_subtracts_sticky_offset() {
+        let s = ScrollSource::Window {
+            sticky_offset: 76.0,
+        };
+        assert_eq!(effective_viewport_for(s, 900.0), 824.0);
+    }
+
+    #[test]
+    fn window_viewport_never_negative() {
+        // A short window with tall sticky chrome must not produce a
+        // negative viewport, which would make children_shown underflow.
+        let s = ScrollSource::Window {
+            sticky_offset: 200.0,
+        };
+        assert_eq!(effective_viewport_for(s, 120.0), 0.0);
+    }
+
+    #[test]
+    fn ssr_fallback_row_count_is_positive() {
+        // The SSR render must emit a stable, non-zero row count so the
+        // first client render can match it byte-for-byte.
+        assert!(SSR_FALLBACK_ROWS > 0);
+    }
 }
