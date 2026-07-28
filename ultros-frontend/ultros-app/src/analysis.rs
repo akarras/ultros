@@ -267,9 +267,6 @@ pub fn real_price(samples: &[(i32, i32, bool)], vendor_price: Option<i32>) -> Re
 /// Minimum span used as the velocity denominator. Guards the degenerate
 /// case observed in prod of six sales sharing one timestamp (one buyer
 /// clearing six listings at once), which would otherwise divide by zero.
-///
-/// TODO(Task 4): remove this allow once the velocity column reads it.
-#[allow(dead_code)]
 pub const MIN_VELOCITY_SPAN_DAYS: f32 = 1.0 / 24.0;
 
 /// Display ceiling for ROI. Beyond this the exact figure carries no
@@ -284,9 +281,6 @@ pub const ROI_DISPLAY_CEILING: i32 = 100_000;
 /// buffer holds the *most recent* sales, this estimates the current rate
 /// rather than a lifetime average; resolution degrades only at the high
 /// end, which does not matter for a floor-style filter.
-///
-/// TODO(Task 4): remove this allow once the velocity column calls it.
-#[allow(dead_code)]
 pub fn velocity_per_day(summary: &SaleSummary) -> Option<f32> {
     if summary.num_sold == 0 {
         return None;
@@ -303,9 +297,6 @@ pub fn velocity_per_day(summary: &SaleSummary) -> Option<f32> {
 /// Returns `None` below 4 samples — a two-point "trend" is noise wearing a
 /// percentage sign. With an odd count the middle sample is skipped so the
 /// two windows never overlap.
-///
-/// TODO(Task 4): remove this allow once the drift column calls it.
-#[allow(dead_code)]
 pub fn price_drift_pct(prices: &[i32]) -> Option<f32> {
     if prices.len() < 4 {
         return None;
@@ -334,9 +325,6 @@ pub fn return_on_investment(profit: i32, cheapest_price: i32) -> i32 {
 
 /// Trustworthiness of a row's numbers when ClickHouse has no rollup for it.
 /// Replaces the page-level disclaimer copy with a per-row statement.
-///
-/// TODO(Task 4): remove this allow once the confidence column reads it.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DerivedConfidence {
     High,
@@ -347,9 +335,6 @@ pub enum DerivedConfidence {
 /// Band a row from its buffer depth and observed velocity. A full buffer
 /// only earns `High` if the sales are actually recent — six sales spread
 /// over a decade is a dead item, not a confident one.
-///
-/// TODO(Task 4): remove this allow once the confidence column calls it.
-#[allow(dead_code)]
 pub fn derived_confidence(summary: &SaleSummary) -> DerivedConfidence {
     let velocity = velocity_per_day(summary).unwrap_or(0.0);
     if summary.num_sold >= 6 && velocity >= 1.0 {
