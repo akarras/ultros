@@ -156,6 +156,49 @@ enum SortMode {
     ProfitPerDay,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+enum SortDir {
+    Asc,
+    #[default]
+    Desc,
+}
+
+impl FromStr for SortDir {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "asc" => Ok(SortDir::Asc),
+            "desc" => Ok(SortDir::Desc),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for SortDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SortDir::Asc => "asc",
+            SortDir::Desc => "desc",
+        })
+    }
+}
+
+/// Sort rows in place. Extracted from the `sorted_data` memo so the
+/// ordering is unit-testable without a reactive runtime.
+fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
+    let key = |d: &CalculatedProfitData| -> i32 {
+        match mode {
+            SortMode::Roi => d.return_on_investment,
+            SortMode::Profit => d.profit,
+            SortMode::ProfitPerDay => d.profit_per_day,
+        }
+    };
+    match dir {
+        SortDir::Desc => rows.sort_by_key(|d| Reverse(key(d))),
+        SortDir::Asc => rows.sort_by_key(key),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ProfitTable(Vec<Arc<ProfitData>>);
 
@@ -427,6 +470,7 @@ fn AnalyzerTable(
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
@@ -606,11 +650,11 @@ fn AnalyzerTable(
             })
             .collect::<Vec<_>>();
 
-        match sort_mode().unwrap_or(SortMode::Roi) {
-            SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
-            SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
-            SortMode::ProfitPerDay => sorted_data.sort_by_key(|data| Reverse(data.profit_per_day)),
-        }
+        sort_rows(
+            &mut sorted_data,
+            sort_mode().unwrap_or(SortMode::ProfitPerDay),
+            sort_dir().unwrap_or_default(),
+        );
         sorted_data
             .into_iter()
             .enumerate()
@@ -1165,7 +1209,7 @@ fn AnalyzerTable(
                                         <div class="flex items-center gap-2">
                                             {t!(i18n, analyzer_col_profit)}
                                             {move || {
-                                                (sort_mode() == Some(SortMode::Profit))
+                                                (sort_mode().unwrap_or(SortMode::ProfitPerDay) == SortMode::Profit)
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
                                             }}
                                         </div>
@@ -1178,11 +1222,12 @@ fn AnalyzerTable(
                                             active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
                                             key="sort"
                                             value="profit-per-day"
+                                            default=true
                                         >
                                             <div class="flex items-center gap-2">
                                                 {t!(i18n, analyzer_col_profit_per_day)}
                                                 {move || {
-                                                    (sort_mode() == Some(SortMode::ProfitPerDay))
+                                                    (sort_mode().unwrap_or(SortMode::ProfitPerDay) == SortMode::ProfitPerDay)
                                                         .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
                                                 }}
                                             </div>
@@ -1195,12 +1240,11 @@ fn AnalyzerTable(
                                         active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
                                         key="sort"
                                         value="roi"
-                                        default=true
                                     >
                                         <div class="flex items-center gap-2">
                                             {t!(i18n, analyzer_col_roi)}
                                             {move || {
-                                                (sort_mode() == Some(SortMode::Roi))
+                                                (sort_mode().unwrap_or(SortMode::ProfitPerDay) == SortMode::Roi)
                                                     .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
                                             }}
                                         </div>
@@ -2145,5 +2189,65 @@ mod tests {
         // lo = 95, hi = (110 + 5).min(5) = 5 => get(95..5) is an invalid range => &[]
         let keys = visible_keys(&data, (100, 110), 5, &seen, |k| *k);
         assert!(keys.is_empty());
+    }
+
+    fn calc(profit: i32, roi: i32, ppd: i32) -> CalculatedProfitData {
+        CalculatedProfitData {
+            inner: Arc::new(ProfitData {
+                estimated_sale_price: 0,
+                cheapest_price: 0,
+                cheapest_world_id: 0,
+                sale_summary: SaleSummary {
+                    item_id: 1,
+                    hq: false,
+                    num_sold: 6,
+                    avg_sale_duration: None,
+                    days_since_last_sale: None,
+                    max_price: 0,
+                    avg_price: 0,
+                    median_price: 0,
+                    min_price: 0,
+                },
+            }),
+            profit,
+            return_on_investment: roi,
+            profit_per_day: ppd,
+        }
+    }
+
+    #[test]
+    fn sort_desc_puts_largest_first() {
+        let mut rows = vec![calc(10, 0, 0), calc(30, 0, 0), calc(20, 0, 0)];
+        sort_rows(&mut rows, SortMode::Profit, SortDir::Desc);
+        assert_eq!(
+            rows.iter().map(|r| r.profit).collect::<Vec<_>>(),
+            vec![30, 20, 10]
+        );
+    }
+
+    #[test]
+    fn sort_asc_puts_smallest_first() {
+        let mut rows = vec![calc(10, 0, 0), calc(30, 0, 0), calc(20, 0, 0)];
+        sort_rows(&mut rows, SortMode::Profit, SortDir::Asc);
+        assert_eq!(
+            rows.iter().map(|r| r.profit).collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn sort_by_profit_per_day_is_independent_of_profit() {
+        let mut rows = vec![calc(100, 0, 1), calc(10, 0, 99)];
+        sort_rows(&mut rows, SortMode::ProfitPerDay, SortDir::Desc);
+        assert_eq!(rows[0].profit_per_day, 99);
+    }
+
+    #[test]
+    fn sort_dir_round_trips_through_string() {
+        assert_eq!("asc".parse::<SortDir>(), Ok(SortDir::Asc));
+        assert_eq!("desc".parse::<SortDir>(), Ok(SortDir::Desc));
+        assert_eq!(SortDir::Asc.to_string(), "asc");
+        assert_eq!(SortDir::Desc.to_string(), "desc");
+        assert!("sideways".parse::<SortDir>().is_err());
     }
 }
