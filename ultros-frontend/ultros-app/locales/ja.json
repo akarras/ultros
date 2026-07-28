@@ -1171,6 +1171,7 @@
     "analyzer_filter_velocity_min_label": "最低回転率",
     "analyzer_velocity_per_day": "%count%/日",
     "analyzer_drift_unavailable": "販売数が不足",
+    "analyzer_velocity_gte": "回転率 ≥",
     "analyzer_columns_button": "列",
     "analyzer_columns_picker_label": "表示する列:",
     "analyzer_columns_picker_reset": "既定に戻す",

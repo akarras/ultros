@@ -1171,6 +1171,7 @@
     "analyzer_filter_velocity_min_label": "最低流通速度",
     "analyzer_velocity_per_day": "%count%/日",
     "analyzer_drift_unavailable": "銷售資料不足",
+    "analyzer_velocity_gte": "流通速度 ≥",
     "analyzer_columns_button": "欄",
     "analyzer_columns_picker_label": "顯示的欄位：",
     "analyzer_columns_picker_reset": "回復預設",

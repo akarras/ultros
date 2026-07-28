@@ -1171,6 +1171,7 @@
     "analyzer_filter_velocity_min_label": "최소 판매 속도",
     "analyzer_velocity_per_day": "%count%/일",
     "analyzer_drift_unavailable": "판매 데이터 부족",
+    "analyzer_velocity_gte": "판매 속도 ≥",
     "analyzer_columns_button": "열",
     "analyzer_columns_picker_label": "표시할 열:",
     "analyzer_columns_picker_reset": "기본값으로",

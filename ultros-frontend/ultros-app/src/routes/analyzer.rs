@@ -464,6 +464,27 @@ fn visible_keys<T>(
         .collect()
 }
 
+/// Normalize a raw `?vel=` value into a usable floor.
+///
+/// `"NaN".parse::<f32>()` succeeds, and `v >= NaN` is false for every row,
+/// so a crafted `?vel=NaN` would silently empty the table. Non-finite
+/// values are treated as "no floor". Normalizing in one place keeps the
+/// filter, the chip and the toolbar input agreeing about whether a floor
+/// is active.
+fn normalize_velocity_floor(raw: Option<f32>) -> Option<f32> {
+    raw.filter(|v| v.is_finite())
+}
+
+/// Does a row clear an explicit velocity floor?
+///
+/// Prefers the ClickHouse rate so the number the Velocity column displays
+/// is the number the filter evaluates, and falls back to the rate derived
+/// from the 6-sale buffer for the ~93% of rows the rollup does not cover.
+/// A row with no rate at all cannot clear a floor.
+fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -> bool {
+    ch_rate.or(derived).map(|v| v >= min).unwrap_or(false)
+}
+
 #[component]
 fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
     view! {
@@ -507,6 +528,9 @@ fn AnalyzerTable(
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (min_velocity, set_min_velocity) = query_signal::<f32>("vel");
+    // Single normalization point for the floor — the filter, the summary
+    // chip and the toolbar input all read this, never `min_velocity` raw.
+    let velocity_floor = Memo::new(move |_| normalize_velocity_floor(min_velocity()));
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
     let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
@@ -607,13 +631,18 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
-                // Velocity floor. A row we can't derive a rate for (no sales in
-                // the buffer) cannot clear an explicit floor, so it drops out.
-                min_velocity()
+                // Velocity floor. Mirrors the Velocity column's preference —
+                // ClickHouse rate first, derived rate as fallback — so the
+                // number shown is the number evaluated. Reading `enrichment`
+                // here is the same pattern the suspicious filter below uses;
+                // the non-reactive `requested` dedupe breaks the recompute ->
+                // refetch loop.
+                velocity_floor()
                     .map(|min| {
-                        velocity_per_day(&data.inner.sale_summary)
-                            .map(|v| v >= min)
-                            .unwrap_or(false)
+                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                        let ch =
+                            enrichment.with(|maps| maps.quality_for(&key).map(|q| q.sales_per_day));
+                        passes_velocity_floor(min, ch, velocity_per_day(&data.inner.sale_summary))
                     })
                     .unwrap_or(true)
             })
@@ -867,7 +896,7 @@ fn AnalyzerTable(
                         min=0
                         step="0.5"
                         type="number"
-                        prop:value=min_velocity
+                        prop:value=velocity_floor
                         on:input=move |input| {
                             let value = event_target_value(&input);
                             if let Ok(v) = value.parse::<f32>() {
@@ -1142,6 +1171,16 @@ fn AnalyzerTable(
                                 <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
                                     {t!(i18n, analyzer_sales_gte)} {sales}
                                     <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
+                        if let Some(v) = velocity_floor() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    {t!(i18n, analyzer_velocity_gte)} {format!("{v:.1}")}
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_velocity(None)>
                                         <Icon icon=icondata::MdiClose />
                                     </button>
                                 </span>
@@ -2382,6 +2421,40 @@ mod tests {
         let mut rows = vec![calc(100, 0, 1), calc(10, 0, 99)];
         sort_rows(&mut rows, SortMode::ProfitPerDay, SortDir::Desc);
         assert_eq!(rows[0].profit_per_day, 99);
+    }
+
+    #[test]
+    fn velocity_floor_prefers_clickhouse_rate_over_derived() {
+        // The Velocity column shows the ClickHouse rate whenever the rollup
+        // covers a row, so the filter has to evaluate that same number.
+        // Otherwise a row displays "0.3/day", survives a floor of 5 on a
+        // derived 6/day, and the filter looks broken.
+        assert!(!passes_velocity_floor(5.0, Some(0.3), Some(6.0)));
+        assert!(passes_velocity_floor(5.0, Some(6.0), Some(0.3)));
+    }
+
+    #[test]
+    fn velocity_floor_falls_back_to_derived_without_clickhouse() {
+        // ~93% of rows have no rollup entry; those must still be filterable.
+        assert!(passes_velocity_floor(1.0, None, Some(2.0)));
+        assert!(!passes_velocity_floor(1.0, None, Some(0.5)));
+    }
+
+    #[test]
+    fn velocity_floor_is_inclusive_and_drops_rateless_rows() {
+        assert!(passes_velocity_floor(2.0, None, Some(2.0)));
+        // No rate at all cannot clear an explicit floor, even a floor of zero.
+        assert!(!passes_velocity_floor(0.0, None, None));
+    }
+
+    #[test]
+    fn non_finite_velocity_floor_is_ignored() {
+        // `"NaN".parse::<f32>()` succeeds, and `v >= NaN` is false for every
+        // row, so honoring `?vel=NaN` would silently empty the table.
+        assert_eq!(normalize_velocity_floor(Some(f32::NAN)), None);
+        assert_eq!(normalize_velocity_floor(Some(f32::INFINITY)), None);
+        assert_eq!(normalize_velocity_floor(Some(2.5)), Some(2.5));
+        assert_eq!(normalize_velocity_floor(None), None);
     }
 
     #[test]

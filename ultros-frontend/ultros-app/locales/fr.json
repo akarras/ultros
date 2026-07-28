@@ -1171,6 +1171,7 @@
     "analyzer_filter_velocity_min_label": "Vitesse min.",
     "analyzer_velocity_per_day": "%count%/jour",
     "analyzer_drift_unavailable": "Ventes insuffisantes",
+    "analyzer_velocity_gte": "Vitesse ≥",
     "analyzer_columns_button": "Colonnes",
     "analyzer_columns_picker_label": "Colonnes visibles :",
     "analyzer_columns_picker_reset": "Réinitialiser",
