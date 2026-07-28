@@ -371,6 +371,10 @@ mod tests {
 
     #[test]
     fn dots_path_emits_one_subpath_per_point() {
+        assert_eq!(
+            dots_path_d(&[(10.0, 20.0)], 2.0).unwrap(),
+            "M8.0 20.0a2.0,2.0 0 1,0 4.0,0a2.0,2.0 0 1,0 -4.0,0"
+        );
         let d = dots_path_d(&[(10.0, 20.0), (30.0, 40.0)], 2.0).unwrap();
         assert_eq!(d.matches('M').count(), 2, "one move per dot: {d}");
         assert!(d.starts_with("M8.0 20.0a2.0,2.0"), "{d}");
