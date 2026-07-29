@@ -1,12 +1,8 @@
-//! Time-bucketed aggregation: VWAP line vertices and volume bars. Bucket
-//! boundaries align to absolute UTC timestamps so day/week buckets land on
-//! calendar boundaries — ported from the web UI's quantity histogram.
-
-use std::collections::BTreeMap;
-
-use chrono::NaiveDateTime;
-
-use crate::data::grouping::SalePoint;
+//! Bucket-width ladder shared with the server: which time-bucket widths the
+//! chart may request, and how a requested width snaps onto the ladder.
+//! Actual VWAP/volume bucketing now happens server-side (see
+//! `ultros_api_types::price_series`), so this module only keeps the
+//! constants both sides must agree on.
 
 const HOUR: i64 = 3_600;
 const DAY: i64 = 86_400;
@@ -27,72 +23,38 @@ pub fn bucket_seconds(days_range: Option<i32>, data_span_days: i64) -> i64 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct VwapPoint {
-    /// Bucket midpoint (the line vertex sits in the middle of its bucket).
-    pub ts: NaiveDateTime,
-    pub vwap: f64,
+/// The only bucket widths this system produces. The server snaps requested
+/// widths onto this ladder so a hand-crafted request cannot ask for a
+/// million buckets, and so client-side axis labelling always matches the
+/// server's bucketing.
+pub const BUCKET_LADDER: [i64; 5] = [HOUR, 6 * HOUR, DAY, 7 * DAY, 30 * DAY];
+
+/// Snap an arbitrary width up to the next ladder step. Values above the top
+/// clamp to the widest bucket.
+pub fn snap_bucket_seconds(requested: i64) -> i64 {
+    BUCKET_LADDER
+        .iter()
+        .copied()
+        .find(|step| *step >= requested)
+        .unwrap_or(30 * DAY)
 }
 
-/// Volume-weighted average price per time bucket.
-pub fn vwap_buckets(points: &[SalePoint], bucket_secs: i64) -> Vec<VwapPoint> {
-    if bucket_secs <= 0 {
-        return Vec::new();
-    }
-    let mut sums: BTreeMap<i64, (i64, i64)> = BTreeMap::new();
-    for point in points {
-        let bucket = point.ts.and_utc().timestamp().div_euclid(bucket_secs) * bucket_secs;
-        let entry = sums.entry(bucket).or_default();
-        entry.0 += point.price as i64 * point.quantity as i64;
-        entry.1 += point.quantity as i64;
-    }
-    sums.into_iter()
-        .filter(|(_, (_, quantity))| *quantity > 0)
-        .filter_map(|(bucket, (gil, quantity))| {
-            chrono::DateTime::from_timestamp(bucket + bucket_secs / 2, 0).map(|ts| VwapPoint {
-                ts: ts.naive_utc(),
-                vwap: gil as f64 / quantity as f64,
-            })
-        })
-        .collect()
+/// Next ladder step up, or `None` at the top. Used to widen rather than
+/// truncate when a response would exceed the bucket cap.
+pub fn widen_bucket(current: i64) -> Option<i64> {
+    let snapped = snap_bucket_seconds(current);
+    BUCKET_LADDER.iter().copied().find(|step| *step > snapped)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct VolumeBucket {
-    /// Bucket start.
-    pub ts: NaiveDateTime,
-    pub quantity: i64,
-}
-
-/// Total quantity per bucket over grouped sale points (the chart feeds the
-/// visible series' points here so hidden series don't count).
-pub fn volume_buckets_from_points<'a>(
-    points: impl Iterator<Item = &'a SalePoint>,
-    bucket_secs: i64,
-) -> Vec<VolumeBucket> {
-    if bucket_secs <= 0 {
-        return Vec::new();
-    }
-    let mut sums: BTreeMap<i64, i64> = BTreeMap::new();
-    for point in points {
-        let bucket = point.ts.and_utc().timestamp().div_euclid(bucket_secs) * bucket_secs;
-        *sums.entry(bucket).or_default() += point.quantity as i64;
-    }
-    sums.into_iter()
-        .filter_map(|(bucket, quantity)| {
-            chrono::DateTime::from_timestamp(bucket, 0).map(|ts| VolumeBucket {
-                ts: ts.naive_utc(),
-                quantity,
-            })
-        })
-        .collect()
+/// Bucket width for a time span expressed in seconds — the server's entry
+/// point. Delegates to [`bucket_seconds`] so both callers share one ladder.
+pub fn bucket_seconds_for_span(span_secs: i64) -> i64 {
+    bucket_seconds(None, (span_secs / DAY).max(1))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::grouping::SalePoint;
-    use crate::test_util::ts;
 
     #[test]
     fn bucket_seconds_scales_with_window() {
@@ -104,48 +66,25 @@ mod tests {
     }
 
     #[test]
-    fn vwap_buckets_weight_by_quantity() {
-        // 100×1 and 200×3 in the same day bucket → VWAP 175, vertex at midday
-        let points = vec![
-            SalePoint {
-                ts: ts(0),
-                price: 100,
-                quantity: 1,
-            },
-            SalePoint {
-                ts: ts(3_600),
-                price: 200,
-                quantity: 3,
-            },
-        ];
-        let buckets = vwap_buckets(&points, 86_400);
-        assert_eq!(buckets.len(), 1);
-        assert_eq!(buckets[0].vwap, 175.0);
-        assert_eq!(buckets[0].ts, ts(43_200));
+    fn snap_rounds_to_the_nearest_ladder_step_not_below_it() {
+        assert_eq!(snap_bucket_seconds(1), HOUR);
+        assert_eq!(snap_bucket_seconds(HOUR), HOUR);
+        assert_eq!(snap_bucket_seconds(2 * HOUR), 6 * HOUR);
+        assert_eq!(snap_bucket_seconds(DAY), DAY);
+        assert_eq!(snap_bucket_seconds(i64::MAX), 30 * DAY);
     }
 
     #[test]
-    fn volume_buckets_sum_quantities() {
-        let points = [
-            SalePoint {
-                ts: ts(0),
-                price: 100,
-                quantity: 2,
-            },
-            SalePoint {
-                ts: ts(60),
-                price: 100,
-                quantity: 3,
-            },
-            SalePoint {
-                ts: ts(86_400),
-                price: 100,
-                quantity: 5,
-            },
-        ];
-        let buckets = volume_buckets_from_points(points.iter(), 86_400);
-        assert_eq!(buckets.len(), 2);
-        assert_eq!(buckets[0].quantity, 5);
-        assert_eq!(buckets[1].quantity, 5);
+    fn widen_walks_up_the_ladder_and_stops_at_the_top() {
+        assert_eq!(widen_bucket(HOUR), Some(6 * HOUR));
+        assert_eq!(widen_bucket(6 * HOUR), Some(DAY));
+        assert_eq!(widen_bucket(30 * DAY), None);
+    }
+
+    #[test]
+    fn span_picks_the_same_width_as_the_days_based_helper() {
+        // 30 days of data with no explicit range: both paths must agree, or the
+        // server and client bucket differently.
+        assert_eq!(bucket_seconds_for_span(30 * DAY), bucket_seconds(None, 30));
     }
 }

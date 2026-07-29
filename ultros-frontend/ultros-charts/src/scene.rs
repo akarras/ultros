@@ -79,6 +79,14 @@ pub enum Node {
         baseline_y: f32,
         fill: Color,
     },
+    /// Pre-serialized path data. Lets a layout emit N marks that share one
+    /// fill or stroke as a single node instead of N nodes — the difference
+    /// between 2,000 SVG elements and 1 for a dense chart.
+    Path {
+        d: String,
+        fill: Option<Color>,
+        stroke: Option<Stroke>,
+    },
     Circle {
         cx: f32,
         cy: f32,

@@ -4,9 +4,10 @@
 //! usvg supports: no CSS classes, no `rgba()` colors (use `*-opacity`
 //! attributes), `xlink:href` for images.
 //!
-//! **Attribute escaping:** attribute values (`font_family`, `Image::href`) are
-//! not escaped — callers must supply attribute-safe values (today they're
-//! internal constants / data URIs).
+//! **Attribute escaping:** attribute values (`font_family`, `Image::href`,
+//! `Node::Path::d`) are not escaped — callers must supply attribute-safe
+//! values (today they're internal constants / data URIs / machine-generated
+//! path data).
 
 use std::fmt::Write;
 
@@ -65,6 +66,29 @@ pub(crate) fn area_path_d(points: &[(f32, f32)], baseline_y: f32) -> Option<Stri
         d,
         "L{last_x:.1} {baseline_y:.1}L{first_x:.1} {baseline_y:.1}Z"
     );
+    Some(d)
+}
+
+/// Path data drawing a filled circle of radius `r` at each point, as one
+/// path with one subpath per dot. Two half-arcs per circle is the standard
+/// way to express a circle in path syntax, and usvg handles it fine.
+/// `None` for an empty input (an empty `d` attribute is invalid SVG).
+// Not yet wired up: will be called by the price chart when rendering batched
+// sale dots in a follow-up change; remove this allow once that lands.
+#[allow(dead_code)]
+pub(crate) fn dots_path_d(points: &[(f32, f32)], r: f32) -> Option<String> {
+    if points.is_empty() {
+        return None;
+    }
+    let mut d = String::with_capacity(points.len() * 40);
+    for (x, y) in points {
+        let left = x - r;
+        let diameter = r * 2.0;
+        let _ = write!(
+            d,
+            "M{left:.1} {y:.1}a{r:.1},{r:.1} 0 1,0 {diameter:.1},0a{r:.1},{r:.1} 0 1,0 -{diameter:.1},0"
+        );
+    }
     Some(d)
 }
 
@@ -145,6 +169,17 @@ pub fn scene_to_svg(scene: &Scene) -> String {
                 };
                 let _ = write!(out, r#"<path d="{d}""#);
                 push_fill(&mut out, fill);
+                out.push_str("/>");
+            }
+            Node::Path { d, fill, stroke } => {
+                let _ = write!(out, r#"<path d="{d}""#);
+                match fill {
+                    Some(fill) => push_fill(&mut out, fill),
+                    None => out.push_str(r#" fill="none""#),
+                }
+                if let Some(stroke) = stroke {
+                    push_stroke(&mut out, stroke);
+                }
                 out.push_str("/>");
             }
             Node::Circle { cx, cy, r, fill } => {
@@ -280,6 +315,47 @@ mod tests {
     }
 
     #[test]
+    fn serializes_path_with_fill_and_stroke() {
+        let scene = Scene {
+            width: 10.0,
+            height: 10.0,
+            background: None,
+            font_family: "sans-serif".to_string(),
+            nodes: vec![
+                Node::Path {
+                    d: "M0 0L5 5".to_string(),
+                    fill: Some(Color::rgb(1, 2, 3).with_alpha(0.5)),
+                    stroke: None,
+                },
+                Node::Path {
+                    d: "M1 1L2 2".to_string(),
+                    fill: None,
+                    stroke: Some(Stroke {
+                        color: Color::rgb(4, 5, 6),
+                        width: 2.0,
+                        dash: None,
+                    }),
+                },
+                Node::Path {
+                    d: "M3 3L4 4".to_string(),
+                    fill: Some(Color::rgb(7, 8, 9)),
+                    stroke: Some(Stroke {
+                        color: Color::rgb(10, 11, 12),
+                        width: 1.0,
+                        dash: None,
+                    }),
+                },
+            ],
+        };
+        let svg = scene_to_svg(&scene);
+        assert!(svg.contains(r##"<path d="M0 0L5 5" fill="#010203" fill-opacity="0.500""##));
+        assert!(svg.contains(r##"<path d="M1 1L2 2" fill="none" stroke="#040506""##));
+        assert!(svg.contains(
+            r##"<path d="M3 3L4 4" fill="#070809" stroke="#0a0b0c" stroke-width="1.00""##
+        ));
+    }
+
+    #[test]
     fn empty_scene_is_well_formed() {
         let scene = Scene {
             width: 10.0,
@@ -291,5 +367,17 @@ mod tests {
         let svg = scene_to_svg(&scene);
         assert!(svg.starts_with("<svg "));
         assert!(svg.ends_with("</svg>"));
+    }
+
+    #[test]
+    fn dots_path_emits_one_subpath_per_point() {
+        assert_eq!(
+            dots_path_d(&[(10.0, 20.0)], 2.0).unwrap(),
+            "M8.0 20.0a2.0,2.0 0 1,0 4.0,0a2.0,2.0 0 1,0 -4.0,0"
+        );
+        let d = dots_path_d(&[(10.0, 20.0), (30.0, 40.0)], 2.0).unwrap();
+        assert_eq!(d.matches('M').count(), 2, "one move per dot: {d}");
+        assert!(d.starts_with("M8.0 20.0a2.0,2.0"), "{d}");
+        assert_eq!(dots_path_d(&[], 2.0), None);
     }
 }

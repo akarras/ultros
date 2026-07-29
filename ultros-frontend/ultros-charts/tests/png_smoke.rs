@@ -12,7 +12,7 @@ use resvg::{
     tiny_skia,
     usvg::{self, Options},
 };
-use ultros_api_types::SaleHistory;
+use ultros_api_types::price_series::{PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup};
 use ultros_api_types::world::{Datacenter, Region, World, WorldData};
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_charts::charts::price_history::{PriceChartOptions, build_price_history_scene};
@@ -46,29 +46,49 @@ fn helper() -> WorldHelper {
     })
 }
 
-#[test]
-fn full_chart_renders_to_a_decodable_png() {
-    let sales: Vec<SaleHistory> = (0..30)
-        .map(|i| SaleHistory {
-            id: i,
-            quantity: 1,
-            price_per_item: 1_000 + i * 13,
-            buying_character_id: 0,
-            hq: false,
-            sold_item_id: 1,
-            sold_date: DateTime::from_timestamp(1_750_000_000 + i as i64 * 7_200, 0)
-                .unwrap()
-                .naive_utc(),
-            world_id: 1,
-            buyer_name: None,
+/// 30 daily buckets on world 1, one sale each — enough to exercise the full
+/// chart (lines, volume, trendline) without a real bucketing pipeline.
+fn thirty_day_series() -> PriceSeries {
+    let bucket_secs = 6 * 3_600;
+    let buckets: Vec<PriceBucket> = (0..30)
+        .map(|i| {
+            let price = 1_000 + i * 13;
+            let start = 1_750_000_000 + i as i64 * 7_200;
+            let start = start.div_euclid(bucket_secs) * bucket_secs;
+            PriceBucket {
+                ts: DateTime::from_timestamp(start, 0).unwrap().naive_utc(),
+                open: price,
+                high: price,
+                low: price,
+                close: price,
+                gil: price as i64,
+                units: 1,
+                sales: 1,
+                p25: price,
+                p50: price,
+                p75: price,
+            }
         })
         .collect();
+    let from = buckets.first().unwrap().ts;
+    let to = buckets.last().unwrap().ts;
+    PriceSeries {
+        bucket_seconds: bucket_secs,
+        group: SeriesGroup::World,
+        from,
+        to,
+        series: vec![PriceSeriesEntry { id: 1, buckets }],
+        raw: None,
+    }
+}
+
+#[test]
+fn full_chart_renders_to_a_decodable_png() {
     let scene = build_price_history_scene(
         &helper(),
-        &sales,
+        &thirty_day_series(),
         &PriceChartOptions {
             title: Some("Smoke Test - Sale History".to_string()),
-            remove_outliers: true,
             show_trendline: true,
             ..Default::default()
         },
@@ -80,7 +100,15 @@ fn full_chart_renders_to_a_decodable_png() {
 
 #[test]
 fn empty_chart_renders_to_a_decodable_png() {
-    let scene = build_price_history_scene(&helper(), &[], &PriceChartOptions::default());
+    let empty = PriceSeries {
+        bucket_seconds: 86_400,
+        group: SeriesGroup::World,
+        from: DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+        to: DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+        series: Vec::new(),
+        raw: None,
+    };
+    let scene = build_price_history_scene(&helper(), &empty, &PriceChartOptions::default());
     let png = svg_to_png(&scene_to_svg(&scene));
     assert!(image::load_from_memory(&png).is_ok());
 }

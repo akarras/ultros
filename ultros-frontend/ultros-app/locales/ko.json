@@ -886,8 +886,6 @@
     "nq": "NQ",
     "median_label": "중앙값",
     "chart_range_90d": "90일",
-    "filtering_outliers": "이상치 필터링 중",
-    "no_filter": "필터 없음",
     "item_view_meta_description": "{{world}} 내 {{name}}의 현재 시장 판 매물입니다. 지역 내 최저 가격을 찾아보세요.",
     "item_view_meta_title": "{{name}} - 🌍{{world}} - 시장 판 - Ultros",
     "open_universalis_aria_label": "새 탭에서 Universalis 시장 페이지 열기",

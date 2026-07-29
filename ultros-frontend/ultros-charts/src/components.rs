@@ -102,6 +102,21 @@ fn node_view(node: &Node) -> AnyView {
             Some(d) => view! { <path d=d fill=color_attr(fill) /> }.into_any(),
             None => ().into_any(),
         },
+        Node::Path { d, fill, stroke } => view! {
+            <path
+                d=d.clone()
+                fill=fill
+                    .as_ref()
+                    .map(color_attr)
+                    .unwrap_or_else(|| "none".to_string())
+                stroke=stroke.as_ref().map(|s| color_attr(&s.color))
+                stroke-width=stroke.as_ref().map(|s| px(s.width))
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-dasharray=stroke.as_ref().and_then(dash_attr)
+            />
+        }
+        .into_any(),
         Node::Circle { cx, cy, r, fill } => view! {
             <circle cx=px(*cx) cy=px(*cy) r=px(*r) fill=color_attr(fill) />
         }
@@ -151,6 +166,48 @@ fn node_view(node: &Node) -> AnyView {
 mod tests {
     use super::*;
     use crate::scene::{Color, Node, Scene, Stroke, TextAnchor};
+
+    #[test]
+    fn renders_path_nodes() {
+        let scene = Scene {
+            width: 10.0,
+            height: 10.0,
+            background: None,
+            font_family: "sans-serif".to_string(),
+            nodes: vec![Node::Path {
+                d: "M0 0L5 5".to_string(),
+                fill: Some(Color::rgb(1, 2, 3)),
+                stroke: None,
+            }],
+        };
+        let html = scene_view(&scene).to_html();
+        assert!(html.contains(r#"d="M0 0L5 5""#), "{html}");
+        assert!(html.contains("#010203"), "{html}");
+    }
+
+    #[test]
+    fn renders_path_nodes_with_stroke() {
+        let scene = Scene {
+            width: 10.0,
+            height: 10.0,
+            background: None,
+            font_family: "sans-serif".to_string(),
+            nodes: vec![Node::Path {
+                d: "M1 1L2 2".to_string(),
+                fill: None,
+                stroke: Some(Stroke {
+                    color: Color::rgb(4, 5, 6),
+                    width: 2.0,
+                    dash: Some((2.0, 4.0)),
+                }),
+            }],
+        };
+        let html = scene_view(&scene).to_html();
+        assert!(html.contains(r#"d="M1 1L2 2""#), "{html}");
+        assert!(html.contains("stroke=\"#040506\""), "{html}");
+        assert!(html.contains("stroke-width=\"2.0\""), "{html}");
+        assert!(html.contains("stroke-dasharray=\"2.0 4.0\""), "{html}");
+    }
 
     #[test]
     fn renders_scene_nodes_as_svg_markup() {

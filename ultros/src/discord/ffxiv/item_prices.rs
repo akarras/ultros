@@ -120,17 +120,24 @@ async fn history(
         .get(&ItemId(item))
         .ok_or(anyhow!("Item not found"))?;
     let item_display_name = localized_item_name(item, user_lang);
-    let world = data
+    let world_result = data
         .world_helper
         .lookup_world_by_name(&world)
         .ok_or(anyhow!("Unable to find world"))?;
-    let png = generate_image(&data.db, &data.world_helper, item_en, &world).await?;
+    let png = generate_image(
+        &data.ch_client,
+        &data.world_cache,
+        &data.world_helper,
+        item_en,
+        &world,
+    )
+    .await?;
     let attachment = CreateAttachment::bytes(png, "chart.png");
     ctx.send(
         poise::CreateReply::default()
             .embed(
                 poise::serenity_prelude::CreateEmbed::new()
-                    .title([&item_display_name, " - ", world.get_name()].concat())
+                    .title([&item_display_name, " - ", world_result.get_name()].concat())
                     .color(ULTROS_COLOR)
                     .image("attachment://chart.png"),
             )

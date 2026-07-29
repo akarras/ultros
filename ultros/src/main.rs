@@ -406,6 +406,7 @@ async fn main() -> Result<()> {
         update_service,
         discord_token,
         token.clone(),
+        ch_client.clone(),
     ));
 
     let character_verification = CharacterVerifierService {
@@ -442,6 +443,7 @@ async fn main() -> Result<()> {
         token: token.clone(),
         ch_client,
         universalis: universalis_client,
+        price_series_cache: Default::default(),
     };
     let web_task = tokio::spawn(web::start_web(web_state));
     tokio::select! {

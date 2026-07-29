@@ -886,8 +886,6 @@
     "nq": "NQ",
     "median_label": "Médiane",
     "chart_range_90d": "90j",
-    "filtering_outliers": "Filtrage des valeurs aberrantes",
-    "no_filter": "Aucun filtre",
     "item_view_meta_description": "Annonces actuelles de l'hôtel des ventes pour {{name}} dans {{world}}. Trouve les prix les plus bas dans ta région.",
     "item_view_meta_title": "{{name}} - 🌍{{world}} - Hôtel des ventes - Ultros",
     "open_universalis_aria_label": "Ouvrir la page de marché Universalis dans un nouvel onglet",

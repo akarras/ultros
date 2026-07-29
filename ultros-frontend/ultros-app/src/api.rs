@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
         CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
@@ -20,6 +19,7 @@ use ultros_api_types::{
     },
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
+    price_series::{HqFilter, PriceSeries, SeriesGroup},
     recent_sales::RecentSales,
     resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
     result::JsonErrorWrapper,
@@ -48,20 +48,30 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
     fetch_api(&format!("/api/v1/listings/{world}/{item_id}")).await
 }
 
-/// Pull a larger window of sales than the default listings endpoint returns.
-/// Server caps `limit` at 10000.
-pub(crate) async fn get_extended_sale_history(
+/// Pre-bucketed price series for the item chart. The payload size tracks the
+/// requested window rather than the item's sale count, so this is safe at
+/// full history. (The raw-sales client wrapper for `/api/v1/extended_history`
+/// was removed when the chart moved to this endpoint — the HTTP route is
+/// still registered server-side, just no longer called from here.)
+pub(crate) async fn get_price_series(
     item_id: i32,
     world: &str,
-    limit: u32,
-) -> AppResult<ExtendedSaleHistory> {
+    group: SeriesGroup,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+) -> AppResult<PriceSeries> {
     if item_id == 0 {
         return Err(AppError::NoItem);
     }
-    fetch_api(&format!(
-        "/api/v1/extended_history/{world}/{item_id}?limit={limit}"
-    ))
-    .await
+    let mut url = format!(
+        "/api/v1/price_series/{world}/{item_id}?group={}&hq={}",
+        group.as_str(),
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
 }
 
 /// This is okay because the client will send our login cookie.

@@ -5,6 +5,7 @@ use poise::{builtins::HelpConfiguration, serenity_prelude as serenity};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
+use ultros_clickhouse::ClickHouseClient;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 
 use crate::{
@@ -26,6 +27,10 @@ pub(crate) struct Data {
     world_cache: Arc<WorldCache>,
     world_helper: Arc<WorldHelper>,
     update_service: Arc<UpdateService>,
+    /// Backs `/prices history`'s chart image — same ClickHouse-sourced
+    /// `PriceSeries` construction the web item-card PNG and JSON endpoint
+    /// share (`crate::web::build_price_series`).
+    ch_client: ClickHouseClient,
 }
 
 #[poise::command(slash_command, prefix_command)]
@@ -81,6 +86,7 @@ pub(crate) async fn start_discord(
     update_service: Arc<UpdateService>,
     discord_token: String,
     token: CancellationToken,
+    ch_client: ClickHouseClient,
 ) {
     let setup_token = token.clone();
     let framework: poise::Framework<Data, Error> = poise::Framework::builder()
@@ -130,6 +136,7 @@ pub(crate) async fn start_discord(
                     world_cache,
                     world_helper,
                     update_service,
+                    ch_client,
                 })
             })
         })

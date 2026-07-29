@@ -886,8 +886,6 @@
     "nq": "NQ",
     "median_label": "中央値",
     "chart_range_90d": "90日",
-    "filtering_outliers": "外れ値を除外中",
-    "no_filter": "フィルターなし",
     "item_view_meta_description": "{{world}} における {{name}} の現在のマーケットボード出品。地域内の最安値を見つけられます。",
     "item_view_meta_title": "{{name}} - 🌍{{world}} - マーケットボード - Ultros",
     "open_universalis_aria_label": "Universalisのマーケットページを新しいタブで開く",

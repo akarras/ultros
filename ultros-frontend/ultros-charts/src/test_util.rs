@@ -1,7 +1,7 @@
-//! Shared fixtures for unit tests: a synthetic world tree and SaleHistory rows.
+//! Shared fixtures for unit tests: a synthetic world tree and PriceSeries rows.
 
 use chrono::NaiveDateTime;
-use ultros_api_types::SaleHistory;
+use ultros_api_types::price_series::{PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup};
 use ultros_api_types::world::{Datacenter, Region, World, WorldData};
 use ultros_api_types::world_helper::WorldHelper;
 
@@ -11,17 +11,54 @@ pub(crate) fn ts(secs: i64) -> NaiveDateTime {
         .naive_utc()
 }
 
-pub(crate) fn sale(price: i32, quantity: i32, world_id: i32, sold: NaiveDateTime) -> SaleHistory {
-    SaleHistory {
-        id: 0,
-        quantity,
-        price_per_item: price,
-        buying_character_id: 0,
-        hq: false,
-        sold_item_id: 1,
-        sold_date: sold,
-        world_id,
-        buyer_name: None,
+pub(crate) fn bucket(
+    ts_secs: i64,
+    open: i32,
+    high: i32,
+    low: i32,
+    close: i32,
+    units: i64,
+) -> PriceBucket {
+    PriceBucket {
+        ts: ts(ts_secs),
+        open,
+        high,
+        low,
+        close,
+        gil: i64::from(close) * units,
+        units,
+        sales: 3,
+        p25: low,
+        p50: (low + high) / 2,
+        p75: high,
+    }
+}
+
+/// Two worlds of one datacenter, 10 daily buckets each, gently trending up.
+pub(crate) fn two_world_series() -> PriceSeries {
+    let entry = |id: i32, base: i32| PriceSeriesEntry {
+        id,
+        buckets: (0..10)
+            .map(|i| {
+                let p = base + i * 10;
+                bucket(
+                    1_700_006_400 + i as i64 * 86_400,
+                    p,
+                    p + 20,
+                    p - 10,
+                    p + 5,
+                    2,
+                )
+            })
+            .collect(),
+    };
+    PriceSeries {
+        bucket_seconds: 86_400,
+        group: SeriesGroup::World,
+        from: ts(1_700_006_400),
+        to: ts(1_700_006_400 + 9 * 86_400),
+        series: vec![entry(1, 1_000), entry(2, 1_200)],
+        raw: None,
     }
 }
 

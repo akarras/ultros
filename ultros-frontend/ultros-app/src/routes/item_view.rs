@@ -1,4 +1,4 @@
-use crate::api::{get_extended_sale_history, get_item_stats, get_listings};
+use crate::api::{get_item_stats, get_listings, get_price_series};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
@@ -26,15 +26,18 @@ use leptos_meta::{Link, Meta};
 use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
+use leptos_use::signal_debounced;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use ultros_api_types::price_series::{HqFilter, SeriesGroup};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world::Datacenter;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
-use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer, SaleHistory};
+use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer};
+use ultros_charts::data::grouping::GroupLevel;
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
@@ -1232,7 +1235,6 @@ pub fn ChartWrapper(
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let (hq_only, set_hq_only) = signal(false);
-    let (filter_outliers, set_filter_outliers) = signal(true);
 
     // Per-item analyzer stats (ClickHouse-backed). LocalResource = client-
     // only — the badge isn't part of SSR output, so we avoid a hydration
@@ -1244,63 +1246,49 @@ pub fn ChartWrapper(
         let w = world();
         async move { get_item_stats(&w, id).await }
     });
-    // The chart's sales are replaced with a larger compact pull once it loads.
-    // Stored as Option<Vec<_>>: None means "use base resource".
-    let (extended_sales, set_extended_sales) = signal::<Option<Vec<SaleHistory>>>(None);
-    let (extended_loading, set_extended_loading) = signal(false);
-    let (extended_error, set_extended_error) = signal::<Option<String>>(None);
-    // Auto-load the extended window on the client. Effects never run during
-    // SSR, so the server renders (and the client hydrates) the base 200-sale
-    // view; the swap-in is an ordinary post-hydration reactive update. Also
-    // resets state when navigating to a different item/world.
+
+    // Chart data now comes pre-bucketed from ClickHouse rather than a raw
+    // sale pull re-bucketed in the browser (see `ultros_api_types::price_series`
+    // doc comment). `group`/`hq` mirror the chart's own controls so the
+    // request always matches what's on screen; `selected_range` is the
+    // timeline slicer's committed selection (`None` = full history).
+    let (group, set_group) = signal(GroupLevel::World);
+    let hq = Signal::derive(move || {
+        if hq_only.get() {
+            HqFilter::Hq
+        } else {
+            HqFilter::Any
+        }
+    });
+    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
+    // A different item/world makes any absolute-timestamp selection from the
+    // previous item meaningless (and possibly outside the new item's data
+    // entirely) — drop back to full range before the next request goes out.
+    // Deliberately does *not* track `group`/`hq`: changing those shouldn't
+    // discard an in-progress zoom.
     Effect::new(move |_| {
-        use leptos::task::spawn_local;
+        item_id.track();
+        world.track();
+        set_selected_range.set(None);
+    });
+    // Debounce so dragging a slicer handle fires one request after the drag
+    // settles rather than one per pointer move; the slicer's own handle
+    // rendering reads the undebounced `selected_range` so it still tracks
+    // the pointer at full rate.
+    let debounced_range = signal_debounced(selected_range, 300.0);
+
+    // LocalResource = client-only, same rationale as `item_stats_resource`
+    // above: avoids a hydration mismatch when the fetch resolves at
+    // different times on server vs. client.
+    let series_resource = LocalResource::new(move || {
         let id = item_id.get();
         let world_name = world.get();
-        set_extended_sales.set(None);
-        set_extended_error.set(None);
-        if id == 0 {
-            return;
-        }
-        set_extended_loading.set(true);
-        spawn_local(async move {
-            let result = get_extended_sale_history(id, &world_name, 10_000).await;
-            // A slow response for a previous item/world must not clobber the
-            // current page; try_* also guards against the component having
-            // been disposed while the request was in flight.
-            let still_current = item_id.try_get_untracked() == Some(id)
-                && world.try_with_untracked(|w| w == &world_name) == Some(true);
-            if !still_current {
-                return;
-            }
-            match result {
-                Ok(payload) => {
-                    let converted: Vec<SaleHistory> = payload
-                        .sales
-                        .into_iter()
-                        .map(|s| SaleHistory {
-                            id: 0,
-                            quantity: s.quantity,
-                            price_per_item: s.price_per_item,
-                            buying_character_id: 0,
-                            hq: s.hq,
-                            sold_item_id: id,
-                            sold_date: s.sold_date,
-                            world_id: s.world_id,
-                            buyer_name: None,
-                        })
-                        .collect();
-                    set_extended_sales.try_set(Some(converted));
-                }
-                Err(e) => {
-                    set_extended_error.try_set(Some(e.to_string()));
-                }
-            }
-            set_extended_loading.try_set(false);
-        });
+        let series_group = SeriesGroup::from(group.get());
+        let hq_filter = hq.get();
+        let range = debounced_range.get();
+        async move { get_price_series(id, &world_name, series_group, hq_filter, range).await }
     });
-
-    /* moved into Transition branch to avoid reading resource outside Suspense/Transition */
+    let series = Signal::derive(move || series_resource.get().and_then(|r| r.ok()));
 
     view! {
         <Transition fallback=move || {
@@ -1324,26 +1312,6 @@ pub fn ChartWrapper(
                         </div>
                     }.into_any()
                 } else {
-                    let base_sales = Memo::new(move |_| {
-                        if let Some(ext) = extended_sales.get() {
-                            return ext;
-                        }
-                        listing_resource
-                            .with(|l| {
-                                l.as_ref()
-                                    .and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
-                            })
-                            .unwrap_or_default()
-                    });
-
-                    let filtered_sales = Memo::new(move |_| {
-                        let mut sales = base_sales();
-                        if hq_only() {
-                            sales.retain(|s| s.hq);
-                        }
-                        sales
-                    });
-
                     view! {
                         <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 text-[color:var(--color-text)] h-full">
                             <div class="flex flex-col gap-3">
@@ -1369,16 +1337,17 @@ pub fn ChartWrapper(
                                             }}
                                         </div>
                                         <p class="text-sm text-[color:var(--color-text-muted)]">
-                                            {move || t!(i18n, based_on_sales, count = base_sales.with(|sales| sales.len()))}
                                             {move || {
-                                                extended_loading
+                                                series
                                                     .get()
-                                                    .then(|| {
-                                                        view! {
-                                                            <span class="ml-2 text-xs animate-pulse">
-                                                                {t!(i18n, extended_history_loading)}
-                                                            </span>
-                                                        }
+                                                    .map(|s| {
+                                                        let n: usize = s
+                                                            .series
+                                                            .iter()
+                                                            .flat_map(|entry| entry.buckets.iter())
+                                                            .map(|b| b.sales as usize)
+                                                            .sum();
+                                                        t!(i18n, based_on_sales, count = n)
                                                     })
                                             }}
                                         </p>
@@ -1390,12 +1359,6 @@ pub fn ChartWrapper(
                                             checked_label=t_string!(i18n, hq_only).to_string()
                                             unchecked_label=t_string!(i18n, all_qualities).to_string()
                                         />
-                                        <Toggle
-                                            checked=filter_outliers
-                                            set_checked=set_filter_outliers
-                                            checked_label=t_string!(i18n, filtering_outliers).to_string()
-                                            unchecked_label=t_string!(i18n, no_filter).to_string()
-                                        />
                                         <a
                                             class="btn-primary text-sm"
                                             target="_blank"
@@ -1406,25 +1369,33 @@ pub fn ChartWrapper(
                                     </div>
                                 </div>
 
-                                {move || extended_error.get().map(|msg| view! {
-                                    <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl px-3 py-2 text-sm">
-                                        {msg}
-                                    </div>
-                                })}
+                                {move || {
+                                    series_resource
+                                        .get()
+                                        .and_then(|r| r.err())
+                                        .map(|e| view! {
+                                            <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl px-3 py-2 text-sm">
+                                                {e.to_string()}
+                                            </div>
+                                        })
+                                }}
 
                                 {move || {
-                                    if filtered_sales.with(|sales| sales.is_empty()) {
-                                        view! {
-                                            <div role="status" class="text-amber-200 border border-amber-500/40 rounded-xl p-4">
-                                                {move || t_string!(i18n, no_sales_found).to_string()}
-                                            </div>
-                                        }.into_any()
-                                    } else {
-                                        view! {
-                                            <PriceHistoryChart sales=filtered_sales filter_outliers scope_name=world />
-                                        }.into_any()
-                                    }
+                                    let is_empty = series.get().map(|s| s.is_empty()).unwrap_or(false);
+                                    is_empty.then(|| view! {
+                                        <div role="status" class="text-amber-200 border border-amber-500/40 rounded-xl p-4">
+                                            {move || t_string!(i18n, no_sales_found).to_string()}
+                                        </div>
+                                    })
                                 }}
+
+                                <PriceHistoryChart
+                                    series=series
+                                    scope_name=world
+                                    group=group
+                                    set_group=set_group
+                                    on_range_change=Callback::new(move |r| set_selected_range.set(r))
+                                />
 
                                 {move || {
                                     let no_listings = with_or(

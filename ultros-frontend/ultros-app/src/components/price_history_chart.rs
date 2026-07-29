@@ -1,7 +1,7 @@
 use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_use::{UseElementSizeReturn, use_element_size};
-use ultros_api_types::SaleHistory;
+use ultros_api_types::price_series::{PriceSeries, SeriesGroup};
 use ultros_charts::charts::price_history::{
     ChartStats, PriceChartModel, PriceChartOptions, build_price_history_chart,
 };
@@ -26,16 +26,19 @@ enum TimelineDrag {
     New { anchor_ts: i64 },
 }
 
-fn sales_time_domain(sales: &[SaleHistory]) -> Option<(i64, i64)> {
-    let min_ts = sales
-        .iter()
-        .map(|sale| sale.sold_date.and_utc().timestamp())
-        .min()?;
-    let max_ts = sales
-        .iter()
-        .map(|sale| sale.sold_date.and_utc().timestamp())
-        .max()?;
-    Some((min_ts, max_ts))
+/// A response with no data at all — used so the chart renders its own empty
+/// state instead of unmounting while the `series` resource is still loading
+/// or errored.
+fn empty_price_series() -> PriceSeries {
+    let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+    PriceSeries {
+        bucket_seconds: 0,
+        group: SeriesGroup::World,
+        from: epoch,
+        to: epoch,
+        series: Vec::new(),
+        raw: None,
+    }
 }
 
 fn normalize_time_range(a: i64, b: i64, domain: (i64, i64)) -> (i64, i64) {
@@ -75,25 +78,35 @@ fn format_timeline_ts(ts: i64, utc_offset_minutes: i32) -> String {
         .unwrap_or_default()
 }
 
+/// Histogram of traded units for the timeline slicer's mini chart. Sums
+/// `units` across every series' buckets (grouping doesn't matter for a
+/// volume-over-time silhouette) into `bucket_count` display buckets spanning
+/// `domain`.
 fn timeline_quantity_buckets(
-    sales: &[SaleHistory],
+    series: &PriceSeries,
     domain: (i64, i64),
     bucket_count: usize,
 ) -> Vec<f64> {
-    if sales.is_empty() || bucket_count == 0 {
+    if bucket_count == 0 {
+        return Vec::new();
+    }
+    let has_data = series.series.iter().any(|entry| !entry.buckets.is_empty());
+    if !has_data {
         return Vec::new();
     }
 
     let span = (domain.1 - domain.0).max(1) as f64;
     let mut buckets = vec![0.0; bucket_count];
-    for sale in sales {
-        let ts = sale.sold_date.and_utc().timestamp();
-        if ts < domain.0 || ts > domain.1 {
-            continue;
+    for entry in &series.series {
+        for bucket in &entry.buckets {
+            let ts = bucket.ts.and_utc().timestamp();
+            if ts < domain.0 || ts > domain.1 {
+                continue;
+            }
+            let offset = ((ts - domain.0) as f64 / span).clamp(0.0, 1.0);
+            let index = ((offset * bucket_count as f64).floor() as usize).min(bucket_count - 1);
+            buckets[index] += bucket.units as f64;
         }
-        let offset = ((ts - domain.0) as f64 / span).clamp(0.0, 1.0);
-        let index = ((offset * bucket_count as f64).floor() as usize).min(bucket_count - 1);
-        buckets[index] += sale.quantity.max(0) as f64;
     }
     buckets
 }
@@ -167,26 +180,41 @@ fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use ultros_api_types::price_series::{PriceBucket, PriceSeriesEntry};
 
-    fn sale(quantity: i32, ts: i64) -> SaleHistory {
-        SaleHistory {
-            id: 0,
-            quantity,
-            price_per_item: 1000,
-            buying_character_id: 0,
-            hq: false,
-            sold_item_id: 1,
-            sold_date: chrono::Utc.timestamp_opt(ts, 0).unwrap().naive_utc(),
-            world_id: 1,
-            buyer_name: None,
+    fn bucket_at(ts: i64, units: i64) -> PriceBucket {
+        PriceBucket {
+            ts: chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc(),
+            open: 1000,
+            high: 1000,
+            low: 1000,
+            close: 1000,
+            gil: 1000 * units,
+            units,
+            sales: 1,
+            p25: 1000,
+            p50: 1000,
+            p75: 1000,
         }
     }
 
-    #[test]
-    fn sales_time_domain_uses_all_available_sales() {
-        let sales = vec![sale(1, 200), sale(1, 100), sale(1, 300)];
-        assert_eq!(sales_time_domain(&sales), Some((100, 300)));
+    fn single_bucket_entry(id: i32, ts: i64, units: i64) -> PriceSeriesEntry {
+        PriceSeriesEntry {
+            id,
+            buckets: vec![bucket_at(ts, units)],
+        }
+    }
+
+    fn series_with(entries: Vec<PriceSeriesEntry>) -> PriceSeries {
+        let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+        PriceSeries {
+            bucket_seconds: 100,
+            group: SeriesGroup::World,
+            from: epoch,
+            to: epoch,
+            series: entries,
+            raw: None,
+        }
     }
 
     #[test]
@@ -226,16 +254,19 @@ mod tests {
     }
 
     #[test]
-    fn timeline_quantity_buckets_sums_quantities() {
-        let sales = vec![sale(3, 0), sale(7, 100)];
-        let buckets = timeline_quantity_buckets(&sales, (0, 100), 2);
+    fn timeline_quantity_buckets_sums_units_across_series() {
+        let series = series_with(vec![
+            single_bucket_entry(1, 0, 3),
+            single_bucket_entry(2, 100, 7),
+        ]);
+        let buckets = timeline_quantity_buckets(&series, (0, 100), 2);
         assert_eq!(buckets, vec![3.0, 7.0]);
     }
 }
 
 #[component]
 fn TimelineSlicer(
-    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
+    #[prop(into)] series: Signal<PriceSeries>,
     #[prop(into)] available_domain: Signal<Option<(i64, i64)>>,
     #[prop(into)] selected_domain: Signal<Option<(i64, i64)>>,
     #[prop(into)] selected_range: Signal<Option<(i64, i64)>>,
@@ -250,7 +281,7 @@ fn TimelineSlicer(
         let Some(domain) = available_domain.get() else {
             return Vec::new();
         };
-        timeline_quantity_buckets(&sales.get(), domain, 64)
+        timeline_quantity_buckets(&series.get(), domain, 64)
     });
     let bucket_items =
         Memo::new(move |_| buckets.get().into_iter().enumerate().collect::<Vec<_>>());
@@ -664,9 +695,11 @@ fn HoverTooltip(
 
 #[component]
 pub fn PriceHistoryChart(
-    #[prop(into)] sales: Signal<Vec<SaleHistory>>,
-    #[prop(into)] filter_outliers: Signal<bool>,
+    #[prop(into)] series: Signal<Option<PriceSeries>>,
     #[prop(into)] scope_name: Signal<String>,
+    #[prop(into)] group: Signal<GroupLevel>,
+    set_group: WriteSignal<GroupLevel>,
+    #[prop(into)] on_range_change: Callback<Option<(i64, i64)>>,
 ) -> impl IntoView {
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
@@ -674,7 +707,10 @@ pub fn PriceHistoryChart(
     let (show_market_average, set_show_market_average) = signal(true);
     let (show_trend, set_show_trend) = signal(false);
     let (show_quantity, set_show_quantity) = signal(false);
-    let (color_by, set_color_by) = signal(GroupLevel::Region);
+    // Local truth for the slicer's own rendering (handle positions, drag
+    // state). Every commit is mirrored out via `on_range_change` below so the
+    // caller can debounce it into a refetch (Task 14) — this signal itself
+    // stays undebounced so the handles track the pointer at full rate.
     let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
     // Series the user hid by clicking legend chips. Stored as a sorted Vec so
     // the model memo's PartialEq sees a stable value.
@@ -704,24 +740,48 @@ pub fn PriceHistoryChart(
     let helper_for_options = helper.clone();
     let color_by_options =
         Memo::new(move |_| available_group_levels(&helper_for_options, &scope_name.get()));
-    let effective_color_by = Memo::new(move |_| {
-        let selected = color_by.get();
+    // If the scope changes underneath an existing selection (e.g. navigating
+    // from a datacenter page to a single-world page) and the current group
+    // no longer makes sense, snap it to the narrowest still-valid option
+    // rather than requesting a grouping the scope can't offer.
+    Effect::new(move |_| {
         let options = color_by_options.get();
-        if options.contains(&selected) {
-            selected
-        } else {
-            *options.first().unwrap_or(&GroupLevel::World)
+        if !options.contains(&group.get_untracked())
+            && let Some(first) = options.first()
+        {
+            set_group.set(*first);
         }
     });
 
-    let available_domain = Memo::new(move |_| sales_time_domain(&sales.get()));
-    let last_available_domain = RwSignal::new(None::<(i64, i64)>);
+    // Resolved series used for both the model and the slicer's histogram.
+    // Falls back to an empty payload while the resource is loading/erroring
+    // so the chart renders its own empty state instead of unmounting.
+    let resolved_series = Signal::derive(move || series.get().unwrap_or_else(empty_price_series));
+
+    let available_domain = Memo::new(move |_| {
+        series
+            .get()
+            .map(|s| (s.from.and_utc().timestamp(), s.to.and_utc().timestamp()))
+    });
+    // A domain nested inside the active selection is the echo of our own
+    // zoom request (the server may report a slightly narrower "actual data"
+    // domain than requested) — leave the selection alone. A domain that
+    // *doesn't* fit means the item/world identity changed out from under an
+    // active selection, so snap back to full range.
     Effect::new(move |_| {
-        let next_domain = available_domain.get();
-        if next_domain != last_available_domain.get_untracked() {
-            last_available_domain.set(next_domain);
+        let Some(domain) = available_domain.get() else {
+            return;
+        };
+        let stale = selected_range
+            .get_untracked()
+            .is_some_and(|(start, end)| domain.0 < start || domain.1 > end);
+        if stale {
             set_selected_range.set(None);
         }
+    });
+    // Mirror every commit to the caller so it can (debounced) refetch.
+    Effect::new(move |_| {
+        on_range_change.run(selected_range.get());
     });
     let selected_domain = Memo::new(move |_| {
         let domain = available_domain.get()?;
@@ -729,19 +789,6 @@ pub fn PriceHistoryChart(
             .get()
             .map(|(start, end)| normalize_time_range(start, end, domain))
             .or(Some(domain))
-    });
-    let visible_sales = Memo::new(move |_| {
-        let sales = sales.get();
-        let Some((start, end)) = selected_domain.get() else {
-            return sales;
-        };
-        sales
-            .into_iter()
-            .filter(|sale| {
-                let ts = sale.sold_date.and_utc().timestamp();
-                ts >= start && ts <= end
-            })
-            .collect::<Vec<_>>()
     });
 
     // Quantise measured width to 16 px steps so resize-dragging doesn't
@@ -758,16 +805,18 @@ pub fn PriceHistoryChart(
 
     let helper_for_model = helper.clone();
     let model = Memo::new(move |_| {
-        let sales = visible_sales.get();
+        let series_value = resolved_series.get();
         let width = chart_width.get();
         let height = (width * 0.56).clamp(300.0, 540.0);
         build_price_history_chart(
             &helper_for_model,
-            &sales,
+            &series_value,
             &PriceChartOptions {
                 width,
                 height,
-                remove_outliers: filter_outliers.get(),
+                // Ignored by the layout: outlier filtering and grouping now
+                // happen server-side. `series.group` is authoritative.
+                remove_outliers: false,
                 show_market_average: show_market_average.get(),
                 show_trendline: show_trend.get(),
                 show_volume: show_quantity.get(),
@@ -775,7 +824,7 @@ pub fn PriceHistoryChart(
                 title: None,
                 icon_data_uri: None,
                 days_range: None,
-                group_level: Some(effective_color_by.get()),
+                group_level: None,
                 utc_offset_minutes: utc_offset.get(),
                 hidden_series: hidden_series.get(),
                 theme: Theme::site(),
@@ -833,9 +882,9 @@ pub fn PriceHistoryChart(
                     set_checked=set_show_quantity
                 />
             </div>
-            <ColorByControl options=color_by_options selected=effective_color_by set_selected=set_color_by />
+            <ColorByControl options=color_by_options selected=group set_selected=set_group />
             <TimelineSlicer
-                sales=sales
+                series=resolved_series
                 available_domain=available_domain
                 selected_domain=selected_domain
                 selected_range=selected_range

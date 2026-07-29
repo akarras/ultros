@@ -41,6 +41,9 @@ pub(crate) struct WebState {
     /// Shared Universalis client — reuses one connection pool instead of
     /// building a reqwest client per request.
     pub(crate) universalis: UniversalisClient,
+    /// Absorbs bursts of identical chart requests. See
+    /// [`crate::web::price_series_cache`].
+    pub(crate) price_series_cache: crate::web::price_series_cache::PriceSeriesCache,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -124,5 +127,11 @@ impl FromRef<WebState> for ClickHouseClient {
 impl FromRef<WebState> for UniversalisClient {
     fn from_ref(input: &WebState) -> Self {
         input.universalis.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::price_series_cache::PriceSeriesCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.price_series_cache.clone()
     }
 }
