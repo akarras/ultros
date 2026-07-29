@@ -290,6 +290,88 @@ pub fn real_price(samples: &[(i32, i32, bool)], vendor_price: Option<i32>) -> Re
     }
 }
 
+/// Minimum span used as the velocity denominator. Guards the degenerate
+/// case observed in prod of six sales sharing one timestamp (one buyer
+/// clearing six listings at once), which would otherwise divide by zero.
+pub const MIN_VELOCITY_SPAN_DAYS: f32 = 1.0 / 24.0;
+
+/// Display ceiling for ROI. Beyond this the exact figure carries no
+/// decision value, and the previous `as i32` cast saturated at `i32::MAX`
+/// for tiny buy prices (a 2-gil buy against a laundered sale price).
+pub const ROI_DISPLAY_CEILING: i32 = 100_000;
+
+/// Recent sales per day, derived from the bounded `RecentSales` buffer.
+///
+/// `avg_sale_duration` is `(now - oldest_sale) / num_sold`, so the total
+/// span is `avg * num_sold` and velocity is `num_sold / span`. Because the
+/// buffer holds the *most recent* sales, this estimates the current rate
+/// rather than a lifetime average; resolution degrades only at the high
+/// end, which does not matter for a floor-style filter.
+pub fn velocity_per_day(summary: &SaleSummary) -> Option<f32> {
+    if summary.num_sold == 0 {
+        return None;
+    }
+    let avg = summary.avg_sale_duration?;
+    let span_days = (avg.num_seconds() as f32 * summary.num_sold as f32) / 86_400.0;
+    Some(summary.num_sold as f32 / span_days.max(MIN_VELOCITY_SPAN_DAYS))
+}
+
+/// Percent change between the mean of the newest samples and the mean of
+/// the oldest samples. `prices` is newest-first, matching the wire order
+/// of `RecentSales`.
+///
+/// Returns `None` below 4 samples — a two-point "trend" is noise wearing a
+/// percentage sign. With an odd count the middle sample is skipped so the
+/// two windows never overlap.
+pub fn price_drift_pct(prices: &[i32]) -> Option<f32> {
+    if prices.len() < 4 {
+        return None;
+    }
+    let take = 3.min(prices.len() / 2);
+    let newest: i64 = prices[..take].iter().map(|p| *p as i64).sum();
+    let oldest: i64 = prices[prices.len() - take..]
+        .iter()
+        .map(|p| *p as i64)
+        .sum();
+    if oldest == 0 {
+        return None;
+    }
+    Some(((newest - oldest) as f32 / oldest as f32) * 100.0)
+}
+
+/// Return on investment as a percentage, computed in f64 and clamped to
+/// [`ROI_DISPLAY_CEILING`].
+pub fn return_on_investment(profit: i32, cheapest_price: i32) -> i32 {
+    if cheapest_price <= 0 {
+        return 0;
+    }
+    let roi = (profit as f64 / cheapest_price as f64) * 100.0;
+    roi.clamp(-(ROI_DISPLAY_CEILING as f64), ROI_DISPLAY_CEILING as f64) as i32
+}
+
+/// Trustworthiness of a row's numbers when ClickHouse has no rollup for it.
+/// Replaces the page-level disclaimer copy with a per-row statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivedConfidence {
+    High,
+    Medium,
+    Low,
+}
+
+/// Band a row from its buffer depth and observed velocity. A full buffer
+/// only earns `High` if the sales are actually recent — six sales spread
+/// over a decade is a dead item, not a confident one.
+pub fn derived_confidence(summary: &SaleSummary) -> DerivedConfidence {
+    let velocity = velocity_per_day(summary).unwrap_or(0.0);
+    if summary.num_sold >= 6 && velocity >= 1.0 {
+        DerivedConfidence::High
+    } else if summary.num_sold >= 4 && velocity >= 0.2 {
+        DerivedConfidence::Medium
+    } else {
+        DerivedConfidence::Low
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +568,147 @@ mod tests {
 
         // large number of days
         assert_eq!(format_duration_short(86400 * 365 + 3600), "365d 1h");
+    }
+
+    fn summary_with(num_sold: usize, avg_secs: i64) -> SaleSummary {
+        SaleSummary {
+            item_id: 1,
+            hq: false,
+            num_sold,
+            avg_sale_duration: Some(Duration::seconds(avg_secs)),
+            days_since_last_sale: Some(Duration::hours(1)),
+            max_price: 0,
+            avg_price: 0,
+            median_price: 0,
+            min_price: 0,
+        }
+    }
+
+    #[test]
+    fn velocity_full_buffer_over_three_days() {
+        // 6 sales spanning 3 days => avg gap = 3d/6 = 12h => 2 sales/day.
+        let s = summary_with(6, 12 * 3600);
+        let v = velocity_per_day(&s).unwrap();
+        assert!((v - 2.0).abs() < 0.001, "expected 2.0, got {v}");
+    }
+
+    #[test]
+    fn velocity_partial_buffer() {
+        // 2 sales spanning 4 days => avg gap = 2 days => 0.5 sales/day.
+        let s = summary_with(2, 2 * 86_400);
+        let v = velocity_per_day(&s).unwrap();
+        assert!((v - 0.5).abs() < 0.001, "expected 0.5, got {v}");
+    }
+
+    #[test]
+    fn velocity_clamps_zero_span() {
+        // Observed in prod: 6 sales sharing one timestamp (one buyer clearing
+        // six listings). Span 0 must not divide by zero or return infinity.
+        let s = summary_with(6, 0);
+        let v = velocity_per_day(&s).unwrap();
+        assert!(v.is_finite(), "velocity must stay finite, got {v}");
+        assert!((v - 6.0 / MIN_VELOCITY_SPAN_DAYS).abs() < 0.001);
+    }
+
+    #[test]
+    fn velocity_decade_old_buffer_is_near_zero() {
+        // Observed max span: 94,041 hours. 6 sales over ~10.7 years.
+        let s = summary_with(6, 94_041 * 3600 / 6);
+        let v = velocity_per_day(&s).unwrap();
+        assert!(v < 0.01, "expected near-zero velocity, got {v}");
+    }
+
+    #[test]
+    fn velocity_none_when_no_sales() {
+        let mut s = summary_with(0, 0);
+        s.avg_sale_duration = None;
+        assert_eq!(velocity_per_day(&s), None);
+    }
+
+    #[test]
+    fn drift_detects_rising_price() {
+        // newest-first: newest 3 mean 200, oldest 3 mean 100 => +100%.
+        let prices = [200, 200, 200, 100, 100, 100];
+        let d = price_drift_pct(&prices).unwrap();
+        assert!((d - 100.0).abs() < 0.01, "expected +100.0, got {d}");
+    }
+
+    #[test]
+    fn drift_detects_falling_price() {
+        let prices = [50, 50, 50, 100, 100, 100];
+        let d = price_drift_pct(&prices).unwrap();
+        assert!((d + 50.0).abs() < 0.01, "expected -50.0, got {d}");
+    }
+
+    #[test]
+    fn drift_flat_is_zero() {
+        let prices = [100, 100, 100, 100, 100, 100];
+        assert!(price_drift_pct(&prices).unwrap().abs() < 0.01);
+    }
+
+    #[test]
+    fn drift_none_below_four_samples() {
+        assert_eq!(price_drift_pct(&[100, 100, 100]), None);
+        assert_eq!(price_drift_pct(&[100]), None);
+        assert_eq!(price_drift_pct(&[]), None);
+    }
+
+    #[test]
+    fn drift_with_five_samples_skips_the_middle() {
+        // len 5 => take 2 from each end, index 2 ignored.
+        let prices = [200, 200, 999_999, 100, 100];
+        let d = price_drift_pct(&prices).unwrap();
+        assert!((d - 100.0).abs() < 0.01, "expected +100.0, got {d}");
+    }
+
+    #[test]
+    fn roi_does_not_saturate_at_i32_max() {
+        // The prod bug: buy 2 gil, profit 213,749,998 previously produced
+        // i32::MAX (2147483647) via an f32 -> i32 saturating cast.
+        let roi = return_on_investment(213_749_998, 2);
+        assert_eq!(roi, ROI_DISPLAY_CEILING);
+        assert_ne!(roi, i32::MAX);
+    }
+
+    #[test]
+    fn roi_normal_range_is_exact() {
+        assert_eq!(return_on_investment(50, 100), 50);
+        assert_eq!(return_on_investment(300, 100), 300);
+    }
+
+    #[test]
+    fn roi_zero_price_is_zero() {
+        assert_eq!(return_on_investment(1000, 0), 0);
+        assert_eq!(return_on_investment(1000, -5), 0);
+    }
+
+    #[test]
+    fn roi_negative_profit_is_negative() {
+        assert_eq!(return_on_investment(-50, 100), -50);
+    }
+
+    #[test]
+    fn confidence_bands_track_buffer_and_velocity() {
+        // Full buffer + brisk velocity (6 sales over 3 days = 2/day).
+        assert_eq!(
+            derived_confidence(&summary_with(6, 12 * 3600)),
+            DerivedConfidence::High
+        );
+        // Mid buffer.
+        assert_eq!(
+            derived_confidence(&summary_with(4, 86_400)),
+            DerivedConfidence::Medium
+        );
+        // Thin buffer.
+        assert_eq!(
+            derived_confidence(&summary_with(1, 86_400)),
+            DerivedConfidence::Low
+        );
+        // Full buffer but glacial (6 sales over ~10 years) is not High.
+        assert_eq!(
+            derived_confidence(&summary_with(6, 94_041 * 3600 / 6)),
+            DerivedConfidence::Low
+        );
     }
 
     #[test]

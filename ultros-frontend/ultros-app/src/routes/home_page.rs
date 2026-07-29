@@ -146,8 +146,11 @@ pub fn HomePage() -> impl IntoView {
         <Script type_="application/ld+json">{HOME_JSON_LD}</Script>
         <div class="main-content p-2 sm:p-6">
             <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
-                // Right sidebar
-                <div class="flex flex-col w-full lg:w-[424px] gap-6 sticky top-4">
+                // Right sidebar. Sticky only from `lg`, where it is an actual
+                // side column: below that the layout stacks, so pinning it
+                // parks a transparent panel over the column scrolling behind
+                // it and the two render on top of each other.
+                <div class="flex flex-col w-full lg:w-[424px] gap-6 lg:sticky lg:top-4">
                     <LiveSaleTicker />
                     <RecentlyViewed />
                     <Ad class="w-full aspect-square rounded-2xl overflow-hidden" />
