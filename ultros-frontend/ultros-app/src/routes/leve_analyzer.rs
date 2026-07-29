@@ -322,14 +322,27 @@ fn LeveAnalyzerTable(
         }
 
         // Sort
+        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
+        let limit = 100;
+        if results.len() > limit {
+            match sort_mode().unwrap_or(SortMode::Profit) {
+                SortMode::Profit => {
+                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
+                }
+                SortMode::Level => {
+                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.class_job_level));
+                }
+            }
+            results.truncate(limit);
+        }
+
         match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Profit => results.sort_by_key(|d| Reverse(d.profit)),
-            SortMode::Level => results.sort_by_key(|d| Reverse(d.class_job_level)),
+            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
+            SortMode::Level => results.sort_unstable_by_key(|d| Reverse(d.class_job_level)),
         }
 
         results
             .into_iter()
-            .take(100)
             .map(Arc::new)
             .enumerate()
             .collect::<Vec<_>>()

@@ -333,10 +333,31 @@ fn RecipeAnalyzerTable(
         }
 
         // Sort
+        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
+        let limit = 100;
+        if results.len() > limit {
+            match sort_mode().unwrap_or(SortMode::Profit) {
+                SortMode::Roi => {
+                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.return_on_investment));
+                }
+                SortMode::Profit => {
+                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
+                }
+                SortMode::Velocity => {
+                    results.select_nth_unstable_by(limit, |a, b| {
+                        b.daily_sales
+                            .partial_cmp(&a.daily_sales)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+            }
+            results.truncate(limit);
+        }
+
         match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Roi => results.sort_by_key(|d| Reverse(d.return_on_investment)),
-            SortMode::Profit => results.sort_by_key(|d| Reverse(d.profit)),
-            SortMode::Velocity => results.sort_by(|a, b| {
+            SortMode::Roi => results.sort_unstable_by_key(|d| Reverse(d.return_on_investment)),
+            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
+            SortMode::Velocity => results.sort_unstable_by(|a, b| {
                 b.daily_sales
                     .partial_cmp(&a.daily_sales)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -345,7 +366,6 @@ fn RecipeAnalyzerTable(
 
         results
             .into_iter()
-            .take(100)
             .map(Arc::new)
             .enumerate()
             .collect::<Vec<_>>()

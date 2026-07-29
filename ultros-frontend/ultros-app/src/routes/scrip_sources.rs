@@ -263,21 +263,28 @@ fn ScripSourceTable(
             }
         }
 
+        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
+        // We first fully sort since dedup_by_key requires it, but we can do a faster un-stable sort.
+        // Then we can dedup, and then truncate the list.
+
         // Sort
         match sort_mode().unwrap_or(SortMode::CostPerScrip) {
-            SortMode::CostPerScrip => {
-                results.sort_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap())
-            }
-            SortMode::ScripAmount => results.sort_by_key(|d| Reverse(d.scrip_amount)),
-            SortMode::Cost => results.sort_by_key(|d| d.cost),
+            SortMode::CostPerScrip => results
+                .sort_unstable_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap()),
+            SortMode::ScripAmount => results.sort_unstable_by_key(|d| Reverse(d.scrip_amount)),
+            SortMode::Cost => results.sort_unstable_by_key(|d| d.cost),
         }
 
         // Deduplicate by item_id (since item may appear in multiple shop lists)
         results.dedup_by_key(|r| r.item_id);
 
+        let limit = 100;
+        if results.len() > limit {
+            results.truncate(limit);
+        }
+
         results
             .into_iter()
-            .take(100)
             .map(Arc::new)
             .enumerate()
             .collect::<Vec<_>>()
