@@ -21,7 +21,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, collections::HashSet, sync::Arc};
 use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
@@ -104,6 +104,49 @@ impl std::fmt::Display for SortMode {
         };
         f.write_str(val)
     }
+}
+
+/// Maximum rows rendered by the table.
+const ROW_LIMIT: usize = 100;
+
+/// Rank the collected rows, collapse repeated items, and cap the list.
+///
+/// The ranking has to be a *total* order. Rows are collected by iterating
+/// `collectables_shop_items`, a `std::collections::HashMap`, so they arrive
+/// here in an order that `RandomState` randomizes per process. The SSR server
+/// and the hydrating wasm client each build their own copy of the game data,
+/// so ranking that leaves ties unresolved puts different rows in different
+/// places — and, at the `limit` boundary, drops a different *set* of rows
+/// entirely — on the two sides. That is the hydration-mismatch class fixed for
+/// the item page in #960. Tie-breaking on the stable item id pins one order.
+fn rank_scrip_sources(
+    mut results: Vec<ScripSourceData>,
+    sort_mode: SortMode,
+    limit: usize,
+) -> Vec<ScripSourceData> {
+    match sort_mode {
+        // `total_cmp` rather than `partial_cmp().unwrap()`: the unwrap was a
+        // latent panic if a cost ever produced a NaN ratio.
+        SortMode::CostPerScrip => results.sort_unstable_by(|a, b| {
+            a.cost_per_scrip
+                .total_cmp(&b.cost_per_scrip)
+                .then_with(|| a.item_id.0.cmp(&b.item_id.0))
+        }),
+        SortMode::ScripAmount => {
+            results.sort_unstable_by_key(|d| (Reverse(d.scrip_amount), d.item_id.0))
+        }
+        SortMode::Cost => results.sort_unstable_by_key(|d| (d.cost, d.item_id.0)),
+    }
+
+    // An item stocked by several collectables shops yields one row per shop.
+    // After a metric sort those rows are not adjacent, so the previous
+    // `dedup_by_key` — which only removes *consecutive* duplicates — left them
+    // on screen. Keep the first, i.e. best-ranked, row for each item.
+    let mut seen = HashSet::with_capacity(results.len());
+    results.retain(|r| seen.insert(r.item_id));
+
+    results.truncate(limit);
+    results
 }
 
 #[component]
@@ -263,31 +306,15 @@ fn ScripSourceTable(
             }
         }
 
-        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        // We first fully sort since dedup_by_key requires it, but we can do a faster un-stable sort.
-        // Then we can dedup, and then truncate the list.
-
-        // Sort
-        match sort_mode().unwrap_or(SortMode::CostPerScrip) {
-            SortMode::CostPerScrip => results
-                .sort_unstable_by(|a, b| a.cost_per_scrip.partial_cmp(&b.cost_per_scrip).unwrap()),
-            SortMode::ScripAmount => results.sort_unstable_by_key(|d| Reverse(d.scrip_amount)),
-            SortMode::Cost => results.sort_unstable_by_key(|d| d.cost),
-        }
-
-        // Deduplicate by item_id (since item may appear in multiple shop lists)
-        results.dedup_by_key(|r| r.item_id);
-
-        let limit = 100;
-        if results.len() > limit {
-            results.truncate(limit);
-        }
-
-        results
-            .into_iter()
-            .map(Arc::new)
-            .enumerate()
-            .collect::<Vec<_>>()
+        rank_scrip_sources(
+            results,
+            sort_mode().unwrap_or(SortMode::CostPerScrip),
+            ROW_LIMIT,
+        )
+        .into_iter()
+        .map(Arc::new)
+        .enumerate()
+        .collect::<Vec<_>>()
     });
 
     view! {
@@ -579,5 +606,119 @@ pub fn ScripSources() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(item_id: i32, scrip_amount: u32, cost: i32) -> ScripSourceData {
+        ScripSourceData {
+            item_id: ItemId(item_id),
+            item_name: format!("Item {item_id}"),
+            level: 90,
+            craft_type: Some(0),
+            scrip_type: ScripType::PurpleCrafters,
+            scrip_amount,
+            cost,
+            cost_per_scrip: cost as f32 / scrip_amount as f32,
+            cheapest_world_id: 0,
+            recipe: None,
+        }
+    }
+
+    fn ids(rows: &[ScripSourceData]) -> Vec<i32> {
+        rows.iter().map(|r| r.item_id.0).collect()
+    }
+
+    /// `collectables_shop_items` is a `std::collections::HashMap`, so the order
+    /// rows are collected in is randomized per process (`RandomState`). The SSR
+    /// server and the hydrating wasm client each build their own copy of the
+    /// game data, so the same rows arrive here in different orders. If the
+    /// ranking is not a total order, the two sides render different rows in
+    /// different positions and tachys' hydration walker trips — the #6831
+    /// crash class fixed for the item page by #960.
+    #[test]
+    fn ranking_is_independent_of_input_order() {
+        for mode in [
+            SortMode::ScripAmount,
+            SortMode::Cost,
+            SortMode::CostPerScrip,
+        ] {
+            // Every row ties on every sort key, which is what game data
+            // actually looks like: `high_reward` is a small integer shared by
+            // hundreds of items.
+            let forward = vec![row(1, 20, 1000), row(2, 20, 1000), row(3, 20, 1000)];
+            let reversed: Vec<_> = forward.iter().rev().cloned().collect();
+
+            assert_eq!(
+                ids(&rank_scrip_sources(forward, mode, ROW_LIMIT)),
+                ids(&rank_scrip_sources(reversed, mode, ROW_LIMIT)),
+                "{mode:?} ranking changed with input order"
+            );
+        }
+    }
+
+    /// The truncation boundary is the sharp edge of the same bug: with ties
+    /// spanning the cap, an unstable ranking changes *which* rows survive, so
+    /// the two sides render genuinely different items.
+    #[test]
+    fn truncation_keeps_the_same_rows_regardless_of_input_order() {
+        let forward: Vec<_> = (1..=10).map(|i| row(i, 20, 1000)).collect();
+        let reversed: Vec<_> = forward.iter().rev().cloned().collect();
+
+        assert_eq!(
+            ids(&rank_scrip_sources(forward, SortMode::ScripAmount, 5)),
+            ids(&rank_scrip_sources(reversed, SortMode::ScripAmount, 5)),
+        );
+    }
+
+    /// An item sold by several collectables shops at different reward tiers
+    /// produces several rows. Those rows are not adjacent after a metric sort,
+    /// so consecutive-only dedup leaves the duplicates on screen.
+    #[test]
+    fn repeated_items_collapse_even_when_not_adjacent() {
+        // Item 1 at two reward tiers, with item 2 ranking between them.
+        let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
+
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, ROW_LIMIT);
+
+        assert_eq!(ids(&ranked), vec![1, 2], "item 1 rendered twice");
+    }
+
+    /// Dedup must keep the best-ranked row for an item, not an arbitrary one.
+    #[test]
+    fn dedup_keeps_the_best_ranked_row_for_an_item() {
+        let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
+
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, ROW_LIMIT);
+
+        assert_eq!(ranked[0].scrip_amount, 40);
+    }
+
+    #[test]
+    fn sort_modes_still_rank_by_their_metric() {
+        let rows = vec![row(1, 10, 3000), row(2, 30, 1000), row(3, 20, 2000)];
+
+        // Most scrips first.
+        assert_eq!(
+            ids(&rank_scrip_sources(
+                rows.clone(),
+                SortMode::ScripAmount,
+                ROW_LIMIT
+            )),
+            vec![2, 3, 1]
+        );
+        // Cheapest total cost first.
+        assert_eq!(
+            ids(&rank_scrip_sources(rows.clone(), SortMode::Cost, ROW_LIMIT)),
+            vec![2, 3, 1]
+        );
+        // Best gil-per-scrip first: 1000/30 < 2000/20 < 3000/10.
+        assert_eq!(
+            ids(&rank_scrip_sources(rows, SortMode::CostPerScrip, ROW_LIMIT)),
+            vec![2, 3, 1]
+        );
     }
 }
