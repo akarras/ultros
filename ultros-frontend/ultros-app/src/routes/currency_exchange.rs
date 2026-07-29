@@ -919,16 +919,16 @@ pub fn CurrencySelection() -> impl IntoView {
     let data = tracked_data();
     let ui_categories = &data.item_ui_categorys;
     let disallowed_items = &["Gil", "MGP"];
-    let allowed_item_ui_categories = ["Currency", "Miscellany", "Other"]
-        .into_iter()
-        .map(|category| {
-            ui_categories
-                .iter()
-                .find(|f| f.1.name == category)
-                .map(|(id, _)| *id)
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
+    // `ItemUICategory` row IDs are stable across game locales; only the `name`
+    // column is translated. Matching by the English name panicked on every
+    // non-English dataset (e.g. `cn` names these "货币"/"杂货"/"其他"), which
+    // crashed `/currency-exchange` for all localized users — GlitchTip #6849.
+    // Match by the stable IDs instead: Currency = 100, Miscellany = 61, Other = 63.
+    let allowed_item_ui_categories = [
+        ItemUiCategoryId(100),
+        ItemUiCategoryId(61),
+        ItemUiCategoryId(63),
+    ];
     let currencies = data
         .special_shops
         .iter()
@@ -1066,4 +1066,66 @@ pub fn CurrencyExchange() -> impl IntoView {
             <Outlet />
         </div>
     }.into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `CurrencySelection` builds its category whitelist from the stable
+    /// `ItemUICategory` row IDs (Currency = 100, Miscellany = 61, Other = 63)
+    /// rather than the localized `name`, because matching the English name
+    /// panicked on non-English datasets (GlitchTip #6849 → cascade #6850). This
+    /// pins the ID→name mapping in the embedded (English) dataset so a future
+    /// game-data bump that renumbers these categories fails loudly here instead
+    /// of silently emptying the currency list.
+    #[test]
+    fn allowed_currency_category_ids_match_expected_names() {
+        let data = xiv_gen_db::data();
+        let cats = &data.item_ui_categorys;
+        for (id, expected) in [(100, "Currency"), (61, "Miscellany"), (63, "Other")] {
+            let cat = cats
+                .get(&ItemUiCategoryId(id))
+                .unwrap_or_else(|| panic!("ItemUICategory {id} missing from embedded data"));
+            assert_eq!(
+                cat.name, expected,
+                "ItemUICategory {id} should be '{expected}' but was '{}'; \
+                 update allowed_item_ui_categories in CurrencySelection",
+                cat.name
+            );
+        }
+    }
+
+    /// Regression for GlitchTip #6849: on a non-English locale the category
+    /// `name`s are translated, so the old
+    /// `find(|c| c.name == "Currency").unwrap()` hit `None` and panicked,
+    /// crashing `/currency-exchange`. Confirm both the crash precondition (the
+    /// English names are absent from the `cn` dataset) and that the stable IDs
+    /// the fix uses still resolve there.
+    #[test]
+    fn currency_categories_resolve_by_id_on_localized_data() {
+        let cn = xiv_gen_db::data_for(xiv_gen::Language::Cn);
+        let cats = &cn.item_ui_categorys;
+
+        // Precondition that made the old name-based lookup unwrap `None`.
+        for english in ["Currency", "Miscellany", "Other"] {
+            assert!(
+                !cats.values().any(|c| c.name == english),
+                "the `cn` dataset should have no category literally named \
+                 '{english}' (names are translated); the old name-based lookup \
+                 unwrapped None here and panicked",
+            );
+        }
+
+        // The IDs the fix uses must still exist (and be named) on `cn`.
+        for id in [100, 61, 63] {
+            let cat = cats
+                .get(&ItemUiCategoryId(id))
+                .unwrap_or_else(|| panic!("ItemUICategory {id} missing from cn dataset"));
+            assert!(
+                !cat.name.is_empty(),
+                "ItemUICategory {id} should have a localized name on cn",
+            );
+        }
+    }
 }

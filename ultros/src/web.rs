@@ -12,6 +12,7 @@ pub(crate) mod static_files;
 
 use anyhow::Error;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
@@ -33,6 +34,7 @@ use tower::ServiceBuilder;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::predicate::{NotForContentType, SizeAbove};
 use tower_http::compression::{CompressionLayer, Predicate};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, warn};
 use ultros_api_types::list::{
@@ -41,7 +43,9 @@ use ultros_api_types::list::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
-use ultros_api_types::user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers};
+use ultros_api_types::user::{
+    AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+};
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
@@ -246,8 +250,8 @@ async fn world_item_listings(
 }
 
 /// Compact extended sale history for charting. Returns up to `limit` rows (default
-/// 1000, capped at 5000) of price/quantity/timestamp/world/hq — no buyer metadata.
-/// Aimed at the "Load extended history" affordance on the price chart.
+/// 1000, capped at 10000) of price/quantity/timestamp/world/hq — no buyer metadata.
+/// Auto-loaded by the price chart on the client after hydration.
 #[tracing::instrument(skip(db, world_cache))]
 async fn extended_sale_history(
     State(db): State<UltrosDb>,
@@ -256,7 +260,7 @@ async fn extended_sale_history(
     axum::extract::Query(query): axum::extract::Query<ExtendedHistoryQuery>,
 ) -> Result<axum::Json<ExtendedSaleHistory>, WebError> {
     const DEFAULT_LIMIT: u64 = 1_000;
-    const MAX_LIMIT: u64 = 5_000;
+    const MAX_LIMIT: u64 = 10_000;
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
     let selected_value = world_cache.lookup_value_by_name(&world)?;
@@ -292,6 +296,7 @@ async fn refresh_world_item_listings(
     State(senders): State<EventSenders>,
     Path((world, item_id)): Path<(String, i32)>,
     State(world_cache): State<Arc<WorldCache>>,
+    State(universalis): State<UniversalisClient>,
 ) -> Result<Redirect, WebError> {
     let lookup = world_cache.lookup_value_by_name(&world)?;
     let all_worlds = world_cache
@@ -299,8 +304,7 @@ async fn refresh_world_item_listings(
         .ok_or_else(|| anyhow::Error::msg("Unable to get worlds"))?;
     let world_clone = world.clone();
     let future = tokio::spawn(async move {
-        let client = UniversalisClient::new("ultros");
-        let current_data = client
+        let current_data = universalis
             .marketboard_current_data(&world_clone, &[item_id])
             .await?;
         // we can potentially get listings from multiple worlds from this call so we should group listings by world
@@ -507,7 +511,7 @@ pub(crate) async fn get_lists(
         db.get_lists_for_user(user.id as i64)
             .await?
             .into_iter()
-            .map(|list| {
+            .map(|(list, owner_name)| {
                 let db = db.clone();
                 let user_id = user.id as i64;
                 async move {
@@ -515,6 +519,7 @@ pub(crate) async fn get_lists(
                     Ok::<_, ApiError>(ListWithPermission {
                         list: List::try_from(list)?,
                         permission,
+                        owner_name,
                     })
                 }
             }),
@@ -527,7 +532,7 @@ pub(crate) async fn get_list(
     State(db): State<UltrosDb>,
     perm: crate::web::list_permission::RequireListPermission<{ crate::web::list_permission::READ }>,
 ) -> Result<Json<(ListWithPermission, Vec<ListItem>)>, ApiError> {
-    let (list, list_items) = futures::future::try_join(
+    let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(perm.list_id, perm.user_id),
         db.get_list_items(perm.list_id, perm.user_id),
     )
@@ -539,6 +544,7 @@ pub(crate) async fn get_list(
     let list = ListWithPermission {
         list: List::try_from(list)?,
         permission: perm.permission,
+        owner_name: Some(owner_name),
     };
     Ok(Json((list, list_items)))
 }
@@ -549,7 +555,7 @@ pub(crate) async fn get_list_with_listings(
     Path(id): Path<i32>,
     user: AuthDiscordUser,
 ) -> Result<Json<(ListWithPermission, Vec<(ListItem, Vec<ActiveListing>)>)>, ApiError> {
-    let (list, list_items) = futures::future::try_join(
+    let ((list, owner_name), list_items) = futures::future::try_join(
         db.get_list(id, user.id as i64),
         db.get_list_items(id, user.id as i64),
     )
@@ -585,6 +591,7 @@ pub(crate) async fn get_list_with_listings(
         ListWithPermission {
             list: List::try_from(list)?,
             permission,
+            owner_name: Some(owner_name),
         },
         list_items,
     )))
@@ -615,7 +622,7 @@ pub(crate) async fn delete_list(
         { crate::web::list_permission::OWNER },
     >,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
     db.delete_list(perm.list_id, perm.user_id).await?;
     send_list_event(
         &senders,
@@ -703,7 +710,7 @@ pub(crate) async fn post_item_to_list(
     >,
     Json(item): Json<ListItem>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(perm.list_id, perm.user_id).await?;
+    let (list, _) = db.get_list(perm.list_id, perm.user_id).await?;
     let ListItem {
         item_id,
         hq,
@@ -746,7 +753,7 @@ pub(crate) async fn post_items_to_list(
     user: AuthDiscordUser,
     Json(items): Json<Vec<ListItem>>,
 ) -> Result<Json<()>, ApiError> {
-    let list = db.get_list(id, user.id as i64).await?;
+    let (list, _) = db.get_list(id, user.id as i64).await?;
 
     let _list = db
         .add_items_to_list(&list, user.id as i64, items.into_iter().map(|i| i.into()))
@@ -845,6 +852,46 @@ pub(crate) async fn delete_list_item(
         format!("{} removed {}", user.name, item_name),
     )
     .await?;
+    Ok(Json(()))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BulkHqUpdate {
+    pub(crate) ids: Vec<i32>,
+    pub(crate) hq: Option<bool>,
+}
+
+pub(crate) async fn bulk_edit_list_items_hq(
+    State(db): State<UltrosDb>,
+    State(senders): State<EventSenders>,
+    user: AuthDiscordUser,
+    Json(data): Json<BulkHqUpdate>,
+) -> Result<Json<()>, ApiError> {
+    let list_ids = db
+        .set_list_items_hq(user.id as i64, &data.ids, data.hq)
+        .await?;
+
+    for list_id in list_ids {
+        if let Ok((list, _)) = db.get_list(list_id, user.id as i64).await {
+            send_list_event(
+                &senders,
+                EventType::updated(ListEventData::List(List::try_from(list)?)),
+            );
+            let _ = record_list_activity(
+                &db,
+                &senders,
+                list_id,
+                &user,
+                ListActivityKind::ItemUpdated,
+                None,
+                None,
+                serde_json::json!({ "bulk_hq": data.hq, "count": data.ids.len() }),
+                format!("{} bulk updated HQ for {} items", user.name, data.ids.len()),
+            )
+            .await;
+        }
+    }
+
     Ok(Json(()))
 }
 
@@ -968,7 +1015,10 @@ async fn character_search(
     //     let world_name = world.get_name();
     //     builder = builder.server(Server::from_str(world_name)?);
     // }
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
     let search_results = builder.send_async(&client).await?;
 
     let characters = search_results
@@ -1109,7 +1159,7 @@ async fn broadcast_list_update(
     list_id: i32,
     user: i64,
 ) -> Result<(), ApiError> {
-    let list = db.get_list(list_id, user).await?;
+    let (list, _) = db.get_list(list_id, user).await?;
     send_list_event(
         senders,
         EventType::updated(ListEventData::List(List::try_from(list)?)),
@@ -1317,6 +1367,30 @@ async fn reorder_retainer(
     Ok(Json(()))
 }
 
+async fn assign_retainer_character(
+    user: AuthDiscordUser,
+    State(db): State<UltrosDb>,
+    Path(owned_retainer_id): Path<i32>,
+    Json(data): Json<AssignRetainerCharacter>,
+) -> Result<Json<()>, ApiError> {
+    if let Some(character_id) = data.character_id {
+        let owns_character = db.user_owns_character(user.id as i64, character_id).await?;
+        if !owns_character {
+            return Err(ApiError::Forbidden(
+                "Cannot assign a character owned by another user",
+            ));
+        }
+    }
+
+    db.update_owned_retainer(user.id as i64, owned_retainer_id, |mut owned_retainer| {
+        owned_retainer.character_id = ActiveValue::Set(data.character_id);
+        owned_retainer
+    })
+    .await?;
+
+    Ok(Json(()))
+}
+
 async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
@@ -1456,6 +1530,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/list/{id}/delete", delete(delete_list))
         .route("/api/v1/list/item/{id}/delete", delete(delete_list_item))
         .route("/api/v1/list/item/delete", post(delete_multiple_list_items))
+        .route("/api/v1/list/item/hq", post(bulk_edit_list_items_hq))
         .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
         .route("/api/v1/group/{id}", delete(delete_group))
@@ -1487,6 +1562,10 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/current_user", get(current_user))
         .route("/api/v1/user/retainer", get(user_retainers))
         .route("/api/v1/retainer/reorder", post(reorder_retainer))
+        .route(
+            "/api/v1/retainer/{id}/character",
+            post(assign_retainer_character),
+        )
         .route(
             "/api/v1/user/retainer/listings",
             get(user_retainer_listings),
@@ -1585,7 +1664,19 @@ pub(crate) async fn start_web(state: WebState) {
                     // don't compress images
                     .and(NotForContentType::IMAGES),
             ),
-        );
+        )
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ));
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`

@@ -159,6 +159,8 @@ pub struct Item {
     pub item_sort_category: i32,
     #[xiv_gen(column = "LevelItem")]
     pub level_item: i32,
+    #[xiv_gen(column = "SubcategorySort", default_if_missing = "0")]
+    pub subcategory_sort: i32,
     #[xiv_gen(column = "LevelEquip")]
     pub level_equip: i32,
     #[xiv_gen(column = "CanBeHq")]

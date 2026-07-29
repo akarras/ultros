@@ -27,7 +27,10 @@ use ultros_api_types::{
     search::SearchResult,
     sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
-    user::{OwnedRetainer, UserData, UserRetainerListings, UserRetainers, group::UserGroup},
+    user::{
+        AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
+        group::{CreateGroup, UserGroup, UserGroupMember},
+    },
 };
 
 use crate::error::{AppError, AppResult};
@@ -46,7 +49,7 @@ pub(crate) async fn get_listings(item_id: i32, world: &str) -> AppResult<Current
 }
 
 /// Pull a larger window of sales than the default listings endpoint returns.
-/// Server caps `limit` at 5000.
+/// Server caps `limit` at 10000.
 pub(crate) async fn get_extended_sale_history(
     item_id: i32,
     world: &str,
@@ -87,6 +90,20 @@ pub(crate) async fn delete_user() -> AppResult<()> {
 /// Get analyzer data
 pub(crate) async fn get_cheapest_listings(world_name: &str) -> AppResult<CheapestListings> {
     fetch_api(&format!("/api/v1/cheapest/{}", world_name)).await
+}
+
+pub(crate) async fn get_cheapest_listings_live(
+    world_name: &str,
+    refresh_version: u64,
+) -> AppResult<CheapestListings> {
+    if refresh_version == 0 {
+        get_cheapest_listings(world_name).await
+    } else {
+        fetch_api(&format!(
+            "/api/v1/cheapest/{world_name}?rt={refresh_version}"
+        ))
+        .await
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -443,8 +460,42 @@ pub(crate) async fn delete_list_items(list_items: Vec<i32>) -> AppResult<()> {
     post_api("/api/v1/list/item/delete", list_items).await
 }
 
+#[derive(Serialize)]
+pub(crate) struct BulkHqUpdate {
+    pub(crate) ids: Vec<i32>,
+    pub(crate) hq: Option<bool>,
+}
+
+pub(crate) async fn edit_list_items_hq(ids: Vec<i32>, hq: Option<bool>) -> AppResult<()> {
+    post_api("/api/v1/list/item/hq", BulkHqUpdate { ids, hq }).await
+}
+
 pub(crate) async fn get_groups() -> AppResult<Vec<UserGroup>> {
     fetch_api("/api/v1/group").await
+}
+
+pub(crate) async fn create_group(group: CreateGroup) -> AppResult<()> {
+    post_api("/api/v1/group/create", group).await
+}
+
+pub(crate) async fn delete_group(id: i32) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{id}")).await
+}
+
+pub(crate) async fn get_group_members(id: i32) -> AppResult<Vec<UserGroupMember>> {
+    fetch_api(&format!("/api/v1/group/{id}/members")).await
+}
+
+pub(crate) async fn add_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/group/{group_id}/member/add/{user_id}"),
+        (),
+    )
+    .await
+}
+
+pub(crate) async fn remove_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group/{group_id}/member/remove/{user_id}")).await
 }
 
 pub(crate) async fn get_list_shares(
@@ -490,6 +541,17 @@ pub(crate) async fn delete_list_invite(invite_id: String) -> AppResult<()> {
 
 pub(crate) async fn update_retainer_order(retainers: Vec<OwnedRetainer>) -> AppResult<()> {
     post_api("/api/v1/retainer/reorder", retainers).await
+}
+
+pub(crate) async fn assign_retainer_character(
+    owned_retainer_id: i32,
+    character_id: Option<i32>,
+) -> AppResult<()> {
+    post_api(
+        &format!("/api/v1/retainer/{owned_retainer_id}/character"),
+        AssignRetainerCharacter { character_id },
+    )
+    .await
 }
 
 pub(crate) async fn get_alerts() -> AppResult<Vec<Alert>> {
@@ -668,6 +730,7 @@ where
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = CLIENT.get_or_init(|| {
         reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(10))
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .build()
             .unwrap()
@@ -753,6 +816,7 @@ where
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = CLIENT.get_or_init(|| {
         reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(10))
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .build()
             .unwrap()
@@ -963,5 +1027,41 @@ mod ssr_response_tests {
         let err = parse_internal_api_response::<i32>(StatusCode::OK, "not json")
             .expect_err("garbage on a 200 is an error");
         assert!(matches!(err, AppError::Json(_)), "got {err:?}");
+    }
+
+    /// An unauthenticated response must surface as `NotAuthenticated` so
+    /// callers can act on it — e.g. the list-invite login redirect in
+    /// `routes/lists.rs` matches this exact variant.
+    #[test]
+    fn unauthenticated_401_maps_to_not_authenticated() {
+        let body =
+            serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotAuthenticated)).unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::UNAUTHORIZED, &body)
+            .expect_err("a 401 must be an error");
+        assert_eq!(err, AppError::ApiError(ApiError::NotAuthenticated));
+    }
+
+    /// Safety proof for moving `ApiError::NoAuthCookie` from `200` to `401`
+    /// server-side (`ultros/src/web/error.rs`): callers see the *same*
+    /// `AppError` either way, because the 200 path recovers the wrapper through
+    /// `deserialize`'s fallback and the 401 path maps the status explicitly.
+    ///
+    /// The difference is only in how it gets *reported*: on a 200 the SSR fetch
+    /// helper takes its `status.is_success()` branch and logs
+    /// "Error deserializing text" at error level (GlitchTip noise), while a 401
+    /// is a plain expected error response.
+    #[test]
+    fn unauthenticated_200_and_401_produce_the_same_app_error() {
+        let body =
+            serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::NotAuthenticated)).unwrap();
+        let legacy_200 = parse_internal_api_response::<i32>(StatusCode::OK, &body)
+            .expect_err("an auth failure is always an error");
+        let fixed_401 = parse_internal_api_response::<i32>(StatusCode::UNAUTHORIZED, &body)
+            .expect_err("an auth failure is always an error");
+        assert_eq!(
+            legacy_200, fixed_401,
+            "changing the status must not change what callers observe"
+        );
+        assert_eq!(fixed_401, AppError::ApiError(ApiError::NotAuthenticated));
     }
 }

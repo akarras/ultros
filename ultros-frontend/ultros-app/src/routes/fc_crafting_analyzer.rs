@@ -8,12 +8,15 @@ use crate::global_state::cookies::Cookies;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
+use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
         gil::*,
         item_icon::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -192,6 +195,16 @@ fn FCCraftingAnalyzerTable(
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -200,7 +213,10 @@ fn FCCraftingAnalyzerTable(
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
+    // Seeded by FCCraftingAnalyzer so a first-time visitor isn't shown recipes
+    // whose output sells once a month. Same velocity floor as the analyzer's
+    // 1d default.
+    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
     let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
     let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
     let cookies = use_context::<Cookies>().unwrap();
@@ -216,9 +232,9 @@ fn FCCraftingAnalyzerTable(
 
     let computed_data = Memo::new(move |_| {
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map = HashMap::new();
+            let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
-                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
+                map.entry(sale.item_id).or_default().push(sale);
             }
             map
         } else {
@@ -455,6 +471,10 @@ fn FCCraftingAnalyzerTable(
                     </ToolbarPills>
                 </ToolbarField>
                 <ToolbarSpacer />
+                <RealtimeStatus
+                    status=realtime_status
+                    last_update=last_update
+                />
             </Toolbar>
 
             <div class="rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
@@ -504,7 +524,6 @@ fn FCCraftingAnalyzerTable(
                     each=computed_data.into()
                     key=move |(index, data): &(usize, Arc<FCCraftProfitData>)| (*index, data.sequence.key_id)
                     view=move |(index, data): (usize, Arc<FCCraftProfitData>)| {
-                        let data_clone = data.clone();
                         let item_id = ItemId(data.sequence.result_item);
                         let item = items.get(&item_id).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
                         let classes = if (index % 2) == 0 {
@@ -568,10 +587,7 @@ fn FCCraftingAnalyzerTable(
                                     <Gil amount=data.profit />
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 shrink-0 text-right">
-                                    <span class={
-                                        let data = data_clone.clone();
-                                        move || roi_badge_class(data.return_on_investment)
-                                    }>
+                                    <span class={roi_badge_class(data.return_on_investment)}>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
                                 </div>
@@ -601,6 +617,10 @@ fn FCCraftingAnalyzerTable(
 #[component]
 pub fn FCCraftingAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in FCCraftingAnalyzerTable: that lives inside the
+    // Suspense closure and remounts whenever its resources change, which would
+    // keep undoing a filter the user had cleared.
+    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 

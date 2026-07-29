@@ -162,7 +162,7 @@ pub fn OnHandQuantity(
 ) -> impl IntoView {
     let i18n = use_i18n();
     let on_hand = use_context::<OnHandMap>().expect("OnHandMap not provided");
-    let value = Memo::new(move |_| on_hand.0.with(|m| m.get(&item_id()).copied().unwrap_or(0)));
+    let value = Signal::derive(move || on_hand.0.with(|m| m.get(&item_id()).copied().unwrap_or(0)));
     let aria = move || match &item_name {
         Some(name) => format!("On-hand quantity for {}", name.get()),
         None => "On-hand quantity".to_string(),
@@ -198,7 +198,7 @@ pub fn OnHandQuantity(
 pub fn OnHandPanel() -> impl IntoView {
     let i18n = use_i18n();
     let on_hand = use_context::<OnHandMap>().expect("OnHandMap not provided");
-    let is_empty = Memo::new(move |_| on_hand.0.with(|m| m.is_empty()));
+    let is_empty = Signal::derive(move || on_hand.0.with(|m| m.is_empty()));
 
     view! {
         <div class="panel p-4 rounded-lg border border-brand-700/30">

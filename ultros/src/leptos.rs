@@ -15,6 +15,7 @@ use axum::{
 };
 use leptos::prelude::*;
 use leptos_axum::{LeptosRoutes, generate_route_list};
+use leptos_router::SsrMode;
 #[cfg(not(debug_assertions))]
 use tower_http::set_header::SetResponseHeader;
 use tracing::{info, instrument};
@@ -49,14 +50,24 @@ fn escape_for_script_tag(json: &str) -> String {
     out
 }
 
-#[instrument(skip(worlds, options, req, user))]
-#[axum::debug_handler(state = WebState)]
-async fn custom_handler(
-    State(worlds): State<Arc<WorldHelper>>,
-    State(options): State<LeptosOptions>,
+/// Which streaming strategy to render a route with.
+///
+/// `leptos_routes_with_handler` binds a single handler to every route and never
+/// consults the `SsrMode` a route declares, so the mode has to be threaded
+/// through by hand — see `create_leptos_app`.
+#[derive(Clone, Copy, Debug)]
+enum StreamMode {
+    OutOfOrder,
+    InOrder,
+}
+
+async fn render_leptos(
+    worlds: Arc<WorldHelper>,
+    options: LeptosOptions,
     region: Option<Region>,
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
+    mode: StreamMode,
 ) -> Response {
     info!("Custom handler");
     // The HTML now carries per-user data (region + current_user), so it must
@@ -89,21 +100,64 @@ async fn custom_handler(
 
     let region_for_ctx = region_str.clone();
     let current_user_for_ctx = current_user.clone();
-    let handler = leptos_axum::render_app_to_stream_with_context_and_replace_blocks(
-        move || {
-            provide_context(LocalWorldData(Ok(worlds.clone())));
-            provide_context(GuessedRegion(region_for_ctx.clone()));
-            provide_context(BootstrapUser(current_user_for_ctx.clone()));
-        },
-        move || shell(options.clone(), bootstrap_script.clone()),
-        true,
-    );
-    let mut response = handler(req).await.into_response();
+    let additional_context = move || {
+        provide_context(LocalWorldData(Ok(worlds.clone())));
+        provide_context(GuessedRegion(region_for_ctx.clone()));
+        provide_context(BootstrapUser(current_user_for_ctx.clone()));
+    };
+    let app_fn = move || shell(options.clone(), bootstrap_script.clone());
+    let mut response = match mode {
+        StreamMode::OutOfOrder => {
+            let handler = leptos_axum::render_app_to_stream_with_context_and_replace_blocks(
+                additional_context,
+                app_fn,
+                true,
+            );
+            handler(req).await.into_response()
+        }
+        StreamMode::InOrder => {
+            let handler =
+                leptos_axum::render_app_to_stream_in_order_with_context(additional_context, app_fn);
+            handler(req).await.into_response()
+        }
+    };
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-store"),
     );
     response
+}
+
+#[instrument(skip(worlds, options, req, user))]
+#[axum::debug_handler(state = WebState)]
+async fn custom_handler(
+    State(worlds): State<Arc<WorldHelper>>,
+    State(options): State<LeptosOptions>,
+    region: Option<Region>,
+    user: Result<AuthDiscordUser, ApiError>,
+    req: Request<Body>,
+) -> Response {
+    render_leptos(worlds, options, region, user, req, StreamMode::OutOfOrder).await
+}
+
+/// Handler for routes that declare `SsrMode::InOrder`.
+///
+/// Out-of-order streaming emits each resolved `<Suspense>` as a `<template>`
+/// plus an inline script that relocates the fragment into place. Those
+/// relocations race `hydrate_body()` and desync tachys' hydration walk, which
+/// panics at `hydration.rs:163` (`failed_to_cast_element`) — GlitchTip #6831.
+/// In-order streaming resolves each boundary before emitting it, so no
+/// relocation script is produced and there is nothing to race.
+#[instrument(skip(worlds, options, req, user))]
+#[axum::debug_handler(state = WebState)]
+async fn in_order_handler(
+    State(worlds): State<Arc<WorldHelper>>,
+    State(options): State<LeptosOptions>,
+    region: Option<Region>,
+    user: Result<AuthDiscordUser, ApiError>,
+    req: Request<Body>,
+) -> Response {
+    render_leptos(worlds, options, region, user, req, StreamMode::InOrder).await
 }
 
 pub(crate) async fn create_leptos_app(
@@ -152,16 +206,33 @@ pub(crate) async fn create_leptos_app(
 
     // simple_logger::init_with_level(log::Level::Debug).expect("couldn't initialize logging");
 
+    // `leptos_routes_with_handler` binds one handler to every route and drops
+    // the `SsrMode` each route declares — so `ssr=SsrMode::InOrder` in the app's
+    // route table was silently ignored, and the item page kept streaming
+    // out-of-order (#6831). Split the listing by mode and give the in-order
+    // routes a handler that actually streams in order.
+    let (in_order_routes, streaming_routes): (Vec<_>, Vec<_>) = routes
+        .into_iter()
+        .partition(|route| matches!(route.mode(), SsrMode::InOrder));
+    tracing::info!(
+        "leptos routes: {} in-order, {} out-of-order",
+        in_order_routes.len(),
+        streaming_routes.len()
+    );
+
     // build our application with a route
-    Ok(Router::new()
+    let mut router = Router::new()
         // `GET /` goes to `root`
         .nest_service(
             &["/", &leptos_options.site_pkg_dir].concat(),
             cargo_leptos_service.clone(),
-        ) // Only need if using wasm-pack. Can be deleted if using cargo-leptos
-        // .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
-        //.nest_service("/static", static_service)
-        .leptos_routes_with_handler(routes, custom_handler))
+        ); // Only need if using wasm-pack. Can be deleted if using cargo-leptos
+    // .nest_service(&bundle_path, cargo_leptos_service) // Only needed if using cargo-leptos. Can be deleted if using wasm-pack and cargo-run
+    //.nest_service("/static", static_service)
+    if !in_order_routes.is_empty() {
+        router = router.leptos_routes_with_handler(in_order_routes, in_order_handler);
+    }
+    Ok(router.leptos_routes_with_handler(streaming_routes, custom_handler))
     // .with_state(state)
     // .layer(Extension(Arc::new(leptos_options))))
 }

@@ -47,3 +47,27 @@ impl Theme {
         Self::base(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_theme_dark_card_background() {
+        let theme = Theme::dark_card();
+        assert_eq!(
+            theme.background,
+            Some(Color::hex("#202124")),
+            "Dark card theme should have the specific dark gray background color"
+        );
+    }
+
+    #[test]
+    fn test_theme_site_background() {
+        let theme = Theme::site();
+        assert_eq!(
+            theme.background, None,
+            "Site theme should have a transparent (None) background"
+        );
+    }
+}

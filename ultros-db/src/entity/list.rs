@@ -51,6 +51,14 @@ pub enum Relation {
         on_delete = "NoAction"
     )]
     World,
+    #[sea_orm(
+        belongs_to = "super::discord_user::Entity",
+        from = "Column::Owner",
+        to = "super::discord_user::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    DiscordUser,
 }
 
 impl Related<super::alert_price::Entity> for Entity {
@@ -98,6 +106,12 @@ impl Related<super::region::Entity> for Entity {
 impl Related<super::world::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::World.def()
+    }
+}
+
+impl Related<super::discord_user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::DiscordUser.def()
     }
 }
 

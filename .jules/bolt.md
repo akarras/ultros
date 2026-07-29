@@ -1,35 +1,51 @@
+## 2024-06-25 - Avoid String formatting inside tight reactive render loops
+**Learning:** Returning `&'static str` for frequently used CSS classes is much better than constructing them dynamically via `format!()` or other means, especially in virtual scrollers or tables. Also, double-check whether a reactive closure `move ||` is truly necessary when the value (`data.return_on_investment`) isn't actually a reactive signal but a plain struct field, as it avoids unnecessary cloning and allocations.
+**Action:** Next time, favor returning `&'static str` literals when working with CSS classes and only use reactive closures when working directly with reactive signals or derived state.
+## 2024-10-27 - Remove Reactive closures for static props
+**Learning:** Leptos creates a reactive Effect for `move ||` closures even if the dependencies are static. For lists (like VirtualScroller), computing static styling outside the loop and passing it prevents unnecessary effect allocation per row.
+**Action:** Hoist static class/style generation out of the `children={ move |(idx, item)|` closure to avoid per-row closures/format calls.
+## 2024-07-16 - Replacing Vec clone/re-collect with retain in-place in Leptos
+**Learning:** In a hot path like WebSocket event parsing (which occurs frequently), converting slices to new iterators using `.cloned().collect()` creates garbage memory. Replacing it with `retain` where possible combined with short circuit conditions like `seen.len() < MAX` directly truncates the collection naturally while filtering. Furthermore, replacing `Memo::new()` with `Signal::derive` in leptos is a deoptimization for operations that clone/allocate on the heap because `Signal::derive` re-executes on every read, thus discarding caching benefits.
+**Action:** When seeing `Vec` reallocations with Iterators, look for in-place modifications using `make_contiguous`, `retain`, `drain`, or `truncate`. Also, do not blindly change `Memo` to `Signal::derive` if the inner function executes heap allocations.
+## 2026-06-25 - Avoid heap allocations when parsing substrings
+**Learning:** We can write a zero-allocation string search algorithm that performs identical substring matching without the need to allocate intermediate `String` instances with `format!()` in hot parsing paths.
+**Action:** When working on parsing logic (e.g. FFXIV tags parsing), prefer manual string searches using `find` and `starts_with` rather than creating `String` using `format!()` for simple matching tasks.
+## 2026-07-26 - Memoization Over-Allocation in `BuyingView`
 
-## 2025-02-13 - Optimize Retainer Lookup in `ultros-db`
-**Learning:** Found a nested loop where we were searching linearly through a `HashMap` of retainers for every single listing being added to the database (`retainers.values().find(|r| r.id == l.retainer_id)`). This turns an $O(K)$ insertion step into $O(N \times K)$ where $N$ is the number of retainers in the map.
-**Action:** Always prefer reverse lookup maps when repeatedly looking up items by a secondary key (like ID when the primary map key is Name). Building a `HashMap<i32, &retainer::Model>` beforehand makes the lookup $O(1)$.
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a `Memo` creates a new array of grouped listings on every update. Previously, the code iterated over the input array using `items.clone()`, making an unnecessary copy of a large vector of items and their associated listings every time the memo ran (which could be frequently due to reactive signal updates like `excluded_datacenters`).
 
-## 2024-05-18 - [Optimizing Leptos Reactivity & Arc Clones]
-**Learning:** In Leptos, using a `move ||` closure for view arguments creates a dynamic node tracking reactivity. For static/immutable strings, computing it once (outside closure or immediately resolving inside `{ }` block without closure) avoids reactive tracking overhead. Also, when passing structs like `SearchResult` around, passing `Arc<SearchResult>` and cloning the `Arc` is O(1) and far cheaper than extracting and cloning its inner `String` components multiple times for callbacks.
-**Action:** Always prefer cloning `Arc` instead of `String` within closures, and omit `move ||` for static derivations when rendering Leptos components.
+**Action:**
+I removed the `clone()` on the `items` vector in the outer loop. Since we only need an iterative pass to calculate required listings, we can use `items.iter()` and then only `clone()` the individual inner `listings` vector (which needs to be cloned to be sorted). In addition, using `sort_unstable_by_key` instead of `sort_by_key` helps since stable sort allocates when it doesn't need to.
+## 2026-07-26 - Filter before sorting to reduce O(N log N) work
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/list_summary.rs`'s `get_cheapest_listing`, we were sorting a large array of `ActiveListing`s by price *before* filtering them by location and HQ constraints. Since sorting is `O(N log N)` and `N` can be very large when fetching all listings for an item across the region, filtering out ~90% of those listings *first* massively cuts down on the work required to sort them, yielding big CPU savings during hot render loops. Additionally, `sort_unstable_by_key` provides further wins over `sort_by_key` by avoiding unneeded allocations.
 
-## 2025-03-02 - Optimize Nested Iterator Chains to Reduce Allocations
-**Learning:** In `get_retainer_undercut_items`, the previous implementation chained `.filter().collect::<Vec<_>>()` and then iterated again with `.iter().map().min()` to calculate `number_behind` and `price_to_beat`. This forced the allocation of a throwaway Vector for every single listing being checked just to compute its length and find a minimum value.
-**Action:** Always compute aggregates directly within a single zero-allocation `for` loop pass over the original iterator/slice instead of relying on intermediate `Vec` allocations from `.collect()` during multi-step iterator chains.
+**Action:**
+Always make sure to filter collections as small as possible *before* running expensive operations on them like `sort_by_key` or `sort_by`, especially when the filtering criteria are strict. Also, prefer `sort_unstable_by_key` when possible over `sort_by_key` to save allocations.
+## 2026-07-26 - Finding Medians in O(N) instead of O(N log N)
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/sale_history_table.rs`, we computed the median unit price and median stack size by completely sorting the arrays (`sort_unstable()`) and taking the middle element. Since finding a median is a classic selection problem, fully sorting the array does O(N log N) work when only O(N) is required. Rust's slice API provides `select_nth_unstable`, which rearranges the slice so that the element at the given index is the one that would be there if the slice were fully sorted, doing it in `O(N)` average time.
+**Action:**
+When computing medians or any k-th order statistic, always use `select_nth_unstable` (or `select_nth_unstable_by_key`) rather than fully sorting the collection to save unnecessary CPU cycles.
+## 2026-06-11 - Leveraging select_nth_unstable for finding median
+**Learning:**
+Using `sort_unstable` to compute median scales at `O(n log n)`, which adds unnecessary performance cost for a metric required at multiple places including analyzer reports. It's much faster to use `select_nth_unstable` which runs in linear time `O(n)`. When refactoring logic doing this optimization it is important to remember to not blindly assume the array will remain fully sorted afterwards for other functions downstream. Iterators utilizing methods like `.first()` and `.last()` need to be updated to compute their metrics linearly as well (e.g., using `.min()` and `.max()`) because `select_nth_unstable` will rearrange items without fully sorting them.
+**Action:**
+When fetching median values, use `select_nth_unstable` (handling odds/even slices correctly). Follow up by reviewing any functions reading that mutated input array. Ensure `.first()`/`.last()` occurrences are converted properly to iterator `.min()`/`.max()`.
+## 2026-06-25 - Avoid O(N log N) sorting when finding the median
+**Learning:**
+In `ultros/src/analyzer_service.rs` we were sorting an array of prices to find the median price (`prices.sort_unstable()`). This does $O(N \log N)$ work, but we only need to pick the median element. Finding an element at a given order index can be performed in $O(N)$ time by using `select_nth_unstable()`.
+**Action:**
+When computing the median of an array in Rust, always prefer `select_nth_unstable(len / 2)` over fully sorting it with `sort_unstable()` to reduce time complexity to linear time.
+## 2026-07-26 - In-place filtering and truncation for Top N lists
+**Learning:**
+In `ultros/src/discord/ffxiv/helpers.rs`, `top_n_cheapest_listings` originally sorted the entire vector of listings by price using `sort_by_key`, then used `.into_iter().filter(...).take(limit).collect()` to return the top results. This caused unnecessary work by sorting the entire array including elements that were destined to be filtered out, and then performed memory allocations to collect the final vector.
+**Action:**
+When returning the top N items from a collection, apply filtering *before* sorting using `.retain()` to significantly reduce the size of $N$ for the $O(N \log N)$ sorting step. Then, use `sort_unstable_by_key` to sort the remaining elements in place without allocating extra memory. Finally, use `.truncate(limit)` to slice the top N items in place instead of creating a new Vector iterator chain with `.take().collect()`.
+## 2026-07-26 - Filter before sorting to reduce O(N log N) work
+**Learning:**
+In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a list of active listings was sorted using `sort_unstable_by_key` before being filtered for HQ constraints and excluded datacenters. Because sorting is an `O(N log N)` operation and filtering is an `O(N)` operation, filtering the array *before* sorting reduces the N elements that must be processed, yielding significant CPU savings during reactive view updates, similar to an optimization already logged in `list_summary.rs`.
 
-## 2024-05-24 - [Discord List Resolution]
-**Learning:** Found an N+1 query issue masquerading as `get_lists_for_user`. The Discord bot commands fetched ALL lists across all 3 relations just to do a `.into_iter().find(...)` in memory! This fetched unneeded list data entirely across the wire and instantiated unused memory.
-**Action:** Always check the underlying DB functions behind fetching collections before using `.find(...)` on the collection in application code. Replace full collection retrievals with targeted queries if only one specific record is needed.
-
-## 2025-03-02 - Avoid Unnecessary Memoization for Cheap Derivations in Leptos
-**Learning:** Found a component (`WindowStats`) wrapping 9 extremely cheap operations (like accessing a struct field or `.round() as i32`) inside `Memo::new`. `Memo` creates a new reactive node, which carries overhead for tracking dependencies, allocating state, and checking equality. For cheap operations, this reactive overhead exceeds the computation cost itself.
-**Action:** Always prefer simple closures (`move || ...`) for O(1) derived signals and cheap math. Only use `Memo::new` when the computation is actually expensive (e.g., sorting, iterating over large lists, or complex formatting) to avoid paying the cost on every update.
-## 2026-05-19 - Optimize `find_set_for_job` in `ultros-app`\n**Learning:** In `find_set_for_job`, items were collected, mapped, string-sorted, and grouped across ALL item levels just to retrieve the specific group matching `target_ilvl`. This incurred an (N \log N)$ cost where $ was all items for a job.\n**Action:** Always filter iterator items by required predicates *before* running expensive data transformations, allocations, sorting, and grouping. Filtering earlier drops the expensive work from (N \log N)$ to (K \log K)$ where $ is the tiny subset of matching items.\n
-
-## 2025-05-22 - Resolve N+1 Queries in Retainer Listings Lookup
-**Learning:** In `get_retainer_listings_for_discord_user`, the code used `futures::future::join_all` to issue concurrent `.find_related()` queries for retainers and their listings. This still results in N+1 database queries (or $1 + N \times 2$) because it sends independent SELECTs per iteration, even if concurrently.
-**Action:** Always combine `find_also_related` (to fetch parent and 1:1/N:1 child in a single query) and SeaORM's `load_many` (to fetch all 1:N relations for a collection of models in one batched query). This reduces the query pattern to exactly 2 queries regardless of the collection size, drastically cutting database roundtrips.
-## 2026-05-29 - Optimize Leptos <For> rendering in conditional blocks
-**Learning:** In Leptos, using `<For>` components inside conditionally rendered blocks (like `match` arms for `Resource` updates) that re-create the entire view adds unnecessary keyed reconciliation overhead. Furthermore, if the block captures an owned `Vec`, providing it to `each=move || vec.clone()` causes unnecessary cloning.
-**Action:** Use `vec.into_iter().map(...).collect_view()` instead of `<For>` when the entire list is recreated on update. This avoids diffing overhead and unnecessary array cloning.
-## 2025-05-29 - Avoid `Memo::new` for trivial signal gets and equality checks
-**Learning:** Found a component (`Clipboard`) using `Memo::new` to wrap a simple `clipboard_text()` getter, as well as an equality check `clipboard_text() == last_copied_text()` and a boolean branch to pick an icon. Creating reactive `Memo` nodes carries an overhead (tracking dependencies, memory allocation, equality checking). For purely O(1) instantaneous operations, this overhead is much larger than the operation being "memoized".
-**Action:** Replace `Memo::new` and `Signal::derive` with regular closures (`move || ...`) for trivial operations like getter calls, comparisons, and conditional returns. Save `Memo` for when the computation actually takes longer than the reactive system overhead.
-
-## 2025-05-30 - Avoid Memo::new for trivial map lookups and struct accesses in Leptos components
-**Learning:** Found multiple components (`RelatedItems`, `VirtualScroller`, `ItemExplorer`) where `Memo::new` was used for completely O(1) operations. In `RelatedItems` we wrapped a HashMap `.get()`. `Memo` creates a new reactive node, tracks dependencies, allocates memory for the value, and does equality checks on every update. For extremely cheap O(1) operations, the reactive system overhead is significantly higher than the operation itself.
-**Action:** Replace `Memo::new` with `Signal::derive` (or raw `move ||`) for cheap map lookups, struct field accesses, and trivial mathematical operations in Leptos. Save `Memo` for when the operation actually involves heavy allocations, sorting, iterating large collections, or expensive formatting.
+**Action:**
+When fetching and filtering lists, always apply strict filters *before* expensive operations such as `sort_by_key` or `sort_by` to save allocations and CPU cycles.

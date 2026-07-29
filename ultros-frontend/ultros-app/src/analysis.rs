@@ -9,6 +9,35 @@ pub struct SalesStats {
     pub total_sales: usize,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SalesCadence {
+    Fast,
+    Steady,
+    Slow,
+    NotEnoughData,
+}
+
+#[allow(dead_code)]
+/// Converts sales/day plus sample count into a movement verdict.
+///
+/// Thresholds:
+/// - NotEnoughData: < 3 sales or <= 0 sales/day
+/// - Fast: >= 5 sales/day
+/// - Steady: >= 1 sale/day
+/// - Slow: > 0 sales/day
+pub fn get_sales_cadence(sales_per_day: f32, sample_count: usize) -> SalesCadence {
+    if sample_count < 3 || sales_per_day <= 0.0 {
+        SalesCadence::NotEnoughData
+    } else if sales_per_day >= 5.0 {
+        SalesCadence::Fast
+    } else if sales_per_day >= 1.0 {
+        SalesCadence::Steady
+    } else {
+        SalesCadence::Slow
+    }
+}
+
 /// Summary stats for a single (item_id, hq) bucket of recent sales. Shared by the analyzer
 /// and vendor-resale tables.
 #[derive(Hash, Clone, Debug, PartialEq)]
@@ -57,21 +86,18 @@ pub fn format_duration_short(secs: u64) -> String {
 
 /// Tailwind class string for the ROI badge in analyzer tables. Tints the badge with the
 /// brand-ring color, proportional to ROI %.
-pub fn roi_badge_class(roi: i32) -> String {
-    let tint = if roi >= 500 {
-        "24%"
+pub fn roi_badge_class(roi: i32) -> &'static str {
+    if roi >= 500 {
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_24%,transparent)]"
     } else if roi >= 200 {
-        "20%"
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_20%,transparent)]"
     } else if roi >= 100 {
-        "16%"
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_16%,transparent)]"
     } else if roi >= 50 {
-        "12%"
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]"
     } else {
-        "10%"
-    };
-    format!(
-        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_{tint},transparent)]"
-    )
+        "inline-flex items-center justify-end px-2 py-1 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+    }
 }
 
 pub fn analyze_sales(sales_data: &[&SaleData], filter_outliers: bool) -> SalesStats {
@@ -184,8 +210,8 @@ impl RealPriceBreakdown {
 /// lengths, matching the upper-middle pick used by `item_view` / `sale_history_table`.
 /// Caller guarantees non-empty.
 fn median_in_place(prices: &mut [i32]) -> i32 {
-    prices.sort_unstable();
-    prices[prices.len() / 2]
+    let (_, &mut val, _) = prices.select_nth_unstable(prices.len() / 2);
+    val
 }
 
 /// Robust price for a single quality from `(price, qty)` samples.
@@ -381,6 +407,51 @@ mod tests {
         assert_eq!(stats.total_sales, 0);
         assert_eq!(stats.avg_price, 0);
         assert_eq!(stats.daily_sales, 0.0);
+    }
+
+    #[test]
+    fn test_analyze_sales_zero_iqr() {
+        use ultros_api_types::recent_sales::Sales;
+        let now = Utc::now().naive_utc();
+        let sales_list = vec![
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(1),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(2),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(3),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(4),
+            },
+            Sales {
+                price_per_unit: 100,
+                sale_date: now - Duration::days(5),
+            },
+        ];
+
+        let data = SaleData {
+            item_id: 1,
+            hq: false,
+            sales: sales_list,
+        };
+
+        // IQR of [100, 100, 100, 100, 100] is 0
+        // analyze_sales should handle this without dropping all items.
+        let stats = analyze_sales(&[&data], true);
+
+        // 5 total sales
+        assert_eq!(stats.total_sales, 5);
+        // Average should be exactly 100
+        assert_eq!(stats.avg_price, 100);
+        // Ensure daily sales calculation doesn't panic and returns a sensible number (5 sales over ~5 days = ~1.0)
+        assert!((stats.daily_sales - 1.0).abs() < 0.1);
     }
 
     #[test]
@@ -638,6 +709,41 @@ mod tests {
             derived_confidence(&summary_with(6, 94_041 * 3600 / 6)),
             DerivedConfidence::Low
         );
+    }
+
+    #[test]
+    fn test_get_sales_cadence() {
+        use SalesCadence::*;
+
+        // NotEnoughData: fewer than 3 sales
+        assert_eq!(get_sales_cadence(10.0, 0), NotEnoughData);
+        assert_eq!(get_sales_cadence(10.0, 1), NotEnoughData);
+        assert_eq!(get_sales_cadence(10.0, 2), NotEnoughData);
+
+        // NotEnoughData: non-positive cadence
+        assert_eq!(get_sales_cadence(0.0, 3), NotEnoughData);
+        assert_eq!(get_sales_cadence(-1.0, 3), NotEnoughData);
+
+        // Fast: >= 5 sales/day
+        assert_eq!(get_sales_cadence(5.0, 3), Fast);
+        assert_eq!(get_sales_cadence(10.0, 3), Fast);
+        assert_eq!(get_sales_cadence(4.99, 3), Steady); // Just below Fast
+
+        // Steady: >= 1 sale/day
+        assert_eq!(get_sales_cadence(1.0, 3), Steady);
+        assert_eq!(get_sales_cadence(4.9, 3), Steady);
+        assert_eq!(get_sales_cadence(0.99, 3), Slow); // Just below Steady
+
+        // Slow: positive below 1
+        assert_eq!(get_sales_cadence(0.1, 3), Slow);
+        assert_eq!(get_sales_cadence(0.5, 3), Slow);
+        assert_eq!(get_sales_cadence(0.0001, 3), Slow);
+
+        // Boundary cases
+        assert_eq!(get_sales_cadence(0.999, 3), Slow);
+        assert_eq!(get_sales_cadence(1.0, 3), Steady);
+        assert_eq!(get_sales_cadence(4.999, 3), Steady);
+        assert_eq!(get_sales_cadence(5.0, 3), Fast);
     }
 }
 

@@ -20,7 +20,7 @@ use ultros_api_types::{ActiveListing, FfxivCharacter, Retainer, world_helper::An
 use xiv_gen::{ItemId, ItemSortCategoryId};
 
 #[derive(PartialOrd, Ord, Eq, PartialEq, Debug)]
-struct ItemSortKey(u8, i32, bool);
+struct ItemSortKey(u8, i32, i32, bool, i32);
 
 impl From<(ItemId, bool)> for ItemSortKey {
     fn from((item_id, hq): (ItemId, bool)) -> Self {
@@ -32,9 +32,15 @@ impl From<(ItemId, bool)> for ItemSortKey {
             let sort_weight = sort_category
                 .get(&ItemSortCategoryId(item.item_sort_category as i32))
                 .map(|category| category.param)?;
-            Some(Self(sort_weight as u8, item.key_id.0, hq))
+            Some(Self(
+                sort_weight as u8,
+                item.subcategory_sort,
+                -item.level_item,
+                !hq,
+                item.key_id.0,
+            ))
         };
-        inner().unwrap_or(Self(u8::MAX, i32::MAX, hq))
+        inner().unwrap_or(Self(u8::MAX, i32::MAX, i32::MAX, hq, i32::MAX))
     }
 }
 
@@ -54,6 +60,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
     let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
     let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
+    let is_empty = listings.is_empty();
     let listings: Vec<_> = listings
         .into_iter()
         .map(|undercut_data| {
@@ -120,7 +127,18 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                         <th scope="col">{t!(i18n, retainers_undercut_by_one)}</th>
                     </tr>
                 </thead>
-                <tbody>{listings}</tbody>
+                <tbody>
+                    {is_empty
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan="6" class="p-4 text-center opacity-70">
+                                        {t!(i18n, retainers_undercuts_empty)}
+                                    </td>
+                                </tr>
+                            }
+                        })} {listings}
+                </tbody>
             </table>
         </div>
     }
@@ -138,6 +156,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
     let worlds = world_data.0.unwrap();
     let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
     let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
+    let is_empty = listings.is_empty();
     let listings: Vec<_> = listings
         .into_iter()
         .map(|listing| {
@@ -195,7 +214,18 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         <th scope="col">{t!(i18n, retainers_total)}</th>
                     </tr>
                 </thead>
-                <tbody>{listings}</tbody>
+                <tbody>
+                    {is_empty
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan="5" class="p-4 text-center opacity-70">
+                                        {t!(i18n, retainers_listings_empty)}
+                                    </td>
+                                </tr>
+                            }
+                        })} {listings}
+                </tbody>
             </table>
         </div>
     }
@@ -484,7 +514,7 @@ mod test {
         use chrono::NaiveDateTime;
         use ultros_api_types::ActiveListing;
         let item_ids = vec![
-            29417, 30842, 36837, 31840, 17325, 9050, 15532, 4737, 19853, 24250,
+            30842, 31840, 29417, 17325, 9050, 15532, 36837, 4737, 24250, 19853,
         ];
         let mut item_vec: Vec<_> = item_ids
             .into_iter()

@@ -133,7 +133,7 @@ pub fn CreateAlertDrawer(
                 <h2 class="text-xl font-bold">{t!(i18n, create_alert_title)}</h2>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">{t!(i18n, create_alert_item_label)}</label>
+                    <label class="text-sm font-semibold" for="create-alert-search">{t!(i18n, create_alert_item_label)}</label>
                     {move || match selected_item.get() {
                         Some((id, name)) => view! {
                             <div class="flex items-center justify-between gap-2 rounded border border-[color:var(--color-outline)] p-2">
@@ -153,6 +153,7 @@ pub fn CreateAlertDrawer(
                         None => view! {
                             <div class="space-y-1">
                                 <input
+                                    id="create-alert-search"
                                     class="input w-full"
                                     placeholder=t_string!(i18n, create_alert_search_placeholder)
                                     prop:value=search
@@ -202,8 +203,9 @@ pub fn CreateAlertDrawer(
                 </div>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_threshold_label)}</label>
+                    <label class="text-sm font-semibold" for="create-alert-threshold">{t!(i18n, alert_drawer_threshold_label)}</label>
                     <input
+                        id="create-alert-threshold"
                         class="input w-full"
                         type="number"
                         min="1"

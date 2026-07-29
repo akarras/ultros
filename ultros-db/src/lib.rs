@@ -125,7 +125,8 @@ impl UltrosDb {
                 .exec(&self.db)
                 .await?;
             info!(
-                "Added retainer home cities. Last insert id: {}",
+                // SeaORM 2.0: `last_insert_id` is `Option`, `None` when nothing was inserted.
+                "Added retainer home cities. Last insert id: {:?}",
                 insert.last_insert_id
             );
         }

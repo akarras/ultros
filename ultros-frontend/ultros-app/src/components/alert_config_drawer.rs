@@ -104,8 +104,9 @@ pub fn AlertConfigDrawer(
                 </div>
 
                 <div class="space-y-1">
-                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_threshold_label)}</label>
+                    <label class="text-sm font-semibold" for="alert-config-threshold">{t!(i18n, alert_drawer_threshold_label)}</label>
                     <input
+                        id="alert-config-threshold"
                         class="input w-full"
                         type="number"
                         min="1"

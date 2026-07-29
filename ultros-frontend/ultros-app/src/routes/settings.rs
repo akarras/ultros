@@ -82,10 +82,13 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                     view! {
                         <div class="mt-4 p-6 rounded-xl bg-brand-900/20 border border-white/10 ">
                             <h3 class="text-xl font-bold text-brand-300 mb-4">
-                                {t!(i18n, search_character)}
+                                <label for="search-character-input">
+                                    {t!(i18n, search_character)}
+                                </label>
                             </h3>
                             <div class="flex gap-2">
                                 <input
+                                    id="search-character-input"
                                     class="flex-grow p-2 rounded-lg bg-brand-950/50 border border-white/10
                                     focus:outline-none focus:border-brand-300/30 transition-colors"
                                     placeholder=move || t_string!(i18n, enter_character_name).to_string()
@@ -98,6 +101,7 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                                     class="px-4 py-2 rounded-lg bg-brand-900/30 hover:bg-brand-800/40
                                     border border-white/10 hover:border-brand-300/30
                                     transition-all duration-300 text-gray-200 hover:text-brand-300"
+                                    aria-label=move || t_string!(i18n, search_character).to_string()
                                     on:click=move |_| {
                                         let _ = search_action.dispatch(character_search());
                                     }

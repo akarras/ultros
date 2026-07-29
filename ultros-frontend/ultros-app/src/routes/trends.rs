@@ -231,6 +231,23 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_volume() {
+        assert_eq!(format_volume(0), "0");
+        assert_eq!(format_volume(999), "999");
+        assert_eq!(format_volume(1_000), "1.0K");
+        assert_eq!(format_volume(10_500), "10.5K");
+        assert_eq!(format_volume(999_999), "1000.0K");
+        assert_eq!(format_volume(1_000_000), "1.0M");
+        assert_eq!(format_volume(1_500_000), "1.5M");
+        assert_eq!(format_volume(999_999_999), "1000.0M");
+    }
+}
+
 #[component]
 fn TrendsWorldNavigator() -> impl IntoView {
     let nav = use_navigate();
@@ -360,13 +377,8 @@ pub fn Trends() -> impl IntoView {
         items
     });
 
-    let pill_active = move |active: bool| {
-        if active {
-            "bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]"
-        } else {
-            "bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent"
-        }
-    };
+    let pill_active_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] text-[color:var(--color-text)] border-[color:color-mix(in_srgb,var(--brand-ring)_40%,var(--color-outline))]";
+    let pill_inactive_combined_class = "px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors bg-transparent text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] border-transparent";
 
     view! {
         <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
@@ -390,21 +402,21 @@ pub fn Trends() -> impl IntoView {
                         <ToolbarPills>
                             <button
                                 aria-pressed=move || (window_days() == 7).to_string()
-                                class=move || format!("px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors {}", pill_active(window_days() == 7))
+                                class=move || if window_days() == 7 { pill_active_combined_class } else { pill_inactive_combined_class }
                                 on:click=move |_| set_window_param.set(Some(7))
                             >
                                 {t!(i18n, trends_window_7d)}
                             </button>
                             <button
                                 aria-pressed=move || (window_days() == 30).to_string()
-                                class=move || format!("px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors {}", pill_active(window_days() == 30))
+                                class=move || if window_days() == 30 { pill_active_combined_class } else { pill_inactive_combined_class }
                                 on:click=move |_| set_window_param.set(Some(30))
                             >
                                 {t!(i18n, trends_window_30d)}
                             </button>
                             <button
                                 aria-pressed=move || (window_days() == 90).to_string()
-                                class=move || format!("px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors {}", pill_active(window_days() == 90))
+                                class=move || if window_days() == 90 { pill_active_combined_class } else { pill_inactive_combined_class }
                                 on:click=move |_| set_window_param.set(Some(90))
                             >
                                 {t!(i18n, trends_window_90d)}
@@ -479,7 +491,7 @@ pub fn Trends() -> impl IntoView {
                             type="button"
                             title=t_string!(i18n, trends_show_suspicious_help).to_string()
                             aria-pressed=move || show_suspicious().to_string()
-                            class=move || format!("px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors {}", pill_active(show_suspicious()))
+                            class=move || if show_suspicious() { pill_active_combined_class } else { pill_inactive_combined_class }
                             on:click=move |_| set_suspicious.set(Some(!show_suspicious()))
                         >
                             {move || if show_suspicious() { "On" } else { "Off" }}

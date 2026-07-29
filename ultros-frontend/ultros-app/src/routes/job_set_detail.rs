@@ -440,7 +440,7 @@ pub fn JobSetDetail() -> impl IntoView {
     let cheapest_prices = use_context::<CheapestPrices>();
     let default_zone_listings = cheapest_prices.map(|p| p.read_listings);
 
-    let set_stem = Memo::new(move |_| group.get().map(|g| g.stem).unwrap_or_default());
+    let set_stem = Signal::derive(move || group.get().map(|g| g.stem).unwrap_or_default());
     let job_name = Memo::new(move |_| {
         canonical_abbr
             .get()
@@ -801,6 +801,7 @@ mod tests {
             base_param_value_special: [0; 6],
             item_sort_category: 0,
             level_item: ilvl,
+            subcategory_sort: 0,
             level_equip: 0,
             can_be_hq: true,
             is_collectable: false,

@@ -33,6 +33,8 @@ struct FromCsvFieldReceiver {
     column: Option<String>,
     #[darling(default)]
     count: Option<usize>,
+    #[darling(default)]
+    default_if_missing: Option<String>,
 }
 
 impl ToTokens for FromCsvReceiver {
@@ -84,11 +86,24 @@ impl ToTokens for FromCsvReceiver {
                     }
                 };
 
-                quote! {
-                    #field_ident: {
-                        let idx = header.iter().position(|h| h == #col_name).expect(&format!("Column {} not found in header. Available columns: {:?}", #col_name, header));
-                        let val = row.get(idx).unwrap_or_default();
-                        #parser
+                if let Some(default_val) = &f.default_if_missing {
+                    quote! {
+                        #field_ident: {
+                            if let Some(idx) = header.iter().position(|h| h == #col_name) {
+                                let val = row.get(idx).unwrap_or_default();
+                                #parser
+                            } else {
+                                #default_val.parse().unwrap()
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        #field_ident: {
+                            let idx = header.iter().position(|h| h == #col_name).expect(&format!("Column {} not found in header. Available columns: {:?}", #col_name, header));
+                            let val = row.get(idx).unwrap_or_default();
+                            #parser
+                        }
                     }
                 }
             }

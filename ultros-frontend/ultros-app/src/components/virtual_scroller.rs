@@ -609,79 +609,81 @@ where
                     <For
                         each=virtual_children
                         key=move |(_, t): &(usize, T)| key(t)
-                        children=move |(idx, child)| {
-                            let row = NodeRef::<leptos::html::Div>::new();
-                            let height_deltas = height_deltas;
-                            let fenwick = fenwick;
-                            if variable_height {
-                                let resize_observer =
-                                    StoredValue::new_local(
+                        children={
+                            let row_class = if variable_height {
+                                "content-auto contain-layout will-change-transform"
+                            } else {
+                                "content-visible contain-layout will-change-transform overflow-hidden"
+                            };
+                            let row_style = if variable_height {
+                                String::new()
+                            } else {
+                                format!("height: {}px;", row_height.round() as u32)
+                            };
+
+                            move |(idx, child)| {
+                                let row = NodeRef::<leptos::html::Div>::new();
+                                let height_deltas = height_deltas;
+                                let fenwick = fenwick;
+                                if variable_height {
+                                    let resize_observer = StoredValue::new_local(
                                         None::<(ResizeObserver, Closure<dyn FnMut()>)>,
                                     );
-                                on_cleanup(move || {
-                                    resize_observer.update_value(|handle| {
-                                        if let Some((observer, _callback)) = handle.take() {
-                                            observer.disconnect();
-                                        }
+                                    on_cleanup(move || {
+                                        resize_observer.update_value(|handle| {
+                                            if let Some((observer, _callback)) = handle.take() {
+                                                observer.disconnect();
+                                            }
+                                        });
                                     });
-                                });
 
-                                Effect::new(move |_| {
-                                    if let Some(el) = row.get() {
-                                        let measure_height = move |measured: f64| {
-                                            let delta = measured - row_height;
-                                            height_deltas.update_value(|v| {
-                                                if idx < v.len() {
-                                                    let old = v[idx];
-                                                    if (old - delta).abs() > 0.5 {
-                                                        v[idx] = delta;
-                                                        // O(log n) update instead of rebuilding prefix sums
-                                                        fenwick.update(|f| f.add(idx, delta - old));
+                                    Effect::new(move |_| {
+                                        if let Some(el) = row.get() {
+                                            let measure_height = move |measured: f64| {
+                                                let delta = measured - row_height;
+                                                height_deltas.update_value(|v| {
+                                                    if idx < v.len() {
+                                                        let old = v[idx];
+                                                        if (old - delta).abs() > 0.5 {
+                                                            v[idx] = delta;
+                                                            // O(log n) update instead of rebuilding prefix sums
+                                                            fenwick.update(|f| f.add(idx, delta - old));
+                                                        }
                                                     }
-                                                }
-                                            });
-                                        };
+                                                });
+                                            };
 
-                                        measure_height(el.offset_height() as f64);
+                                            measure_height(el.offset_height() as f64);
 
-                                        if resize_observer.with_value(|observer| observer.is_none())
-                                        {
-                                            let observed_el = el.clone();
-                                            let callback = Closure::wrap(Box::new(move || {
-                                                measure_height(observed_el.offset_height() as f64);
-                                            })
-                                                as Box<dyn FnMut()>);
-
-                                            if let Ok(observer) =
-                                                ResizeObserver::new(callback.as_ref().unchecked_ref())
+                                            if resize_observer
+                                                .with_value(|observer| observer.is_none())
                                             {
-                                                observer.observe(&el);
-                                                resize_observer.set_value(Some((observer, callback)));
+                                                let observed_el = el.clone();
+                                                let callback = Closure::wrap(Box::new(move || {
+                                                    measure_height(observed_el.offset_height() as f64);
+                                                })
+                                                    as Box<dyn FnMut()>);
+
+                                                if let Ok(observer) = ResizeObserver::new(
+                                                    callback.as_ref().unchecked_ref(),
+                                                ) {
+                                                    observer.observe(&el);
+                                                    resize_observer
+                                                        .set_value(Some((observer, callback)));
+                                                }
                                             }
                                         }
-                                    }
-                                });
-                            }
-                            view! {
-                                <div
-                                    node_ref=row
-                                    class=move || {
-                                        if variable_height {
-                                            "content-auto contain-layout will-change-transform".to_string()
-                                        } else {
-                                            "content-visible contain-layout will-change-transform overflow-hidden".to_string()
-                                        }
-                                    }
-                                    style=move || {
-                                        if variable_height {
-                                            String::new()
-                                        } else {
-                                            format!("height: {}px;", row_height.round() as u32)
-                                        }
-                                    }
-                                >
-                                    {view(child)}
-                                </div>
+                                    });
+                                }
+                                view! {
+                                    <div
+                                        node_ref=row
+                                        class=row_class
+                                        style=row_style.clone()
+                                    >
+                                        {view(child)}
+                                    </div>
+                                }
                             }
                         }
                     />
@@ -785,5 +787,127 @@ mod tests {
         // overscan added on top.
         assert_eq!(rows_for_viewport(680.0, 32.0, 10), 32);
         assert_eq!(rows_for_viewport(0.0, 32.0, 10), 11);
+    }
+
+    #[test]
+    fn test_fenwick_tree_basic_operations() {
+        let mut f = Fenwick::new(5);
+        f.add(0, 10.0);
+        f.add(1, 20.0);
+        f.add(2, 30.0);
+
+        assert_eq!(f.sum(0), 0.0);
+        assert_eq!(f.sum(1), 10.0);
+        assert_eq!(f.sum(2), 30.0);
+        assert_eq!(f.sum(3), 60.0);
+        assert_eq!(f.sum(4), 60.0);
+        assert_eq!(f.sum(5), 60.0);
+        assert_eq!(f.sum(6), 60.0); // OOB clamp
+    }
+
+    #[test]
+    fn test_fenwick_tree_negative_delta() {
+        let mut f = Fenwick::new(5);
+        f.add(0, 10.0);
+        f.add(1, 20.0);
+        f.add(2, 30.0);
+
+        // subtract 5 from index 1
+        f.add(1, -5.0);
+
+        assert_eq!(f.sum(0), 0.0);
+        assert_eq!(f.sum(1), 10.0);
+        assert_eq!(f.sum(2), 25.0);
+        assert_eq!(f.sum(3), 55.0);
+    }
+
+    #[test]
+    fn test_fenwick_tree_reset() {
+        let mut f = Fenwick::new(3);
+        f.add(0, 10.0);
+        f.add(1, 10.0);
+
+        assert_eq!(f.sum(2), 20.0);
+
+        f.reset(5);
+        assert_eq!(f.sum(2), 0.0);
+        assert_eq!(f.n, 5);
+
+        f.add(4, 5.0);
+        assert_eq!(f.sum(5), 5.0);
+    }
+
+    #[test]
+    fn test_virtual_scroller_binary_search_logic() {
+        let n = 100;
+        let mut f = Fenwick::new(n);
+        let row_height = 20.0;
+
+        // Let's set delta of 10.0 for items [10, 20)
+        // This makes items 10-19 effectively 30px tall, rest 20px
+        for i in 10..20 {
+            f.add(i, 10.0);
+        }
+
+        // This mimics the child_start binary search
+        let find_first_gte = |scroll: f64| {
+            let mut lo: i32 = 0;
+            let mut hi: i32 = n as i32;
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                let base = mid as f64 * row_height;
+                let delta = f.sum(mid as usize);
+                if base + delta < scroll {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            lo.max(0) as u32
+        };
+
+        // Before modified items
+        assert_eq!(find_first_gte(100.0), 5); // 5 * 20 = 100
+        assert_eq!(find_first_gte(101.0), 6); // 6 * 20 = 120 > 101
+
+        // Start of modified items
+        assert_eq!(find_first_gte(200.0), 10); // 10 * 20 = 200
+        assert_eq!(find_first_gte(201.0), 11); // 11 * 20 + 10 = 230 > 201
+
+        // End of modified items
+        // Sum after 20 items: 10 * 20 + 10 * 30 = 200 + 300 = 500
+        assert_eq!(find_first_gte(500.0), 20);
+        assert_eq!(find_first_gte(501.0), 21); // 21 * 20 + 100 = 520 > 501
+    }
+
+    #[test]
+    fn test_virtual_scroller_binary_search_negative_deltas() {
+        let n = 10;
+        let mut f = Fenwick::new(n);
+        let row_height = 20.0;
+
+        // Simulate a row that shrunk
+        f.add(1, -5.0); // Item 1 is 15px tall
+
+        let find_first_gte = |scroll: f64| {
+            let mut lo: i32 = 0;
+            let mut hi: i32 = n as i32;
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                let base = mid as f64 * row_height;
+                let delta = f.sum(mid as usize);
+                if base + delta < scroll {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            lo.max(0) as u32
+        };
+
+        assert_eq!(find_first_gte(15.0), 1); // 1 * 20 = 20 > 15
+        assert_eq!(find_first_gte(20.0), 1); // 1 * 20 = 20 >= 20
+        assert_eq!(find_first_gte(35.0), 2); // 2 * 20 - 5 = 35 >= 35
+        assert_eq!(find_first_gte(36.0), 3); // 3 * 20 - 5 = 55 > 36
     }
 }

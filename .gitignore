@@ -1,5 +1,7 @@
 target/
 .env
+# Agent-local MCP config — may contain tokens / machine-specific paths
+.mcp.json
 .DS_Store
 executables/
 integration/node_modules/

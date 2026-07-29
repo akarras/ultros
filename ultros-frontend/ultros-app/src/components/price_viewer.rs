@@ -1,21 +1,26 @@
+use std::collections::HashSet;
+
 use leptos::either::Either;
 use leptos::prelude::*;
 
 use super::{datacenter_name::*, gil::*, world_name::*};
+use crate::components::listing_filters::filter_active_listings;
+use crate::global_state::LocalWorldData;
 use crate::i18n::*;
-use ultros_api_types::{ActiveListing, world_helper::AnySelector};
+use ultros_api_types::ActiveListing;
+use ultros_api_types::world_helper::AnySelector;
 
 fn get_cheapest_listing(
     mut listings: Vec<ActiveListing>,
     quantity: i32,
     hq: Option<bool>,
 ) -> Vec<ActiveListing> {
-    // Optimization: Filter out unwanted quality types *before* sorting.
+    // ⚡ Bolt: Optimization: Filter out unwanted quality types *before* sorting.
     // This significantly reduces the N in O(N log N) sorting time when filtering by HQ/NQ.
     if let Some(hq) = hq {
         listings.retain(|listing| listing.hq == hq);
     }
-    listings.sort_by_key(|listing| listing.price_per_unit);
+    listings.sort_unstable_by_key(|listing| listing.price_per_unit);
 
     let quantity_needed = quantity;
     let mut current_quantity = 0;
@@ -30,12 +35,35 @@ fn get_cheapest_listing(
 }
 
 #[component]
-pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>) -> impl IntoView {
+pub fn PriceViewer(
+    quantity: i32,
+    hq: Option<bool>,
+    listings: Vec<ActiveListing>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
+) -> impl IntoView {
     let i18n = use_i18n();
-    let cheapest_listings = get_cheapest_listing(listings, quantity, hq);
+    let world_data = use_context::<LocalWorldData>().and_then(|world_data| world_data.0.ok());
+    let excluded_worlds = excluded_worlds.iter().copied().collect::<HashSet<_>>();
+
+    let cheapest_listings = Memo::new(move |_| {
+        excluded_datacenters.with(|excluded_datacenters| {
+            let listings = filter_active_listings(
+                listings.clone(),
+                world_data.as_deref(),
+                &excluded_worlds,
+                excluded_datacenters,
+            );
+            get_cheapest_listing(listings, quantity, hq)
+        })
+    });
     view! {
         <div class="flex flex-col gap-1">
-            {if cheapest_listings.is_empty() {
+            {move || {
+                let cheapest = cheapest_listings.get();
+                if cheapest.is_empty() {
                 Either::Left(
                     view! {
                         <span class="text-[color:var(--color-text-muted)]">{t!(i18n, price_viewer_no_listing_data)}</span>
@@ -43,7 +71,7 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
                 )
             } else {
                 Either::Right(
-                    cheapest_listings
+                    cheapest
                         .iter()
                         .map(|listing| {
                             view! {
@@ -60,6 +88,7 @@ pub fn PriceViewer(quantity: i32, hq: Option<bool>, listings: Vec<ActiveListing>
                         .collect::<Vec<_>>(),
                 )
             }}
+        }
         </div>
     }
     .into_any()
@@ -171,5 +200,19 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, 1);
         assert_eq!(result[1].id, 2);
+    }
+
+    #[test]
+    fn test_get_cheapest_listing_uses_pre_filtered_listings() {
+        let listings = vec![
+            mock_listing(1, 100, 5, false),
+            mock_listing(2, 200, 5, false),
+        ];
+        let filtered = listings.into_iter().skip(1).collect::<Vec<_>>();
+
+        let result = get_cheapest_listing(filtered, 5, None);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 2);
     }
 }

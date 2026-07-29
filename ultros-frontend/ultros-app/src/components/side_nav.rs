@@ -102,6 +102,10 @@ pub fn SideNav() -> impl IntoView {
                     <Icon icon=i::AiOrderedListOutlined />
                     <span class="side-nav-label">{t!(i18n, lists)}</span>
                 </A>
+                <A href="/groups" attr:class="side-nav-item">
+                    <Icon icon=i::BiGroupSolid />
+                    <span class="side-nav-label">{t!(i18n, groups)}</span>
+                </A>
                 <A href="/retainers/listings" attr:class="side-nav-item">
                     <Icon icon=i::BiGroupSolid />
                     <span class="side-nav-label">{t!(i18n, retainers)}</span>

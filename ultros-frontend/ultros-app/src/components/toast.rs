@@ -5,6 +5,26 @@ use icondata as i;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
 
+pub fn toast_color_class(level: &ToastLevel) -> &'static str {
+    match level {
+        ToastLevel::Info => {
+            "bg-[color:var(--color-background-elevated)] border-[color:var(--color-outline)] text-[color:var(--color-text)]"
+        }
+        ToastLevel::Success => "bg-green-500/10 border-green-500/20 text-green-400",
+        ToastLevel::Warning => "bg-yellow-500/10 border-yellow-500/20 text-yellow-400",
+        ToastLevel::Error => "bg-red-500/10 border-red-500/20 text-red-400",
+    }
+}
+
+pub fn toast_icon(level: &ToastLevel) -> icondata::Icon {
+    match level {
+        ToastLevel::Info => i::BsInfoCircle,
+        ToastLevel::Success => i::BsCheckCircle,
+        ToastLevel::Warning => i::BsExclamationTriangle,
+        ToastLevel::Error => i::BsExclamationCircle,
+    }
+}
+
 #[component]
 pub fn ToastItem(toast: Toast) -> impl IntoView {
     let i18n = use_i18n();
@@ -12,42 +32,25 @@ pub fn ToastItem(toast: Toast) -> impl IntoView {
     let (is_exiting, set_is_exiting) = signal(false);
 
     let base_class = "flex items-center gap-3 w-full max-w-sm p-4 rounded-lg shadow-lg border text-sm animate-in slide-in-from-bottom-2 fade-in duration-300";
-    let color_class = match toast.level {
-        ToastLevel::Info => {
-            "bg-[color:var(--color-background-elevated)] border-[color:var(--color-outline)] text-[color:var(--color-text)]"
-        }
-        ToastLevel::Success => "bg-green-500/10 border-green-500/20 text-green-400",
-        ToastLevel::Warning => "bg-yellow-500/10 border-yellow-500/20 text-yellow-400",
-        ToastLevel::Error => "bg-red-500/10 border-red-500/20 text-red-400",
-    };
-
-    let icon = match toast.level {
-        ToastLevel::Info => i::BsInfoCircle,
-        ToastLevel::Success => i::BsCheckCircle,
-        ToastLevel::Warning => i::BsExclamationTriangle,
-        ToastLevel::Error => i::BsExclamationCircle,
-    };
-
-    let exit_class = move || {
-        if is_exiting() {
-            "animate-out slide-out-to-right fade-out duration-300"
-        } else {
-            ""
-        }
-    };
+    let color_class = toast_color_class(&toast.level);
+    let icon = toast_icon(&toast.level);
 
     let message = toast.message.clone();
     let id = toast.id;
 
     view! {
         <div
-            class=move || format!("{} {} {}", base_class, color_class, exit_class())
+            class=format!("{} {}", base_class, color_class)
+            class=("animate-out", move || is_exiting())
+            class=("slide-out-to-right", move || is_exiting())
+            class=("fade-out", move || is_exiting())
+            class=("duration-300", move || is_exiting())
             role="alert"
         >
             <Icon icon width="1.2em" height="1.2em" aria_hidden=true />
             <div class="flex-1">{message}</div>
             <button
-                class="opacity-70 hover:opacity-100 transition-opacity"
+                class="opacity-70 hover:opacity-100 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-ring)] rounded"
                 aria-label=t_string!(i18n, close)
                 on:click=move |_| {
                     set_is_exiting(true);
@@ -78,5 +81,28 @@ pub fn ToastContainer() -> impl IntoView {
                 </Show>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_toast_color_class() {
+        assert!(toast_color_class(&ToastLevel::Info).contains("var(--color-background-elevated)"));
+        assert!(toast_color_class(&ToastLevel::Success).contains("green"));
+        assert!(toast_color_class(&ToastLevel::Warning).contains("yellow"));
+        assert!(toast_color_class(&ToastLevel::Error).contains("red"));
+    }
+
+    #[test]
+    fn test_toast_icon() {
+        // We can check equality since icondata::Icon derives PartialEq, or we can check the name/SVG paths if needed.
+        // It's easiest to verify they map to the exact constant references.
+        assert_eq!(toast_icon(&ToastLevel::Info), i::BsInfoCircle);
+        assert_eq!(toast_icon(&ToastLevel::Success), i::BsCheckCircle);
+        assert_eq!(toast_icon(&ToastLevel::Warning), i::BsExclamationTriangle);
+        assert_eq!(toast_icon(&ToastLevel::Error), i::BsExclamationCircle);
     }
 }

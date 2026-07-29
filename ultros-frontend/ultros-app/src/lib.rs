@@ -3,9 +3,12 @@ pub(crate) mod analysis;
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod error;
+pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) mod math;
+pub(crate) mod query_defaults;
 pub(crate) mod routes;
+pub(crate) mod sales_cadence;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
@@ -32,6 +35,7 @@ use crate::{
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
+        groups::*,
         help::*,
         history::*,
         home_page::*,
@@ -60,8 +64,17 @@ use leptos::prelude::*;
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_meta::*;
 use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
-use leptos_router::path;
+use leptos_router::{SsrMode, path};
 use log::info;
+
+/// Id of the sentinel element `shell()` renders as the final child of `<body>`.
+///
+/// Its presence in the parsed document is the client's proof that the SSR
+/// response arrived complete rather than truncated mid-stream. Shared between
+/// the server-rendered shell and the client's pre-hydration guard so the two
+/// can never drift apart. See the sentinel in `shell()` and the guard in
+/// `ultros-client`'s `hydrate()` for the full story (GlitchTip #6831).
+pub const SSR_END_SENTINEL_ID: &str = "ultros-ssr-end";
 
 #[cfg(feature = "hydrate")]
 mod sentry_tags {
@@ -160,6 +173,17 @@ fn error_reporting_script() -> Option<String> {
             if (location) {{
                 scope.setContext("rust_panic", {{ location: location }});
             }}
+            // Group by the Rust panic site, not the JS stack. This reporter
+            // is defined in INLINE page script, so the stack frame Sentry
+            // captures for it has the PAGE URL as its filename (e.g.
+            // /item/Siren/12412). Default grouping keys off that frame, so a
+            // single recurring panic — most of our volume is the external
+            // translation-overlay hydration flood, see shell() — fragments
+            // into one count=1 issue PER URL (hundreds of them). A stable
+            // fingerprint keyed on the panic location collapses them into one
+            // issue per site, while genuinely distinct panics (different
+            // location) still split out and stay individually actionable.
+            scope.setFingerprint(["rust-wasm-panic", location || message || "unknown"]);
             Sentry.captureException(error);
         }});
     }};
@@ -176,6 +200,12 @@ fn error_reporting_script() -> Option<String> {
     var existingBeforeSend = config && config.beforeSend;
     config = config || {{}};
     config.beforeSend = function(event, hint) {{
+        // Diagnostic-only: annotate hydration-class panics with a DOM-injection
+        // snapshot (contexts.dom_injection) BEFORE the drop check, so the
+        // #6831 events that still leak through carry the injector's signature.
+        if (window.__ultrosAnnotateEvent) {{
+            window.__ultrosAnnotateEvent(event);
+        }}
         if (window.__ultrosShouldDropEvent && window.__ultrosShouldDropEvent(event)) {{
             return null;
         }}
@@ -303,6 +333,21 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
             </head>
             <body translate="no" class="notranslate">
                 <App />
+                // End-of-document sentinel for the client's truncation guard
+                // (GlitchTip #6831). The wasm bootstrap `HydrationScripts`
+                // emits is a *deferred module script in `<head>`*, so it runs
+                // as soon as parsing finishes — and a stalled or cut-off SSR
+                // response still "finishes" parsing, just with most of the
+                // body missing (`document.readyState === "complete"` with two
+                // body children instead of ~10). Hydrating that partial DOM
+                // walks tachys straight into `failed_to_cast_element` and
+                // panics at `hydration.rs:163`. This element streams last, so
+                // the client can tell a complete document from a truncated one
+                // by asking whether it arrived. See `hydrate()` in
+                // ultros-client. Item routes are `SsrMode::InOrder`, so
+                // "sentinel present" really does mean "everything before it
+                // arrived".
+                <div id=SSR_END_SENTINEL_ID hidden></div>
             </body>
         </html>
     }
@@ -466,6 +511,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             <Route path=path!("") view=RetainersBasePath />
                         </ParentRoute>
                         <Route path=path!("alerts") view=Alerts />
+                        <Route path=path!("groups") view=Groups />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />
                             <Route path=path!(":id") view=ListView />
@@ -475,13 +521,25 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                             <Route path=path!("jobset/:jobset/set/:ilvl") view=JobSetDetail />
                             <Route path=path!("jobset/:jobset") view=JobItems />
                             <Route path=path!("category/:category") view=CategoryItems />
-                            <Route
-                                path=path!("")
-                                view=move || view! { "Choose a category to search!" }
-                            />
+                            <Route path=path!("") view=DefaultItems />
                         </ParentRoute>
-                        <Route path=path!("item/:world/:id") view=ItemView />
-                        <Route path=path!("item/:id") view=ItemView />
+                        // #6831: the item page's data (`listing_resource`) is
+                        // slow in production, so its several `<Suspense>`/`<Transition>`
+                        // boundaries actually suspend and stream out-of-order. That OOO
+                        // template-relocation is what desyncs tachys' hydration marker
+                        // walk (`hydration.rs` `failed_to_cast_marker_node`, "expected a
+                        // marker node, found <tr>") — the single largest GlitchTip issue.
+                        // Two component-level fixes (#933, #939) that reshaped the
+                        // listings `<For>` did not stop it. Locally the resource resolves
+                        // instantly, so the page renders in document order and hydrates
+                        // cleanly — which is exactly what `InOrder` streaming reproduces
+                        // in production. Force it here so the item page never streams OOO.
+                        <Route
+                            path=path!("item/:world/:id")
+                            view=ItemView
+                            ssr=SsrMode::InOrder
+                        />
+                        <Route path=path!("item/:id") view=ItemView ssr=SsrMode::InOrder />
                         <Route path=path!("flip-finder") view=Analyzer />
                         <Route path=path!("analyzer") view=move || {
                             let nav = leptos_router::hooks::use_navigate();
@@ -571,13 +629,47 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("WebAssembly compilation aborted"));
         // Category 2: injected-WebView document TypeError.
         assert!(FILTER_JS.contains("HTMLDocument.c"));
-        // Category 3: frozen-Chrome-112 translate-overlay hydration panic.
-        // Must read the live UA (the browser tag is server-derived and absent
-        // in beforeSend), so the navigator read is the load-bearing part.
-        assert!(FILTER_JS.contains("ULTROS_FROZEN_CHROME_RE"));
+        // Category 3: hydration-panic flood, gated behind an injecting-
+        // population fingerprint. The stale-Chrome check must read the live UA
+        // (the browser tag is server-derived and absent in beforeSend), so the
+        // navigator read is the load-bearing part.
+        assert!(FILTER_JS.contains("isStaleChromeMajor"));
         assert!(FILTER_JS.contains("navigator.userAgent"));
         assert!(FILTER_JS.contains("hydration.rs"));
+        // The cascade shapes are recognized WITHOUT the tachys breadcrumb (it
+        // is not in the array the SDK hands beforeSend): the `RefCell already
+        // borrowed` cascade via the js-sys futures-executor rust_panic location,
+        // and the unhandled wasm trap via the exact RuntimeError "unreachable"
+        // value. Deleting either silently re-opens the #6661/#4908/#6570 flood.
+        assert!(FILTER_JS.contains("ULTROS_JSSYS_EXECUTOR_RE"));
+        assert!(FILTER_JS.contains("\"unreachable\""));
+        // Category 3 (modern-Chrome translation population): the injected
+        // <font> DOM fingerprint that catches the flood the stale-UA check
+        // misses. Removing it silently re-opens the #3005/#4911/#6406 flood.
+        assert!(FILTER_JS.contains("hasInjectedTranslationFont"));
+        assert!(FILTER_JS.contains("getElementsByTagName"));
         // Category 4: empty promise rejections.
         assert!(FILTER_JS.contains("Non-Error promise rejection captured with value: undefined"));
+        // Category 5: leptos hydration-bootstrap ReferenceErrors stripped by a
+        // proxy/crawler. Removing it re-opens the #6620/#6667/#6760/#6761 flood.
+        assert!(FILTER_JS.contains("isStrippedHydrationBootstrap"));
+        // Category 6: the redundant onerror wasm `unreachable` trap dedup —
+        // drops the per-deploy duplicate of every Rust panic (the #6781–#6828
+        // rotation) via a pkg-bundle stack frame. Removing it re-opens it.
+        assert!(FILTER_JS.contains("isRedundantWasmUnreachableTrap"));
+        assert!(FILTER_JS.contains("ULTROS_PKG_FRAME_RE"));
+        // Category 7: the redundant `RefCell already borrowed` executor cascade,
+        // dropped unconditionally when its rust_panic.location is the js-sys
+        // futures executor. Deleting it silently re-opens the #6758 flood (the
+        // single largest issue).
+        assert!(FILTER_JS.contains("isExecutorReentryCascade"));
+        assert!(FILTER_JS.contains("RefCell already borrowed"));
+        // Category 8: errors thrown entirely inside a third-party analytics /
+        // ads / CDN-telemetry script (Cloudflare Insights beacon, gtag, AdSense,
+        // funding-choices). Removing it re-opens the external-script noise (the
+        // #6836 Cloudflare-beacon class). The host allowlist must NOT contain
+        // ultros.app / the pkg bundle, or a real Ultros bug could be swept up.
+        assert!(FILTER_JS.contains("isThirdPartyScriptError"));
+        assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
     }
 }

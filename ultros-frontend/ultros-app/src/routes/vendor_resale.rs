@@ -10,15 +10,18 @@ use crate::{
         item_icon::*,
         meta::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
+        toolbar::{Toolbar, ToolbarField, ToolbarPills},
         virtual_scroller::*,
         world_picker::*,
     },
     error::AppError,
     global_state::LocalWorldData,
     i18n::*,
+    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    ws::realtime::use_realtime,
 };
 use chrono::{Duration, Utc};
 use humantime::{format_duration, parse_duration};
@@ -94,13 +97,19 @@ fn compute_summary(sale: SaleData) -> SaleSummary {
         .iter()
         .map(|price| price.price_per_unit)
         .collect::<Vec<_>>();
-    prices.sort_unstable();
-    let median_price = match prices.as_slice() {
+    // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
+    let median_price = match prices.as_mut_slice() {
         [] => 0,
-        values if values.len() % 2 == 1 => values[values.len() / 2],
+        values if values.len() % 2 == 1 => {
+            let len = values.len();
+            let (_, &mut median, _) = values.select_nth_unstable(len / 2);
+            median
+        }
         values => {
-            let upper = values.len() / 2;
-            ((values[upper - 1] as i64 + values[upper] as i64) / 2) as i32
+            let mid = values.len() / 2;
+            let (left, &mut mid_val, _) = values.select_nth_unstable(mid);
+            let mid_left_val = *left.iter().max().unwrap();
+            ((mid_val as i64 + mid_left_val as i64) / 2) as i32
         }
     };
     SaleSummary {
@@ -212,17 +221,29 @@ fn VendorResaleTable(
     world: Signal<String>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let profits = VendorProfitTable::new(sales, world_cheapest_listings);
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
+    // Seeded to 1d by VendorWorldView so a first-time visitor isn't shown items
+    // that sell once a month. The field sits in the primary toolbar and the
+    // chip has an X, so the default is visible and one click from gone.
+    let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
-    let show_more = RwSignal::new(false);
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
@@ -372,6 +393,17 @@ fn VendorResaleTable(
                         }
                     />
                 </ToolbarField>
+                <ToolbarField label=t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()>
+                    <input
+                        class="input input-sm w-32"
+                        placeholder=t_string!(i18n, analyzer_placeholder_7d_12h)
+                        title=t_string!(i18n, analyzer_tooltip_duration_format)
+                        prop:value=move || max_predicted_time().unwrap_or_default()
+                        on:input=move |input| {
+                            set_max_predicted_time(Some(event_target_value(&input)))
+                        }
+                    />
+                </ToolbarField>
                 <ToolbarField label=t_string!(i18n, vendor_resale_filter_category_label).to_string()>
                     <select
                         class="input input-sm w-48"
@@ -415,38 +447,18 @@ fn VendorResaleTable(
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
-                <ToolbarSpacer />
-                <button
-                    class="btn-secondary flex items-center gap-2"
-                    on:click=move |_| show_more.update(|v| *v = !*v)
-                >
-                    <Icon icon=i::FaFilterSolid />
-                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
-                </button>
             </Toolbar>
-
-            // Secondary filter toolbar (expanded)
-            {move || show_more.get().then(|| view! {
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            placeholder="e.g. 7d 12h"
-                            title=t_string!(i18n, analyzer_tooltip_duration_format)
-                            prop:value=move || max_predicted_time().unwrap_or_default()
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value))
-                            }
-                        />
-                    </ToolbarField>
-                </Toolbar>
-            })}
 
             // Results summary
             <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)]">
-                    <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
+                <div class="text-sm text-[color:var(--color-text)] flex flex-wrap items-center gap-3">
+                    <div>
+                        <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
+                    </div>
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                    />
                 </div>
                 <div class="flex flex-wrap gap-2">
                     {move || {
@@ -603,7 +615,6 @@ fn VendorResaleTable(
                             } else {
                                 "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
-                            let data_clone = data.clone();
                             view! {
                                 <div class=classes role="row-group">
                                     <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
@@ -626,9 +637,7 @@ fn VendorResaleTable(
                                         <Gil amount=data.profit />
                                     </div>
                                     <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
-                                        <span class={
-                                            move || roi_badge_class(data_clone.return_on_investment)
-                                        }>
+                                        <span class={roi_badge_class(data.return_on_investment)}>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
                                     </div>
@@ -660,8 +669,12 @@ fn VendorResaleTable(
 #[component]
 pub fn VendorWorldView() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in VendorResaleTable: that lives inside the
+    // Suspense closure and remounts on every market refetch, which would keep
+    // undoing a filter the user had cleared.
+    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
     let params = use_params_map();
-    let world = Memo::new(move |_| params.with(|p| p.get("world").clone()).unwrap_or_default());
+    let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
 
     // We fetch sales for better estimation, even though we are comparing to vendor prices
     let sales = ArcResource::new(
@@ -741,7 +754,7 @@ pub fn VendorWorldView() -> impl IntoView {
                                             <VendorResaleTable
                                                 sales=s
                                                 world_cheapest_listings=w
-                                                world=world.into()
+                                                world=world
                                             />
                                         },
                                     )

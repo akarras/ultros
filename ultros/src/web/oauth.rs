@@ -145,6 +145,8 @@ fn safe_login_next(next: Option<&str>) -> Option<String> {
         || next.contains('\\')
         || next.contains('\n')
         || next.contains('\r')
+        || next.contains('\t')
+        || next.contains(' ')
         || next.contains("://")
     {
         return None;
@@ -259,26 +261,40 @@ pub async fn redirect(
     cookie.set_secure(true);
     cookie.set_same_site(SameSite::Lax);
     cookie.set_http_only(true);
+    cookie.set_path("/");
     cookie.make_permanent();
     cookies = cookies.add(cookie);
     Ok((cookies, Redirect::to(&redirect_to)))
 }
 
+#[allow(clippy::collapsible_if)]
 pub async fn logout(
     cookie_jar: PrivateCookieJar,
     State(config): State<DiscordAuthConfig>,
+    State(cache): State<AuthUserCache>,
 ) -> Result<(PrivateCookieJar, Redirect), WebError> {
     let cookie = cookie_jar
         .get("discord_auth")
         .ok_or(WebError::NotAuthenticated)?;
-    let token = AccessToken::new(cookie.value().to_string());
+
+    let token_value = cookie.value().to_string();
+    cache.remove_token(&token_value).await;
+
+    let token = AccessToken::new(token_value);
     // now try to revoke it async style
-    config
+    if let Ok(revocable_token) = config
         .inner
         .client
-        .revoke_token(StandardRevocableToken::AccessToken(token))?
-        .request_async(&config.inner.http_client)
-        .await?;
+        .revoke_token(StandardRevocableToken::AccessToken(token))
+    {
+        if let Err(e) = revocable_token
+            .request_async(&config.inner.http_client)
+            .await
+        {
+            tracing::warn!("Failed to revoke discord token on logout: {}", e);
+        }
+    }
+
     let cookie_jar = cookie_jar.remove(cookie);
     Ok((cookie_jar, Redirect::to("/")))
 }
@@ -421,6 +437,7 @@ impl DiscordAuthConfig {
                     .expect("Failed to parse revoke URL"),
             );
         let http_client = oauth2::reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(10))
             .redirect(oauth2::reqwest::redirect::Policy::none())
             .build()
             .expect("Failed to build oauth2 reqwest client");
@@ -461,6 +478,8 @@ mod tests {
             safe_login_next(Some("/path\r\nLocation: //evil.example")),
             None
         );
+        assert_eq!(safe_login_next(Some("/\t/evil.example")), None);
+        assert_eq!(safe_login_next(Some("/ /evil.example")), None);
     }
 }
 

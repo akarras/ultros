@@ -8,7 +8,7 @@ use icondata as i;
 use leptos::either::EitherOf3;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
-use ultros_api_types::list::{List, ListPermission};
+use ultros_api_types::list::{List, ListCapabilities, ListPermission};
 
 #[component]
 pub fn ListSettingsDrawer(
@@ -20,8 +20,9 @@ pub fn ListSettingsDrawer(
     set_visible: WriteSignal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let can_admin = permission >= ListPermission::Owner;
-    let can_leave = permission == ListPermission::Read || permission == ListPermission::Write;
+    let caps = ListCapabilities::from(permission);
+    let can_admin = caps.can_admin;
+    let can_leave = caps.can_leave;
     let navigate = use_navigate();
 
     let list_id = list.id;

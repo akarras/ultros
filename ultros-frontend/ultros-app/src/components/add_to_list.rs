@@ -9,7 +9,7 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos::task::spawn_local;
 use ultros_api_types::icon_size::IconSize;
-use ultros_api_types::list::{ListItem, ListPermission};
+use ultros_api_types::list::{ListCapabilities, ListItem, ListPermission};
 use xiv_gen::ItemId;
 
 use crate::api::add_item_to_list;
@@ -118,7 +118,8 @@ fn AddToListModal(
                                     .map(|lwp| {
                                         let permission = lwp.permission;
                                         let list = lwp.list;
-                                        let can_write = permission >= ListPermission::Write;
+                                        let caps = ListCapabilities::from(permission);
+                                        let can_write = caps.can_write;
                                         let (saved, set_saved) = signal(false);
                                         let (running, set_running) = signal(false);
                                         let (error, set_error) = signal(Option::<String>::None);

@@ -14,7 +14,6 @@ pub fn ListingsTable(
     let i18n = use_i18n();
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
-    let show_click = move |_| set_show_more(true);
     // Optimization: Split sorting from slicing.
     // This memo handles the expensive sorting operation and only updates when the source `listings` signal changes.
     // Note: We use Arc<Retainer> to make cloning cheap (pointer copy vs string copy).
@@ -49,53 +48,79 @@ pub fn ListingsTable(
                 </tr>
             </thead>
             <tbody>
-                {move || {
-                    view! {
-                        <For
-                            each=listings
-                            key=move |(listing, _retainer)| listing.id
-                            children=move |(listing, retainer)| {
-                                let total = listing.price_per_unit * listing.quantity;
-                                view! {
-                                    <tr>
-                                        <td>
-                                            <Gil amount=listing.price_per_unit />
-                                        </td>
-                                        <td>{listing.quantity}</td>
-                                        <td>
-                                            <Gil amount=total />
-                                        </td>
-                                        <td>
-                                            <A href=format!(
-                                                "/retainers/listings/{}",
-                                                retainer.id,
-                                            )>{retainer.name.clone()}</A>
-                                        </td>
-                                        <td>
-                                            <WorldName id=AnySelector::World(listing.world_id) />
-                                        </td>
-                                        <td>
-                                            <DatacenterName world_id=listing.world_id />
-                                        </td>
-                                        <td>
-                                            <RelativeToNow timestamp=listing.timestamp />
-                                        </td>
-                                    </tr>
-                                }
-                            }
-                        />
+                // #6831 — the largest GlitchTip issue by orders of magnitude —
+                // is a tachys hydration panic (`hydration.rs`
+                // `failed_to_cast_marker_node`: "expected a marker node, found
+                // <tr>") firing on essentially every `/item/*` page under
+                // production's out-of-order streaming SSR.
+                //
+                // Root cause: a `<For>` relies on its *following sibling* to
+                // supply a marker node so the hydration walk knows where the
+                // keyed list ends. A dynamic sibling (`{ move || … }`) emits that
+                // opening marker; a plain static element does not. This `<tbody>`
+                // placed a static `<tr>` (the "show more" row) directly after the
+                // `<For>`, leaving the list's trailing edge unbounded — the walker
+                // then reads that `<tr>` where it expected a marker and panics.
+                //
+                // (PR #933 removed a redundant `{ move || <For/> }` *wrapper* but
+                // left this static-`<tr>`-after-`<For>` adjacency intact, so the
+                // crash survived on the deployed fix build.)
+                //
+                // Fix: render `<For>` as a direct child and the "show more" row as
+                // a *dynamic* `{ move || … }` block, exactly like the sibling
+                // `SaleHistoryTable` — which reads the same resource in the same
+                // `<Transition>` on this page and never crashes. The dynamic block
+                // supplies the marker node that bounds the `<For>`.
+                <For
+                    each=listings
+                    key=move |(listing, _retainer)| listing.id
+                    children=move |(listing, retainer)| {
+                        let total = listing.price_per_unit * listing.quantity;
+                        view! {
+                            <tr>
+                                <td>
+                                    <Gil amount=listing.price_per_unit />
+                                </td>
+                                <td>{listing.quantity}</td>
+                                <td>
+                                    <Gil amount=total />
+                                </td>
+                                <td>
+                                    <A href=format!(
+                                        "/retainers/listings/{}",
+                                        retainer.id,
+                                    )>{retainer.name.clone()}</A>
+                                </td>
+                                <td>
+                                    <WorldName id=AnySelector::World(listing.world_id) />
+                                </td>
+                                <td>
+                                    <DatacenterName world_id=listing.world_id />
+                                </td>
+                                <td>
+                                    <RelativeToNow timestamp=listing.timestamp />
+                                </td>
+                            </tr>
+                        }
                     }
+                />
+                {move || {
+                    (!show_more() && listing_count() >= 10)
+                        .then(|| {
+                            view! {
+                                <tr>
+                                    <td colspan=7>
+                                        <button
+                                            class="btn w-full"
+                                            on:click=move |_| set_show_more(true)
+                                        >
+                                            {t!(i18n, listings_show_more)}
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        })
                 }}
-                <tr
-                    on:click=show_click
-                    class:hidden=move || { listing_count() < 10 || show_more() }
-                >
-                    <td colspan=7>
-                        <button on:click=show_click class="btn w-full">
-                            {t!(i18n, listings_show_more)}
-                        </button>
-                    </td>
-                </tr>
             </tbody>
             </table>
         </div>

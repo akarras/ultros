@@ -17,5 +17,8 @@ mod icon;
 #[cfg(feature = "image")]
 pub use icon::item_icon_data_uri;
 
+#[cfg(feature = "leptos")]
+pub mod components;
+
 #[cfg(test)]
 pub(crate) mod test_util;

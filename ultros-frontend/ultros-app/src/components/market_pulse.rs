@@ -24,6 +24,14 @@ fn compact_number(n: u64) -> String {
     }
 }
 
+fn format_delta(delta_pct: Option<f32>) -> (String, &'static str) {
+    match delta_pct {
+        Some(p) if p >= 0.0 => (format!("+{p:.1}%"), "text-emerald-300"),
+        Some(p) => (format!("{p:.1}%"), "text-red-300"),
+        None => ("—".to_string(), "text-[color:var(--color-text-muted)]"),
+    }
+}
+
 /// One KPI metric column — inline layout (no card background) so a row of
 /// four reads like a typewriter strip rather than a card grid. The visual
 /// separator between columns is provided by the parent via `metric-divider`.
@@ -31,11 +39,7 @@ fn compact_number(n: u64) -> String {
 #[component]
 fn KpiCard(label: AnyView, value: String, #[prop(into)] delta_pct: Option<f32>) -> impl IntoView {
     // Delta chip: green when positive, red when negative, muted dash when None.
-    let (delta_text, delta_class): (String, &'static str) = match delta_pct {
-        Some(p) if p >= 0.0 => (format!("+{p:.1}%"), "text-emerald-300"),
-        Some(p) => (format!("{p:.1}%"), "text-red-300"),
-        None => ("—".to_string(), "text-[color:var(--color-text-muted)]"),
-    };
+    let (delta_text, delta_class) = format_delta(delta_pct);
 
     view! {
         <div class="flex flex-col gap-1 min-w-0 px-3 sm:px-5 py-1">
@@ -114,5 +118,54 @@ pub fn MarketPulse(world: Signal<Option<String>>) -> impl IntoView {
                 }}
             </Suspense>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compact_number_formatting() {
+        // Less than 10k: exactly separated
+        assert_eq!(compact_number(0), "0");
+        assert_eq!(compact_number(999), "999");
+        assert_eq!(compact_number(9_999), "9,999");
+
+        // 10k to 1M: formatted in K
+        assert_eq!(compact_number(10_000), "10.0K");
+        assert_eq!(compact_number(10_500), "10.5K");
+        assert_eq!(compact_number(999_999), "1000.0K");
+
+        // 1M to 1B: formatted in M
+        assert_eq!(compact_number(1_000_000), "1.0M");
+        assert_eq!(compact_number(1_500_000), "1.5M");
+        assert_eq!(compact_number(999_999_999), "1000.0M");
+
+        // Over 1B: formatted in B
+        assert_eq!(compact_number(1_000_000_000), "1.00B");
+        assert_eq!(compact_number(1_550_000_000), "1.55B");
+        assert_eq!(compact_number(1_555_000_000), "1.55B"); // float truncation to 2 decimal places
+        assert_eq!(compact_number(1_559_000_000), "1.56B"); // rounding
+    }
+
+    #[test]
+    fn test_format_delta() {
+        assert_eq!(
+            format_delta(None),
+            ("—".to_string(), "text-[color:var(--color-text-muted)]")
+        );
+        assert_eq!(
+            format_delta(Some(0.0)),
+            ("+0.0%".to_string(), "text-emerald-300")
+        );
+        assert_eq!(
+            format_delta(Some(12.34)),
+            ("+12.3%".to_string(), "text-emerald-300")
+        );
+        assert_eq!(
+            format_delta(Some(-5.67)),
+            ("-5.7%".to_string(), "text-red-300")
+        );
     }
 }

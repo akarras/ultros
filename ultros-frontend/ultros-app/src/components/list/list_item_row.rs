@@ -17,6 +17,10 @@ pub fn ListItemRow(
     listings: Vec<ActiveListing>,
     edit_list_mode: Signal<bool>,
     #[prop(into)] selected_items: RwSignal<HashSet<i32>>,
+    #[prop(default = &[])] excluded_worlds: &'static [i32],
+    #[prop(into, default = Signal::derive(HashSet::new))] excluded_datacenters: Signal<
+        HashSet<String>,
+    >,
     // The return type of delete_list_item is impl Future<Output = Result<(), AppError>> so in Action it becomes () for the output if we don't care about the result, but wait. Action<I, O>. The original code used Action::new. Let's check original.
     // original: let delete_item = Action::new(move |list_item: &i32| delete_list_item(*list_item));
     // delete_list_item returns Result<(), AppError>.
@@ -91,13 +95,37 @@ pub fn ListItemRow(
                                     let complete = a >= q;
                                     view! {
                                         <div class="flex flex-col items-start gap-1">
-                                            {item_now.hq.and_then(|hq| {
-                                                hq.then_some(view! {
-                                                    <span class="inline-flex rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">
-                                                        "HQ"
-                                                    </span>
-                                                })
-                                            })}
+                                            {move || {
+                                                if can_write.get() {
+                                                    Either::Left(view! {
+                                                        <Tooltip tooltip_text=Signal::derive(move || if item.with(|i| i.hq == Some(true)) { t_string!(i18n, list_view_bulk_any_quality).to_string() } else { t_string!(i18n, list_view_bulk_set_hq).to_string() })>
+                                                            <button
+                                                                class="inline-flex rounded-md border px-2 py-0.5 text-xs font-bold transition-colors"
+                                                                class=("border-[color:var(--brand-ring)]/40", move || item.with(|i| i.hq == Some(true)))
+                                                                class=("text-[color:var(--brand-fg)]", move || item.with(|i| i.hq == Some(true)))
+                                                                class=("border-[color:var(--color-outline)]", move || item.with(|i| i.hq != Some(true)))
+                                                                class=("text-[color:var(--color-text-muted)]", move || item.with(|i| i.hq != Some(true)))
+                                                                on:click=move |_| {
+                                                                    item.update(|i| {
+                                                                        i.hq = if i.hq == Some(true) { None } else { Some(true) };
+                                                                    });
+                                                                    let _ = edit_item.dispatch(item.get());
+                                                                }
+                                                            >
+                                                                "HQ"
+                                                            </button>
+                                                        </Tooltip>
+                                                    })
+                                                } else {
+                                                    Either::Right(item_now.hq.and_then(|hq| {
+                                                        hq.then_some(view! {
+                                                            <span class="inline-flex rounded-md border border-[color:var(--brand-ring)]/40 px-2 py-0.5 text-xs font-bold text-[color:var(--brand-fg)]">
+                                                                "HQ"
+                                                            </span>
+                                                        })
+                                                    }))
+                                                }
+                                            }}
                                             {complete.then(|| view! {
                                                 <span
                                                     class="inline-flex items-center gap-1 rounded-md border border-green-400/40 px-1.5 py-0.5 text-xs text-green-200"
@@ -176,6 +204,8 @@ pub fn ListItemRow(
                                             quantity=remaining
                                             hq=item.with(|i| i.hq)
                                             listings=listings()
+                                            excluded_worlds=excluded_worlds
+                                            excluded_datacenters=excluded_datacenters
                                         />
                                     }
                                 }}
@@ -380,6 +410,8 @@ pub fn ListItemRow(
                                             quantity=remaining
                                             hq=item.hq
                                             listings=listings()
+                                            excluded_worlds=excluded_worlds
+                                            excluded_datacenters=excluded_datacenters
                                         />
                                     }
                                 }}

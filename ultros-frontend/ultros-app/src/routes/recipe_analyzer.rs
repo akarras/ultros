@@ -7,6 +7,8 @@ use crate::components::related_items::is_shard_item;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
+use crate::ws::realtime::use_realtime;
 use crate::{
     analysis::{SalesStats, analyze_sales, roi_badge_class},
     api::{get_cheapest_listings, get_recent_sales_for_world},
@@ -17,6 +19,7 @@ use crate::{
         icon::Icon,
         item_icon::*,
         query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
@@ -94,6 +97,16 @@ fn RecipeAnalyzerTable(
 
     world: Signal<String>,
 ) -> impl IntoView {
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = CheapestListingsMap::from(global_cheapest_listings);
     let data = tracked_data();
     let items = &data.items;
@@ -117,7 +130,10 @@ fn RecipeAnalyzerTable(
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (use_subcrafts, set_use_subcrafts) = query_signal::<bool>("subcrafts");
-    let (min_daily_sales, set_min_daily_sales) = query_signal::<f32>("min-sales");
+    // Seeded by RecipeAnalyzer so a first-time visitor isn't shown recipes
+    // whose output sells once a month. Same velocity floor as the analyzer's
+    // 1d default.
+    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
     let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
@@ -155,9 +171,9 @@ fn RecipeAnalyzerTable(
         let filter_outliers = filter_outliers().unwrap_or(false);
 
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map = HashMap::new();
+            let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
             for sale in &sales.sales {
-                map.entry(sale.item_id).or_insert_with(Vec::new).push(sale);
+                map.entry(sale.item_id).or_default().push(sale);
             }
             map
         } else {
@@ -508,6 +524,10 @@ fn RecipeAnalyzerTable(
                     </ToolbarPills>
                 </ToolbarField>
                 <ToolbarSpacer />
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                    />
             </Toolbar>
 
             <Show when=move || !has_levels()>
@@ -569,8 +589,6 @@ fn RecipeAnalyzerTable(
                     each=computed_data.into()
                     key=move |(index, data): &(usize, Arc<RecipeProfitData>)| (*index, data.recipe.key_id)
                     view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
-                        // Clone data for use in closures to avoid moving the Arc
-                        let data_clone = data.clone();
                         let item_id = ItemId(data.recipe.item_result);
                         let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
                         let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
@@ -620,10 +638,7 @@ fn RecipeAnalyzerTable(
                                     <Gil amount=data.profit />
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
-                                     <span class={
-                                        let data = data_clone.clone();
-                                        move || roi_badge_class(data.return_on_investment)
-                                    }>
+                                     <span class={roi_badge_class(data.return_on_investment)}>
                                         {format!("{}%", data.return_on_investment)}
                                     </span>
                                 </div>
@@ -702,6 +717,10 @@ fn CollapseIcon(collapsed: Signal<bool>) -> impl IntoView {
 #[component]
 pub fn RecipeAnalyzer() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in RecipeAnalyzerTable: that lives inside the
+    // Suspense closure and remounts whenever its resources change, which would
+    // keep undoing a filter the user had cleared.
+    seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
     let params = use_params_map();
     let (home_world, _) = use_home_world();
 

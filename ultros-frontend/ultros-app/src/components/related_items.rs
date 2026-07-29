@@ -462,6 +462,12 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
                 shops.into_iter().map(move |gil_shop| (gil_shop, npc))
             })
         })
+        // `e_npc_bases` is a std HashMap whose iteration order is randomized
+        // per process (RandomState). Without a stable sort the SSR server and
+        // the hydrating wasm client emit the vendor rows in different orders,
+        // desyncing the DOM and tripping tachys' hydration walker (#6831).
+        // Sort by stable ids so both sides render the same sequence.
+        .sorted_by_key(|(gil_shop, npc)| (npc.key_id.0, gil_shop.0))
         .collect()
 }
 
@@ -553,27 +559,78 @@ pub(crate) fn get_vendor_price(item_id: i32) -> Option<u32> {
 }
 
 pub(crate) fn special_shop_has_item(shop: &SpecialShop, item_id: i32) -> bool {
-    // The new SpecialShop struct has a flat `item` Vec<u16> with 60 elements.
-    // Check if any item in the shop matches the given item_id.
-    shop.item.iter().any(|&i| i as i32 == item_id)
+    // Check both possible receive slots for each of the 60 entries
+    shop.item_receive_0.iter().any(|&i| i as i32 == item_id)
+        || shop.item_receive_1.iter().any(|&i| i as i32 == item_id)
 }
 
 type Cost = (ItemId, u32);
 type TradeCosts = Vec<Cost>;
 
 fn get_trade_costs(shop: &SpecialShop, item_id: i32) -> Vec<TradeCosts> {
-    // The new SpecialShop struct has a flat `item` Vec<u16> without the old
-    // semantic separation of receive/cost/count fields. We can only report
-    // that the item exists in this shop; detailed cost information is no longer
-    // available from the data model.
-    let has_item = shop.item.iter().any(|&i| i as i32 == item_id);
-    if has_item {
-        // Return a single empty trade cost entry to indicate the shop has this item
-        // but we cannot determine the specific costs.
-        vec![vec![]]
-    } else {
-        vec![]
+    let mut results = Vec::new();
+    // SpecialShop has 60 entries, each with up to 2 receive items and 3 cost items
+    for i in 0..60 {
+        let is_receive_0 = shop
+            .item_receive_0
+            .get(i)
+            .map(|&id| id as i32 == item_id)
+            .unwrap_or(false);
+        let is_receive_1 = shop
+            .item_receive_1
+            .get(i)
+            .map(|&id| id as i32 == item_id)
+            .unwrap_or(false);
+
+        if is_receive_0 || is_receive_1 {
+            let mut costs = Vec::new();
+            // Check all three possible cost slots
+            if let Some(&cost_item) = shop.item_cost_0.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_0.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
+            }
+            if let Some(&cost_item) = shop.item_cost_1.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_1.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
+            }
+            if let Some(&cost_item) = shop.item_cost_2.get(i)
+                && cost_item > 0
+            {
+                let count = shop.count_cost_2.get(i).cloned().unwrap_or(0);
+                costs.push((ItemId(cost_item as i32), count));
+            }
+
+            if !costs.is_empty() {
+                results.push(costs);
+            }
+        }
     }
+    results
+}
+
+/// Collect the special shops that trade for `item_id`, in a stable,
+/// `key_id`-ascending order.
+///
+/// `special_shops` is a `std::collections::HashMap` whose iteration order is
+/// randomized per process (`RandomState`). The SSR server process and the
+/// client wasm instance each build their own copy of the game data, so an
+/// unsorted `.values()` yields the shops in a *different* order on each side.
+/// That makes the server-rendered DOM and the hydrating DOM disagree, tripping
+/// tachys' hydration walker (`failed_to_cast_element`) — the #6831 crash.
+/// Sorting by the stable `key_id` makes both sides render the same sequence.
+fn exchange_shops_for_item(
+    special_shops: &std::collections::HashMap<xiv_gen::SpecialShopId, SpecialShop>,
+    item_id: i32,
+) -> Vec<&SpecialShop> {
+    special_shops
+        .values()
+        .filter(|shop| special_shop_has_item(shop, item_id))
+        .sorted_by_key(|shop| shop.key_id.0)
+        .collect()
 }
 
 #[component]
@@ -582,10 +639,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let data = tracked_data();
     let exchanges = Memo::new(move |_| {
         let item_id = item_id();
-        data.special_shops
-            .values()
-            .filter(move |shop| special_shop_has_item(shop, item_id))
-            .collect::<Vec<_>>()
+        exchange_shops_for_item(&data.special_shops, item_id)
     });
 
     let view = move || {
@@ -642,23 +696,106 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use xiv_gen::SpecialShop;
 
     #[test]
     fn test_special_shop_has_item() {
-        // The new SpecialShop struct has 302 fields (item + 300 item_N_unknow_M + others).
-        // We cannot easily construct one manually without Default. Test the logic
-        // via special_shop_has_item and get_trade_costs using a minimal approach.
-
-        // Since SpecialShop doesn't derive Default and has 300+ fields, we test
-        // the logic indirectly. The functions are simple enough to verify by inspection.
-        // If Default is added to SpecialShop in the future, these tests can be expanded.
+        let shop = SpecialShop {
+            key_id: xiv_gen::SpecialShopId(1),
+            name: "Test Shop".to_string(),
+            item: vec![],
+            item_receive_0: vec![123, 456],
+            count_receive_0: vec![1, 1],
+            item_receive_1: vec![0, 789],
+            count_receive_1: vec![0, 1],
+            item_cost_0: vec![10, 20],
+            count_cost_0: vec![100, 200],
+            item_cost_1: vec![0, 0],
+            count_cost_1: vec![0, 0],
+            item_cost_2: vec![0, 0],
+            count_cost_2: vec![0, 0],
+        };
+        assert!(special_shop_has_item(&shop, 123));
+        assert!(special_shop_has_item(&shop, 789));
+        assert!(!special_shop_has_item(&shop, 999));
     }
 
     #[test]
-    fn test_get_trade_costs_empty() {
-        // Verify that get_trade_costs returns empty when item is not present.
-        // This test is a placeholder until SpecialShop derives Default or
-        // a constructor is available.
+    fn test_get_trade_costs() {
+        let shop = SpecialShop {
+            key_id: xiv_gen::SpecialShopId(1),
+            name: "Test Shop".to_string(),
+            item: vec![],
+            item_receive_0: vec![123, 456],
+            count_receive_0: vec![1, 1],
+            item_receive_1: vec![0, 789],
+            count_receive_1: vec![0, 1],
+            item_cost_0: vec![10, 20],
+            count_cost_0: vec![100, 200],
+            item_cost_1: vec![11, 0],
+            count_cost_1: vec![50, 0],
+            item_cost_2: vec![0, 0],
+            count_cost_2: vec![0, 0],
+        };
+
+        let costs_123 = get_trade_costs(&shop, 123);
+        assert_eq!(costs_123.len(), 1);
+        assert_eq!(costs_123[0].len(), 2);
+        assert_eq!(costs_123[0][0], (ItemId(10), 100));
+        assert_eq!(costs_123[0][1], (ItemId(11), 50));
+
+        let costs_789 = get_trade_costs(&shop, 789);
+        assert_eq!(costs_789.len(), 1);
+        assert_eq!(costs_789[0].len(), 1);
+        assert_eq!(costs_789[0][0], (ItemId(20), 200));
+    }
+
+    /// Regression guard for #6831: the exchange-source shops must come out in a
+    /// stable, `key_id`-ascending order no matter what order they sit in the
+    /// (randomly seeded) `special_shops` HashMap. If this order ever depends on
+    /// HashMap iteration order again, SSR and CSR render different DOM and the
+    /// item page crashes on hydration.
+    #[test]
+    fn exchange_shops_for_item_is_deterministically_sorted() {
+        use std::collections::HashMap;
+
+        // A shop whose first receive slot trades for `received`.
+        fn mk_shop(key_id: i32, received: u16) -> SpecialShop {
+            SpecialShop {
+                key_id: xiv_gen::SpecialShopId(key_id),
+                name: format!("Shop {key_id}"),
+                item: vec![],
+                item_receive_0: vec![received],
+                count_receive_0: vec![1],
+                item_receive_1: vec![0],
+                count_receive_1: vec![0],
+                item_cost_0: vec![10],
+                count_cost_0: vec![1],
+                item_cost_1: vec![0],
+                count_cost_1: vec![0],
+                item_cost_2: vec![0],
+                count_cost_2: vec![0],
+            }
+        }
+
+        let mut shops = HashMap::new();
+        // Insert in a deliberately non-ascending key order.
+        for key_id in [7, 2, 9, 4, 1] {
+            shops.insert(xiv_gen::SpecialShopId(key_id), mk_shop(key_id, 123));
+        }
+        // Two shops that do NOT trade for item 123 must be filtered out.
+        shops.insert(xiv_gen::SpecialShopId(50), mk_shop(50, 999));
+        shops.insert(xiv_gen::SpecialShopId(51), mk_shop(51, 888));
+
+        let ids: Vec<i32> = exchange_shops_for_item(&shops, 123)
+            .iter()
+            .map(|shop| shop.key_id.0)
+            .collect();
+
+        // Ascending key_id order regardless of HashMap seed — the deterministic
+        // sequence both SSR and CSR must produce.
+        assert_eq!(ids, vec![1, 2, 4, 7, 9]);
     }
 }
 
@@ -719,6 +856,9 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     &data.leve_reward_item_groups,
                 )
             })
+            // `leves` is a randomized std HashMap; sort by stable id so SSR and
+            // CSR render the levequest rows in the same order (#6831 hydration).
+            .sorted_by_key(|leve| leve.key_id.0)
             .collect::<Vec<_>>()
     });
 

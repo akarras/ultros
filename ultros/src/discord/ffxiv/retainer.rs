@@ -1,6 +1,6 @@
 use crate::EventType;
 use crate::discord::ffxiv::helpers::{
-    discord_locale_to_xiv_language, localized_item_name, name_matches_lowered_ascii,
+    discord_locale_to_xiv_language, localized_item_name, name_matches_lowered_ascii, truncate_100,
 };
 use itertools::Itertools;
 use poise::serenity_prelude::Color;
@@ -81,14 +81,14 @@ async fn autocomplete_retainer_id(
         .filter(move |retainer| retainer.name.to_ascii_lowercase().contains(&partial))
         .flat_map(move |retainer| {
             Some(poise::serenity_prelude::AutocompleteChoice::new(
-                format!(
+                truncate_100(&format!(
                     "{} - {}",
                     retainer.name,
                     world_cache
                         .lookup_selector(&AnySelector::World(retainer.world_id))
                         .ok()?
                         .get_name()
-                ),
+                )),
                 retainer.id,
             ))
         })
@@ -357,7 +357,7 @@ async fn owned_retainer_auto_complete(
         .flat_map(|(owned, retainer)| {
             let retainer = retainer?;
             Some(poise::serenity_prelude::AutocompleteChoice::new(
-                retainer.name,
+                truncate_100(&retainer.name),
                 owned.id,
             ))
         })

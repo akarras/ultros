@@ -164,13 +164,13 @@ fn AddSetToListModal(
                             view! {
                                 <div class="flex items-center gap-2">
                                     <label
-                                        for=move || format!("set-entry-qty-{}", entry.item_id.0)
+                                        for=format!("set-entry-qty-{}", entry.item_id.0)
                                         class="flex-1 min-w-0"
                                     >
                                         <SmallItemDisplay item=entry.item />
                                     </label>
                                     <input
-                                        id=move || format!("set-entry-qty-{}", entry.item_id.0)
+                                        id=format!("set-entry-qty-{}", entry.item_id.0)
                                         type="number"
                                         min="0"
                                         class="input w-24 ml-auto"

@@ -202,6 +202,7 @@ pub struct CurrentlyShownMultiView {
     pub dc_name: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct UniversalisClient {
     client: Client,
 }

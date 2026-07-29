@@ -19,7 +19,11 @@
     "test:list-bulk-edit": "node ./list-bulk-edit.cjs",
     "test:fc-crafting-breakdown": "node ./fc-crafting-breakdown.cjs",
     "test:dashboard": "node ./dashboard.cjs",
-    "test:error-filter": "node --test ./error-filter.test.cjs"
+    "test:group-shared-list": "node ./group-shared-list.cjs",
+    "test:error-filter": "node --test ./error-filter.test.cjs",
+    "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs",
+    "diag:hydrate-timing": "node ./hydrate-timing.cjs",
+    "diag:truncation-proxy": "node ./truncation-proxy.mjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

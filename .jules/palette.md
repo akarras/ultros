@@ -1,9 +1,17 @@
-## 2024-05-18 - Missing label associations and ARIA labels in Endpoint Forms
-**Learning:** Found that `EndpointCreateForm` inputs lacked standard `id` and `for` associations, and icon-only buttons like "Delete endpoint" lacked `aria-label`. Standard accessible form practices seem to be occasionally missed in Leptos `view!` macros.
-**Action:** Next time, remember to apply `id` and `for` attributes to `input` and `label` elements when creating or editing forms to ensure screen readers announce them properly. Always ensure `aria-label` is present on interactive elements that only contain icons.
-## 2026-05-14 - Added aria-label to max_purchase_price filter button
-**Learning:** Found that the button to remove the `max_purchase_price` filter chip in `analyzer.rs` was missing an `aria-label`, unlike the other filter removal buttons. This is an accessibility issue where screen readers wouldn't announce the purpose of the icon-only button.
-**Action:** Always verify that dynamically generated icon-only buttons (like inside a loop or conditional rendering block) have appropriate `aria-label` attributes.
-## 2026-05-21 - Prevent screen readers from reading decorative icons in buttons
-**Learning:** Found that when buttons have an icon next to visible text, sometimes the icon isn't hidden with `aria_hidden=true`. While this isn't an error, adding `aria_hidden=true` to the icon (since the button already has visible text) makes the screen reader experience smoother by preventing it from reading the decorative icon.
-**Action:** When inspecting buttons with both text and icons, consider adding `aria_hidden=true` to the icon component (if supported, e.g. the `Icon` component in this repo supports it) to avoid redundant or confusing announcements.
+## 2023-11-20 - Accessible Icon-Only Buttons
+**Learning:** Found that some icon-only interactive elements like 'Delete Group' and 'Add Member' in the groups component lacked `aria-label`s, making them invisible to screen readers.
+**Action:** Always add reactive `aria-label` properties to icon-only buttons to ensure they are fully accessible, especially when their function might change based on state (e.g. asking for confirmation).
+
+## 2026-07-07 - Accessible textareas
+**Learning:** In the MakePlaceImporter, the textarea was missing an ID and the associated label lacked a `for` attribute, which breaks form field accessibility for screen readers.
+**Action:** Ensure all form controls, such as `<textarea>` and `<input>`, have unique IDs and are properly associated with their corresponding `<label>` elements using the `for` attribute.
+
+## 2026-07-28 - Explicit aria-label for Image-only Menu Buttons
+**Learning:** Found that interactive elements containing only images with alt text might still need an explicit `aria-label` if the image's alt text doesn't adequately describe the element's action (e.g. 'username' vs 'Account menu button').
+**Action:** Always add an explicit `aria-label` to avatar dropdown buttons to standardize the action's description across login states.
+## 2025-02-12 - Added ARIA label to resend button
+**Learning:** Screen readers will struggle to identify multiple identical buttons (like "Resend") across rows in a data table unless they have unique labels with context.
+**Action:** Always include row-specific context (like the item name) in the `aria-label` for buttons inside list/table rows to ensure accessibility.
+## 2024-07-23 - Add explicit input associations
+**Learning:** In Leptos, when defining `for` and `id` attributes that need dynamic values within `move ||` closures, ensure you do not inadvertently move an entire struct (like `group`) multiple times, which causes E0382. Instead, extract the required value (e.g. `let group_id = group.id;`) beforehand so it can be copied into the closures.
+**Action:** Always extract and copy small values before using them inside Leptos closures to avoid ownership issues.

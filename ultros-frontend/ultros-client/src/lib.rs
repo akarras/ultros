@@ -331,9 +331,10 @@ pub fn hydrate() {
         // Use the SSR-injected bootstrap when available; only fall back to
         // network requests if it's missing (e.g. stale cached HTML).
         let bootstrap = read_bootstrap();
-        let (worlds, region, current_user) = if let Some(b) = bootstrap {
-            let _ = populate_xiv_gen_data().await;
+        let (xiv_data, worlds, region, current_user) = if let Some(b) = bootstrap {
+            let xiv_data = populate_xiv_gen_data().await;
             (
+                xiv_data,
                 Ok(Arc::new(WorldHelper::from(b.world_data))),
                 b.region,
                 Some(b.current_user),
@@ -347,7 +348,7 @@ pub fn hydrate() {
             // the SSR DOM (rendered with the server's view of auth state)
             // and the client view tree (auth state still loading) diverge
             // and tachys hydration panics at hydration.rs:163.
-            let (_, ((worlds, region), current_user)) = join(
+            let (xiv_data, ((worlds, region), current_user)) = join(
                 populate_xiv_gen_data(),
                 join(
                     join(get_world_data(), get_region()),
@@ -355,8 +356,64 @@ pub fn hydrate() {
                 ),
             )
             .await;
-            (worlds, region, Some(current_user))
+            (xiv_data, worlds, region, Some(current_user))
         };
+
+        // The entire client view tree reads game data through
+        // `xiv_gen_db::data()` (via `tracked_data()`, used across ~37 route and
+        // component files). If the `.rkyv` data archive failed to populate —
+        // an ad blocker or corporate proxy dropping the binary fetch, a flaky
+        // network, or a crawler like Baiduspider that won't fetch it — then
+        // `data()` panics with "XIV data not initialized" the instant we
+        // hydrate (xiv-gen-db/src/lib.rs), taking down the page and firing a
+        // WASM panic to GlitchTip (issue #6765). The SSR HTML was rendered
+        // server-side with the embedded data, so it already shows the correct
+        // page; hydrating with no client data could only panic — or, worse,
+        // silently diverge into a hydration mismatch. Leave the static SSR
+        // content in place instead. Navigation still works as full page loads,
+        // each re-rendered server-side with real data.
+        if let Err(e) = xiv_data {
+            error!(
+                "XIV game data failed to load; leaving server-rendered content un-hydrated: {e}"
+            );
+            // Resolve the boot-progress indicator, which waits on this event
+            // and would otherwise show a "taking longer than expected" error
+            // once its watchdog fires — the SSR page is the final state here.
+            dispatch_boot_event("ultros:hydrated");
+            return;
+        }
+
+        // The SSR response can end early — a stalled render, a dropped
+        // connection, a proxy cutting the stream — and the browser still
+        // reports `readyState === "complete"` for whatever it managed to
+        // parse. The bootstrap `HydrationScripts` emits is a deferred module
+        // script in `<head>`, so it fires on that truncated document just the
+        // same, and `hydrate_body` then walks a DOM missing nearly everything
+        // it expects: tachys hits `failed_to_cast_element` and panics at
+        // `hydration.rs:163`, which cascades into `RefCell already borrowed`
+        // from the wasm-bindgen-futures executor. That is GlitchTip #6831 —
+        // measured on prod, every panicking load hydrated with 2 body children
+        // where a healthy load has 9-12, and serving a deliberately truncated
+        // copy of the same page reproduced it 4/4 against an intact-page
+        // control of 0/4.
+        //
+        // `shell()` renders `SSR_END_SENTINEL_ID` as the last child of
+        // `<body>`, so its absence means the document we were handed is
+        // incomplete. There is nothing coherent to hydrate against; keep the
+        // partial server-rendered markup rather than panicking on it.
+        if document().get_element_by_id(SSR_END_SENTINEL_ID).is_none() {
+            error!(
+                "SSR document truncated (missing #{SSR_END_SENTINEL_ID}); \
+                 skipping hydration to avoid a tachys hydration panic"
+            );
+            // Deliberately *not* dispatching "ultros:hydrated": this page is
+            // genuinely broken, and letting the boot-progress watchdog surface
+            // its existing "taking longer than expected — reload" affordance
+            // gives the reader a way out. A truncated response is transient,
+            // so a reload almost always succeeds.
+            return;
+        }
+
         info!("hydrating body");
         let world_data = match worlds {
             Ok(worlds) => LocalWorldData(Ok(worlds)),

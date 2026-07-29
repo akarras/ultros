@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check for updates
@@ -32,7 +32,12 @@ jobs:
       - name: Update Submodule
         if: steps.check.outputs.has_updates == 'true'
         run: |
-          git submodule update --remote --merge xiv-gen/ffxiv-datamining
+          git submodule update --init --recursive --remote xiv-gen/ffxiv-datamining
+
+      - name: Verify Build
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          cargo check -p xiv-gen-db
 
       - name: Create Pull Request
         if: steps.check.outputs.has_updates == 'true'

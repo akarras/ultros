@@ -22,6 +22,13 @@ pub fn iqr_bounds(sales: &[SaleHistory]) -> Option<(i32, i32)> {
     let q1 = *prices.get(q1_index)?;
     let q3 = *prices.get(q3_index)?;
     let widened = ((q3 - q1) as f32 * 2.5) as i32;
+
+    // Sentry: If IQR is 0, we shouldn't consider minor variations as outliers.
+    // If all (or most) prices are exactly the same, no data should be filtered out.
+    if widened == 0 {
+        return None;
+    }
+
     Some((q1 - widened, q3 + widened))
 }
 
@@ -59,5 +66,15 @@ mod tests {
         let filtered = filter_outliers(&sales);
         assert_eq!(filtered.len(), 20);
         assert!(filtered.iter().all(|s| s.price_per_item < 10_000));
+    }
+
+    #[test]
+    fn zero_iqr_retains_minor_variations() {
+        let mut sales: Vec<_> = (0..20).map(|i| sale(100, 1, 1, ts(i as i64))).collect();
+        sales.push(sale(101, 1, 1, ts(21)));
+        sales.push(sale(99, 1, 1, ts(22)));
+        let filtered = filter_outliers(&sales);
+        // If IQR is 0, nothing should be an outlier. It should keep all 22 sales.
+        assert_eq!(filtered.len(), 22);
     }
 }

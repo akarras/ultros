@@ -98,9 +98,11 @@ else
     BASE_URL="http://127.0.0.1:$port"
     log "spawning fresh server on port $port"
 
+    # `${arr[@]}` on an empty array trips `set -u` under macOS's stock
+    # bash 3.2 — the `+` expansion guard is the portable idiom.
     if [ "${SKIP_BUILD:-0}" != "1" ]; then
         log "cargo leptos build (set SKIP_BUILD=1 to skip)"
-        cargo leptos build "${bin_feature_args[@]}"
+        cargo leptos build ${bin_feature_args[@]+"${bin_feature_args[@]}"}
     fi
 
     set -m
@@ -108,7 +110,7 @@ else
         HOSTNAME="$BASE_URL" \
         LEPTOS_SITE_ADDR="127.0.0.1:$port" \
         cargo leptos serve \
-        "${bin_feature_args[@]}" \
+        ${bin_feature_args[@]+"${bin_feature_args[@]}"} \
         >/tmp/ultros-e2e-server.log 2>&1 &
     server_pid=$!
     set +m
@@ -183,6 +185,12 @@ case " ${LEPTOS_FEATURES:-} " in
         ( cd integration && BASE_URL="$BASE_URL" npm run test:shared-list ) || shared_list_exit=$?
         if [ "$shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
             test_exit="$shared_list_exit"
+        fi
+        log "running group-shared-list flow (test-auth feature detected)"
+        group_shared_list_exit=0
+        ( cd integration && BASE_URL="$BASE_URL" npm run test:group-shared-list ) || group_shared_list_exit=$?
+        if [ "$group_shared_list_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+            test_exit="$group_shared_list_exit"
         fi
         log "running list-flow E2E (test-auth feature detected)"
         list_flow_exit=0

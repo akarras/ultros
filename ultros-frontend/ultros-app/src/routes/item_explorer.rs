@@ -10,19 +10,22 @@ use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
 use crate::components::toggle::Toggle;
+use crate::components::world_name::WorldName;
 use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*};
-use crate::global_state::home_world::get_price_zone;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::routes::item_explorer_scope::{ExplorerPriceScope, use_explorer_price_scope};
 use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_router::components::A;
 use leptos_router::components::Outlet;
-use leptos_router::hooks::{query_signal, use_params_map};
+use leptos_router::hooks::{query_signal, use_location, use_params_map};
+use leptos_router::location::Location;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
+use ultros_api_types::world_helper::AnySelector;
 use xiv_gen::{ClassJobCategory, ClassJobCategoryId, Item, ItemId};
 
 /// Return true if the given acronym is in the given class job category
@@ -215,7 +218,7 @@ pub fn JobItems() -> impl IntoView {
     let params = use_params_map();
     let data = tracked_data();
     let (non_market, set_non_market) = query_signal::<bool>("show-non-market");
-    let market_only = Memo::new(move |_| !non_market().unwrap_or_default());
+    let market_only = Signal::derive(move || !non_market().unwrap_or_default());
     let set_market_only =
         SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
     let items = Memo::new(move |_| {
@@ -422,6 +425,73 @@ impl Display for SortDirection {
     }
 }
 
+/// Sortable column header for the results list. Clicking sets `sort` to
+/// `value` and resets the page; clicking the already-active column
+/// toggles between descending (the default — `dir` removed) and
+/// ascending. Href construction mirrors `QueryButton` so all other query
+/// params (`world`, `per_page`, ...) survive.
+#[component]
+fn SortHeader(
+    /// value written to the `sort` query key
+    value: &'static str,
+    /// active when no `sort` param is present
+    #[prop(optional)]
+    default: bool,
+    children: Children,
+) -> impl IntoView {
+    let Location {
+        pathname, query, ..
+    } = use_location();
+    let is_active = Signal::derive(move || {
+        query.with(|q| {
+            let current = q.get_str("sort");
+            current == Some(value) || (default && current.is_none())
+        })
+    });
+    let is_asc = Signal::derive(move || query.with(|q| q.get_str("dir") == Some("asc")));
+    let href = move || {
+        let mut query = query();
+        query.remove("page");
+        query.remove("sort");
+        query.insert("sort".to_string(), value.to_string());
+        let flip_to_asc = is_active.get() && !is_asc.get();
+        query.remove("dir");
+        if flip_to_asc {
+            query.insert("dir".to_string(), "asc".to_string());
+        }
+        format!("{}{}", pathname(), query.to_query_string())
+    };
+    view! {
+        <div
+            role="columnheader"
+            aria-sort=move || {
+                if is_active() {
+                    if is_asc() { "ascending" } else { "descending" }
+                } else {
+                    "none"
+                }
+            }
+        >
+            <a
+                href=href
+                class="flex items-center gap-1 hover:text-brand-300 transition-colors"
+            >
+                {children()}
+                <span class="w-3 inline-block">
+                    {move || {
+                        if is_active() {
+                            if is_asc() { "↑" } else { "↓" }
+                        } else {
+                            ""
+                        }
+                    }}
+                </span>
+            </a>
+        </div>
+    }
+    .into_any()
+}
+
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
     let i18n = use_i18n();
@@ -431,7 +501,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
     let listings_resource = cheapest_prices.read_listings;
-    let (price_zone, _) = get_price_zone();
+    let scope = use_context::<ExplorerPriceScope>()
+        .expect("ItemList is always rendered inside ItemExplorer, which provides the scope");
+    let scope_name = scope.name;
+    let is_single_world = scope.is_single_world;
 
     // Defer the price-based filter + sort until after hydration.
     //
@@ -516,7 +589,15 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
     // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive for O(1) ops
     let items_len = Signal::derive(move || sorted_items.with(|i| i.len()));
-    let pages = Signal::derive(move || Pages::new(items_len(), 50));
+    // Rows per page, clamped to the values the selector offers so a
+    // hand-edited `?per_page=` can't produce a surprising page size.
+    let (per_page_q, _) = query_signal::<usize>("per_page");
+    let per_page = Signal::derive(move || match per_page_q().unwrap_or(50) {
+        25 => 25,
+        100 => 100,
+        _ => 50,
+    });
+    let pages = Signal::derive(move || Pages::new(items_len(), per_page()));
 
     let filtered_items = Memo::new(move |_| {
         let page = pages
@@ -611,97 +692,171 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 </div>
             </div>
 
-            // Item Grid
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+            // Results list: one row per item so prices line up in a
+            // scannable column. One responsive layout in three tiers:
+            // below `lg` only icon/name/NQ/actions (the rest collapses
+            // into a compact line under the name), `lg` adds iLvl/Lv/HQ,
+            // `xl` adds vendor and world. The full column set can't come
+            // in earlier than `xl` — the fixed columns plus the app
+            // sidebar leave `1fr` with no room and the item name
+            // collapses to zero width.
+            <div role="table" class="panel rounded-xl border border-white/5 divide-y divide-white/5 overflow-hidden">
+                <div
+                    role="row"
+                    class=move || {
+                        if is_single_world.get() {
+                            "hidden lg:grid lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_5rem] items-center gap-x-3 px-3 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]"
+                        } else {
+                            "hidden lg:grid lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_6.5rem_5rem] items-center gap-x-3 px-3 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]"
+                        }
+                    }
+                >
+                    <div role="columnheader"></div>
+                    <SortHeader value="name">{t!(i18n, item_explorer_name)}</SortHeader>
+                    <SortHeader value="ilvl" default=true>{t!(i18n, item_explorer_ilvl)}</SortHeader>
+                    <div role="columnheader">{t!(i18n, item_explorer_col_equip_level)}</div>
+                    <SortHeader value="price">{t!(i18n, nq)}</SortHeader>
+                    <div role="columnheader">{t!(i18n, hq)}</div>
+                    <div role="columnheader" class="hidden xl:block">
+                        {t!(i18n, item_explorer_vendor)}
+                    </div>
+                    <div
+                        role="columnheader"
+                        class=move || {
+                            if is_single_world.get() { "hidden" } else { "hidden xl:block" }
+                        }
+                    >
+                        {t!(i18n, item_explorer_col_world)}
+                    </div>
+                    <div role="columnheader"></div>
+                </div>
                 <For
                     each=move || filtered_items.get()
                     key=|(id, item)| (id.0, item.name.clone())
                     children=move |(id, item)| {
+                        let item_id = id.0;
                         view! {
-                            <div class="group relative flex flex-col p-4 rounded-xl panel
-                                        border border-white/5 hover:border-brand-500/30
-                                        hover:shadow-lg hover:shadow-brand-500/5
-                                        transition-all duration-300">
-                                <div class="flex flex-row items-start gap-4 mb-4">
-                                    <div class="shrink-0 relative">
-                                         <A href=move || format!("/item/{}/{}",
-                                            price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
-                                         >
-                                            <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
-                                         </A>
-                                    </div>
-                                    <div class="flex flex-col min-w-0 pt-0.5">
-                                        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
-                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                {t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}
-                                            </span>
-                                             {if item.level_equip > 1 {
-                                                view! {
-                                                    <span class="text-xs px-1.5 py-0.5 rounded bg-white/5 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                        {t!(i18n, item_explorer_lv_prefix)} " "{item.level_equip}
-                                                    </span>
-                                                }.into_any()
-                                            } else {
-                                                view! { <span/> }.into_any()
-                                            }}
-                                        </div>
-                                        <A href=move || format!("/item/{}/{}",
-                                            price_zone.get().as_ref().map(|z| z.get_name()).unwrap_or("North-America"),
-                                            item.key_id.0)
-                                            attr:class="font-bold text-base leading-snug text-[color:var(--color-text)] \
-                                                       group-hover:text-brand-300 transition-colors line-clamp-2 \
-                                                       hover:underline decoration-brand-300/30 underline-offset-4"
-                                         >
-                                            {item.name.as_str()}
-                                        </A>
-                                    </div>
-                                </div>
-                                <div class="flex-1" />
-                                <div class="flex flex-col gap-3 mt-2 pt-3 border-t border-white/5">
-                                    <div class="flex flex-col gap-2 text-sm">
-                                        <CheapestPrice item_id=*id show_hq=false label=t_string!(i18n, nq).to_string() />
-                                        // Always emit a stable wrapper div so the SSR and CSR view
-                                        // trees agree on element shape/count for this tuple slot.
-                                        // Conditional rendering inside the wrapper keeps the
-                                        // outer (AnyView, AnyView, AnyView) tuple types matching
-                                        // between server and client (fixes tachys hydration panic).
+                            <div
+                                role="row"
+                                class=move || {
+                                    if is_single_world.get() {
+                                        "grid grid-cols-[2.5rem_minmax(0,1fr)_auto_auto] lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_5rem] items-center gap-x-3 px-3 py-2 hover:bg-white/5 transition-colors"
+                                    } else {
+                                        "grid grid-cols-[2.5rem_minmax(0,1fr)_auto_auto] lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_6.5rem_5rem] items-center gap-x-3 px-3 py-2 hover:bg-white/5 transition-colors"
+                                    }
+                                }
+                            >
+                                <A href=move || format!("/item/{}/{}",
+                                    scope_name.get(),
+                                    item.key_id.0)
+                                >
+                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
+                                </A>
+                                <div class="flex flex-col min-w-0">
+                                    <A href=move || format!("/item/{}/{}",
+                                        scope_name.get(),
+                                        item.key_id.0)
+                                        attr:class="font-medium leading-snug text-[color:var(--color-text)] truncate \
+                                                   hover:text-brand-300 transition-colors \
+                                                   hover:underline decoration-brand-300/30 underline-offset-4"
+                                    >
+                                        {item.name.as_str()}
+                                    </A>
+                                    // Compact metadata, only below `lg` where the
+                                    // dedicated columns are hidden.
+                                    <div class="flex lg:hidden items-center gap-2 text-xs text-[color:var(--color-text-muted)]">
+                                        <span>{t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}</span>
                                         <div>
-                                            {if item.can_be_hq {
+                                            {if item.level_equip > 1 {
                                                 view! {
-                                                    <CheapestPrice item_id=*id show_hq=true label=t_string!(i18n, hq).to_string() />
+                                                    <span>{t!(i18n, item_explorer_lv_prefix)} " "{item.level_equip}</span>
                                                 }.into_any()
                                             } else {
                                                 ().into_any()
                                             }}
                                         </div>
-                                        <div>
-                                            {
-                                                if let Some(price) = crate::components::related_items::get_vendor_price(id.0) {
-                                                    view! {
-                                                        <div class="flex items-center gap-2">
-                                                            <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                                                {t!(i18n, item_explorer_vendor)}
-                                                            </span>
-                                                            <Gil amount=price as i32 />
-                                                        </div>
-                                                    }.into_any()
-                                                } else {
-                                                    ().into_any()
-                                                }
-                                            }
-                                        </div>
                                     </div>
-                                    <div class="flex items-center gap-2 mt-1">
-                                        <div class="flex-1">
-                                            <AddToList
-                                                item_id=id.0
-                                                class="w-full flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
-                                            />
-                                        </div>
-                                        <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title=t_string!(i18n, item_explorer_copy_name).to_string()>
-                                             <Clipboard clipboard_text=item.name.clone() />
-                                        </div>
+                                </div>
+                                <div role="cell" class="hidden lg:block text-sm text-[color:var(--color-text-muted)]">
+                                    {item.level_item}
+                                </div>
+                                <div role="cell" class="hidden lg:block text-sm text-[color:var(--color-text-muted)]">
+                                    {if item.level_equip > 1 {
+                                        view! { <span>{item.level_equip}</span> }.into_any()
+                                    } else {
+                                        view! { <span>"—"</span> }.into_any()
+                                    }}
+                                </div>
+                                <div role="cell" class="text-sm">
+                                    <CheapestPrice item_id=*id show_hq=false show_world=false />
+                                </div>
+                                // Always emit a stable wrapper div so the SSR and CSR view
+                                // trees agree on element shape/count for this slot (same
+                                // tachys-hydration reasoning as the old card layout).
+                                <div role="cell" class="hidden lg:block text-sm">
+                                    {if item.can_be_hq {
+                                        view! {
+                                            <CheapestPrice item_id=*id show_hq=true show_world=false />
+                                        }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }}
+                                </div>
+                                <div role="cell" class="hidden xl:block text-sm">
+                                    {if let Some(price) = crate::components::related_items::get_vendor_price(item_id) {
+                                        view! { <Gil amount=price as i32 /> }.into_any()
+                                    } else {
+                                        ().into_any()
+                                    }}
+                                </div>
+                                // World holding the cheapest listing. Gated behind the
+                                // same `hydrated` flag as the price sort — SSR and the
+                                // first CSR render both show nothing, keeping shapes
+                                // in sync (see comment on `hydrated` above).
+                                <div
+                                    role="cell"
+                                    class=move || {
+                                        if is_single_world.get() {
+                                            "hidden"
+                                        } else {
+                                            "hidden xl:block truncate text-sm text-[color:var(--color-text-muted)]"
+                                        }
+                                    }
+                                >
+                                    {move || {
+                                        if !hydrated.get() {
+                                            return ().into_any();
+                                        }
+                                        listings_resource
+                                            .with(|data| {
+                                                data.as_ref().and_then(|result| {
+                                                    result.as_ref().ok().and_then(|map| {
+                                                        let summary = map.find_matching_listings(item_id);
+                                                        let best = match (summary.lq, summary.hq) {
+                                                            (Some(lq), Some(hq)) => {
+                                                                Some(if hq.price < lq.price { hq } else { lq })
+                                                            }
+                                                            (lq, hq) => lq.or(hq),
+                                                        };
+                                                        best.map(|listing| {
+                                                            view! {
+                                                                <WorldName id=AnySelector::World(listing.world_id) />
+                                                            }
+                                                            .into_any()
+                                                        })
+                                                    })
+                                                })
+                                            })
+                                            .unwrap_or_else(|| ().into_any())
+                                    }}
+                                </div>
+                                <div role="cell" class="flex items-center justify-end gap-1">
+                                    <AddToList
+                                        item_id=item_id
+                                        class="flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                                    />
+                                    <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title=t_string!(i18n, item_explorer_copy_name).to_string()>
+                                        <Clipboard clipboard_text=item.name.clone() />
                                     </div>
                                 </div>
                             </div>
@@ -711,8 +866,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                 />
             </div>
 
-            // Pagination
-             <div class="flex justify-center mt-6">
+            // Pagination + rows per page
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6">
                  <div class="flex flex-wrap justify-center gap-2 p-2 rounded-xl bg-[color:var(--bg-panel)]/50 border border-white/5">
                     {move || {
                         pages.get()
@@ -732,6 +887,39 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                             })
                             .collect::<Vec<_>>()
                     }}
+                </div>
+                <div class="flex items-center gap-2 p-2 rounded-xl bg-[color:var(--bg-panel)]/50 border border-white/5">
+                    <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
+                        {t!(i18n, item_explorer_rows_per_page)}
+                    </span>
+                    <QueryButton
+                        key="per_page"
+                        value="25"
+                        remove_queries=&["page"]
+                        class="px-2.5 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
+                        active_classes="px-2.5 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                    >
+                        "25"
+                    </QueryButton>
+                    <QueryButton
+                        key="per_page"
+                        value="50"
+                        default=true
+                        remove_queries=&["page"]
+                        class="px-2.5 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
+                        active_classes="px-2.5 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                    >
+                        "50"
+                    </QueryButton>
+                    <QueryButton
+                        key="per_page"
+                        value="100"
+                        remove_queries=&["page"]
+                        class="px-2.5 py-1.5 rounded-lg text-sm font-medium transition-colors text-[color:var(--color-text-muted)] hover:bg-white/5"
+                        active_classes="px-2.5 py-1.5 rounded-lg text-sm font-medium !bg-brand-500/20 !text-brand-300 ring-1 ring-brand-500/50"
+                    >
+                        "100"
+                    </QueryButton>
                 </div>
             </div>
             // Next Page Big Button (if applicable)
@@ -765,6 +953,46 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
 
 #[component]
 pub fn ItemExplorer() -> impl IntoView {
+    // Rescope prices for the whole explorer subtree: shadow the global
+    // `CheapestPrices` context (keyed on the PRICE_ZONE cookie) with a
+    // resource keyed on the page's own `?world=`-driven scope. Every
+    // descendant (`ItemList`, `CheapestPrice`, `JobSetCard`,
+    // `JobSetDetail`) picks the scoped resource up via `use_context`
+    // without signature changes.
+    let scope = use_explorer_price_scope();
+    let scope_name = scope.name;
+    // The root-level `CheapestPrices` (lib.rs) already loads the cookie
+    // zone's listings on every page. Grab its handle *before* shadowing
+    // so the common no-`?world=` case reuses that fetch instead of
+    // issuing a duplicate request for the same zone.
+    let global_prices = use_context::<CheapestPrices>();
+    let (cookie_zone, _) = crate::global_state::home_world::get_price_zone();
+    let cookie_zone_name = Signal::derive(move || {
+        cookie_zone
+            .get()
+            .map(|z| z.get_name().to_string())
+            .unwrap_or_else(|| "North-America".to_string())
+    });
+    let read_listings = Resource::new(
+        move || (scope_name.get(), cookie_zone_name.get()),
+        move |(world, cookie_world)| {
+            let global_prices = global_prices.clone();
+            async move {
+                if let Some(global) = global_prices.filter(|_| world == cookie_world) {
+                    return global.read_listings.await;
+                }
+                crate::api::get_cheapest_listings(&world)
+                    .await
+                    .map(|cheapest_prices| {
+                        ultros_api_types::cheapest_listings::CheapestListingsMap::from(
+                            cheapest_prices,
+                        )
+                    })
+            }
+        },
+    );
+    provide_context(CheapestPrices { read_listings });
+    provide_context(scope);
     view! {
         <div class="flex flex-col min-h-[calc(100vh-56px)]">
             <div class="p-4 lg:p-8 max-w-[1600px] mx-auto w-full">
@@ -875,8 +1103,8 @@ mod tests {
         );
         // Ensure invalid jobs are filtered out
         assert!(
-            !visible_jobs.iter().any(|(id, _)| id.0 == 43),
-            "Job 43 should be filtered out"
+            !visible_jobs.iter().any(|(id, _)| id.0 == 99),
+            "Job 99 should be filtered out"
         );
         assert!(
             !visible_jobs.iter().any(|(id, _)| id.0 == 44),

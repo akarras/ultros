@@ -9,6 +9,7 @@ use leptos::config::LeptosOptions;
 use tokio_util::sync::CancellationToken;
 use ultros_api_types::world_helper::WorldHelper;
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
+use universalis::UniversalisClient;
 
 use ultros_clickhouse::ClickHouseClient;
 
@@ -37,6 +38,9 @@ pub(crate) struct WebState {
     /// ClickHouse client for analytical queries (Phase 1+ uses this; Phase 0
     /// only writes via the analyzer's dual-write path).
     pub(crate) ch_client: ClickHouseClient,
+    /// Shared Universalis client — reuses one connection pool instead of
+    /// building a reqwest client per request.
+    pub(crate) universalis: UniversalisClient,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -114,5 +118,11 @@ impl FromRef<WebState> for SearchService {
 impl FromRef<WebState> for ClickHouseClient {
     fn from_ref(input: &WebState) -> Self {
         input.ch_client.clone()
+    }
+}
+
+impl FromRef<WebState> for UniversalisClient {
+    fn from_ref(input: &WebState) -> Self {
+        input.universalis.clone()
     }
 }

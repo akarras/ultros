@@ -88,10 +88,11 @@ where
     };
     view! {
         <div class="flex-column">
-            <label>
+            <label for="make-place-textarea">
                 {t!(i18n, make_place_instructions)}
             </label>
             <textarea
+                id="make-place-textarea"
                 class="input h-96"
                 on:input=move |input| set_list(event_target_value(&input))
             ></textarea>

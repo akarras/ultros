@@ -1,8 +1,18 @@
-## 2025-02-14 - Fix OAuth CSRF vulnerability
-**Vulnerability:** OAuth `state` parameter generated during `begin_login` was ignored during `redirect` callback, allowing Cross-Site Request Forgery (CSRF).
-**Learning:** Even when using a mature library like `oauth2-rs`, the framework integration points are critical. The library provides `CsrfToken` helpers, but the application is responsible for persisting and validating them.
-**Prevention:** Always ensure that generated security tokens (CSRF, Nonce, PKCE) are statefully stored (e.g., via `HttpOnly` + `Secure` cookies or session store) during the initial request, and rigorously validated on the callback.
-## 2025-02-15 - Fix Information Exposure in Error Responses
-**Vulnerability:** Detailed error messages were exposed to users in API and web responses via `self.to_string()` and `format!("{self}")`, potentially leaking internal server details or logic.
-**Learning:** Returning `format!("{self}")` or `self.to_string()` directly in `into_response()` for `WebError` or `ApiError` exposes the full error text.
-**Prevention:** Mask errors going to the client as "Internal server error" for 5xx responses, while preserving original error logs server-side via `tracing::error!`.
+## 2024-05-24 - [Add Global Security Headers]
+**Vulnerability:** Missing security headers (X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security)
+**Learning:** The Axum server didn't have global security headers applied, opening the door to clickjacking, MIME-sniffing and MITM attacks via plain HTTP.
+**Prevention:** Always add global security headers via middleware (e.g. `SetResponseHeaderLayer` from `tower_http`) when configuring a web server.
+
+## 2024-05-24 - [Add Timeouts to Webhook Client]
+**Vulnerability:** Denial of Service (DoS) via Server Tarpitting / SSRF
+**Learning:** `reqwest::Client::new()` in Rust does not have a default timeout. If a user sets a malicious webhook URL that holds the connection open, it could exhaust server resources and block other alerts from being sent.
+**Prevention:** Always configure an explicit `.timeout()` when instantiating `reqwest::Client` for outbound HTTP requests to user-controlled URLs.
+
+## 2024-05-24 - [Fix Cookie Path Scoping]
+**Vulnerability:** Incomplete Cookie Scope Configuration
+**Learning:** The `discord_auth` cookie was being set during a `/redirect` endpoint without an explicitly set `Path=/`. This scopes the cookie to the `/redirect` path, meaning the browser wouldn't send the auth cookie to other paths (like `/api/v1/user`), effectively breaking authentication outside that route. Other cookies in the same file were properly using `cookie.set_path("/")` or `CookieBuilder` with `.path("/")`.
+**Prevention:** Always explicitly set `cookie.set_path("/")` for application-wide authentication or session cookies to ensure they are sent to all relevant routes.
+## 2026-07-26 - [Fix Open Redirect Bypass via Whitespace]
+**Vulnerability:** Open Redirect bypass
+**Learning:** Browsers sometimes normalize or ignore whitespace characters like tabs (`\t`) and spaces (` `) in URL paths. A URL like `/\t/evil.com` or `/ /evil.com` starts with `/` and thus bypasses a strict `starts_with("//")` protocol-relative check, but the browser may resolve it to `//evil.com` and redirect the user.
+**Prevention:** Always strip or reject raw whitespace characters (like spaces and tabs) when validating relative redirect URLs to prevent open redirect vulnerabilities.

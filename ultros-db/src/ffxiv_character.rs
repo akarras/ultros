@@ -94,6 +94,20 @@ impl UltrosDb {
     }
 
     #[instrument(skip(self))]
+    pub async fn user_owns_character(
+        &self,
+        discord_user_id: i64,
+        ffxiv_character_id: i32,
+    ) -> Result<bool> {
+        let owned = owned_ffxiv_character::Entity::find()
+            .filter(owned_ffxiv_character::Column::DiscordUserId.eq(discord_user_id))
+            .filter(owned_ffxiv_character::Column::FfxivCharacterId.eq(ffxiv_character_id))
+            .one(&self.db)
+            .await?;
+        Ok(owned.is_some())
+    }
+
+    #[instrument(skip(self))]
     pub async fn get_pending_character_challenges_for_discord_user(
         &self,
         discord_user_id: i64,

@@ -51,7 +51,10 @@ function sanitizeFileComponent(s) {
 const ROUTE_ASSERTS = {
   "/": { titleIncludes: "Ultros" },
   "/items": { titleIncludes: "Ultros" },
-  "/item/46010": { titleIncludes: "Ceremonial Shamshir" },
+  "/item/46010": {
+    titleIncludes: "Ceremonial Shamshir",
+    bodyIncludesAny: ["Fresh", "Caution", "Verify In-Game", "No Data"],
+  },
   "/items/category/Gunbreaker's Arms": { titleIncludes: "Gunbreaker" },
   "/flip-finder": { titleIncludes: "Ultros" },
   "/flip-finder/Gilgamesh": { titleIncludes: "Gilgamesh" },
@@ -60,6 +63,7 @@ const ROUTE_ASSERTS = {
   "/currency-exchange": { titleIncludes: "Ultros" },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
+  "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
   "/privacy": { titleIncludes: "Ultros", bodyIncludesAny: ["privacy", "Privacy"] },
   "/cookie-policy": { titleIncludes: "Ultros", bodyIncludesAny: ["cookie", "Cookie"] },
 };
@@ -89,6 +93,7 @@ function getRoutes() {
     "/currency-exchange",
     "/history",
     "/settings",
+    "/groups",
     "/help",
     "/help/flip-finder",
     "/privacy",
