@@ -61,6 +61,21 @@ To exercise login flow locally:
 LEPTOS_FEATURES=test-auth ./scripts/run_e2e.sh
 ```
 
+### Targeted probes
+
+The runner only asserts on titles and body substrings, which can't see values that
+hydration silently drops. [integration/jobset-card-hydration.cjs](integration/jobset-card-hydration.cjs)
+covers that seam for the gear-set cards on `/items/jobset/<JOB>`: it reads the NQ/HQ
+totals after a direct (SSR + hydrate) load and again after a client-side navigation to
+the same route, and fails if they disagree. It needs market data to be meaningful but
+passes rather than failing when there is none, so it's safe against an empty dev DB.
+
+```bash
+BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:jobset-card-hydration
+```
+
+`JOBSET` (default `SAM`) and `WORLD` (default `Gilgamesh`) pick the route.
+
 ### Caveats
 
 - Requires a populated `.env` (DATABASE_URL, DISCORD_*, KEY) — or those vars exported directly.
