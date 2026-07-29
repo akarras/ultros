@@ -122,6 +122,11 @@ static STATIC_PAGES: LazyLock<Vec<SearchResult>> = LazyLock::new(|| {
     ]
 });
 
+/// Job abbreviations offered as one-click examples in the empty-state hints.
+/// These match the `job equipment` documents the backend indexes as
+/// `"<name> (<abbreviation>)"`, so clicking one lands on that job's gear.
+const JOB_EXAMPLES: [&str; 3] = ["SAM", "WHM", "BLM"];
+
 fn get_static_pages() -> &'static [SearchResult] {
     &STATIC_PAGES
 }
@@ -321,7 +326,7 @@ pub fn SearchBox() -> impl IntoView {
     };
 
     view! {
-        <div class="relative md:w-full sm:w-[424px]">
+        <div class="relative w-full">
             <div class="relative">
                 <input
                     node_ref=text_input
@@ -337,7 +342,9 @@ pub fn SearchBox() -> impl IntoView {
                     aria-keyshortcuts="Meta+K Control+K"
                     aria-busy=move || loading().to_string()
                     aria-controls="search-results"
-                    aria-expanded=move || active().to_string()
+                    // Only the results listbox counts as the combobox popup —
+                    // the empty-state hint panel isn't one.
+                    aria-expanded=move || (active() && !search().is_empty()).to_string()
                     role="combobox"
                     aria-autocomplete="list"
                     aria-activedescendant=move || {
@@ -357,6 +364,9 @@ pub fn SearchBox() -> impl IntoView {
                         <Tooltip tooltip_text=t_string!(i18n, search_box_clear_tooltip)>
                             <button
                                 class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none rounded-full"
+                                // Keep focus on the input so the focusout timer
+                                // never fires and collapses the panel mid-click.
+                                on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
                                 on:click=move |_| {
                                     set_search("".to_string());
                                     if let Some(input) = text_input.get() {
@@ -370,6 +380,50 @@ pub fn SearchBox() -> impl IntoView {
                             </button>
                         </Tooltip>
                     </Show>
+                </div>
+            </div>
+
+            // Empty-state hints: shown while the box is focused but nothing has
+            // been typed, so people discover the less obvious things the index
+            // covers (job gear sets, currencies, tool pages).
+            <div
+                class="absolute w-full mt-2 z-50 p-3 flex flex-col gap-2 bg-[color:var(--color-background-elevated)] border border-[color:var(--color-outline)] rounded-md shadow-lg"
+                class:hidden=move || !active() || !search().is_empty()
+            >
+                <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
+                    {t!(i18n, search_hint_title)}
+                </span>
+                <div class="flex items-center gap-2 text-sm flex-wrap">
+                    <Icon icon=i::FaUserSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_jobs)}</span>
+                    {JOB_EXAMPLES
+                        .iter()
+                        .map(|job| {
+                            view! {
+                                <button
+                                    class="px-2 py-0.5 rounded-full text-xs border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] hover:border-[color:var(--brand-ring)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none"
+                                    on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
+                                    on:click=move |_| {
+                                        set_search(job.to_string());
+                                        if let Some(input) = text_input.get() {
+                                            let _ = input.focus();
+                                        }
+                                        set_active(true);
+                                    }
+                                >
+                                    {*job}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaBoxOpenSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_items)}</span>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                    <Icon icon=i::FaWrenchSolid attr:class="text-[color:var(--color-text-muted)]" />
+                    <span>{t!(i18n, search_hint_tools)}</span>
                 </div>
             </div>
 
@@ -512,14 +566,9 @@ pub fn SearchBox() -> impl IntoView {
                         scroll_to_index=Signal::derive(move || focused_index.get())
 
                     />
-                    <Show when=move || {
-                        let s = search.get();
-                        !s.is_empty() && !loading.get() && search_results.with(|r| r.is_empty())
-                    }>
-                        <div class="p-4 text-center text-sm text-[color:var(--color-text-muted)]">
-                            "No results found for \"" {search} "\""
-                        </div>
-                    </Show>
+                // The empty-results message lives above, outside this wrapper —
+                // this wrapper is itself hidden whenever the result list is
+                // empty, so a nested no-results branch could never render.
                 </div>
             </div>
         </div>
