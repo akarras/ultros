@@ -659,8 +659,8 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                             costs.into_iter().map(|(item_id, count)| {
                                                 if let Some(item) = data.items.get(&item_id) {
                                                     view! {
-                                                        <div class="flex items-center gap-1 px-2 py-1 rounded border border-[color:var(--color-outline)] hover:border-brand-300/60 transition-colors">
-                                                            <span class="font-bold text-brand-200">{count} "x"</span>
+                                                        <div class="flex min-w-0 items-center gap-1 px-2 py-1 rounded border border-[color:var(--color-outline)] hover:border-brand-300/60 transition-colors">
+                                                            <span class="shrink-0 whitespace-nowrap font-bold text-brand-200">{count} "x"</span>
                                                             <SmallItemDisplay item />
                                                         </div>
                                                     }.into_any()
