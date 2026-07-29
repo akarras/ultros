@@ -2,8 +2,8 @@ use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_i18n::I18nContext;
+use leptos_router::components::A;
 
 #[component]
 pub fn ToolHeader(
@@ -191,19 +191,40 @@ mod tests {
     #[test]
     fn test_tool_confidence_level_logic() {
         // High confidence: total_sales >= 20 AND daily_sales >= 1.0
-        assert_eq!(get_tool_confidence_level(20, 1.0), ToolConfidenceLevel::High);
-        assert_eq!(get_tool_confidence_level(100, 5.0), ToolConfidenceLevel::High);
+        assert_eq!(
+            get_tool_confidence_level(20, 1.0),
+            ToolConfidenceLevel::High
+        );
+        assert_eq!(
+            get_tool_confidence_level(100, 5.0),
+            ToolConfidenceLevel::High
+        );
 
         // Medium confidence (misses daily_sales but >= 20 sales)
-        assert_eq!(get_tool_confidence_level(20, 0.9), ToolConfidenceLevel::Medium);
+        assert_eq!(
+            get_tool_confidence_level(20, 0.9),
+            ToolConfidenceLevel::Medium
+        );
 
         // Medium confidence (misses total_sales but >= 5 sales)
-        assert_eq!(get_tool_confidence_level(19, 1.0), ToolConfidenceLevel::Medium);
-        assert_eq!(get_tool_confidence_level(5, 0.0), ToolConfidenceLevel::Medium);
+        assert_eq!(
+            get_tool_confidence_level(19, 1.0),
+            ToolConfidenceLevel::Medium
+        );
+        assert_eq!(
+            get_tool_confidence_level(5, 0.0),
+            ToolConfidenceLevel::Medium
+        );
 
         // Low data: total_sales < 5
-        assert_eq!(get_tool_confidence_level(4, 100.0), ToolConfidenceLevel::LowData);
-        assert_eq!(get_tool_confidence_level(0, 0.0), ToolConfidenceLevel::LowData);
+        assert_eq!(
+            get_tool_confidence_level(4, 100.0),
+            ToolConfidenceLevel::LowData
+        );
+        assert_eq!(
+            get_tool_confidence_level(0, 0.0),
+            ToolConfidenceLevel::LowData
+        );
     }
 
     #[test]
