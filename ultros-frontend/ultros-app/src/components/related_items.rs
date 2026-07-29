@@ -1013,7 +1013,10 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 empty:hidden">
+            // The inner #vendor-sources / #exchange-sources / #leve-sources ids
+            // stay — MarketStatsPanel's source callout links to them directly.
+            // This wrapper id is the jump-nav's coarser "Sources" destination.
+            <div id="sources" class="scroll-mt-16 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 empty:hidden">
                 <VendorItems item_id />
                 <ExchangeSources item_id />
                 <LeveSources item_id />

@@ -13,6 +13,25 @@ pub enum FreshnessTone {
     Neutral,
 }
 
+impl FreshnessTone {
+    pub fn css_classes(&self) -> &'static str {
+        match self {
+            Self::Success => {
+                "text-emerald-300 border-emerald-400/40 bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]"
+            }
+            Self::Warning => {
+                "text-amber-300 border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
+            }
+            Self::Error => {
+                "text-red-300 border-red-400/40 bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]"
+            }
+            Self::Neutral => {
+                "text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum FreshnessLabel {
@@ -174,5 +193,25 @@ mod tests {
         let display =
             get_freshness_verdict_display(FreshnessVerdict::Fresh, Some(Duration::seconds(-10)));
         assert_eq!(display.age_formatted, Some("0s".to_string()));
+    }
+
+    #[test]
+    fn test_freshness_tone_css_classes() {
+        assert_eq!(
+            FreshnessTone::Success.css_classes(),
+            "text-emerald-300 border-emerald-400/40 bg-[color:color-mix(in_srgb,#10b981_14%,transparent)]"
+        );
+        assert_eq!(
+            FreshnessTone::Warning.css_classes(),
+            "text-amber-300 border-amber-400/40 bg-[color:color-mix(in_srgb,#f59e0b_12%,transparent)]"
+        );
+        assert_eq!(
+            FreshnessTone::Error.css_classes(),
+            "text-red-300 border-red-400/40 bg-[color:color-mix(in_srgb,#ef4444_12%,transparent)]"
+        );
+        assert_eq!(
+            FreshnessTone::Neutral.css_classes(),
+            "text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+        );
     }
 }

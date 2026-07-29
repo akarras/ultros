@@ -116,7 +116,14 @@
         background-color: var(--color-background);
         color: var(--text-color);
         position: relative;
-        overflow-x: hidden;
+        /* Deliberately no `overflow-x` here. Declaring it makes BODY itself a
+           scroll container (the hidden x-axis forces y to compute to `auto`),
+           and every `position: sticky` descendant then resolves against
+           BODY's scrollport instead of the viewport — which never scrolls, so
+           nothing ever sticks. That silently kills the Flip Finder's sticky
+           control bar and table header. Horizontal page scroll is already
+           suppressed by `overflow-x: hidden` on `html`, which the UA
+           propagates to the viewport. */
     }
 
     :focus-visible {
@@ -1938,6 +1945,153 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 .toolbar-spacer {
     flex: 1;
+}
+
+/* ----- Flip Finder sticky control bar -----
+   The bar is the only filter surface on the page, so it must not grow: the
+   table header sticks at `top: STICKY_BAR_HEIGHT` (76px, components/filter_chip.rs)
+   and a taller bar would cover it. The chip row scrolls horizontally instead
+   of wrapping. Deliberately no `overflow` here — an overflow on an ancestor
+   of the table header would re-parent its scrollport away from the viewport. */
+@utility sticky-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background-color: var(--color-background-panel);
+    border-bottom: 1px solid var(--color-outline);
+}
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    color: var(--color-text);
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+    border: 1px solid var(--color-outline);
+}
+.filter-chip-editing {
+    background-color: transparent;
+    border-color: var(--brand-ring);
+}
+.filter-chip-label {
+    color: var(--color-text-muted);
+}
+.filter-chip-value {
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.filter-chip-value:hover {
+    color: var(--brand-fg);
+}
+.filter-chip-static {
+    color: inherit;
+}
+.filter-chip-x {
+    display: inline-flex;
+    color: var(--color-text-muted);
+}
+.filter-chip-x:hover {
+    color: var(--color-text);
+}
+/* Horizontal chip strip. Safe as a scrollport: nothing sticky lives inside
+   it, and it is not an ancestor of the virtualized list. */
+.filter-chip-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.5rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-width: 0;
+    flex: 1;
+    /* The bar is height-locked, so a reserved scrollbar gutter would eat
+       into the chips themselves. Scrolling still works via trackpad,
+       shift+wheel and focus. */
+    scrollbar-width: none;
+}
+.filter-chip-row::-webkit-scrollbar {
+    display: none;
+}
+/* ----- Flip Finder grid: horizontal scrollports -----
+   The grid is wider than the viewport at every breakpoint, and `html`/`body`
+   are `overflow-x: hidden`, so something has to scroll or the right-hand
+   columns are simply unreachable. It cannot be a wrapper around the list: in
+   window-scroll mode that wrapper becomes the nearest scrollport for the
+   sticky table header (an `overflow-x` forces `overflow-y` to compute to
+   `auto`), and since it never scrolls vertically the header would never
+   stick. So the header and the row area are two *sibling* scrollports of
+   equal width whose scrollLeft is synchronized in analyzer.rs. */
+.analyzer-hscroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Rows scroll underneath the sticky header, so it cannot be
+       semi-transparent. */
+    background-color: var(--color-background-panel);
+    scrollbar-width: thin;
+}
+/* One width for the header row, every data row, and the spacer that holds the
+   rows, so the two scrollports scroll through the same range and the row
+   striping covers it.
+
+   The base value tracks the columns each breakpoint actually reveals (several
+   are `hidden md:flex` / `lg:flex`). `--analyzer-extra-cols` is set inline by
+   the route and carries the optional columns the user has switched on beyond
+   the default set — the stylesheet cannot know those. */
+.analyzer-table {
+    --analyzer-row-min-width: calc(38rem + var(--analyzer-extra-cols, 0px));
+}
+@media (min-width: 768px) {
+    .analyzer-table {
+        --analyzer-row-min-width: calc(61rem + var(--analyzer-extra-cols, 0px));
+    }
+}
+@media (min-width: 1024px) {
+    .analyzer-table {
+        --analyzer-row-min-width: calc(68rem + var(--analyzer-extra-cols, 0px));
+    }
+}
+.analyzer-grid-row {
+    min-width: var(--analyzer-row-min-width, 0px);
+}
+
+/* Compact control-bar button. Sized to fit the bar's 32px rows — the
+   standard .btn-secondary padding would overflow them. */
+.sticky-bar-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-outline);
+    color: var(--color-text);
+    background-color: color-mix(in srgb, var(--color-text) 5%, transparent);
+    cursor: pointer;
+}
+.sticky-bar-button:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+/* Popovers hung off the bar (columns picker, + Filter menu). The bar is
+   `position: sticky`, so it is already the containing block for these. */
+.sticky-bar-popover {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 30;
+    margin-top: 0.25rem;
+    max-height: 60vh;
+    overflow-y: auto;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.5rem;
+    background-color: var(--color-background-panel);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
 /* ----- Item Explorer chip strip (consumed by ItemExplorerToolbar) ----- */

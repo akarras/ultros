@@ -203,7 +203,14 @@ impl UpdateService {
                                 )));
                             }
                             Err(e) => {
-                                error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up listing update failed")
+                                error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up listing update failed");
+                                // Storing the sales would bump `listing_last_updated`,
+                                // the very marker this service diffs against Universalis
+                                // to decide what still needs recovering. Bumping it after
+                                // a failed listing write would make the item look freshly
+                                // ingested and hide the gap from every later pass, so
+                                // leave it untouched and retry on the next cycle.
+                                return;
                             }
                         }
                         match self.db.update_sales(sales, item_id, world_id).await {
@@ -306,6 +313,28 @@ mod tests {
             vec![theirs(1, 1_000 + UPLOAD_TIME_SLACK_SECONDS)],
         );
         assert!(missed.is_empty());
+    }
+
+    /// The `listing_last_updated` marker is the *only* signal that an item still
+    /// needs recovering, and it is compared against Universalis' upload time. If a
+    /// failed write stamps it anyway, the item reads as in-sync from then on and no
+    /// later pass retries it. That is why `update_sales` waits until the sales have
+    /// landed before writing the marker, and why the catch-up loop skips the sales
+    /// update entirely when the listing update failed.
+    #[test]
+    fn marker_bumped_by_a_failed_write_permanently_hides_the_gap() {
+        let their_upload = 1_000;
+        // A catch-up attempt runs well after their upload, fails to write, but
+        // still stamps `listing_last_updated` with "now".
+        let failed_attempt_at = their_upload + UPLOAD_TIME_SLACK_SECONDS + 500;
+        let missed = missed_updates(
+            vec![ours(1, failed_attempt_at)],
+            vec![theirs(1, their_upload)],
+        );
+        assert!(
+            missed.is_empty(),
+            "a prematurely bumped marker makes the still-missing item invisible to catch-up"
+        );
     }
 
     #[test]

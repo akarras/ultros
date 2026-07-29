@@ -641,14 +641,15 @@ pub fn ListView() -> impl IntoView {
                                                 }
                                             })
                                             .collect::<Vec<_>>();
+                                        // ⚡ Bolt Optimization: Replace stable sort and vector reallocation
+                                        // with in-place unstable sort and truncation to avoid O(N) allocation
+                                        // during hot search filter renders.
                                         score
-                                            .sort_by_key(|(_, i)| (
+                                            .sort_unstable_by_key(|(_, i)| (
                                                 Reverse(i.level_item),
                                             ));
+                                        score.truncate(100);
                                         score
-                                            .into_iter()
-                                            .take(100)
-                                            .collect::<Vec<_>>()
                                     })
                             };
                             let adding = add_item.pending();

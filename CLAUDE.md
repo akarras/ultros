@@ -11,12 +11,54 @@ Run `./check_ci.sh` from the repo root. It runs `cargo fmt --all -- --check` and
 
 `./check_ci.sh` runs clippy which compiles the whole workspace, and the `xiv-gen-db` build script reads from `xiv-gen/ffxiv-datamining/` — a git submodule. The csv data for `cn`, `ko`, `tc` lives in *nested* submodules of `ffxiv-datamining` (separate xivapi-adjacent repos), so a non-recursive init only gets you en/ja/de/fr and the build still panics on `cn/Item.csv`.
 
-Two paths:
+### Use `--reference`, not `--init --recursive`
 
-1. Initialize **recursively**: `git submodule update --init --recursive` (use `--depth=1` to keep it fast). May require user permission depending on the sandbox.
-2. If submodule init is blocked, **at least run `cargo fmt --all -- --check`** — it doesn't need the submodule and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
+A plain `git submodule update --init --recursive` does **not** work reliably here, and `--depth=1` makes it worse. Three failure modes, all observed:
+
+- **`universalis-assets` + `--depth=1`** — the shallow fetch doesn't contain the pinned commit, so git aborts with `fatal: Unable to find current revision in submodule path ...` and leaves the directory **empty**. `git submodule status` still shows it initialized, so it only surfaces later as `ultros-xiv-icons/build.rs` panicking with `No such file or directory` on `universalis-assets/icon2x`. A failed shallow attempt also leaves a broken per-worktree gitdir that makes retries fail until it's removed.
+- **`ffxiv-datamining`** — a full clone from GitHub often dies partway with `RPC failed; curl 56 Recv failure: Connection reset by peer` / `fatal: early EOF`. Git retries once, then aborts the whole command.
+- **Anything after the first failure** — because the abort is command-wide, later submodules in the same invocation get registered but never populated. `classjob-icons` checked out "successfully" at the right SHA with **zero files**, showing up in `git status` as wholesale deleted content.
+
+Instead, initialize each submodule against the main clone's already-populated module dir. This is fast and mostly offline:
+
+```bash
+MAIN=/path/to/your/main/ffxiv-playground   # NOT the worktree
+
+git submodule update --init --reference $MAIN/.git/modules/ultros-frontend/universalis-assets ultros-frontend/ultros-xiv-icons/universalis-assets
+git submodule update --init --reference $MAIN/.git/modules/xiv-gen/ffxiv-datamining xiv-gen/ffxiv-datamining
+git submodule update --init --force ultros/static/classjob-icons
+
+# cn/ko/tc are NESTED submodules of ffxiv-datamining, also cached in main:
+M=$MAIN/.git/modules/xiv-gen/ffxiv-datamining/modules/csv
+for s in cn ko tc; do
+  git -C xiv-gen/ffxiv-datamining submodule update --init --reference "$M/$s" "csv/$s"
+done
+```
+
+Then **verify** rather than trusting exit codes — several of these fail silently:
+
+```bash
+ls xiv-gen/ffxiv-datamining/csv/{en,cn,tc}/Item.csv xiv-gen/ffxiv-datamining/csv/ko/csv/Item.csv
+ls ultros-frontend/ultros-xiv-icons/universalis-assets/icon2x | head -1
+ls ultros/static/classjob-icons | wc -l   # must be non-zero
+git status --short                        # no submodule should show as modified
+```
+
+`csv/ko` genuinely nests one level deeper than its siblings (`csv/ko/csv/Item.csv`) — that's the ko repo's own layout, not a broken checkout.
+
+If submodule init is blocked entirely, **at least run `cargo fmt --all -- --check`** — it doesn't need the submodule and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
 
 Either way, *do not commit and push without running fmt-check* — every formatting mistake will fail CI and waste a round trip.
+
+### Reading `check_ci.sh`'s exit code
+
+Don't pipe it into `tail`/`grep` and read `$?` — that's the pipe's status and will report a false success. Redirect and check explicitly:
+
+```bash
+./check_ci.sh > /tmp/ci.log 2>&1; echo "REAL_EXIT=$?"; tail -30 /tmp/ci.log
+```
+
+Clippy can also be **OOM-killed** on a memory-constrained machine (exit `137`, `Killed: 9`), which is not a lint failure. Re-run with `cargo clippy --all-targets -j 2 -- -D warnings` to lower peak memory.
 
 ## Windows: OpenSSL via vendored build
 

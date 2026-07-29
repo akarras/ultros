@@ -1,4 +1,7 @@
-use crate::analysis::{SaleSummary, get_sales_cadence, roi_badge_class};
+use crate::analysis::{
+    DerivedConfidence, SaleSummary, derived_confidence, get_sales_cadence, price_drift_pct,
+    return_on_investment, roi_badge_class, velocity_per_day,
+};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -10,6 +13,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
+        filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -17,11 +21,10 @@ use crate::{
         query_button::QueryButton,
         realtime_status::RealtimeStatus,
         sales_cadence_badge::SalesCadenceBadge,
+        saved_views::SavedViewsMenu,
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
-        tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         tooltip::*,
         virtual_scroller::*,
         world_picker::*,
@@ -29,6 +32,7 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
+    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
 };
 use ultros_api_types::{
     resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
@@ -60,36 +64,52 @@ impl EnrichmentMaps {
 }
 
 /// Stable URL IDs for optional columns. Required columns (HQ, Item,
-/// Profit, ROI, Buy Price) are not in this list — they always render.
-/// Order here is the canonical render + serialization order.
+/// Profit, Buy Price) are not in this list — they always render.
+///
+/// Order here is the columns-picker + `?cols=` serialization order:
+/// default-on columns first, opt-ins after. It is deliberately *not* the
+/// DOM order — the markup interleaves the required columns — but with the
+/// default set the two coincide.
 const COL_PROFIT_PER_DAY: &str = "profit_per_day";
+const COL_VELOCITY: &str = "velocity";
+const COL_DRIFT: &str = "drift";
+const COL_CONFIDENCE: &str = "confidence";
 const COL_WORLD: &str = "world";
+const COL_LAST_SOLD: &str = "last_sold";
+const COL_ROI: &str = "roi";
 const COL_DATACENTER: &str = "datacenter";
 const COL_TREND: &str = "trend";
 const COL_SALES_PER_DAY: &str = "sales_per_day";
 const COL_VOLUME_30D: &str = "volume_30d";
-const COL_LAST_SOLD: &str = "last_sold";
 
 const ALL_OPTIONAL_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
+    COL_VELOCITY,
+    COL_DRIFT,
+    COL_CONFIDENCE,
     COL_WORLD,
+    COL_LAST_SOLD,
+    COL_ROI,
     COL_DATACENTER,
     COL_TREND,
     COL_SALES_PER_DAY,
     COL_VOLUME_30D,
-    COL_LAST_SOLD,
 ];
 
 /// Default visible set when `?cols=` is absent from the URL. Once the
 /// user explicitly sets the param (even to ""), we respect that exact
 /// set instead of falling back to defaults.
+///
+/// ClickHouse-only columns (trend, sales/day, 30d volume) are off because
+/// the rollup covers ~7% of traded items, so they would be blank on most
+/// rows. ROI is off because it ranks by ratio, which is the wrong
+/// objective when retainer slots are the scarce resource.
 const DEFAULT_VISIBLE_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
+    COL_VELOCITY,
+    COL_DRIFT,
+    COL_CONFIDENCE,
     COL_WORLD,
-    COL_DATACENTER,
-    COL_TREND,
-    COL_SALES_PER_DAY,
-    COL_VOLUME_30D,
     COL_LAST_SOLD,
 ];
 
@@ -113,12 +133,13 @@ fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> 
 }
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
-use humantime::{format_duration, parse_duration};
+use humantime::parse_duration;
 use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
+    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    location::Location,
 };
 use std::{
     cmp::Reverse,
@@ -132,6 +153,8 @@ use ultros_api_types::{
     websocket::{FilterPredicate, SocketMessageType, is_analyzer_market_update_relevant},
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
+use web_sys::wasm_bindgen::JsCast;
+use web_sys::wasm_bindgen::closure::Closure;
 use xiv_gen::ItemId;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -145,6 +168,10 @@ struct ProfitData {
     estimated_sale_price: i32,
     cheapest_price: i32,
     cheapest_world_id: i32,
+    /// Raw sale prices in the API's newest-first order, captured before
+    /// `compute_summary` sorts its own copy. `price_drift_pct` needs the
+    /// chronological order; every other consumer wants the sorted one.
+    prices: Vec<i32>,
     sale_summary: SaleSummary,
 }
 
@@ -161,6 +188,49 @@ enum SortMode {
     Roi,
     Profit,
     ProfitPerDay,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+enum SortDir {
+    Asc,
+    #[default]
+    Desc,
+}
+
+impl FromStr for SortDir {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "asc" => Ok(SortDir::Asc),
+            "desc" => Ok(SortDir::Desc),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for SortDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SortDir::Asc => "asc",
+            SortDir::Desc => "desc",
+        })
+    }
+}
+
+/// Sort rows in place. Extracted from the `sorted_data` memo so the
+/// ordering is unit-testable without a reactive runtime.
+fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
+    let key = |d: &CalculatedProfitData| -> i32 {
+        match mode {
+            SortMode::Roi => d.return_on_investment,
+            SortMode::Profit => d.profit,
+            SortMode::ProfitPerDay => d.profit_per_day,
+        }
+    };
+    match dir {
+        SortDir::Desc => rows.sort_by_key(|d| Reverse(key(d))),
+        SortDir::Asc => rows.sort_by_key(key),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -336,6 +406,9 @@ impl ProfitTable {
                 let hq = sale.hq;
                 let key = ProfitKey { item_id, hq };
                 let (raw_region_price, region_world_id) = *region_cheapest.get(&key)?;
+                // Capture the wire-order prices before `compute_summary` consumes
+                // the SaleData — the Drift column reads them newest-first.
+                let prices: Vec<i32> = sale.sales.iter().map(|s| s.price_per_unit).collect();
                 let summary = compute_summary(sale, filter_outliers);
 
                 // Troll-listing guard: if the region floor is implausibly high vs the median,
@@ -361,6 +434,7 @@ impl ProfitTable {
 
                 Some(ProfitData {
                     estimated_sale_price,
+                    prices,
                     sale_summary: summary,
                     cheapest_world_id: region_world_id,
                     cheapest_price: raw_region_price,
@@ -403,16 +477,225 @@ fn visible_keys<T>(
         .collect()
 }
 
+/// Normalize a raw `?vel=` value into a usable floor.
+///
+/// `"NaN".parse::<f32>()` succeeds, and `v >= NaN` is false for every row,
+/// so a crafted `?vel=NaN` would silently empty the table. Non-finite
+/// values are treated as "no floor". Normalizing in one place keeps the
+/// filter, the chip and the toolbar input agreeing about whether a floor
+/// is active.
+fn normalize_velocity_floor(raw: Option<f32>) -> Option<f32> {
+    raw.filter(|v| v.is_finite())
+}
+
+/// Does a row clear an explicit velocity floor?
+///
+/// Prefers the ClickHouse rate so the number the Velocity column displays
+/// is the number the filter evaluates, and falls back to the rate derived
+/// from the 6-sale buffer for the ~93% of rows the rollup does not cover.
+/// A row with no rate at all cannot clear a floor.
+fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -> bool {
+    ch_rate.or(derived).map(|v| v >= min).unwrap_or(false)
+}
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `query_signal` key it drives, so the list doubles as the
+// URL contract. The sticky bar renders one chip per *set* filter and the
+// `+ Filter` menu offers the rest — no filter is ever drawn twice.
+const FILTER_PROFIT: &str = "profit";
+const FILTER_PROFIT_PER_DAY: &str = "ppd";
+const FILTER_ROI: &str = "roi";
+const FILTER_SALES: &str = "sales";
+const FILTER_VELOCITY: &str = "vel";
+const FILTER_MIN_BUY: &str = "min-buy";
+const FILTER_MAX_PRICE: &str = "max-price";
+const FILTER_NEXT_SALE: &str = "next-sale";
+const FILTER_LAST_SOLD: &str = "last-sold";
+const FILTER_PRE_TAX: &str = "tax";
+const FILTER_SHOW_SUSPICIOUS: &str = "show-suspicious";
+// Chip-only filters: picked from a list or off a row rather than typed, so
+// they are never offered by the `+ Filter` menu.
+const FILTER_CATEGORY: &str = "category";
+const FILTER_WORLD: &str = "world";
+const FILTER_DATACENTER: &str = "datacenter";
+
+/// Filters the `+ Filter` menu can add, in menu order.
+const ADDABLE_FILTERS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_PROFIT_PER_DAY,
+    FILTER_ROI,
+    FILTER_SALES,
+    FILTER_VELOCITY,
+    FILTER_MIN_BUY,
+    FILTER_MAX_PRICE,
+    FILTER_NEXT_SALE,
+    FILTER_LAST_SOLD,
+    FILTER_PRE_TAX,
+    FILTER_SHOW_SUSPICIOUS,
+];
+
+/// Value a filter takes when it is added from the `+ Filter` menu.
+///
+/// A filter with no starting value would render a chip with nothing in it,
+/// so every entry in [`ADDABLE_FILTERS`] must have one. These mirror the
+/// example values the old toolbar carried as input placeholders.
+fn default_filter_value(id: &str) -> &'static str {
+    match id {
+        FILTER_PROFIT => "100000",
+        FILTER_PROFIT_PER_DAY => "10000",
+        FILTER_ROI => "200",
+        FILTER_SALES => "2",
+        FILTER_VELOCITY => "0.2",
+        FILTER_MIN_BUY => "5000",
+        FILTER_MAX_PRICE => "500000",
+        FILTER_NEXT_SALE => "7d",
+        FILTER_LAST_SOLD => "1d",
+        // Booleans: the chip's presence *is* the value, so `x` restores the
+        // default (post-tax, suspicious rows hidden).
+        FILTER_PRE_TAX => "false",
+        FILTER_SHOW_SUSPICIOUS => "true",
+        _ => "",
+    }
+}
+
+/// Apply an edited chip value to a numeric filter.
+///
+/// A parse failure keeps `current`. The toolbar these chips replaced did the
+/// same (`if let Ok(v) = … { set } else if value.is_empty() { clear }`), and
+/// the alternative is worse than it sounds: `set(raw.parse().ok())` deletes
+/// the filter the user is in the middle of editing the moment they type
+/// something the target type rejects — `-5` into a `usize` count, say — with
+/// no message and no undo. Only an explicit clear removes a filter, and by
+/// the time a value reaches here `committed_value` has already mapped blank
+/// input to `None`.
+fn commit_numeric<T: FromStr>(current: Option<T>, raw: Option<String>) -> Option<T> {
+    match raw {
+        None => None,
+        Some(s) => s.parse::<T>().ok().or(current),
+    }
+}
+
+/// Render a velocity floor for the chip's resting state.
+///
+/// `f32::to_string` prints the round-tripped `?vel=0.2` as
+/// `0.20000000298023224`. Two decimals is finer than the filter's own
+/// resolution, and the result parses back to the same value, so the input
+/// shows this too rather than a second, uglier spelling of the same number.
+fn format_velocity_floor(v: f32) -> String {
+    let s = format!("{v:.2}");
+    match s.contains('.') {
+        // `trim_end_matches('0')` alone would turn "10.00" into "1".
+        true => s.trim_end_matches('0').trim_end_matches('.').to_string(),
+        false => s,
+    }
+}
+
+/// Rendered width of the optional columns that are *not* in the default set,
+/// in px.
+///
+/// The grid's base width lives in the stylesheet, which is the only place that
+/// can know which columns a breakpoint hides. What it cannot know is which
+/// optional columns the user switched on, so that part is measured here and
+/// handed over as `--analyzer-extra-cols`. Under-reserving is the failure that
+/// matters: the two scrollports would stop short of the last column and it
+/// would be unreachable.
+fn extra_column_width_px(visible: &std::collections::HashSet<&'static str>) -> u32 {
+    const EXTRA_COLUMN_WIDTHS: &[(&str, u32)] = &[
+        (COL_ROI, 112),
+        (COL_DATACENTER, 112),
+        (COL_TREND, 100),
+        (COL_SALES_PER_DAY, 88),
+        (COL_VOLUME_30D, 88),
+    ];
+    EXTRA_COLUMN_WIDTHS
+        .iter()
+        .filter(|(col, _)| visible.contains(col))
+        .map(|(_, w)| w)
+        .sum()
+}
+
+/// Filters the `+ Filter` menu should offer: everything addable that is not
+/// already on screen as a chip.
+fn available_filters(active: &[&str]) -> Vec<&'static str> {
+    ADDABLE_FILTERS
+        .iter()
+        .copied()
+        .filter(|id| !active.contains(id))
+        .collect()
+}
+
+/// Regions whose cross-region listings can be pulled in alongside the
+/// current world's own region. Shared between the cross-region toggle's
+/// resource (in `AnalyzerWorldView`) and the per-region opt-out checkboxes
+/// rendered in the Columns popover (in `AnalyzerTable`) — both need the same
+/// list, and only one of them may query it.
+const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
+
+/// One sortable column header.
+///
+/// Clicking an inactive column sorts by it descending; clicking the column
+/// already in effect flips the direction. The arrow reflects the direction
+/// actually applied — the three call sites this replaces each hardcoded a
+/// down arrow, so `?dir=asc` rendered ascending rows under a descending
+/// glyph, and nothing in the UI could reach `?dir=` at all.
+///
+/// `dir` is omitted from the href when it would be the default, so the
+/// common case stays a clean `?sort=…` and bookmarks don't accumulate a
+/// redundant param.
 #[component]
-fn PresetFilterButton(href: &'static str, #[prop(into)] label: String) -> impl IntoView {
+fn SortHeader(
+    mode: SortMode,
+    #[prop(into)] label: String,
+    sort_mode: Memo<Option<SortMode>>,
+    sort_dir: Memo<Option<SortDir>>,
+) -> impl IntoView {
+    let Location {
+        pathname, query, ..
+    } = use_location();
+    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::ProfitPerDay) == mode);
+    let dir = Signal::derive(move || sort_dir().unwrap_or_default());
     view! {
         <a
-            href=href
-            class="btn-secondary"
+            class=move || {
+                if is_active() {
+                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                } else {
+                    "!text-brand-300 hover:text-brand-200"
+                }
+            }
+            aria-current=move || if is_active() { "true" } else { "false" }
+            href=move || {
+                let mut q = query();
+                q.remove("sort");
+                q.remove("dir");
+                q.insert("sort".to_string(), mode.to_string());
+                let next = if is_active() {
+                    match dir() {
+                        SortDir::Desc => SortDir::Asc,
+                        SortDir::Asc => SortDir::Desc,
+                    }
+                } else {
+                    SortDir::Desc
+                };
+                if next != SortDir::default() {
+                    q.insert("dir".to_string(), next.to_string());
+                }
+                format!("{}{}", pathname(), q.to_query_string())
+            }
         >
-            {label}
+            <div class="flex items-center gap-2">
+                {label}
+                {move || {
+                    is_active()
+                        .then(|| match dir() {
+                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
+                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
+                        })
+                }}
+            </div>
         </a>
     }
+    .into_any()
 }
 
 #[component]
@@ -424,6 +707,19 @@ fn AnalyzerTable(
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
     filter_outliers: bool,
+    /// Current world's region name, if resolvable. Only used to exclude the
+    /// current region from the cross-region opt-out list in the Columns
+    /// popover — a plain value like `filter_outliers`, not a reactive prop,
+    /// since this component remounts whenever the caller's region changes.
+    region: Option<String>,
+    /// Current state of the cross-region toggle, mirroring `filter_outliers`.
+    cross_region_enabled: bool,
+    /// The caller's own `query_signal` setters for `?cross=` / `?filter-outliers=`.
+    /// Threaded through as props rather than re-derived here so there is a
+    /// single `query_signal` per URL key instead of two independent ones
+    /// drifting in and out of the router's query-mutation queue.
+    set_cross_region_enabled: SignalSetter<Option<bool>>,
+    set_filter_outliers: SignalSetter<Option<bool>>,
     on_market_update: Callback<()>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -448,14 +744,22 @@ fn AnalyzerTable(
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    let (max_predicted_time, set_max_predicted_time) = query_signal::<String>("next-sale");
+    // Seeded to 1d by AnalyzerWorldView so a first-time visitor isn't shown
+    // items that sell once a month. The field sits in the primary toolbar and
+    // the chip has an X, so the default is visible and one click from gone.
+    let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
+    let (min_velocity, set_min_velocity) = query_signal::<f32>("vel");
+    // Single normalization point for the floor — the filter, the summary
+    // chip and the toolbar input all read this, never `min_velocity` raw.
+    let velocity_floor = Memo::new(move |_| normalize_velocity_floor(min_velocity()));
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
     let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
@@ -464,6 +768,7 @@ fn AnalyzerTable(
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
+    let show_filter_menu = RwSignal::new(false);
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -493,21 +798,145 @@ fn AnalyzerTable(
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
-    let predicted_time_string = Memo::new(move |_| {
-        predicted_time()
-            .map(|duration| format_duration(duration).to_string())
-            .unwrap_or("---".to_string())
-    });
 
     let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
-    let show_more = RwSignal::new(false);
     let last_sold_duration =
         Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
-    let last_sold_string = Memo::new(move |_| {
-        last_sold_duration()
-            .map(|d| format_duration(d).to_string())
-            .unwrap_or("---".to_string())
+
+    // Filters currently drawn as a chip. Drives the "no active filters"
+    // hint and keeps `+ Filter` from offering a second copy of something
+    // the user can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        let mut push_if = |set: bool, id: &'static str| {
+            if set {
+                active.push(id);
+            }
+        };
+        push_if(minimum_profit().is_some(), FILTER_PROFIT);
+        push_if(minimum_profit_per_day().is_some(), FILTER_PROFIT_PER_DAY);
+        push_if(minimum_roi().is_some(), FILTER_ROI);
+        push_if(minimum_sales().is_some(), FILTER_SALES);
+        push_if(velocity_floor().is_some(), FILTER_VELOCITY);
+        push_if(min_buy_price().is_some(), FILTER_MIN_BUY);
+        push_if(max_purchase_price().is_some(), FILTER_MAX_PRICE);
+        push_if(max_predicted_time().is_some(), FILTER_NEXT_SALE);
+        push_if(last_sold_within().is_some(), FILTER_LAST_SOLD);
+        push_if(tax_enabled() == Some(false), FILTER_PRE_TAX);
+        push_if(show_suspicious_active(), FILTER_SHOW_SUSPICIOUS);
+        push_if(category_filter().is_some(), FILTER_CATEGORY);
+        push_if(world_filter().is_some(), FILTER_WORLD);
+        push_if(datacenter_filter().is_some(), FILTER_DATACENTER);
+        active
     });
+
+    // Menu label for a filter. Reuses the labels the old toolbar fields
+    // carried, which are longer and more explanatory than the chip labels —
+    // the menu is where a filter has to be recognized, not just recalled.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, analyzer_filter_profit_min_label).to_string(),
+            FILTER_PROFIT_PER_DAY => {
+                t_string!(i18n, analyzer_filter_profit_per_day_min_label).to_string()
+            }
+            FILTER_ROI => t_string!(i18n, analyzer_filter_roi_min_label).to_string(),
+            FILTER_SALES => t_string!(i18n, analyzer_filter_sales_min_label).to_string(),
+            FILTER_VELOCITY => t_string!(i18n, analyzer_filter_velocity_min_label).to_string(),
+            FILTER_MIN_BUY => t_string!(i18n, analyzer_filter_min_buy_label).to_string(),
+            FILTER_MAX_PRICE => t_string!(i18n, analyzer_filter_buy_max_label).to_string(),
+            FILTER_NEXT_SALE => t_string!(i18n, analyzer_filter_max_sale_time_label).to_string(),
+            FILTER_LAST_SOLD => t_string!(i18n, analyzer_last_sold_within).to_string(),
+            FILTER_PRE_TAX => t_string!(i18n, analyzer_pre_tax).to_string(),
+            FILTER_SHOW_SUSPICIOUS => t_string!(i18n, analyzer_show_suspicious).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // Adding a filter seeds it with `default_filter_value` so the chip has
+    // something to show; the user edits it in place from there.
+    let add_filter = move |id: &str| {
+        let value = default_filter_value(id);
+        match id {
+            FILTER_PROFIT => set_minimum_profit(value.parse().ok()),
+            FILTER_PROFIT_PER_DAY => set_minimum_profit_per_day(value.parse().ok()),
+            FILTER_ROI => set_minimum_roi(value.parse().ok()),
+            FILTER_SALES => set_minimum_sales(value.parse().ok()),
+            FILTER_VELOCITY => set_min_velocity(value.parse().ok()),
+            FILTER_MIN_BUY => set_min_buy_price(value.parse().ok()),
+            FILTER_MAX_PRICE => set_max_purchase_price(value.parse().ok()),
+            FILTER_NEXT_SALE => set_max_predicted_time(Some(value.to_string())),
+            FILTER_LAST_SOLD => set_last_sold_within(Some(value.to_string())),
+            FILTER_PRE_TAX => set_tax_enabled(Some(false)),
+            FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
+            _ => {}
+        }
+    };
+
+    // --- Horizontal scroll sync ---------------------------------------------
+    // Two sibling scrollports: one on the sticky header, one on the row area
+    // (the list's own row container, which already computes to
+    // `overflow-x: auto`). A single scrollport wrapping the list is not an
+    // option — it would become the nearest scrollport for the sticky header
+    // and stop it sticking to the viewport — and no scrollport at all leaves
+    // the right-hand columns clipped by `html { overflow-x: hidden }` with no
+    // way to reach them.
+    let header_scroll = NodeRef::<leptos::html::Div>::new();
+    let list_scroll = NodeRef::<leptos::html::Div>::new();
+    // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
+    // firing after the component is disposed.
+    let hscroll_listeners =
+        StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
+    on_cleanup(move || {
+        hscroll_listeners.update_value(|listeners| {
+            for (el, cb) in listeners.drain(..) {
+                let _ =
+                    el.remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
+            }
+        });
+    });
+    Effect::new(move |_| {
+        // Re-runs when the refs are populated; the guard keeps a second run
+        // from double-registering.
+        let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
+            return;
+        };
+        if hscroll_listeners.with_value(|l| !l.is_empty()) {
+            return;
+        }
+        // Mirroring writes `scrollLeft` on the other element, which fires its
+        // scroll event in turn; the equality check is what keeps that from
+        // ping-ponging.
+        let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
+            Closure::wrap(Box::new(move || {
+                let x = from.scroll_left();
+                if to.scroll_left() != x {
+                    to.set_scroll_left(x);
+                }
+            }) as Box<dyn FnMut()>)
+        };
+        let head_cb = mirror(head.clone(), body.clone());
+        let body_cb = mirror(body.clone(), head.clone());
+        let _ = head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
+        let _ = body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
+        hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
+    });
+
+    let clear_all_filters = move || {
+        set_minimum_profit(None);
+        set_minimum_profit_per_day(None);
+        set_minimum_roi(None);
+        set_max_predicted_time(None);
+        set_world_filter(None);
+        set_datacenter_filter(None);
+        set_minimum_sales(None);
+        set_min_velocity(None);
+        set_category_filter(None);
+        set_max_purchase_price(None);
+        set_min_buy_price(None);
+        set_last_sold_within(None);
+        set_show_suspicious(None);
+        set_tax_enabled(None);
+    };
 
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
     // visible-window fetch effect below; never wholesale-replaced (except on a
@@ -526,11 +955,7 @@ fn AnalyzerTable(
                     data.estimated_sale_price
                 };
                 let profit = estimated - data.cheapest_price;
-                let return_on_investment = if data.cheapest_price > 0 {
-                    ((profit as f32 / data.cheapest_price as f32) * 100.0) as i32
-                } else {
-                    0
-                };
+                let return_on_investment = return_on_investment(profit, data.cheapest_price);
                 let profit_per_day = data
                     .sale_summary
                     .avg_sale_duration
@@ -565,6 +990,22 @@ fn AnalyzerTable(
             .filter(move |data| {
                 minimum_sales()
                     .map(|sales| data.inner.sale_summary.num_sold >= sales)
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                // Velocity floor. Mirrors the Velocity column's preference —
+                // ClickHouse rate first, derived rate as fallback — so the
+                // number shown is the number evaluated. Reading `enrichment`
+                // here is the same pattern the suspicious filter below uses;
+                // the non-reactive `requested` dedupe breaks the recompute ->
+                // refetch loop.
+                velocity_floor()
+                    .map(|min| {
+                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                        let ch =
+                            enrichment.with(|maps| maps.quality_for(&key).map(|q| q.sales_per_day));
+                        passes_velocity_floor(min, ch, velocity_per_day(&data.inner.sale_summary))
+                    })
                     .unwrap_or(true)
             })
             .filter(move |data| {
@@ -639,11 +1080,11 @@ fn AnalyzerTable(
             })
             .collect::<Vec<_>>();
 
-        match sort_mode().unwrap_or(SortMode::Roi) {
-            SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
-            SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
-            SortMode::ProfitPerDay => sorted_data.sort_by_key(|data| Reverse(data.profit_per_day)),
-        }
+        sort_rows(
+            &mut sorted_data,
+            sort_mode().unwrap_or(SortMode::ProfitPerDay),
+            sort_dir().unwrap_or_default(),
+        );
         sorted_data
             .into_iter()
             .enumerate()
@@ -807,507 +1248,621 @@ fn AnalyzerTable(
     });
 
     view! {
-        <div class="flex flex-col gap-6">
-            // Primary filter toolbar
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        max=100000
-                        step=1000
-                        placeholder=t_string!(i18n, analyzer_placeholder_100000)
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit));
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
-                            }
+        <div class="flex flex-col gap-4">
+            // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
+            // header sticks directly beneath it at that offset, so a bar that
+            // grew with its content would cover its own column headers.
+            <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1">
+                // Row 1 — result count and view-level controls.
+                <div class="h-8 flex items-center gap-3 min-w-0">
+                    <span class="text-sm text-[color:var(--brand-fg)] font-semibold whitespace-nowrap">
+                        {move || {
+                            t_string!(i18n, analyzer_rows_count)
+                                .to_string()
+                                .replace("%count%", &sorted_data().len().to_string())
+                        }}
+                    </span>
+                    // Live-market indicator, carried over from the realtime work on
+                    // main. It sat in the results-summary panel this bar replaced.
+                    <RealtimeStatus status=realtime_status last_update=last_update />
+                    <div class="flex-1" />
+                    <SavedViewsMenu current_world=world />
+                    <button
+                        class="sticky-bar-button"
+                        aria-expanded=move || show_columns_picker.get().to_string()
+                        on:click=move |_| {
+                            show_filter_menu.set(false);
+                            show_columns_picker.update(|v| *v = !*v);
                         }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_roi_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        max=100000
-                        step=10
-                        placeholder=t_string!(i18n, analyzer_placeholder_200)
-                        type="number"
-                        prop:value=minimum_roi
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(roi) = value.parse::<i32>() {
-                                set_minimum_roi(Some(roi));
-                            } else if value.is_empty() {
-                                set_minimum_roi(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_sales_min_label).to_string()>
-                    <input
-                        class="input input-sm w-24"
-                        min=0
-                        max=6
-                        step=1
-                        placeholder=t_string!(i18n, analyzer_placeholder_0_to_6)
-                        title=t_string!(i18n, analyzer_tooltip_sales_min)
-                        type="number"
-                        prop:value=minimum_sales
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(sales) = value.parse::<usize>() {
-                                set_minimum_sales(Some(sales.min(6)));
-                            } else if value.is_empty() {
-                                set_minimum_sales(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_buy_max_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        step=1000
-                        placeholder=t_string!(i18n, analyzer_placeholder_500000)
-                        type="number"
-                        prop:value=max_purchase_price
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(p) = value.parse::<i32>() {
-                                set_max_purchase_price(Some(p));
-                            } else if value.is_empty() {
-                                set_max_purchase_price(None);
-                            }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_category_label).to_string()>
-                    <select
-                        class="input input-sm"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if let Ok(id) = val.parse::<i32>() {
-                                set_category_filter(Some(id));
-                            } else {
-                                set_category_filter(None);
-                            }
-                        }
-                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
                     >
-                        <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                        {
-                            let mut categories = tracked_data().item_search_categorys
-                                .iter()
-                                .filter(|(_, cat)| !cat.name.is_empty())
-                                .map(|(id, cat)| (id.0, cat.name.clone()))
-                                .collect::<Vec<_>>();
-                            categories.sort_by(|a, b| a.1.cmp(&b.1));
-                            categories.into_iter().map(|(id, name)| {
-                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                            }).collect_view()
-                        }
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, analyzer_filter_prices_label).to_string()>
-                    // tax_enabled semantics: Some(true) = post-tax (5% deducted), None/Some(false) = pre-tax
-                    // Default unwrap_or(true) means post-tax is the default
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "false" } else { "true" }
-                            on:click=move |_| set_tax_enabled(Some(false))
-                        >
-                            "Pre-tax"
-                        </button>
-                        <button
-                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "true" } else { "false" }
-                            on:click=move |_| set_tax_enabled(Some(true))
-                        >
-                            "Post-tax"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarSpacer />
-                <button
-                    class="btn-secondary flex items-center gap-2"
-                    on:click=move |_| show_columns_picker.update(|v| *v = !*v)
-                    aria-expanded=move || show_columns_picker.get().to_string()
-                >
-                    <Icon icon=i::FaTableColumnsSolid />
-                    {t!(i18n, analyzer_columns_button)}
-                </button>
-                <button
-                    class="btn-secondary flex items-center gap-2"
-                    on:click=move |_| show_more.update(|v| *v = !*v)
-                    aria-expanded=move || show_more.get().to_string()
-                >
-                    <Icon icon=i::FaFilterSolid />
-                    {move || if show_more.get() { "Fewer Filters" } else { "More Filters" }}
-                </button>
-            </Toolbar>
+                        <Icon icon=i::FaTableColumnsSolid />
+                        {t!(i18n, analyzer_columns_button)}
+                    </button>
+                    <button
+                        class="sticky-bar-button"
+                        aria-label=t_string!(i18n, aria_clear_all_filters)
+                        on:click=move |_| clear_all_filters()
+                    >
+                        {t!(i18n, analyzer_clear_all)}
+                    </button>
+                </div>
 
-            // Columns picker (URL-persisted via ?cols=)
-            {move || show_columns_picker.get().then(|| {
-                let make_toggle = move |col: &'static str| {
-                    move |_| {
-                        let mut set = visible_cols.get_untracked();
-                        if set.contains(col) {
-                            set.remove(col);
-                        } else {
-                            set.insert(col);
+                // Row 2 — the filters themselves. One chip per active filter,
+                // and nothing at all for the ones that are not in use.
+                <div class="h-8 flex items-center gap-2 min-w-0">
+                    <div class="filter-chip-row">
+                        {move || {
+                            active_filters()
+                                .is_empty()
+                                .then(|| {
+                                    view! {
+                                        <span class="text-sm text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                            {t!(i18n, analyzer_no_active_filters)}
+                                        </span>
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_profit()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_profit_gte).to_string()
+                                            value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                            numeric=true
+                                            min="0"
+                                            step="1000"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_profit(
+                                                    commit_numeric(minimum_profit.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_profit_per_day()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_profit_per_day_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                minimum_profit_per_day().map(|v| v.to_string())
+                                            })
+                                            numeric=true
+                                            min="0"
+                                            step="1000"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_profit_per_day(
+                                                    commit_numeric(minimum_profit_per_day.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_roi()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_roi_gte).to_string()
+                                            value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
+                                            numeric=true
+                                            min="0"
+                                            step="10"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_minimum_roi(commit_numeric(minimum_roi.get_untracked(), v));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            minimum_sales()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_sales_gte).to_string()
+                                            value=Signal::derive(move || minimum_sales().map(|v| v.to_string()))
+                                            numeric=true
+                                            min="0"
+                                            max="6"
+                                            step="1"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                // Only 6 sales ship per item, so a larger floor
+                                                // silently empties the table.
+                                                set_minimum_sales(
+                                                    commit_numeric(minimum_sales.get_untracked(), v)
+                                                        .map(|s: usize| s.min(6)),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            velocity_floor()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_velocity_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                velocity_floor().map(format_velocity_floor)
+                                            })
+                                            numeric=true
+                                            min="0"
+                                            step="0.5"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_velocity(
+                                                    commit_numeric(velocity_floor.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            min_buy_price()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_min_buy_gte).to_string()
+                                            value=Signal::derive(move || min_buy_price().map(|v| v.to_string()))
+                                            numeric=true
+                                            min="0"
+                                            step="1000"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_buy_price(
+                                                    commit_numeric(min_buy_price.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            max_purchase_price()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_budget_lte).to_string()
+                                            value=Signal::derive(move || max_purchase_price().map(|v| v.to_string()))
+                                            numeric=true
+                                            min="0"
+                                            step="1000"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_max_purchase_price(
+                                                    commit_numeric(max_purchase_price.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            max_predicted_time()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_next_sale_lte).to_string()
+                                            value=Signal::derive(max_predicted_time)
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_max_predicted_time(v);
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            last_sold_within()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_last_sold_lte).to_string()
+                                            value=Signal::derive(last_sold_within)
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_last_sold_within(v);
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            category_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_category_label).to_string()
+                                            readonly=true
+                                            value=Signal::derive(move || {
+                                                let cat_id = category_filter()?;
+                                                Some(
+                                                    tracked_data()
+                                                        .item_search_categorys
+                                                        .get(&xiv_gen::ItemSearchCategoryId(cat_id))
+                                                        .map(|c| c.name.clone())
+                                                        .unwrap_or_else(|| cat_id.to_string()),
+                                                )
+                                            })
+                                            on_commit=Callback::new(move |_| set_category_filter(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            world_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_world_label).to_string()
+                                            readonly=true
+                                            value=Signal::derive(world_filter)
+                                            on_commit=Callback::new(move |_| set_world_filter(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            datacenter_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_datacenter_label).to_string()
+                                            readonly=true
+                                            value=Signal::derive(datacenter_filter)
+                                            on_commit=Callback::new(move |_| set_datacenter_filter(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        // Post-tax is the default, so only the opt-out is a chip.
+                        {move || {
+                            (tax_enabled() == Some(false))
+                                .then(|| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_pre_tax).to_string()
+                                            readonly=true
+                                            value=Signal::derive(|| None::<String>)
+                                            on_commit=Callback::new(move |_| set_tax_enabled(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            show_suspicious_active()
+                                .then(|| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_show_suspicious).to_string()
+                                            readonly=true
+                                            value=Signal::derive(|| None::<String>)
+                                            on_commit=Callback::new(move |_| set_show_suspicious(None))
+                                        />
+                                    }
+                                })
+                        }}
+                    </div>
+                    <button
+                        class="sticky-bar-button"
+                        aria-expanded=move || show_filter_menu.get().to_string()
+                        on:click=move |_| {
+                            show_columns_picker.set(false);
+                            show_filter_menu.update(|v| *v = !*v);
                         }
-                        set_cols_param.set(Some(serialize_visible_cols(&set)));
-                    }
-                };
-                let col_label = move |col: &'static str| -> String {
-                    match col {
-                        c if c == COL_PROFIT_PER_DAY => t_string!(i18n, analyzer_col_profit_per_day).to_string(),
-                        c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
-                        c if c == COL_DATACENTER => t_string!(i18n, analyzer_col_datacenter).to_string(),
-                        c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
-                        c if c == COL_SALES_PER_DAY => t_string!(i18n, analyzer_col_sales_per_day).to_string(),
-                        c if c == COL_VOLUME_30D => t_string!(i18n, analyzer_col_volume_30d).to_string(),
-                        c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
-                        _ => String::new(),
-                    }
-                };
-                view! {
-                    <div class="panel px-4 py-3 rounded-lg flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                        <span class="font-semibold text-[color:var(--brand-fg)]">
-                            {t!(i18n, analyzer_columns_picker_label)}
-                        </span>
-                        {ALL_OPTIONAL_COLS.iter().map(|col| {
-                            let col = *col;
-                            let label = col_label(col);
-                            let on_change = make_toggle(col);
+                    >
+                        <Icon icon=i::FaFilterSolid />
+                        {t!(i18n, analyzer_add_filter)}
+                    </button>
+                </div>
+
+                // `+ Filter` menu. Unset filters live here, so the bar's height
+                // tracks the filters in use rather than the filters that exist.
+                {move || {
+                    show_filter_menu
+                        .get()
+                        .then(|| {
                             view! {
-                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                                    <input
-                                        type="checkbox"
-                                        class="accent-brand-300"
-                                        prop:checked=move || visible_cols().contains(col)
-                                        on:change=on_change
-                                    />
-                                    <span>{label}</span>
-                                </label>
+                                <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
+                                    {move || {
+                                        available_filters(&active_filters())
+                                            .into_iter()
+                                            .map(|id| {
+                                                let label = filter_label(id);
+                                                view! {
+                                                    <button
+                                                        class="text-left px-2 py-1 rounded-sm text-[color:var(--color-text)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]"
+                                                        on:click=move |_| {
+                                                            add_filter(id);
+                                                            show_filter_menu.set(false);
+                                                        }
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                }
+                                            })
+                                            .collect_view()
+                                    }}
+                                    // Category is chosen from a list rather than
+                                    // typed, so its chip is read-only and this is
+                                    // where it is picked. Hidden once a category
+                                    // is set: leaving it up would echo the chip,
+                                    // which is the duplication this bar deletes.
+                                    {move || category_filter().is_none().then(|| view! {
+                                    <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
+                                        <span class="text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, analyzer_filter_category_label)}
+                                        </span>
+                                        <select
+                                            class="input input-sm"
+                                            on:change=move |ev| {
+                                                let val = event_target_value(&ev);
+                                                if let Ok(id) = val.parse::<i32>() {
+                                                    set_category_filter(Some(id));
+                                                } else {
+                                                    set_category_filter(None);
+                                                }
+                                                show_filter_menu.set(false);
+                                            }
+                                            prop:value=move || {
+                                                category_filter().map(|c| c.to_string()).unwrap_or_default()
+                                            }
+                                        >
+                                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                                            {
+                                                let mut categories = tracked_data()
+                                                    .item_search_categorys
+                                                    .iter()
+                                                    .filter(|(_, cat)| !cat.name.is_empty())
+                                                    .map(|(id, cat)| (id.0, cat.name.clone()))
+                                                    .collect::<Vec<_>>();
+                                                categories.sort_by(|a, b| a.1.cmp(&b.1));
+                                                categories
+                                                    .into_iter()
+                                                    .map(|(id, name)| {
+                                                        view! {
+                                                            <option
+                                                                value=id.to_string()
+                                                                selected=move || category_filter() == Some(id)
+                                                            >
+                                                                {name}
+                                                            </option>
+                                                        }
+                                                    })
+                                                    .collect_view()
+                                            }
+                                        </select>
+                                    </label>
+                                    })}
+                                </div>
                             }
-                        }).collect_view()}
-                        <button
-                            class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                            on:click=move |_| set_cols_param.set(None)
-                        >
-                            {t!(i18n, analyzer_columns_picker_reset)}
-                        </button>
-                    </div>
-                }
-            })}
+                        })
+                }}
 
-            // Secondary filter toolbar (expanded)
-            {move || show_more.get().then(|| view! {
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_profit_per_day_min_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            min=0
-                            max=100000
-                            step=1000
-                            placeholder=t_string!(i18n, placeholder_eg_10000)
-                            type="number"
-                            prop:value=minimum_profit_per_day
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(profit) = value.parse::<i32>() {
-                                    set_minimum_profit_per_day(Some(profit));
-                                } else if value.is_empty() {
-                                    set_minimum_profit_per_day(None);
+                // Columns picker (URL-persisted via ?cols=). A popover rather
+                // than a panel so opening it cannot change the bar's height.
+                {move || {
+                    show_columns_picker
+                        .get()
+                        .then(|| {
+                            let make_toggle = move |col: &'static str| {
+                                move |_| {
+                                    let mut set = visible_cols.get_untracked();
+                                    if set.contains(col) {
+                                        set.remove(col);
+                                    } else {
+                                        set.insert(col);
+                                    }
+                                    set_cols_param.set(Some(serialize_visible_cols(&set)));
                                 }
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_min_buy_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            min=0
-                            step=1000
-                            placeholder=t_string!(i18n, analyzer_placeholder_5000)
-                            type="number"
-                            prop:value=min_buy_price
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                if let Ok(p) = value.parse::<i32>() {
-                                    set_min_buy_price(Some(p));
-                                } else if value.is_empty() {
-                                    set_min_buy_price(None);
+                            };
+                            let col_label = move |col: &'static str| -> String {
+                                match col {
+                                    c if c == COL_PROFIT_PER_DAY => {
+                                        t_string!(i18n, analyzer_col_profit_per_day).to_string()
+                                    }
+                                    c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
+                                    c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
+                                    c if c == COL_CONFIDENCE => {
+                                        t_string!(i18n, analyzer_col_confidence).to_string()
+                                    }
+                                    c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
+                                    c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
+                                    c if c == COL_DATACENTER => {
+                                        t_string!(i18n, analyzer_col_datacenter).to_string()
+                                    }
+                                    c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
+                                    c if c == COL_SALES_PER_DAY => {
+                                        t_string!(i18n, analyzer_col_sales_per_day).to_string()
+                                    }
+                                    c if c == COL_VOLUME_30D => {
+                                        t_string!(i18n, analyzer_col_volume_30d).to_string()
+                                    }
+                                    c if c == COL_LAST_SOLD => {
+                                        t_string!(i18n, analyzer_col_last_sold).to_string()
+                                    }
+                                    _ => String::new(),
                                 }
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_filter_max_sale_time_label).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            placeholder=t_string!(i18n, analyzer_placeholder_7d_12h)
-                            title=t_string!(i18n, analyzer_tooltip_duration_format)
-                            prop:value=move || max_predicted_time().unwrap_or_default()
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                set_max_predicted_time(Some(value));
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_last_sold_within).to_string()>
-                        <input
-                            class="input input-sm w-32"
-                            placeholder=t_string!(i18n, analyzer_placeholder_7d)
-                            title=t_string!(i18n, analyzer_tooltip_duration_format)
-                            prop:value=move || last_sold_within().unwrap_or_default()
-                            on:input=move |input| {
-                                let value = event_target_value(&input);
-                                set_last_sold_within(Some(value));
-                            }
-                        />
-                    </ToolbarField>
-                    <ToolbarField label=t_string!(i18n, analyzer_show_suspicious).to_string()>
-                        <Toggle
-                            checked=Signal::derive(move || show_suspicious_active.get())
-                            set_checked=SignalSetter::map(move |v: bool| set_show_suspicious(v.then_some(true)))
-                            checked_label=Oco::Owned(t_string!(i18n, analyzer_show_suspicious).to_string())
-                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_show_suspicious).to_string())
-                        />
-                    </ToolbarField>
-                </Toolbar>
-            })}
+                            };
+                            view! {
+                                <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                                    <span class="font-semibold text-[color:var(--brand-fg)]">
+                                        {t!(i18n, analyzer_columns_picker_label)}
+                                    </span>
+                                    {ALL_OPTIONAL_COLS
+                                        .iter()
+                                        .map(|col| {
+                                            let col = *col;
+                                            let label = col_label(col);
+                                            let on_change = make_toggle(col);
+                                            view! {
+                                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
+                                                    <input
+                                                        type="checkbox"
+                                                        class="accent-brand-300"
+                                                        prop:checked=move || visible_cols().contains(col)
+                                                        on:change=on_change
+                                                    />
+                                                    <span>{label}</span>
+                                                </label>
+                                            }
+                                        })
+                                        .collect_view()}
+                                    <button
+                                        class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                        on:click=move |_| set_cols_param.set(None)
+                                    >
+                                        {t!(i18n, analyzer_columns_picker_reset)}
+                                    </button>
 
-            // Results summary
-            <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)] flex flex-wrap items-center gap-3">
-                    <div>
-                        <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> {t!(i18n, analyzer_results)}
-                    </div>
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                    />
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    {move || {
-                        let mut chips: Vec<_> = Vec::new();
-                        if let Some(p) = minimum_profit() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_profit_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(p) = minimum_profit_per_day() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_profit_per_day_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit_per_day(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(cat_id) = category_filter() {
-                            let cat_name = tracked_data()
-                                .item_search_categorys
-                                .get(&xiv_gen::ItemSearchCategoryId(cat_id))
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| format!("Category {}", cat_id));
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_category_label)} {cat_name}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(sales) = minimum_sales() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_sales_gte)} {sales}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(roi) = minimum_roi() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_roi_gte)} {format!("{roi}%")}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(p) = max_purchase_price() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    "Budget ≤ " <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_purchase_price(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(p) = min_buy_price() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_min_buy_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_min_buy_price(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(_ns) = max_predicted_time() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_next_sale_lte)} {predicted_time_string()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if last_sold_within().is_some() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_last_sold_lte)} {last_sold_string()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_last_sold_within(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(w) = world_filter() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_world_label)} {w.clone()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_world_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(dc) = datacenter_filter() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, analyzer_datacenter_label)} {dc.clone()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_datacenter_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if chips.is_empty() {
-                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, analyzer_no_active_filters)}</span> })
-                        } else {
-                            Either::Right(view! { <>{chips}</> })
-                        }
-                    }}
-                </div>
-                <button aria-label=t_string!(i18n, aria_clear_all_filters) class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
-                    set_minimum_profit(None);
-                    set_minimum_profit_per_day(None);
-                    set_minimum_roi(None);
-                    set_max_predicted_time(None);
-                    set_world_filter(None);
-                    set_datacenter_filter(None);
-                    set_minimum_sales(None);
-                    set_category_filter(None);
-                    set_max_purchase_price(None);
-                    set_min_buy_price(None);
-                    set_last_sold_within(None);
-                    set_show_suspicious(None);
-                }>
-                    {t!(i18n, analyzer_clear_all)}
-                </button>
+                                    // Cross-region + outlier-filtering, formerly the controls
+                                    // panel above the table. `w-full` forces its own row inside
+                                    // the wrapping flex container above.
+                                    <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
+                                        <Toggle
+                                            checked=Signal::derive(move || cross_region_enabled)
+                                            set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
+                                                val.then_some(true),
+                                            ))
+                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
+                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
+                                        />
+                                        <Toggle
+                                            checked=Signal::derive(move || filter_outliers)
+                                            set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
+                                                val.then_some(true),
+                                            ))
+                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
+                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
+                                        />
+                                        <div
+                                            class="flex flex-wrap gap-2"
+                                            class:hidden=move || !cross_region_enabled
+                                        >
+                                            {
+                                                let region = region.clone();
+                                                move || {
+                                                    let region = region.clone();
+                                                    region
+                                                        .map(|region| {
+                                                            CONNECTED_REGIONS
+                                                                .iter()
+                                                                .filter(move |r| **r != region.as_str())
+                                                                .map(|region_name| {
+                                                                    let (enabled, set_enabled) = query_signal::<
+                                                                        bool,
+                                                                    >(region_name.to_string());
+                                                                    view! {
+                                                                        <Toggle
+                                                                            checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                                            set_checked=SignalSetter::map(move |checked: bool| {
+                                                                                set_enabled(Some(checked));
+                                                                            })
+                                                                            checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
+                                                                            unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
+                                                                        />
+                                                                    }
+                                                                })
+                                                                .collect::<Vec<_>>()
+                                                        })
+                                                }
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        })
+                }}
             </div>
 
-            // Results table
-            <div class="rounded-lg overflow-x-auto border border-[color:var(--color-outline)] content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            // Results table. Deliberately no `overflow` on this wrapper: in
+            // window mode an overflow on any ancestor of the sticky table
+            // header re-parents its scrollport away from the viewport, which
+            // silently defeats `sticky_offset`.
+            <div
+                class="analyzer-table border border-[color:var(--color-outline)]"
+                style=move || {
+                    format!("--analyzer-extra-cols: {}px;", extra_column_width_px(&visible_cols()))
+                }
+            >
                 <VirtualScroller
+                        scroll_source=ScrollSource::Window { sticky_offset: STICKY_BAR_HEIGHT }
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
+                        // The header row's own height. The rendered element is
+                        // up to ~15px taller, because `.analyzer-hscroll`
+                        // reserves a horizontal scrollbar, but that height
+                        // depends on the platform's scrollbar and on whether
+                        // the grid currently overflows — neither of which is
+                        // knowable here. The row math only uses this to offset
+                        // the scroll position, and `overscan=8` (320px) covers
+                        // the error many times over, so the content height is
+                        // deliberately the value passed.
                         header_height=56.0
                         variable_height=false
                         visible_range=visible_range
+                        list_ref=list_scroll
+                        row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
-                            <div class="flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[44px] px-2 text-center">
+                            <div class="analyzer-hscroll" node_ref=header_scroll>
+                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                                <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
                                 <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
                                     {t!(i18n, analyzer_col_item)}
                                 </div>
-                                <div role="columnheader" class="w-28 px-3 text-right">
-                                    <QueryButton
-                                        class="!text-brand-300 hover:text-brand-200"
-                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                        key="sort"
-                                        value="profit"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            {t!(i18n, analyzer_col_profit)}
-                                            {move || {
-                                                (sort_mode() == Some(SortMode::Profit))
-                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                            }}
-                                        </div>
-                                    </QueryButton>
+                                <div role="columnheader" class="w-28 shrink-0 px-3 text-right">
+                                    <SortHeader
+                                        mode=SortMode::Profit
+                                        label=t_string!(i18n, analyzer_col_profit).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2">
-                                        <QueryButton
-                                            class="!text-brand-300 hover:text-brand-200"
-                                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                            key="sort"
-                                            value="profit-per-day"
-                                        >
-                                            <div class="flex items-center gap-2">
-                                                {t!(i18n, analyzer_col_profit_per_day)}
-                                                {move || {
-                                                    (sort_mode() == Some(SortMode::ProfitPerDay))
-                                                        .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                                }}
-                                            </div>
-                                        </QueryButton>
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                        <SortHeader
+                                            mode=SortMode::ProfitPerDay
+                                            label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
                                     </div>
                                 })}
-                                <div role="columnheader" class="w-28 px-3 py-2">
-                                    <QueryButton
-                                        class="!text-brand-300 hover:text-brand-200"
-                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                        key="sort"
-                                        value="roi"
-                                        default=true
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            {t!(i18n, analyzer_col_roi)}
-                                            {move || {
-                                                (sort_mode() == Some(SortMode::Roi))
-                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                            }}
-                                        </div>
-                                    </QueryButton>
-                                </div>
-                                <div role="columnheader" class="w-28 px-3 py-2">
+                                {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
+                                        {t!(i18n, analyzer_col_velocity)}
+                                    </div>
+                                })}
+                                {move || visible_cols().contains(COL_DRIFT).then(|| view! {
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
+                                        {t!(i18n, analyzer_col_drift)}
+                                    </div>
+                                })}
+                                {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
+                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center">
+                                        {t!(i18n, analyzer_col_confidence)}
+                                    </div>
+                                })}
+                                {move || visible_cols().contains(COL_ROI).then(|| view! {
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                        <SortHeader
+                                            mode=SortMode::Roi
+                                            label=t_string!(i18n, analyzer_col_roi).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
+                                    </div>
+                                })}
+                                <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -1329,7 +1884,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -1351,7 +1906,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1359,7 +1914,8 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[140px] px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1367,7 +1923,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1375,13 +1931,14 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 px-3 py-2 hidden md:flex flex-col leading-tight">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 hidden md:flex flex-col leading-tight">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
                                     </div>
                                 })}
+                            </div>
                             </div>
                         }.into_any()
                         each=sorted_data.into()
@@ -1393,6 +1950,17 @@ fn AnalyzerTable(
                             data.profit,
                         )
                         view=move |(index, data): (usize, CalculatedProfitData)| {
+                            // Hoist the Copy scalars out so each per-column `move ||`
+                            // closure can capture them without contending for
+                            // `data.inner` (an Arc, and not Copy). `row_key` is bound
+                            // below alongside `item_id`/`hq`.
+                            let row_cheapest_price = data.inner.cheapest_price;
+                            let row_days_since = data.inner.sale_summary.days_since_last_sale;
+                            let row_roi = data.return_on_investment;
+                            let row_velocity = velocity_per_day(&data.inner.sale_summary);
+                            let row_num_sold = data.inner.sale_summary.num_sold;
+                            let row_drift = price_drift_pct(&data.inner.prices);
+                            let row_confidence = derived_confidence(&data.inner.sale_summary);
                             let world = worlds
                                 .lookup_selector(AnySelector::World(data.inner.cheapest_world_id));
                             let datacenter = world
@@ -1419,13 +1987,13 @@ fn AnalyzerTable(
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
                             let classes = if (index % 2) == 0 {
-                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                             } else {
-                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
                             view! {
                                 <div class=classes role="row-group">
-                                    <div role="cell" class="px-2 py-2 w-[44px] flex items-center justify-center">
+                                    <div role="cell" class="px-2 py-2 w-[44px] shrink-0 flex items-center justify-center">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
@@ -1456,24 +2024,90 @@ fn AnalyzerTable(
                                         <Clipboard clipboard_text=item.to_string() />
                                         <AddToList item_id />
                                     </div>
-                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
                                     </div>
                                     {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                             <Gil amount=data.profit_per_day />
                                         </div>
                                     })}
-                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
-                                        <span class={roi_badge_class(data.return_on_investment)}>
-                                            {format!("{}%", data.return_on_investment)}
-                                        </span>
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-28 text-right flex items-center justify-end">
+                                    {move || visible_cols().contains(COL_VELOCITY).then(|| {
+                                        // Prefer the ClickHouse 30d rate where the rollup
+                                        // covers the row; otherwise the derived rate off the
+                                        // 6-sale buffer, which every row has.
+                                        let maps = enrichment.get();
+                                        let v = maps
+                                            .quality_for(&row_key)
+                                            .map(|q| q.sales_per_day)
+                                            .or(row_velocity);
+                                        let text = match v {
+                                            Some(v) => t_string!(i18n, analyzer_velocity_per_day)
+                                                .to_string()
+                                                .replace("%count%", &format!("{v:.1}")),
+                                            None => "—".to_string(),
+                                        };
+                                        view! {
+                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums">
+                                                {text}
+                                            </div>
+                                        }
+                                    })}
+                                    {move || visible_cols().contains(COL_DRIFT).then(|| {
+                                        // +/- 1% is inside the noise floor of a 6-sale window,
+                                        // so it renders neutral rather than green/red.
+                                        let (text, class, title) = match row_drift {
+                                            Some(d) if d > 1.0 => (format!("+{d:.0}%"), "text-emerald-300", None),
+                                            Some(d) if d < -1.0 => (format!("{d:.0}%"), "text-red-300", None),
+                                            Some(d) => (format!("{d:+.0}%"), "text-[color:var(--color-text-muted)]", None),
+                                            None => (
+                                                "—".to_string(),
+                                                "text-[color:var(--color-text-muted)]",
+                                                Some(t_string!(i18n, analyzer_drift_unavailable).to_string()),
+                                            ),
+                                        };
+                                        view! {
+                                            <div
+                                                role="cell"
+                                                title=title
+                                                class=format!("px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums {class}")
+                                            >
+                                                {text}
+                                            </div>
+                                        }
+                                    })}
+                                    {move || visible_cols().contains(COL_CONFIDENCE).then(|| {
+                                        // ClickHouse band where it exists, else the band derived
+                                        // from buffer depth + velocity.
+                                        let maps = enrichment.get();
+                                        let (label, class) = match maps.quality_for(&row_key).map(|q| q.confidence_band) {
+                                            Some(ConfidenceBand::High) => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-emerald-300"),
+                                            Some(ConfidenceBand::Medium) => (t_string!(i18n, analyzer_confidence_medium).to_string(), "text-amber-300"),
+                                            Some(ConfidenceBand::Low) | Some(ConfidenceBand::Unusable) => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-red-300"),
+                                            Some(ConfidenceBand::Unknown) | None => match row_confidence {
+                                                DerivedConfidence::High => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-emerald-300"),
+                                                DerivedConfidence::Medium => (t_string!(i18n, analyzer_confidence_medium).to_string(), "text-amber-300"),
+                                                DerivedConfidence::Low => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-red-300"),
+                                            },
+                                        };
+                                        view! {
+                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center">
+                                                <span class=format!("text-xs font-semibold {class}")>{label}</span>
+                                            </div>
+                                        }
+                                    })}
+                                    {move || visible_cols().contains(COL_ROI).then(|| view! {
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                            <span class=roi_badge_class(row_roi)>
+                                                {format!("{row_roi}%")}
+                                            </span>
+                                        </div>
+                                    })}
+                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 hidden lg:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden lg:block flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                             })>
@@ -1490,7 +2124,7 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 hidden xl:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden xl:block flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                             })>
@@ -1506,100 +2140,89 @@ fn AnalyzerTable(
                                             </Tooltip>
                                         </div>
                                     })}
-                                    {
-                                        // Hoist Copy values out so each per-column `move ||` closure
-                                        // can capture them without contending for `data.inner` (Arc, not Copy).
-                                        let row_key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                                        let row_cheapest_price = data.inner.cheapest_price;
-                                        let row_days_since = data.inner.sale_summary.days_since_last_sale;
-                                        view! {
-                                            {move || visible_cols().contains(COL_TREND).then(|| {
-                                                let maps = enrichment.get();
-                                                let inner = if let Some(pts) = maps.sparkline_for(&row_key) {
-                                                    let pct = maps.quality_for(&row_key)
-                                                        .map(|q| {
-                                                            let vwap = q.vwap as f32;
-                                                            if vwap <= 0.0 {
-                                                                0.0
-                                                            } else {
-                                                                (row_cheapest_price as f32 - vwap) / vwap * 100.0
-                                                            }
-                                                        })
-                                                        .unwrap_or(0.0);
-                                                    view! { <Sparkline points=pts.clone() pct_change=pct /> }.into_any()
-                                                } else if maps.is_settled(&row_key) {
-                                                    // fetched, no series -> empty sparkline (prior behavior)
-                                                    view! { <Sparkline points=Vec::new() pct_change=0.0 /> }.into_any()
-                                                } else {
-                                                    view! { <SingleLineSkeleton /> }.into_any()
-                                                };
-                                                view! {
-                                                    <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
-                                                        {inner}
-                                                    </div>
-                                                }
-                                            })}
-                                            {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
-                                                let maps = enrichment.get();
-                                                let settled = maps.is_settled(&row_key);
-                                                let quality = maps.quality_for(&row_key);
-                                                let inner = if let Some(q) = quality {
-                                                    let cadence = get_sales_cadence(q.sales_per_day, q.sample_size as usize);
-                                                    view! { <SalesCadenceBadge cadence sales_per_day=q.sales_per_day compact=true /> }.into_any()
-                                                } else if settled {
-                                                    let summary = &data.inner.sale_summary;
-                                                    if summary.num_sold > 0 {
-                                                        let spd = summary.avg_sale_duration.map(|d| {
-                                                            let secs = d.num_seconds().abs().max(1) as f32;
-                                                            86400.0 / secs
-                                                        }).unwrap_or(0.0);
-                                                        let cadence = get_sales_cadence(spd, summary.num_sold);
-                                                        view! { <SalesCadenceBadge cadence sales_per_day=spd compact=true /> }.into_any()
+                                    {move || visible_cols().contains(COL_TREND).then(|| {
+                                        let maps = enrichment.get();
+                                        let inner = if let Some(pts) = maps.sparkline_for(&row_key) {
+                                            let pct = maps.quality_for(&row_key)
+                                                .map(|q| {
+                                                    let vwap = q.vwap as f32;
+                                                    if vwap <= 0.0 {
+                                                        0.0
                                                     } else {
-                                                        view! { "—" }.into_any()
+                                                        (row_cheapest_price as f32 - vwap) / vwap * 100.0
                                                     }
-                                                } else {
-                                                    view! { <SingleLineSkeleton /> }.into_any()
-                                                };
-                                                view! {
-                                                    <div role="cell" class="px-3 py-2 w-[140px] hidden md:flex items-center justify-center">
-                                                        {inner}
-                                                    </div>
-                                                }
-                                            })}
-                                            {move || visible_cols().contains(COL_VOLUME_30D).then(|| {
-                                                let maps = enrichment.get();
-                                                let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
-                                                    (Some(q), _) => view! { {q.sample_size.to_string()} }.into_any(),
-                                                    (None, true) => view! { "—" }.into_any(),
-                                                    (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
-                                                };
-                                                view! {
-                                                    <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
-                                                        {inner}
-                                                    </div>
-                                                }
-                                            })}
-                                            {move || visible_cols().contains(COL_LAST_SOLD).then(|| {
-                                                let last = row_days_since
-                                                    .and_then(|d| d.to_std().ok())
-                                                    .map(|d| {
-                                                        let secs = d.as_secs();
-                                                        let days = secs / 86_400;
-                                                        let hours = (secs % 86_400) / 3_600;
-                                                        if days > 0 { format!("{}d ago", days) }
-                                                        else if hours > 0 { format!("{}h ago", hours) }
-                                                        else { "just now".to_string() }
-                                                    })
-                                                    .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
-                                                view! {
-                                                    <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
-                                                        {last}
-                                                    </div>
-                                                }
-                                            })}
+                                                })
+                                                .unwrap_or(0.0);
+                                            view! { <Sparkline points=pts.clone() pct_change=pct /> }.into_any()
+                                        } else if maps.is_settled(&row_key) {
+                                            // fetched, no series -> empty sparkline (prior behavior)
+                                            view! { <Sparkline points=Vec::new() pct_change=0.0 /> }.into_any()
+                                        } else {
+                                            view! { <SingleLineSkeleton /> }.into_any()
+                                        };
+                                        view! {
+                                            <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
+                                                {inner}
+                                            </div>
                                         }
-                                    }
+                                    })}
+                                    {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
+                                        // Cadence badge carried over from main. Where the
+                                        // rollup has no row this falls back to the same
+                                        // derived rate the Velocity column uses, so the two
+                                        // columns never contradict each other.
+                                        let maps = enrichment.get();
+                                        let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
+                                            (Some(q), _) => {
+                                                let cadence = get_sales_cadence(q.sales_per_day, q.sample_size as usize);
+                                                view! { <SalesCadenceBadge cadence sales_per_day=q.sales_per_day compact=true /> }.into_any()
+                                            }
+                                            (None, true) => match row_velocity {
+                                                Some(spd) => {
+                                                    let cadence = get_sales_cadence(spd, row_num_sold);
+                                                    view! { <SalesCadenceBadge cadence sales_per_day=spd compact=true /> }.into_any()
+                                                }
+                                                None => view! { "—" }.into_any(),
+                                            },
+                                            (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
+                                        };
+                                        view! {
+                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center">
+                                                {inner}
+                                            </div>
+                                        }
+                                    })}
+                                    {move || visible_cols().contains(COL_VOLUME_30D).then(|| {
+                                        let maps = enrichment.get();
+                                        let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
+                                            (Some(q), _) => view! { {q.sample_size.to_string()} }.into_any(),
+                                            (None, true) => view! { "—" }.into_any(),
+                                            (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
+                                        };
+                                        view! {
+                                            <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                                {inner}
+                                            </div>
+                                        }
+                                    })}
+                                    {move || visible_cols().contains(COL_LAST_SOLD).then(|| {
+                                        let last = row_days_since
+                                            .and_then(|d| d.to_std().ok())
+                                            .map(|d| {
+                                                let secs = d.as_secs();
+                                                let days = secs / 86_400;
+                                                let hours = (secs % 86_400) / 3_600;
+                                                if days > 0 { format!("{}d ago", days) }
+                                                else if hours > 0 { format!("{}h ago", hours) }
+                                                else { "just now".to_string() }
+                                            })
+                                            .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
+                                        view! {
+                                            <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
+                                                {last}
+                                            </div>
+                                        }
+                                    })}
                                 </div>
                             }
                                 .into_any()
@@ -1613,6 +2236,10 @@ fn AnalyzerTable(
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
+    // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
+    // closure and remounts on every market refetch, which would keep undoing a
+    // filter the user had cleared.
+    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
     let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
@@ -1662,7 +2289,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
 
     let (cross_region_enabled, set_cross_region_enabled) = query_signal::<bool>("cross");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
-    let connected_regions = &["Europe", "Japan", "North-America", "Oceania"];
+    let connected_regions = CONNECTED_REGIONS;
     let query = use_query_map();
 
     let enabled_regions = move || {
@@ -1711,131 +2338,29 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     view! {
         <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, analyzer_meta_title).to_string().replace("%world%", &world()) />
-            <div class="flex flex-col gap-8">
-                    <ToolHeader
-                        title=t_string!(i18n, flip_finder).to_string()
-                        summary=t_string!(i18n, analyzer_tool_summary).to_string()
-                        context=t_string!(i18n, analyzer_tool_context).to_string()
-                        help_href="/help/flip-finder"
-                        help_body=t_string!(i18n, analyzer_tool_help).to_string()
-                    />
-
-                    // Controls Section
-                    <div class="panel p-4 sm:p-6 rounded-2xl">
-                        <div class="flex flex-col gap-4">
-                            <MetaDescription text=move || {
-                                t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
-                            } />
-
-                            // World Navigator
-                            <div class="flex flex-col md:flex-row gap-4 items-center">
-                                <AnalyzerWorldNavigator />
-                                <div class="flex flex-col gap-2">
-                                    <Toggle
-                                        checked=Signal::derive(move || {
-                                            cross_region_enabled().unwrap_or_default()
-                                        })
-                                        set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                            val.then_some(true),
-                                        ))
-                                        checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
-                                        unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
-                                    />
-                                    <Toggle
-                                        checked=Signal::derive(move || {
-                                            filter_outliers().unwrap_or_default()
-                                        })
-                                        set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
-                                            val.then_some(true),
-                                        ))
-                                        checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
-                                        unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
-                                    />
-
-                                    <div
-                                        class="flex flex-wrap gap-2"
-                                        class:hidden=move || {
-                                            !cross_region_enabled().unwrap_or_default()
-                                        }
-                                    >
-                                        {move || {
-                                            region()
-                                                .map(|region| move || {
-                                                    connected_regions
-                                                        .iter()
-                                                        .filter(|r| **r != region.as_str())
-                                                        .map(|region| {
-                                                            let (enabled, set_enabled) = query_signal::<
-                                                                bool,
-                                                            >(region.to_string());
-                                                            view! {
-                                                                <Toggle
-                                                                    checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                                    set_checked=SignalSetter::map(move |checked: bool| {
-                                                                        set_enabled(Some(checked));
-                                                                    })
-                                                                    checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region)
-                                                                    unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region)
-                                                                />
-                                                            }
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                })
-                                                .ok()
-                                        }}
-                                    </div>
-                                </div>
-                            </div>
-
-                            // Preset Filters
-                            <div class="flex flex-wrap gap-4">
-                                <PresetFilterButton
-                                    href="?min-buy=5000&last-sold=7d&roi=30&sort=profit-per-day"
-                                    label=t_string!(i18n, analyzer_preset_realistic).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=100000&last-sold=14d&roi=20&sort=profit"
-                                    label=t_string!(i18n, analyzer_preset_big_ticket).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=1000&last-sold=3d&sort=profit-per-day"
-                                    label=t_string!(i18n, analyzer_preset_volume).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=1000&last-sold=7d&roi=300&profit=0&sort=profit"
-                                    label=t_string!(i18n, analyzer_preset_300_return).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=10000&last-sold=1M&roi=500&profit=200000"
-                                    label=t_string!(i18n, analyzer_preset_500_return).to_string()
-                                />
-                                <PresetFilterButton
-                                    href="?min-buy=1000&last-sold=30d&profit=100000"
-                                    label=t_string!(i18n, analyzer_preset_100k_profit).to_string()
-                                />
-                            </div>
-                            <details class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)] open:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
-                                <summary class="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[color:var(--brand-fg)] hover:text-[color:var(--color-text)]">
-                                    {t!(i18n, analyzer_calc_title)}
-                                </summary>
-                                <div class="px-3 pb-3 pt-1 flex flex-col gap-2">
-                                    <code class="text-sm text-brand-300 whitespace-normal break-words">
-                                        {t!(i18n, analyzer_calc_formula)}
-                                    </code>
-                                    <p class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">
-                                        {t!(i18n, analyzer_calc_details)}
-                                    </p>
-                                    <div class="flex flex-wrap gap-2 pt-1">
-                                        <AssumptionBadge text=t_string!(i18n, analyzer_assumption_cross_region).to_string() />
-                                        <AssumptionBadge text=t_string!(i18n, analyzer_assumption_hq_nq).to_string() />
-                                    </div>
-                                </div>
-                            </details>
-                        </div>
+            <MetaDescription text=move || {
+                t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
+            } />
+            <div class="flex flex-col gap-3">
+                    // Title + world picker. Deliberately kept OUTSIDE the
+                    // `<Suspense>` below: `AnalyzerTable` (and the sticky bar
+                    // it renders) only exists once every resource has
+                    // resolved, so a control placed there vanishes behind
+                    // `BoxSkeleton` on every load — including a world change,
+                    // which is exactly when a user most needs to be able to
+                    // change worlds again. Keeping it here means it is always
+                    // on screen, load or no load.
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, flip_finder)}
+                        </h1>
+                        <AnalyzerWorldNavigator />
                     </div>
 
-                    // Main Content
-                    <div class="min-h-screen">
+                    // Main Content. No `min-h-screen` and no scroll container:
+                    // the table virtualizes against the window, so the page
+                    // itself is what scrolls.
+                    <div>
                         <Suspense fallback=BoxSkeleton>
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
@@ -1862,6 +2387,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     worlds
                                                     world=world
                                                     filter_outliers=filter_outliers().unwrap_or(false)
+                                                    region=region().ok()
+                                                    cross_region_enabled=cross_region_enabled().unwrap_or_default()
+                                                    set_cross_region_enabled=set_cross_region_enabled
+                                                    set_filter_outliers=set_filter_outliers
                                                     on_market_update=refetch_market_data
                                                 />
                                             },
@@ -1966,65 +2495,6 @@ pub fn Analyzer() -> impl IntoView {
                             </h2>
                             <AnalyzerWorldNavigator />
                         </div>
-                    </div>
-
-                    // Features Grid
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaMoneyBillTrendUpSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_profit_tracking)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, analyzer_feature_profit_tracking_desc)}
-                            </p>
-                        </div>
-
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaChartLineSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_market_analysis)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, analyzer_feature_market_analysis_desc)}
-                            </p>
-                        </div>
-
-                        <div class="card p-6 rounded-lg transition-colors duration-200">
-                            <Icon
-                                attr:class="text-brand-300 mb-4"
-                                width="2.5em"
-                                height="2.5em"
-                                icon=i::FaFilterSolid
-                            />
-                            <h3 class="text-xl font-bold text-brand-300 mb-2">{t!(i18n, analyzer_feature_custom_filters)}</h3>
-                            <p class="text-gray-300">
-                                {t!(i18n, analyzer_feature_custom_filters_desc)}
-                            </p>
-                        </div>
-                    </div>
-
-                    // Tips Section
-                    <div class="panel p-6 rounded-2xl">
-                        <h2 class="text-xl font-bold text-brand-300 mb-4">{t!(i18n, analyzer_tips_title)}</h2>
-                        <ul class="list-disc list-inside text-gray-300 space-y-2">
-                            <li>
-                                {t!(i18n, analyzer_tip_1)}
-                            </li>
-                            <li>
-                                {t!(i18n, analyzer_tip_2)}
-                            </li>
-                            <li>{t!(i18n, analyzer_tip_3)}</li>
-                            <li>
-                                {t!(i18n, analyzer_tip_4)}
-                            </li>
-                        </ul>
                     </div>
                 </div>
         </div>
@@ -2289,5 +2759,370 @@ mod tests {
         // lo = 95, hi = (110 + 5).min(5) = 5 => get(95..5) is an invalid range => &[]
         let keys = visible_keys(&data, (100, 110), 5, &seen, |k| *k);
         assert!(keys.is_empty());
+    }
+
+    fn calc(profit: i32, roi: i32, ppd: i32) -> CalculatedProfitData {
+        CalculatedProfitData {
+            inner: Arc::new(ProfitData {
+                estimated_sale_price: 0,
+                cheapest_price: 0,
+                cheapest_world_id: 0,
+                prices: Vec::new(),
+                sale_summary: SaleSummary {
+                    item_id: 1,
+                    hq: false,
+                    num_sold: 6,
+                    avg_sale_duration: None,
+                    days_since_last_sale: None,
+                    max_price: 0,
+                    avg_price: 0,
+                    median_price: 0,
+                    min_price: 0,
+                },
+            }),
+            profit,
+            return_on_investment: roi,
+            profit_per_day: ppd,
+        }
+    }
+
+    #[test]
+    fn sort_desc_puts_largest_first() {
+        let mut rows = vec![calc(10, 0, 0), calc(30, 0, 0), calc(20, 0, 0)];
+        sort_rows(&mut rows, SortMode::Profit, SortDir::Desc);
+        assert_eq!(
+            rows.iter().map(|r| r.profit).collect::<Vec<_>>(),
+            vec![30, 20, 10]
+        );
+    }
+
+    #[test]
+    fn sort_asc_puts_smallest_first() {
+        let mut rows = vec![calc(10, 0, 0), calc(30, 0, 0), calc(20, 0, 0)];
+        sort_rows(&mut rows, SortMode::Profit, SortDir::Asc);
+        assert_eq!(
+            rows.iter().map(|r| r.profit).collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn sort_by_profit_per_day_is_independent_of_profit() {
+        let mut rows = vec![calc(100, 0, 1), calc(10, 0, 99)];
+        sort_rows(&mut rows, SortMode::ProfitPerDay, SortDir::Desc);
+        assert_eq!(rows[0].profit_per_day, 99);
+    }
+
+    #[test]
+    fn velocity_floor_prefers_clickhouse_rate_over_derived() {
+        // The Velocity column shows the ClickHouse rate whenever the rollup
+        // covers a row, so the filter has to evaluate that same number.
+        // Otherwise a row displays "0.3/day", survives a floor of 5 on a
+        // derived 6/day, and the filter looks broken.
+        assert!(!passes_velocity_floor(5.0, Some(0.3), Some(6.0)));
+        assert!(passes_velocity_floor(5.0, Some(6.0), Some(0.3)));
+    }
+
+    #[test]
+    fn velocity_floor_falls_back_to_derived_without_clickhouse() {
+        // ~93% of rows have no rollup entry; those must still be filterable.
+        assert!(passes_velocity_floor(1.0, None, Some(2.0)));
+        assert!(!passes_velocity_floor(1.0, None, Some(0.5)));
+    }
+
+    #[test]
+    fn velocity_floor_is_inclusive_and_drops_rateless_rows() {
+        assert!(passes_velocity_floor(2.0, None, Some(2.0)));
+        // No rate at all cannot clear an explicit floor, even a floor of zero.
+        assert!(!passes_velocity_floor(0.0, None, None));
+    }
+
+    #[test]
+    fn non_finite_velocity_floor_is_ignored() {
+        // `"NaN".parse::<f32>()` succeeds, and `v >= NaN` is false for every
+        // row, so honoring `?vel=NaN` would silently empty the table.
+        assert_eq!(normalize_velocity_floor(Some(f32::NAN)), None);
+        assert_eq!(normalize_velocity_floor(Some(f32::INFINITY)), None);
+        assert_eq!(normalize_velocity_floor(Some(2.5)), Some(2.5));
+        assert_eq!(normalize_velocity_floor(None), None);
+    }
+
+    #[test]
+    fn roi_is_optional_and_off_by_default() {
+        assert!(ALL_OPTIONAL_COLS.contains(&COL_ROI));
+        assert!(!DEFAULT_VISIBLE_COLS.contains(&COL_ROI));
+    }
+
+    #[test]
+    fn new_columns_are_on_by_default() {
+        for col in [COL_VELOCITY, COL_DRIFT, COL_CONFIDENCE] {
+            assert!(ALL_OPTIONAL_COLS.contains(&col), "{col} missing from ALL");
+            assert!(DEFAULT_VISIBLE_COLS.contains(&col), "{col} not default-on");
+        }
+    }
+
+    #[test]
+    fn ch_only_columns_are_off_by_default() {
+        for col in [COL_TREND, COL_VOLUME_30D, COL_SALES_PER_DAY, COL_DATACENTER] {
+            assert!(
+                !DEFAULT_VISIBLE_COLS.contains(&col),
+                "{col} should be opt-in (ClickHouse covers ~7% of items)"
+            );
+        }
+    }
+
+    #[test]
+    fn visible_cols_round_trip_with_new_ids() {
+        let set = parse_visible_cols(Some("velocity,drift,confidence"));
+        assert_eq!(set.len(), 3);
+        let s = serialize_visible_cols(&set);
+        assert_eq!(parse_visible_cols(Some(&s)), set);
+    }
+
+    #[test]
+    fn explicit_empty_cols_param_is_respected() {
+        // Regression guard: an explicit "" must mean "no optional columns",
+        // not "fall back to defaults".
+        assert!(parse_visible_cols(Some("")).is_empty());
+        assert!(!parse_visible_cols(None).is_empty());
+    }
+
+    #[test]
+    fn profit_table_keeps_raw_prices_newest_first() {
+        use ultros_api_types::cheapest_listings::{CheapestListingItem, CheapestListings};
+        use ultros_api_types::recent_sales::RecentSales;
+
+        // `sales_row` takes (price, days_ago), so this is newest-first — the
+        // wire order `price_drift_pct` expects. The captured vector must not be
+        // the price-sorted one `compute_summary` builds internally, or the
+        // Drift column would read a monotonic ramp for every row.
+        let sales = RecentSales {
+            sales: vec![sales_row(
+                400,
+                false,
+                &[(90, 0), (95, 1), (100, 2), (300, 3), (110, 4), (105, 5)],
+            )],
+        };
+        let region = CheapestListings {
+            cheapest_listings: vec![CheapestListingItem {
+                item_id: 400,
+                hq: false,
+                cheapest_price: 50,
+                world_id: 42,
+            }],
+        };
+        let world = CheapestListings {
+            cheapest_listings: vec![],
+        };
+
+        let table = ProfitTable::new(sales, region, world, vec![], false);
+        assert_eq!(table.0.len(), 1);
+        assert_eq!(table.0[0].prices, vec![90, 95, 100, 300, 110, 105]);
+    }
+
+    #[test]
+    fn the_default_column_set_adds_no_extra_width() {
+        // The stylesheet's per-breakpoint baseline already covers these, so
+        // counting them here would reserve the width twice and leave the grid
+        // scrolling into empty space.
+        let defaults: std::collections::HashSet<&'static str> =
+            DEFAULT_VISIBLE_COLS.iter().copied().collect();
+        assert_eq!(extra_column_width_px(&defaults), 0);
+        assert_eq!(extra_column_width_px(&std::collections::HashSet::new()), 0);
+    }
+
+    #[test]
+    fn every_opt_in_column_reserves_width() {
+        // A column that neither the CSS baseline nor this function accounts
+        // for is one the scrollports stop short of — the column renders and
+        // cannot be reached, which is the bug this whole mechanism exists to
+        // prevent.
+        for col in ALL_OPTIONAL_COLS {
+            if DEFAULT_VISIBLE_COLS.contains(col) {
+                continue;
+            }
+            let set: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
+            assert!(
+                extra_column_width_px(&set) > 0,
+                "{col} reserves no width, so the grid would stop short of it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_entry_leaves_the_filter_alone() {
+        // The prod-facing bug this guards: `set(raw.parse().ok())` deletes the
+        // filter the user is editing the moment the target type rejects what
+        // they typed. `-5` is a legal number, so `type=number` hands it over
+        // intact; `usize` then refuses it.
+        assert_eq!(
+            commit_numeric(Some(3usize), Some("-5".to_string())),
+            Some(3)
+        );
+        assert_eq!(
+            commit_numeric(Some(100_000i32), Some("abc".to_string())),
+            Some(100_000)
+        );
+    }
+
+    #[test]
+    fn an_explicit_clear_removes_the_filter() {
+        // `None` is the `x` button, and `committed_value` has already mapped
+        // blank input to `None` by this point.
+        assert_eq!(commit_numeric(Some(3usize), None), None);
+    }
+
+    #[test]
+    fn a_valid_entry_replaces_the_value() {
+        assert_eq!(commit_numeric(Some(3usize), Some("6".to_string())), Some(6));
+        assert_eq!(
+            commit_numeric(None, Some("0.25".to_string())),
+            Some(0.25f32)
+        );
+    }
+
+    #[test]
+    fn a_bad_entry_with_nothing_to_keep_stays_unset() {
+        assert_eq!(commit_numeric(None::<i32>, Some("abc".to_string())), None);
+    }
+
+    #[test]
+    fn velocity_floor_renders_without_float_noise() {
+        // `?vel=0.2` round-trips through f32 as 0.20000000298023224.
+        assert_eq!(format_velocity_floor(0.2), "0.2");
+        assert_eq!(format_velocity_floor(1.0), "1");
+        assert_eq!(format_velocity_floor(2.5), "2.5");
+        // Guards the naive `trim_end_matches('0')`, which reads "10.00" as "1".
+        assert_eq!(format_velocity_floor(10.0), "10");
+    }
+
+    #[test]
+    fn a_rendered_velocity_floor_parses_back_to_itself() {
+        // The chip shows this string *and* edits it, so it has to survive a
+        // round trip or opening the chip would change the filter.
+        for v in [0.2f32, 0.25, 1.0, 10.0, 0.05] {
+            let rendered = format_velocity_floor(v);
+            assert_eq!(
+                rendered.parse::<f32>(),
+                Ok(v),
+                "{v} rendered as {rendered:?} did not parse back"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_menu_omits_filters_that_already_have_a_chip() {
+        // Offering a filter that is already a chip would put two editable
+        // representations of one value back on the page — the exact thing
+        // the sticky bar exists to delete.
+        let available = available_filters(&[FILTER_PROFIT, FILTER_VELOCITY]);
+        assert!(!available.contains(&FILTER_PROFIT));
+        assert!(!available.contains(&FILTER_VELOCITY));
+        let expected = ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| *id != FILTER_PROFIT && *id != FILTER_VELOCITY)
+            .collect::<Vec<_>>();
+        assert_eq!(available, expected, "menu order must be stable");
+    }
+
+    #[test]
+    fn filter_menu_offers_everything_when_nothing_is_set() {
+        assert_eq!(available_filters(&[]), ADDABLE_FILTERS.to_vec());
+    }
+
+    #[test]
+    fn addable_filter_ids_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for id in ADDABLE_FILTERS {
+            assert!(seen.insert(*id), "{id} is listed twice in ADDABLE_FILTERS");
+        }
+    }
+
+    #[test]
+    fn every_addable_filter_has_a_starting_value() {
+        for id in ADDABLE_FILTERS {
+            assert!(
+                !default_filter_value(id).is_empty(),
+                "{id} has no default, so the + Filter menu would add an empty chip"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_filter_defaults_are_parseable() {
+        // These feed `"...".parse::<i32/usize/f32>()`; an unparseable default
+        // silently adds nothing at all when picked from the menu.
+        for id in [
+            FILTER_PROFIT,
+            FILTER_PROFIT_PER_DAY,
+            FILTER_ROI,
+            FILTER_SALES,
+            FILTER_VELOCITY,
+            FILTER_MIN_BUY,
+            FILTER_MAX_PRICE,
+        ] {
+            let raw = default_filter_value(id);
+            assert!(
+                raw.parse::<f64>().is_ok(),
+                "{id} default {raw:?} does not parse as a number"
+            );
+        }
+    }
+
+    #[test]
+    fn duration_filter_defaults_parse_as_durations() {
+        for id in [FILTER_NEXT_SALE, FILTER_LAST_SOLD] {
+            let raw = default_filter_value(id);
+            assert!(
+                parse_duration(raw).is_ok(),
+                "{id} default {raw:?} is not a duration humantime accepts"
+            );
+        }
+    }
+
+    /// The header's flip rule, extracted from the href closure so it can be
+    /// pinned without a router. Clicking the column already in effect flips;
+    /// clicking any other column starts descending.
+    fn next_sort_dir(is_active: bool, current: SortDir) -> SortDir {
+        if is_active {
+            match current {
+                SortDir::Desc => SortDir::Asc,
+                SortDir::Asc => SortDir::Desc,
+            }
+        } else {
+            SortDir::Desc
+        }
+    }
+
+    #[test]
+    fn clicking_the_active_column_flips_direction() {
+        assert_eq!(next_sort_dir(true, SortDir::Desc), SortDir::Asc);
+        assert_eq!(next_sort_dir(true, SortDir::Asc), SortDir::Desc);
+    }
+
+    #[test]
+    fn clicking_a_different_column_starts_descending() {
+        // Arriving at a new column ascending would bury the best rows, which
+        // is the opposite of what every one of these columns is sorted for.
+        assert_eq!(next_sort_dir(false, SortDir::Asc), SortDir::Desc);
+        assert_eq!(next_sort_dir(false, SortDir::Desc), SortDir::Desc);
+    }
+
+    #[test]
+    fn descending_is_the_default_so_it_stays_out_of_the_url() {
+        // The header omits `dir` whenever it equals the default; if that
+        // default ever changed, every bookmarked `?sort=` would silently
+        // flip meaning.
+        assert_eq!(SortDir::default(), SortDir::Desc);
+    }
+
+    #[test]
+    fn sort_dir_round_trips_through_string() {
+        assert_eq!("asc".parse::<SortDir>(), Ok(SortDir::Asc));
+        assert_eq!("desc".parse::<SortDir>(), Ok(SortDir::Desc));
+        assert_eq!(SortDir::Asc.to_string(), "asc");
+        assert_eq!(SortDir::Desc.to_string(), "desc");
+        assert!("sideways".parse::<SortDir>().is_err());
     }
 }

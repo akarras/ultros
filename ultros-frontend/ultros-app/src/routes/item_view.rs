@@ -8,9 +8,10 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_table::*, meta::*,
-    realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, skeleton::BoxSkeleton, stats_display::*, toggle::Toggle, ui_text::*,
+    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_panel::ListingsPanel,
+    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
+    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
+    toggle::Toggle, ui_text::*,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -18,6 +19,7 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string};
+use crate::routes::item_view_scope::item_href;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta};
@@ -64,7 +66,7 @@ where
 }
 
 /// [`Get`] counterpart to [`with_or`] for values that are cloned out anyway.
-fn get_or_default<S>(signal: &S) -> S::Value
+pub(crate) fn get_or_default<S>(signal: &S) -> S::Value
 where
     S: Get,
     S::Value: Default,
@@ -112,6 +114,18 @@ fn WorldButton(
 ) -> impl IntoView {
     let (home_world, _) = use_home_world();
     let world_name = world.get_name().to_string();
+    let label = world_name.clone();
+    let query = use_query_map();
+    // Only the params this route actually owns are carried forward, so a
+    // stale or hostile query key can't be reflected back into a link.
+    let search = Signal::derive(move || {
+        query.with(|query| match query.get("exclude-worlds") {
+            Some(worlds) if !worlds.is_empty() => {
+                format!("exclude-worlds={}", Url::escape(&worlds))
+            }
+            _ => String::new(),
+        })
+    });
     let world_2 = world_name.clone();
     let world_3 = world_name.clone();
     let is_home_world = Signal::derive({
@@ -166,7 +180,7 @@ fn WorldButton(
                     .join(" ")
             }
                 attr:aria-current=move || is_selected.get().then_some("page")
-                href=format!("/item/{}/{item_id}", Url::escape(&world_name))
+                href=move || search.with(|search| item_href(&world_name, item_id, search))
             >
                 {move || {
                     is_home_world
@@ -178,7 +192,7 @@ fn WorldButton(
                             }
                         })
                 }}
-                {world_name}
+                {label}
             </A>
     }.into_any()
 }
@@ -262,7 +276,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
 
     view! {
-        <div class="sticky top-0 z-10 backdrop-blur bg-[color:color-mix(in_srgb,var(--color-background)_85%,transparent)] border-y border-[color:var(--color-outline)]">
+        <div class="border-y border-[color:var(--color-outline)]">
             <div class="w-full px-3 sm:px-4">
                 <div class="flex flex-col gap-2 py-2">
                         {move || {
@@ -340,7 +354,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
 }
 
 #[component]
-fn DatacenterExclusionControls(
+pub fn DatacenterExclusionControls(
     world: Memo<String>,
     excluded_datacenters: RwSignal<HashSet<String>>,
 ) -> impl IntoView {
@@ -1132,7 +1146,7 @@ fn WorldMarketShare(
     view! {
         <Transition fallback=move || ()>
             {move || {
-                // Suspend on `listing_resource` here too (see HighQualityTable) so the
+                // Suspend on `listing_resource` here too (see ListingsPanel) so the
                 // server and the hydrating client agree on the rendered structure —
                 // the tachys hydration mismatch behind GlitchTip #6831.
                 if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
@@ -1405,101 +1419,6 @@ pub fn ChartWrapper(
 }
 
 #[component]
-fn HighQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] filtered_listings: Signal<ListingRows>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    view! {
-        <div class="space-y-6">
-            <Transition fallback=move || {
-                view! { <BoxSkeleton /> }
-            }>
-                {move || {
-                    // Read `listing_resource` inside the Transition so this section
-                    // actually suspends on it during SSR. `filtered_listings` is a Memo
-                    // created outside any Suspense boundary, so reading it alone does NOT
-                    // subscribe this Transition to the resource — the server would then
-                    // render an empty table while the client hydrates a populated one,
-                    // tripping the tachys hydration `unreachable!()` panic (GlitchTip #6831).
-                    if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
-                        return ().into_any();
-                    }
-                    let hq_listings = Memo::new(move |_| {
-                        with_or(&filtered_listings, Vec::new(), |listings| {
-                            listings
-                                .iter()
-                                .filter(|(listing, _)| listing.hq)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        })
-                    });
-                    view! {
-                        <div
-                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || hq_listings.with(|l| l.is_empty())
-                        >
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, high_quality_listings).to_string()}
-                            </h2>
-                            <ListingsTable listings=hq_listings />
-                        </div>
-                    }
-                        .into_any()
-                }}
-            </Transition>
-        </div>
-    }
-    .into_any()
-}
-
-#[component]
-fn LowQualityTable(
-    listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] filtered_listings: Signal<ListingRows>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    view! {
-        <div class="space-y-6">
-            <Transition fallback=move || {
-                view! { <BoxSkeleton /> }
-            }>
-                {move || {
-                    // Suspend on `listing_resource` here too (see HighQualityTable) so the
-                    // server does not emit an empty table that the client then hydrates as
-                    // populated — the tachys hydration mismatch behind GlitchTip #6831.
-                    if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
-                        return ().into_any();
-                    }
-                    let lq_listings = Memo::new(move |_| {
-                        with_or(&filtered_listings, Vec::new(), |listings| {
-                            listings
-                                .iter()
-                                .filter(|(listing, _)| !listing.hq)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        })
-                    });
-                    view! {
-                        <div
-                            class="flex flex-col gap-4 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
-                            class:hidden=move || lq_listings.with(|l| l.is_empty())
-                        >
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, low_quality_listings).to_string()}
-                            </h2>
-                            <ListingsTable listings=lq_listings />
-                        </div>
-                    }
-                        .into_any()
-                }}
-            </Transition>
-        </div>
-    }
-    .into_any()
-}
-
-#[component]
 fn SalesDetails(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
 ) -> impl IntoView {
@@ -1677,8 +1596,8 @@ fn ListingsContent(
     });
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
-            <DecisionHeader listing_resource filtered_listings world />
-            <div class="flex flex-col gap-4 sm:gap-6">
+            <div id="overview" class="scroll-mt-16">
+                <DecisionHeader listing_resource filtered_listings world />
                 <MarketStatsPanel
                     listing_resource
                     filtered_listings
@@ -1686,20 +1605,28 @@ fn ListingsContent(
                     realtime_status=realtime_status.into()
                     last_update_at=last_update_at.into()
                 />
-                <WorldMarketShare listing_resource filtered_listings world />
-                <div id="history">
-                    <ChartWrapper listing_resource filtered_listings item_id world />
-                </div>
             </div>
-
-            <div id="listings" class="grid grid-cols-1 gap-6 mt-6">
-                <DatacenterExclusionControls world excluded_datacenters />
-                <HighQualityTable listing_resource filtered_listings />
-                <LowQualityTable listing_resource filtered_listings />
+            <div id="history" class="scroll-mt-16 mt-4 sm:mt-6">
+                <ChartWrapper listing_resource filtered_listings item_id world />
+            </div>
+            <div id="listings" class="scroll-mt-16 mt-6">
+                <ListingsPanel
+                    listing_resource
+                    filtered_listings
+                    world
+                    excluded_datacenters
+                />
             </div>
 
             <div class="grid grid-cols-1 gap-6 mt-8">
                 <SalesDetails listing_resource />
+            </div>
+
+            // Per-world supply distribution answers a research question, not
+            // something every visitor should scroll past on the way to the
+            // chart. It sits below the sale history for that reason.
+            <div class="mt-6">
+                <WorldMarketShare listing_resource filtered_listings world />
             </div>
 
             <div class="mt-6 mx-auto">
@@ -1918,9 +1845,15 @@ pub fn ItemView() -> impl IntoView {
 
             <WorldMenu world_name=world item_id />
 
+            <SectionNav>
+                <span class="text-sm font-bold text-brand-200 whitespace-nowrap">
+                    {move || Url::unescape(&world())}
+                </span>
+            </SectionNav>
+
             <div class="main-content px-0 sm:px-4">
                 <ListingsContent item_id world excluded_worlds />
-                <div class="mt-6">
+                <div id="related" class="scroll-mt-16 mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>
             </div>

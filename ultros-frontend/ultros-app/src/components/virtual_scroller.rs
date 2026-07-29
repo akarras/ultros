@@ -46,6 +46,77 @@ impl Fenwick {
     }
 }
 
+/// Where a [`VirtualScroller`] reads its scroll position and viewport size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScrollSource {
+    /// The component owns a fixed-height `overflow-y-auto` container.
+    /// This is the historical behavior and remains the default.
+    Container { viewport_height: f64 },
+    /// The page scrolls; the list measures against the window. Keeps
+    /// native scrolling on mobile (no nested scroll trap, browser chrome
+    /// auto-hides). `sticky_offset` is the height of sticky chrome above
+    /// the list, so rows hidden behind it are not counted as visible.
+    ///
+    /// Note: in this mode the scroller element deliberately carries **no**
+    /// `overflow` of its own. Any overflow on an ancestor of a
+    /// `position: sticky` header makes that header stick to the ancestor's
+    /// scrollport instead of the viewport, which would silently defeat the
+    /// sticky header. A caller that needs horizontal scrolling must put
+    /// `overflow-x-auto` *inside* the header/row views, not around the list.
+    Window { sticky_offset: f64 },
+}
+
+/// Rows rendered during SSR and on the first client render in
+/// [`ScrollSource::Window`] mode.
+///
+/// Window mode cannot measure `innerHeight` on the server. Rendering a
+/// measured count on the client while the server rendered a different one
+/// is an SSR/CSR mismatch, which surfaces as the tachys `hydration.rs`
+/// panic this repo has hit repeatedly. Both sides therefore render exactly
+/// this many rows until an `Effect` flips the `hydrated` flag.
+pub const SSR_FALLBACK_ROWS: usize = 20;
+
+/// Usable viewport height for a scroll source. Extracted so the geometry
+/// is testable without a browser.
+fn effective_viewport_for(source: ScrollSource, measured_window_height: f64) -> f64 {
+    match source {
+        ScrollSource::Container { viewport_height } => viewport_height,
+        ScrollSource::Window { sticky_offset } => (measured_window_height - sticky_offset).max(0.0),
+    }
+}
+
+/// Viewport height, in px, that the row math should actually use.
+///
+/// `measured_window_height` is `0.0` until the client has measured the window,
+/// which is permanently the case on the server. In [`ScrollSource::Window`]
+/// mode a measurement is only trusted once `hydrated` is true *and* the
+/// measurement is non-zero; until then both sides return the same
+/// [`SSR_FALLBACK_ROWS`]-worth of height, so the server render and the first
+/// client render produce an identical row count.
+///
+/// [`ScrollSource::Container`] ignores both extra arguments entirely, which is
+/// what keeps the existing call sites byte-identical.
+fn viewport_px(
+    source: ScrollSource,
+    measured_window_height: f64,
+    hydrated: bool,
+    row_height: f64,
+    header_height: f64,
+) -> f64 {
+    if matches!(source, ScrollSource::Window { .. }) && (!hydrated || measured_window_height <= 0.0)
+    {
+        return SSR_FALLBACK_ROWS as f64 * row_height;
+    }
+    (effective_viewport_for(source, measured_window_height) - header_height).max(0.0)
+}
+
+/// Rows to render for a viewport of `viewport` px, including `overscan` rows
+/// beyond the fold. Extracted so the SSR fallback height can be checked to
+/// round-trip back to exactly [`SSR_FALLBACK_ROWS`] rows.
+fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u32) -> u32 {
+    ((viewport / avg_row_height).ceil() as u32).max(1) + overscan
+}
+
 /// Virtual scroller currently mimics the API of the ForEach components, but adds a row_height and viewport_height.
 /// It might be possible to not have a fixed row height in the future, but for now it's good enough!
 ///
@@ -58,6 +129,10 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     key: KF,
     view: D,
     viewport_height: f64,
+    /// Opt into window-scroll virtualization. `None` preserves the
+    /// historical container behavior driven by `viewport_height`.
+    #[prop(optional)]
+    scroll_source: Option<ScrollSource>,
     row_height: f64,
     #[prop(optional, into)] header: Option<AnyView>,
     #[prop(optional)] header_height: f64,
@@ -65,6 +140,28 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional)] variable_height: bool,
     #[prop(optional, into)] scroll_to_index: Option<Signal<Option<usize>>>,
     #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
+    /// Handle on the element that holds the rows.
+    ///
+    /// That element already computes to `overflow-x: auto` (it declares
+    /// `overflow-y: hidden`, which forces the visible axis to `auto`), so it
+    /// is the list's horizontal scrollport. A caller rendering a grid wider
+    /// than the viewport needs this handle to keep its own header scrollport
+    /// in sync with it — the list itself cannot be wrapped in a scrollport
+    /// without stealing the sticky header's (see [`ScrollSource::Window`]).
+    #[prop(optional)]
+    list_ref: Option<NodeRef<leptos::html::Div>>,
+    /// CSS `min-width` for the column of rows, for a caller whose grid is
+    /// wider than the viewport.
+    ///
+    /// Widening the rows alone is not enough to make the list scroll: the row
+    /// box carries `contain: layout`, which stops its overflow reaching the
+    /// list's scrollable overflow region (measured in Chrome — the rows
+    /// overflow, `scrollWidth` on the list does not move). Sizing the spacer
+    /// that holds the rows is what actually gives the list something to
+    /// scroll. Takes any CSS length, so a `var()` can keep a responsive value
+    /// in the stylesheet where it belongs.
+    #[prop(optional, into)]
+    row_min_width: Option<String>,
     /// Optional writeback of the rendered row range `(start, end)` (end
     /// exclusive, includes overscan). Lets a parent fetch data only for
     /// rows in view. When omitted, no extra work is done.
@@ -81,6 +178,17 @@ where
     let render_ahead: u32 = if overscan == 0 { 10 } else { overscan };
     let header_h: f64 = header_height.max(0.0);
     let header_opt: Option<AnyView> = header;
+    let source = scroll_source.unwrap_or(ScrollSource::Container { viewport_height });
+    let is_window = matches!(source, ScrollSource::Window { .. });
+
+    // Hydration gate. Effects run client-only and after hydration, so the
+    // first client render still sees `false` and matches the server's.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| hydrated.set(true));
+
+    // Measured `window.innerHeight`, only meaningful once hydrated. Starts at
+    // 0.0 on both sides so nothing can diverge before the first effect runs.
+    let window_height = RwSignal::new(0.0f64);
     let (scroll_offset, set_scroll_offset) = signal(0);
     // rAF-based scroll coalescing to reduce state churn under heavy scroll
     let last_scroll = RwSignal::new(0);
@@ -101,8 +209,13 @@ where
         fenwick.update(|f| {
             f.reset(len);
         });
-        // reset scroll so new dataset renders from top (e.g., search changes)
-        set_scroll_offset(0);
+        // reset scroll so new dataset renders from top (e.g., search changes).
+        // In window mode the page scroll position is the source of truth and
+        // did not move, so zeroing here would render the wrong slice until the
+        // next scroll event.
+        if !is_window {
+            set_scroll_offset(0);
+        }
     });
 
     // dataset reset handled by length change effect
@@ -110,6 +223,119 @@ where
         Some(r) => r,
         None => NodeRef::<leptos::html::Div>::new(),
     };
+    let list: NodeRef<leptos::html::Div> = match list_ref {
+        Some(r) => r,
+        None => NodeRef::<leptos::html::Div>::new(),
+    };
+
+    // Window-scroll mode: the container no longer scrolls, so its `on:scroll`
+    // handler is inert. Drive `scroll_offset` and `window_height` from the
+    // page instead.
+    if is_window {
+        let sticky_offset = match source {
+            ScrollSource::Window { sticky_offset } => sticky_offset,
+            ScrollSource::Container { .. } => 0.0,
+        };
+        // The JS closures are parked in a local StoredValue rather than
+        // `Closure::forget`-ed: a forgotten listener keeps firing after the
+        // component is disposed and writes into dead signals on the next
+        // route change.
+        let window_cb = StoredValue::new_local(None::<Closure<dyn FnMut()>>);
+        // Handle of a frame that has been requested but has not fired yet.
+        let raf_handle = StoredValue::new(None::<i32>);
+        on_cleanup(move || {
+            // Cancel an in-flight frame *before* dropping the closures. A
+            // scroll immediately followed by a route change leaves a frame
+            // already scheduled against the rAF closure; dropping it first
+            // would have the browser invoke a freed wasm-bindgen closure
+            // ("closure invoked recursively or after being dropped"), and even
+            // surviving that it would run `sync()` into disposed signals.
+            if let Some(handle) = raf_handle.get_value()
+                && let Some(w) = window()
+            {
+                let _ = w.cancel_animation_frame(handle);
+            }
+            raf_handle.set_value(None);
+            window_cb.update_value(|slot| {
+                if let Some(cb) = slot.take()
+                    && let Some(w) = window()
+                {
+                    let handler = cb.as_ref().unchecked_ref();
+                    let _ = w.remove_event_listener_with_callback("scroll", handler);
+                    let _ = w.remove_event_listener_with_callback("resize", handler);
+                }
+            });
+        });
+
+        Effect::new(move |_| {
+            // Tracks nothing, so it runs exactly once; the guard is belt and
+            // braces against a double registration.
+            if window_cb.with_value(|slot| slot.is_some()) {
+                return;
+            }
+            let Some(w) = window() else { return };
+
+            // Reads layout, so it is only ever called from a rAF callback (or
+            // once at setup) rather than synchronously on every scroll event.
+            let sync = move || {
+                if let Some(h) = window()
+                    .and_then(|w| w.inner_height().ok())
+                    .and_then(|v| v.as_f64())
+                {
+                    window_height.set(h);
+                }
+                if let Some(el) = scroller.get_untracked() {
+                    // `rect.top()` is viewport-relative, so how far the list
+                    // has scrolled is just how far its top edge has travelled
+                    // above the viewport (plus any sticky chrome covering it).
+                    // Measuring every frame rather than caching a `list_top`
+                    // keeps this correct across reflows above the list, and
+                    // avoids depending on layout having settled at setup time.
+                    let top = el.get_bounding_client_rect().top();
+                    set_scroll_offset((sticky_offset - top).max(0.0).round() as i32);
+                }
+            };
+            sync();
+
+            // One long-lived rAF closure, reused for every frame, so scrolling
+            // does not leak a `Closure` per event.
+            type RafCallback = Closure<dyn FnMut(f64)>;
+            let raf_cb: Rc<RefCell<Option<RafCallback>>> = Rc::new(RefCell::new(None));
+            *raf_cb.borrow_mut() = Some(Closure::wrap(Box::new(move |_: f64| {
+                // The frame has fired, so the handle is spent; clearing it
+                // keeps `on_cleanup` from cancelling a stale id.
+                raf_handle.set_value(None);
+                sync();
+                raf_pending.set(false);
+            }) as Box<dyn FnMut(f64)>));
+
+            let cb = Closure::wrap(Box::new(move || {
+                if raf_pending.get_untracked() {
+                    return;
+                }
+                raf_pending.set(true);
+                // Every path that fails to actually schedule a frame has to
+                // clear the flag again, otherwise nothing will ever set it back
+                // to false and this listener is dead for the rest of the
+                // component's life.
+                let scheduled = match (window(), raf_cb.borrow().as_ref()) {
+                    (Some(w), Some(c)) => {
+                        w.request_animation_frame(c.as_ref().unchecked_ref()).ok()
+                    }
+                    _ => None,
+                };
+                match scheduled {
+                    Some(handle) => raf_handle.set_value(Some(handle)),
+                    None => raf_pending.set(false),
+                }
+            }) as Box<dyn FnMut()>);
+
+            let handler = cb.as_ref().unchecked_ref();
+            let _ = w.add_event_listener_with_callback("scroll", handler);
+            let _ = w.add_event_listener_with_callback("resize", handler);
+            window_cb.set_value(Some(cb));
+        });
+    }
 
     // use memo here so our signals only retrigger if the value actually changed.
     let child_start = Memo::new(move |_| {
@@ -139,7 +365,18 @@ where
 
         lo_u32.saturating_sub(render_ahead / 2)
     });
-    let effective_viewport = (viewport_height - header_h).max(0.0);
+    // In container mode this tracks `window_height` and `hydrated` needlessly,
+    // but neither ever changes the result there, so the memo's own diffing
+    // absorbs it and downstream signals never see a change.
+    let effective_viewport = Memo::new(move |_| {
+        viewport_px(
+            source,
+            window_height.get(),
+            hydrated.get(),
+            row_height,
+            header_h,
+        )
+    });
     let avg_row_height = Memo::new(move |_| {
         let len = children_len();
         if len == 0 {
@@ -150,7 +387,7 @@ where
         }
     });
     let children_shown = Memo::new(move |_| {
-        ((effective_viewport / avg_row_height()).ceil() as u32).max(1) + render_ahead
+        rows_for_viewport(effective_viewport.get(), avg_row_height(), render_ahead)
     });
 
     // Publish the rendered row range to an optional parent signal. `child_start`
@@ -175,18 +412,26 @@ where
             if let Some(target) = scroll_sig.get()
                 && let Some(div) = scroller.get()
             {
-                // approximate top of target row using measured prefix sums
+                // approximate top of target row using measured prefix sums.
+                // `effective_viewport` is read untracked so a viewport resize
+                // does not re-trigger a scroll animation; before it became a
+                // memo it was a plain constant and this effect only ever ran
+                // in response to `scroll_sig`.
+                //
+                // Note: this drives `div.scrollTop`, so it is a no-op under
+                // `ScrollSource::Window` where the div does not scroll.
+                let viewport = effective_viewport.get_untracked();
                 let row_top = target as f64 * row_height + fenwick.with(|f| f.sum(target));
                 let current = div.scroll_top();
                 let visible_top = current + header_h;
-                let visible_bottom = current + header_h + effective_viewport;
+                let visible_bottom = current + header_h + viewport;
                 let row_bottom = row_top + avg_row_height();
                 let bottom_pad = 16.0;
                 // decide desired scrollTop
                 let desired = if row_top < visible_top - 1.0 {
                     (row_top - header_h).max(0.0)
                 } else if row_bottom > visible_bottom + 1.0 {
-                    (row_bottom - (header_h + effective_viewport) + bottom_pad).max(0.0)
+                    (row_bottom - (header_h + viewport) + bottom_pad).max(0.0)
                 } else {
                     current
                 };
@@ -238,6 +483,23 @@ where
             }
         });
     }
+    // Both are constant for the life of the component, so they stay plain
+    // values rather than closures.
+    //
+    // Window mode carries no `overflow` at all: any overflow on an ancestor of
+    // the `position: sticky` header would re-parent its scrollport to this div
+    // and stop it sticking to the viewport. Callers needing horizontal scroll
+    // must apply it inside the header/row views.
+    let container_class = if is_window {
+        "w-full"
+    } else {
+        "overflow-y-auto overflow-x-auto w-full will-change-scroll contain-paint forced-layer"
+    };
+    let container_style = if is_window {
+        String::new()
+    } else {
+        format!("height: {}px;", viewport_height.ceil() as u32)
+    };
     let virtual_children = Memo::new(move |_| {
         each.with(|children| {
             let array_size = children.len();
@@ -280,11 +542,39 @@ where
                 }
             }
             node_ref=scroller
-            class="overflow-y-auto overflow-x-auto w-full will-change-scroll contain-paint forced-layer"
-            style=format!("height: {}px;", viewport_height.ceil() as u32)
+            class=container_class
+            style=container_style
         >
-            {header_opt.map(|h| view! { <div class="sticky top-0 z-10">{h}</div> })}
+            {header_opt
+                .map(|h| match source {
+                    ScrollSource::Container { .. } => {
+                        view! { <div class="sticky top-0 z-10">{h}</div> }.into_any()
+                    }
+                    ScrollSource::Window { sticky_offset } => {
+                        view! {
+                            <div
+                                class="sticky z-10"
+                                style=format!("top: {}px;", sticky_offset.round() as i32)
+                            >
+                                {h}
+                            </div>
+                        }
+                            .into_any()
+                    }
+                })}
+            // Row area. `overflow-y: hidden` forces the visible x-axis to
+            // compute to `auto`, so this box is also the list's horizontal
+            // scrollport (see `list_ref` / `row_min_width`).
+            //
+            // Note for anyone tidying a caller's header later: this box is as
+            // tall as the *whole* virtual list, so its horizontal scrollbar
+            // sits at the bottom of all of it — hundreds of thousands of px
+            // down, i.e. never on screen. It scrolls by wheel, trackpad and
+            // touch, but a scrollbar on the caller's sticky header is the only
+            // affordance a user can actually see. Removing that header
+            // scrollbar makes off-screen columns unreachable in practice.
             <div
+                node_ref=list
                 class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
                 style=move || {
                     format!(
@@ -302,6 +592,7 @@ where
                     format!(
                         "
             transform: translateY({}px);
+            {}
           ",
                         {
                             let start = child_start() as usize;
@@ -309,6 +600,10 @@ where
                             let val = child_start() as f64 * row_height + delta_before;
                             val.max(0.0).round() as i32
                         },
+                        row_min_width
+                            .as_ref()
+                            .map(|w| format!("min-width: {w};"))
+                            .unwrap_or_default(),
                     )
                 }>
                     <For
@@ -402,6 +697,97 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn container_viewport_ignores_window_height() {
+        let s = ScrollSource::Container {
+            viewport_height: 720.0,
+        };
+        assert_eq!(effective_viewport_for(s, 1080.0), 720.0);
+    }
+
+    #[test]
+    fn window_viewport_subtracts_sticky_offset() {
+        let s = ScrollSource::Window {
+            sticky_offset: 76.0,
+        };
+        assert_eq!(effective_viewport_for(s, 900.0), 824.0);
+    }
+
+    #[test]
+    fn window_viewport_never_negative() {
+        // A short window with tall sticky chrome must not produce a
+        // negative viewport, which would make children_shown underflow.
+        let s = ScrollSource::Window {
+            sticky_offset: 200.0,
+        };
+        assert_eq!(effective_viewport_for(s, 120.0), 0.0);
+    }
+
+    const ROW_H: f64 = 32.0;
+    const HEADER_H: f64 = 40.0;
+    const WINDOW: ScrollSource = ScrollSource::Window {
+        sticky_offset: 76.0,
+    };
+
+    #[test]
+    fn ssr_fallback_height_round_trips_to_the_fallback_row_count() {
+        // The pre-hydration height only protects hydration if it maps back
+        // through the row math to exactly SSR_FALLBACK_ROWS rows.
+        let fallback = viewport_px(WINDOW, 0.0, false, ROW_H, HEADER_H);
+        assert_eq!(
+            rows_for_viewport(fallback, ROW_H, 0),
+            SSR_FALLBACK_ROWS as u32
+        );
+    }
+
+    #[test]
+    fn window_mode_ignores_a_measurement_until_hydrated() {
+        // This is the whole hydration guard: the client can already read
+        // innerHeight during its first render pass, and using it would render
+        // a different row count than the server did.
+        assert_eq!(
+            viewport_px(WINDOW, 1080.0, false, ROW_H, HEADER_H),
+            viewport_px(WINDOW, 0.0, false, ROW_H, HEADER_H),
+        );
+    }
+
+    #[test]
+    fn window_mode_uses_the_measurement_once_hydrated() {
+        assert_eq!(
+            viewport_px(WINDOW, 1080.0, true, ROW_H, HEADER_H),
+            1080.0 - 76.0 - HEADER_H,
+        );
+    }
+
+    #[test]
+    fn window_mode_falls_back_when_hydrated_without_a_measurement() {
+        // innerHeight can legitimately read 0 (background tab, some embeds).
+        // Falling through would yield a 0px viewport, i.e. a single row.
+        assert_eq!(
+            viewport_px(WINDOW, 0.0, true, ROW_H, HEADER_H),
+            SSR_FALLBACK_ROWS as f64 * ROW_H,
+        );
+    }
+
+    #[test]
+    fn container_mode_is_unaffected_by_the_hydration_gate() {
+        // The 7 existing call sites must keep their exact previous geometry:
+        // viewport minus header, whatever the hydration state or window size.
+        let c = ScrollSource::Container {
+            viewport_height: 720.0,
+        };
+        assert_eq!(viewport_px(c, 0.0, false, ROW_H, HEADER_H), 680.0);
+        assert_eq!(viewport_px(c, 1080.0, true, ROW_H, HEADER_H), 680.0);
+    }
+
+    #[test]
+    fn rows_for_viewport_matches_the_previous_arithmetic() {
+        // Guards the extraction from `children_shown`: ceil, floor of 1, then
+        // overscan added on top.
+        assert_eq!(rows_for_viewport(680.0, 32.0, 10), 32);
+        assert_eq!(rows_for_viewport(0.0, 32.0, 10), 11);
+    }
 
     #[test]
     fn test_fenwick_tree_basic_operations() {
