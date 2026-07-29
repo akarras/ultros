@@ -138,7 +138,8 @@ use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
+    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
+    location::Location,
 };
 use std::{
     cmp::Reverse,
@@ -629,6 +630,73 @@ fn available_filters(active: &[&str]) -> Vec<&'static str> {
 /// rendered in the Columns popover (in `AnalyzerTable`) — both need the same
 /// list, and only one of them may query it.
 const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
+
+/// One sortable column header.
+///
+/// Clicking an inactive column sorts by it descending; clicking the column
+/// already in effect flips the direction. The arrow reflects the direction
+/// actually applied — the three call sites this replaces each hardcoded a
+/// down arrow, so `?dir=asc` rendered ascending rows under a descending
+/// glyph, and nothing in the UI could reach `?dir=` at all.
+///
+/// `dir` is omitted from the href when it would be the default, so the
+/// common case stays a clean `?sort=…` and bookmarks don't accumulate a
+/// redundant param.
+#[component]
+fn SortHeader(
+    mode: SortMode,
+    #[prop(into)] label: String,
+    sort_mode: Memo<Option<SortMode>>,
+    sort_dir: Memo<Option<SortDir>>,
+) -> impl IntoView {
+    let Location {
+        pathname, query, ..
+    } = use_location();
+    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::ProfitPerDay) == mode);
+    let dir = Signal::derive(move || sort_dir().unwrap_or_default());
+    view! {
+        <a
+            class=move || {
+                if is_active() {
+                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                } else {
+                    "!text-brand-300 hover:text-brand-200"
+                }
+            }
+            aria-current=move || if is_active() { "true" } else { "false" }
+            href=move || {
+                let mut q = query();
+                q.remove("sort");
+                q.remove("dir");
+                q.insert("sort".to_string(), mode.to_string());
+                let next = if is_active() {
+                    match dir() {
+                        SortDir::Desc => SortDir::Asc,
+                        SortDir::Asc => SortDir::Desc,
+                    }
+                } else {
+                    SortDir::Desc
+                };
+                if next != SortDir::default() {
+                    q.insert("dir".to_string(), next.to_string());
+                }
+                format!("{}{}", pathname(), q.to_query_string())
+            }
+        >
+            <div class="flex items-center gap-2">
+                {label}
+                {move || {
+                    is_active()
+                        .then(|| match dir() {
+                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
+                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
+                        })
+                }}
+            </div>
+        </a>
+    }
+    .into_any()
+}
 
 #[component]
 fn AnalyzerTable(
@@ -1748,38 +1816,21 @@ fn AnalyzerTable(
                                     {t!(i18n, analyzer_col_item)}
                                 </div>
                                 <div role="columnheader" class="w-28 shrink-0 px-3 text-right">
-                                    <QueryButton
-                                        class="!text-brand-300 hover:text-brand-200"
-                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                        key="sort"
-                                        value="profit"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            {t!(i18n, analyzer_col_profit)}
-                                            {move || {
-                                                (sort_mode().unwrap_or(SortMode::ProfitPerDay) == SortMode::Profit)
-                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                            }}
-                                        </div>
-                                    </QueryButton>
+                                    <SortHeader
+                                        mode=SortMode::Profit
+                                        label=t_string!(i18n, analyzer_col_profit).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
                                     <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
-                                        <QueryButton
-                                            class="!text-brand-300 hover:text-brand-200"
-                                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                            key="sort"
-                                            value="profit-per-day"
-                                            default=true
-                                        >
-                                            <div class="flex items-center gap-2">
-                                                {t!(i18n, analyzer_col_profit_per_day)}
-                                                {move || {
-                                                    (sort_mode().unwrap_or(SortMode::ProfitPerDay) == SortMode::ProfitPerDay)
-                                                        .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                                }}
-                                            </div>
-                                        </QueryButton>
+                                        <SortHeader
+                                            mode=SortMode::ProfitPerDay
+                                            label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
@@ -1799,20 +1850,12 @@ fn AnalyzerTable(
                                 })}
                                 {move || visible_cols().contains(COL_ROI).then(|| view! {
                                     <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
-                                        <QueryButton
-                                            class="!text-brand-300 hover:text-brand-200"
-                                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                            key="sort"
-                                            value="roi"
-                                        >
-                                            <div class="flex items-center gap-2">
-                                                {t!(i18n, analyzer_col_roi)}
-                                                {move || {
-                                                    (sort_mode().unwrap_or(SortMode::ProfitPerDay) == SortMode::Roi)
-                                                        .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                                }}
-                                            </div>
-                                        </QueryButton>
+                                        <SortHeader
+                                            mode=SortMode::Roi
+                                            label=t_string!(i18n, analyzer_col_roi).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
                                     </div>
                                 })}
                                 <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
@@ -3036,6 +3079,42 @@ mod tests {
                 "{id} default {raw:?} is not a duration humantime accepts"
             );
         }
+    }
+
+    /// The header's flip rule, extracted from the href closure so it can be
+    /// pinned without a router. Clicking the column already in effect flips;
+    /// clicking any other column starts descending.
+    fn next_sort_dir(is_active: bool, current: SortDir) -> SortDir {
+        if is_active {
+            match current {
+                SortDir::Desc => SortDir::Asc,
+                SortDir::Asc => SortDir::Desc,
+            }
+        } else {
+            SortDir::Desc
+        }
+    }
+
+    #[test]
+    fn clicking_the_active_column_flips_direction() {
+        assert_eq!(next_sort_dir(true, SortDir::Desc), SortDir::Asc);
+        assert_eq!(next_sort_dir(true, SortDir::Asc), SortDir::Desc);
+    }
+
+    #[test]
+    fn clicking_a_different_column_starts_descending() {
+        // Arriving at a new column ascending would bury the best rows, which
+        // is the opposite of what every one of these columns is sorted for.
+        assert_eq!(next_sort_dir(false, SortDir::Asc), SortDir::Desc);
+        assert_eq!(next_sort_dir(false, SortDir::Desc), SortDir::Desc);
+    }
+
+    #[test]
+    fn descending_is_the_default_so_it_stays_out_of_the_url() {
+        // The header omits `dir` whenever it equals the default; if that
+        // default ever changed, every bookmarked `?sort=` would silently
+        // flip meaning.
+        assert_eq!(SortDir::default(), SortDir::Desc);
     }
 
     #[test]
