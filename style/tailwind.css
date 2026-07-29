@@ -1863,7 +1863,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 
 /* ----- Topbar component styles ----- */
 @utility top-bar {
-    display: flex;
+    /* 3-column grid so the search box is centered in the bar: the two outer
+       tracks are equal `1fr`, so the middle track lands dead center no matter
+       how wide the hamburger/actions clusters are. A flex row with auto
+       margins can't do this — the left and right clusters have different
+       widths, so the free space splits unevenly.
+       Columns are assigned explicitly because the hamburger is
+       `display: none` on desktop (a hidden element isn't a grid item, so
+       auto-placement would slide the search box into column 1). */
+    display: grid;
+    grid-template-columns: 1fr minmax(0, 480px) 1fr;
     align-items: center;
     gap: 0.75rem;
     height: 56px;
@@ -1874,6 +1883,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     z-index: 40;
 }
 .top-bar-hamburger {
+    grid-column: 1;
+    justify-self: start;
     display: none; /* hidden on desktop; mobile media query below re-shows it */
     align-items: center;
     justify-content: center;
@@ -1893,16 +1904,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 .top-bar-search {
-    flex: 1;
-    max-width: 480px;
-    margin-inline: auto;
+    grid-column: 2;
+    width: 100%;
     min-width: 0;
 }
 .top-bar-actions {
+    grid-column: 3;
+    justify-self: end;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-left: auto;
 }
 
 /* ----- Toolbar primitive (consumed by Track 3) ----- */
