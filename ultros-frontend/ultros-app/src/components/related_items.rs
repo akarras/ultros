@@ -473,6 +473,7 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
 
 #[component]
 fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     // lookup items
     let npcs = Memo::new(move |_| {
@@ -520,7 +521,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <div id="vendor-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
             <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                 <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
-                "Vendor Sources"
+                {t!(i18n, related_vendor_sources_title)}
             </h3>
             <div class="grid grid-cols-1 gap-3">{data}</div>
         </div>
@@ -684,7 +685,7 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <div id="exchange-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
             <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                 <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
-                "Exchange Sources"
+                {t!(i18n, related_exchange_sources_title)}
             </h3>
             <div class="grid grid-cols-1 gap-3">
                 {view}
@@ -843,6 +844,7 @@ pub fn leve_rewards_item(
 
 #[component]
 fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
     let data = tracked_data();
     let leves = Memo::new(move |_| {
         let item_id = item_id();
@@ -893,7 +895,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         <div id="leve-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
             <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                 <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
-                "Levequest Rewards"
+                {t!(i18n, related_levequest_rewards_title)}
             </h3>
             <div class="grid grid-cols-1 gap-3">{view}</div>
         </div>
