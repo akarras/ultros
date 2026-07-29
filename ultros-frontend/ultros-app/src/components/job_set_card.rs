@@ -37,6 +37,27 @@ fn set_total(group: &JobSetGroup, prices: &CheapestListingsMap, hq_only: bool) -
     had_any.then_some(total)
 }
 
+/// The NQ/HQ pair the card renders, gated on whether the first client
+/// render has already happened.
+///
+/// Before hydration this deliberately reports `(None, None)` — i.e. the
+/// same "—" placeholder the server ships — regardless of what the price
+/// resource holds. See the gate comment in [`JobSetCard`] for why the
+/// first CSR render *must* agree with SSR here.
+fn card_totals(
+    hydrated: bool,
+    prices: Option<&CheapestListingsMap>,
+    group: &JobSetGroup,
+) -> (Option<i64>, Option<i64>) {
+    if !hydrated {
+        return (None, None);
+    }
+    match prices {
+        Some(map) => (set_total(group, map, false), set_total(group, map, true)),
+        None => (None, None),
+    }
+}
+
 /// Stable URL slug for the per-set detail page. We key on `ilvl`
 /// rather than the (locale-dependent) stem so links survive language
 /// switches and so deep-links don't break if the prefix detection
@@ -151,6 +172,43 @@ mod tests {
     }
 
     #[test]
+    fn card_totals_are_empty_until_hydrated() {
+        // Regression for the gear-set cards rendering a permanent "—" on a
+        // direct load of `/items/jobset/<JOB>`: SSR ships the placeholder
+        // (resource still pending) and tachys *adopts* the SSR text node
+        // during hydration without rewriting it, so a first CSR render that
+        // already knows the total leaves the DOM stuck on "—" forever. The
+        // first client render therefore has to report exactly what the
+        // server did, even with a fully populated price map in hand.
+        let group = JobSetGroup {
+            stem: "x".to_string(),
+            ilvl: 770,
+            items: vec![item(1, "a"), item(2, "b")],
+        };
+        let prices = map_with(&[(1, false, 100), (1, true, 200), (2, true, 50)]);
+
+        assert_eq!(card_totals(false, Some(&prices), &group), (None, None));
+        // NQ: 100 (item 1's lower NQ) + 50 (item 2's only listing).
+        // HQ: 200 + 50, both items' HQ listings.
+        assert_eq!(
+            card_totals(true, Some(&prices), &group),
+            (Some(150), Some(250))
+        );
+    }
+
+    #[test]
+    fn card_totals_are_empty_without_a_price_map() {
+        // The resource can be absent (no `CheapestPrices` context) or still
+        // erroring/pending after hydration — both render the placeholder.
+        let group = JobSetGroup {
+            stem: "x".to_string(),
+            ilvl: 770,
+            items: vec![item(1, "a")],
+        };
+        assert_eq!(card_totals(true, None, &group), (None, None));
+    }
+
+    #[test]
     fn set_total_handles_partial_coverage() {
         // Only one of three items has a listing — total still
         // returns Some, summed over what's known. The UI labels
@@ -181,16 +239,44 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
     let ilvl = group.ilvl;
     let href = detail_href(&jobset, &group_for_href);
 
+    // Defer reading the cheapest-listings resource until after the first
+    // client render.
+    //
+    // There is no `<Suspense>` around these totals, so SSR renders the body
+    // with the resource still pending and always ships the "—" placeholder
+    // (`card_totals` -> `GilOrDash`). The client, by contrast, has the
+    // resolved resource in the hydration payload on its very first render.
+    // That divergence doesn't panic here — `GilOrDash` keeps the element
+    // shape stable (see #696) — but it silently loses the value: tachys
+    // *adopts* the SSR text node during hydration without writing to it
+    // (`tachys/src/view/strings.rs`: `if !FROM_SERVER { set_text }`) while
+    // storing the client-computed string as the node's state. The DOM keeps
+    // showing "—" even though the reactive graph thinks it rendered the
+    // total, and `rebuild` only patches the node once the value *changes* —
+    // which is exactly why switching worlds (a refetch, hence a different
+    // total) makes the prices finally appear.
+    //
+    // Same `Effect`-driven `hydrated` gate as #730 (relative-time) and #740
+    // (`<CheapestPrice>`, whose skeleton is why the sortable list below the
+    // cards was never affected): effects run client-only, after the initial
+    // view is rendered, so SSR and the first CSR render both emit "—", and a
+    // frame later the flag flips, the memo recomputes to a genuinely
+    // different value, and tachys patches the DOM.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
+
     let totals = Memo::new(move |_| {
+        if !hydrated.get() {
+            return card_totals(false, None, &group_for_total);
+        }
         let Some(listings) = read_listings else {
-            return (None, None);
+            return card_totals(true, None, &group_for_total);
         };
-        listings.with(|data| match data {
-            Some(Ok(map)) => (
-                set_total(&group_for_total, map, false),
-                set_total(&group_for_total, map, true),
-            ),
-            _ => (None, None),
+        listings.with(|data| {
+            let map = data.as_ref().and_then(|result| result.as_ref().ok());
+            card_totals(true, map, &group_for_total)
         })
     });
 
