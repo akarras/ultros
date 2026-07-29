@@ -1509,5 +1509,14 @@
     "groups_group_deleted": "Group deleted",
     "retainers_assign_character": "Assign Character",
     "retainers_no_character": "No character",
-    "retainers_assign_error": "Failed to assign character"
+    "retainers_assign_error": "Failed to assign character",
+    "item_view_nav_aria": "섹션으로 이동",
+    "item_view_nav_overview": "개요",
+    "item_view_nav_listings": "판매 목록",
+    "item_view_nav_history": "내역",
+    "item_view_nav_sources": "획득 방법",
+    "item_view_nav_related": "관련",
+    "item_view_listings_count": "{{count}}개 판매 중",
+    "item_view_quality_filter_aria": "품질별로 판매 목록 필터",
+    "item_view_quality_all": "전체"
 }

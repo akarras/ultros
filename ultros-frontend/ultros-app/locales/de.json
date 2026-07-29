@@ -1509,5 +1509,14 @@
     "groups_group_deleted": "Group deleted",
     "retainers_assign_character": "Assign Character",
     "retainers_no_character": "No character",
-    "retainers_assign_error": "Failed to assign character"
+    "retainers_assign_error": "Failed to assign character",
+    "item_view_nav_aria": "Zu Abschnitt springen",
+    "item_view_nav_overview": "Übersicht",
+    "item_view_nav_listings": "Angebote",
+    "item_view_nav_history": "Verlauf",
+    "item_view_nav_sources": "Bezugsquellen",
+    "item_view_nav_related": "Verwandte",
+    "item_view_listings_count": "{{count}} Angebote",
+    "item_view_quality_filter_aria": "Angebote nach Qualität filtern",
+    "item_view_quality_all": "Alle"
 }

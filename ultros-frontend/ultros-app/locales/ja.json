@@ -1509,5 +1509,14 @@
     "groups_group_deleted": "Group deleted",
     "retainers_assign_character": "Assign Character",
     "retainers_no_character": "No character",
-    "retainers_assign_error": "Failed to assign character"
+    "retainers_assign_error": "Failed to assign character",
+    "item_view_nav_aria": "セクションへ移動",
+    "item_view_nav_overview": "概要",
+    "item_view_nav_listings": "出品",
+    "item_view_nav_history": "履歴",
+    "item_view_nav_sources": "入手方法",
+    "item_view_nav_related": "関連",
+    "item_view_listings_count": "出品{{count}}件",
+    "item_view_quality_filter_aria": "品質で出品を絞り込む",
+    "item_view_quality_all": "すべて"
 }

@@ -116,7 +116,7 @@ pub(crate) fn ItemStats(item_id: ItemId) -> impl IntoView {
     params
         .map(|p| {
             view! {
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-2 w-full">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2 w-full">
                     {p.into_iter()
                         .map(|p| view! { <ParamView data=p /> })
                         .collect_view()}
