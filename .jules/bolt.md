@@ -49,3 +49,8 @@ In `ultros-frontend/ultros-app/src/components/list/buying_view.rs`, a list of ac
 
 **Action:**
 When fetching and filtering lists, always apply strict filters *before* expensive operations such as `sort_by_key` or `sort_by` to save allocations and CPU cycles.
+## 2026-07-26 - In-place truncation using select_nth_unstable
+**Learning:**
+In several analyzer routes (`recipe_analyzer.rs`, `venture_analyzer.rs`, etc.), we were applying expensive `sort_by_key` or `sort_by` sorting on a vector of all results just to display the top 100 entries using `.into_iter().take(100)`. When finding the top N elements, `select_nth_unstable_by` runs in linear time `O(N)` instead of `O(N log N)`, finding the exact elements to keep.
+**Action:**
+When returning the top N items from a collection, first use `select_nth_unstable` to partition the elements if `len > N`. Then use `.truncate(N)` to remove the unsorted tail in-place. Finally, use `sort_unstable_by` on the remaining top N elements which guarantees `O(K log K)` where `K` is the small limit size. Note: Do not do this if `dedup_by_key` is required on adjacent duplicate keys, because deduplication logic can be dependent on full order.
