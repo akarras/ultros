@@ -18,9 +18,19 @@ fn load_env() {
     let _ = dotenvy::dotenv();
 }
 
-/// Item id far outside the real range so fixtures never collide with
+/// Item ids far outside the real range so fixtures never collide with
 /// backfilled production data in a shared dev ClickHouse.
-const FIXTURE_ITEM: i32 = 999_000_001;
+///
+/// Each test owns a *distinct* id. `seed` clears and repopulates the rows for
+/// the id it is given, and cargo runs the tests in this file concurrently by
+/// default — so a single shared id makes every test observe the union of all
+/// five seeds (each assertion comes back at exactly 5x its expected count).
+/// Partitioning by id keeps them isolated without forcing `--test-threads=1`.
+const FIXTURE_ITEM_OHLC: i32 = 999_000_001;
+const FIXTURE_ITEM_VWAP: i32 = 999_000_002;
+const FIXTURE_ITEM_DATACENTER: i32 = 999_000_003;
+const FIXTURE_ITEM_HQ: i32 = 999_000_004;
+const FIXTURE_ITEM_RAW_WINDOW: i32 = 999_000_005;
 
 fn ts(secs: i64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp(secs, 0).unwrap()
@@ -30,7 +40,7 @@ fn ts(secs: i64) -> chrono::DateTime<chrono::Utc> {
 /// assertions is unambiguous.
 const T0: i64 = 1_700_006_400; // 2023-11-15 00:00:00 UTC
 
-async fn seed(ch: &ClickHouseClient) {
+async fn seed(ch: &ClickHouseClient, item: i32) {
     // `ALTER TABLE ... DELETE` (a mutation) rather than the lightweight
     // `DELETE FROM`: the rest of this crate's smoke tests (schema_smoke,
     // writer_smoke, rollups_smoke, vendor_filter_smoke) all clear fixtures
@@ -42,7 +52,7 @@ async fn seed(ch: &ClickHouseClient) {
     // race against not-yet-deleted leftover rows from a prior run.
     ch.client()
         .query("ALTER TABLE sales DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
-        .bind(FIXTURE_ITEM)
+        .bind(item)
         .execute()
         .await
         .expect("clear fixtures");
@@ -66,7 +76,7 @@ async fn seed(ch: &ClickHouseClient) {
             .write(&SaleRow {
                 pg_id,
                 sold_date: ts(T0 + offset),
-                item_id: FIXTURE_ITEM,
+                item_id: item,
                 hq,
                 world_id,
                 price_per_item: price,
@@ -89,11 +99,11 @@ async fn ohlc_keys_on_sold_date_not_insertion_order() {
     load_env();
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.expect("migrate");
-    seed(&ch).await;
+    seed(&ch, FIXTURE_ITEM_OHLC).await;
 
     let rows = queries::price_series(
         &ch,
-        FIXTURE_ITEM,
+        FIXTURE_ITEM_OHLC,
         &[(1, 10), (2, 10)],
         SeriesGroup::World,
         HqFilter::Any,
@@ -121,11 +131,11 @@ async fn gil_and_units_reproduce_vwap() {
     load_env();
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.expect("migrate");
-    seed(&ch).await;
+    seed(&ch, FIXTURE_ITEM_VWAP).await;
 
     let rows = queries::price_series(
         &ch,
-        FIXTURE_ITEM,
+        FIXTURE_ITEM_VWAP,
         &[(1, 10), (2, 10)],
         SeriesGroup::World,
         HqFilter::Any,
@@ -152,11 +162,11 @@ async fn datacenter_grouping_merges_worlds_and_recomputes_quantiles() {
     load_env();
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.expect("migrate");
-    seed(&ch).await;
+    seed(&ch, FIXTURE_ITEM_DATACENTER).await;
 
     let rows = queries::price_series(
         &ch,
-        FIXTURE_ITEM,
+        FIXTURE_ITEM_DATACENTER,
         &[(1, 10), (2, 10)],
         SeriesGroup::Datacenter,
         HqFilter::Any,
@@ -187,11 +197,11 @@ async fn hq_filter_narrows_the_result() {
     load_env();
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.expect("migrate");
-    seed(&ch).await;
+    seed(&ch, FIXTURE_ITEM_HQ).await;
 
     let rows = queries::price_series(
         &ch,
-        FIXTURE_ITEM,
+        FIXTURE_ITEM_HQ,
         &[(1, 10), (2, 10)],
         SeriesGroup::World,
         HqFilter::Hq,
@@ -223,7 +233,7 @@ async fn raw_sales_respects_the_requested_window() {
     load_env();
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.expect("migrate");
-    seed(&ch).await;
+    seed(&ch, FIXTURE_ITEM_RAW_WINDOW).await;
 
     // Fixture rows are at offsets 0, 1_800, 3_600, 7_200. A window of
     // [T0 + 1_800, T0 + 7_200) should include the offset-1_800 and
@@ -231,7 +241,7 @@ async fn raw_sales_respects_the_requested_window() {
     // (at `to`, which is exclusive).
     let rows = queries::raw_sales(
         &ch,
-        FIXTURE_ITEM,
+        FIXTURE_ITEM_RAW_WINDOW,
         &[1, 2],
         HqFilter::Any,
         ts(T0 + 1_800),
