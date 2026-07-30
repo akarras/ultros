@@ -217,6 +217,63 @@ impl std::fmt::Display for SortDir {
     }
 }
 
+/// `?quality=` — show only HQ or only NQ rows. Param absent = both.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum QualityFilter {
+    Hq,
+    Nq,
+}
+
+impl FromStr for QualityFilter {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "hq" => Ok(QualityFilter::Hq),
+            "nq" => Ok(QualityFilter::Nq),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for QualityFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            QualityFilter::Hq => "hq",
+            QualityFilter::Nq => "nq",
+        })
+    }
+}
+
+/// `?confidence=` — minimum confidence band a row must reach.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ConfidenceFloor {
+    Low,
+    Medium,
+    High,
+}
+
+impl FromStr for ConfidenceFloor {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "low" => Ok(ConfidenceFloor::Low),
+            "medium" => Ok(ConfidenceFloor::Medium),
+            "high" => Ok(ConfidenceFloor::High),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for ConfidenceFloor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ConfidenceFloor::Low => "low",
+            ConfidenceFloor::Medium => "medium",
+            ConfidenceFloor::High => "high",
+        })
+    }
+}
+
 /// Sort rows in place. Extracted from the `sorted_data` memo so the
 /// ordering is unit-testable without a reactive runtime.
 fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
@@ -496,6 +553,71 @@ fn normalize_velocity_floor(raw: Option<f32>) -> Option<f32> {
 /// A row with no rate at all cannot clear a floor.
 fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -> bool {
     ch_rate.or(derived).map(|v| v >= min).unwrap_or(false)
+}
+
+fn passes_quality(filter: QualityFilter, hq: bool) -> bool {
+    match filter {
+        QualityFilter::Hq => hq,
+        QualityFilter::Nq => !hq,
+    }
+}
+
+/// Case-insensitive substring match for the `?name=` filter. A blank query
+/// matches everything — the chip seeds empty so the user can type into it,
+/// and that state must not blank the table.
+fn matches_item_name(query: &str, item_name: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    item_name.to_lowercase().contains(&q)
+}
+
+/// Does a row clear the `?drift=` floor? Drift comes off the row's own
+/// price buffer, so coverage is near-universal; a row with too few sales
+/// to compute a drift fails an explicit floor — the velocity floor's rule.
+fn passes_drift_floor(min: f32, drift: Option<f32>) -> bool {
+    drift.map(|d| d >= min).unwrap_or(false)
+}
+
+/// Bands on one scale: Unusable=0 < Low=1 < Medium=2 < High=3. The CH
+/// `Unknown` variant is "no deep scan yet", not a verdict, so it defers to
+/// the derived band — the same preference the Confidence column renders.
+fn confidence_rank(ch: Option<ConfidenceBand>, derived: DerivedConfidence) -> u8 {
+    match ch {
+        Some(ConfidenceBand::High) => 3,
+        Some(ConfidenceBand::Medium) => 2,
+        Some(ConfidenceBand::Low) => 1,
+        Some(ConfidenceBand::Unusable) => 0,
+        Some(ConfidenceBand::Unknown) | None => match derived {
+            DerivedConfidence::High => 3,
+            DerivedConfidence::Medium => 2,
+            DerivedConfidence::Low => 1,
+        },
+    }
+}
+
+fn passes_confidence_floor(
+    floor: ConfidenceFloor,
+    ch: Option<ConfidenceBand>,
+    derived: DerivedConfidence,
+) -> bool {
+    let floor_rank = match floor {
+        ConfidenceFloor::Low => 1,
+        ConfidenceFloor::Medium => 2,
+        ConfidenceFloor::High => 3,
+    };
+    confidence_rank(ch, derived) >= floor_rank
+}
+
+/// Does a row clear the `?min-volume=` floor? 30-day volume is ClickHouse-
+/// only (~7% item coverage) AND lazily enriched per visible window — if
+/// unknown failed, the un-enriched initial table would filter to zero rows
+/// and the visible-window fetch would never fire. So unknown rows pass,
+/// and only a *known* volume below the floor drops a row (the suspicious
+/// filter's rule).
+fn passes_volume_floor(min: u32, ch_volume: Option<u32>) -> bool {
+    ch_volume.map(|v| v >= min).unwrap_or(true)
 }
 
 // --- Filter registry -------------------------------------------------------
@@ -3124,5 +3246,123 @@ mod tests {
         assert_eq!(SortDir::Asc.to_string(), "asc");
         assert_eq!(SortDir::Desc.to_string(), "desc");
         assert!("sideways".parse::<SortDir>().is_err());
+    }
+
+    #[test]
+    fn quality_filter_round_trips_its_url_tokens() {
+        assert_eq!("hq".parse::<QualityFilter>(), Ok(QualityFilter::Hq));
+        assert_eq!("nq".parse::<QualityFilter>(), Ok(QualityFilter::Nq));
+        assert!("HQ".parse::<QualityFilter>().is_err());
+        assert_eq!(QualityFilter::Hq.to_string(), "hq");
+        assert_eq!(QualityFilter::Nq.to_string(), "nq");
+    }
+
+    #[test]
+    fn quality_filter_selects_matching_rows_only() {
+        assert!(passes_quality(QualityFilter::Hq, true));
+        assert!(!passes_quality(QualityFilter::Hq, false));
+        assert!(passes_quality(QualityFilter::Nq, false));
+        assert!(!passes_quality(QualityFilter::Nq, true));
+    }
+
+    #[test]
+    fn name_match_is_case_insensitive_substring() {
+        assert!(matches_item_name("grade", "Grade 8 Tincture of Strength"));
+        assert!(matches_item_name(
+            "TINCTURE",
+            "Grade 8 Tincture of Strength"
+        ));
+        assert!(!matches_item_name("potion", "Grade 8 Tincture of Strength"));
+    }
+
+    #[test]
+    fn blank_or_whitespace_name_query_matches_everything() {
+        // The chip seeds empty and the user may commit whitespace; neither
+        // should silently empty the table.
+        assert!(matches_item_name("", "Anything"));
+        assert!(matches_item_name("   ", "Anything"));
+    }
+
+    #[test]
+    fn drift_floor_keeps_rows_at_or_above_the_floor() {
+        assert!(passes_drift_floor(-10.0, Some(-5.0)));
+        assert!(passes_drift_floor(-10.0, Some(-10.0)));
+        assert!(!passes_drift_floor(-10.0, Some(-25.0)));
+    }
+
+    #[test]
+    fn drift_floor_drops_rows_with_uncomputable_drift() {
+        // Universal-coverage metric: same unknown-fails rule as the
+        // velocity floor (spec: Unknown-data semantics).
+        assert!(!passes_drift_floor(-10.0, None));
+    }
+
+    #[test]
+    fn confidence_floor_prefers_the_clickhouse_band() {
+        // CH says Low; the derived band saying High must not override it.
+        assert!(!passes_confidence_floor(
+            ConfidenceFloor::Medium,
+            Some(ConfidenceBand::Low),
+            DerivedConfidence::High,
+        ));
+        assert!(passes_confidence_floor(
+            ConfidenceFloor::Medium,
+            Some(ConfidenceBand::High),
+            DerivedConfidence::Low,
+        ));
+    }
+
+    #[test]
+    fn confidence_unknown_band_falls_back_to_derived() {
+        // CH `Unknown` is "no deep-scan yet", not a verdict.
+        assert!(passes_confidence_floor(
+            ConfidenceFloor::Medium,
+            Some(ConfidenceBand::Unknown),
+            DerivedConfidence::Medium,
+        ));
+        assert!(passes_confidence_floor(
+            ConfidenceFloor::High,
+            None,
+            DerivedConfidence::High,
+        ));
+        assert!(!passes_confidence_floor(
+            ConfidenceFloor::High,
+            None,
+            DerivedConfidence::Medium,
+        ));
+    }
+
+    #[test]
+    fn confidence_unusable_fails_any_floor() {
+        assert!(!passes_confidence_floor(
+            ConfidenceFloor::Low,
+            Some(ConfidenceBand::Unusable),
+            DerivedConfidence::High,
+        ));
+    }
+
+    #[test]
+    fn confidence_floor_round_trips_its_url_tokens() {
+        assert_eq!(
+            "medium".parse::<ConfidenceFloor>(),
+            Ok(ConfidenceFloor::Medium)
+        );
+        assert!("Medium".parse::<ConfidenceFloor>().is_err());
+        assert_eq!(ConfidenceFloor::High.to_string(), "high");
+    }
+
+    #[test]
+    fn volume_floor_keeps_rows_without_clickhouse_coverage() {
+        // CH-only metric (~7% coverage, lazily enriched): unknown-fails
+        // would empty the un-enriched table and deadlock the lazy fetch
+        // (spec: Unknown-data semantics). Unknown rows pass.
+        assert!(passes_volume_floor(10, None));
+    }
+
+    #[test]
+    fn volume_floor_drops_rows_with_known_volume_below_it() {
+        assert!(!passes_volume_floor(10, Some(3)));
+        assert!(passes_volume_floor(10, Some(10)));
+        assert!(passes_volume_floor(10, Some(250)));
     }
 }
