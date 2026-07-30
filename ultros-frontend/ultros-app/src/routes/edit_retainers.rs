@@ -6,22 +6,37 @@ use ultros_api_types::world_helper::AnySelector;
 
 use crate::api::{
     assign_retainer_character, claim_retainer, get_characters, get_retainers, search_retainers,
-    unclaim_retainer, update_retainer_order,
+    unclaim_retainer, update_retainer_order, get_login,
 };
 use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
+use crate::components::tool_help::ActionableEmptyState;
 use crate::i18n::*;
 
 #[component]
 pub fn EditRetainers() -> impl IntoView {
     let i18n = use_i18n();
+    let login = Resource::new(|| (), |_| async move { get_login().await });
     // This page should let the user drag and drop retainers to reorder them
     // It should also support a search panel for retainers to the right that will allow the user to search for retainers
 
     let (retainer_search, set_retainer_search) = signal(String::new());
 
-    let search_results = Resource::new(retainer_search, move |search| async move {
-        search_retainers(search).await
-    });
+    let search_results = Resource::new(
+        move || {
+            if login.get().map(|res| res.is_ok()).unwrap_or(false) {
+                Some(retainer_search.get())
+            } else {
+                None
+            }
+        },
+        move |search| async move {
+            if let Some(search) = search {
+                search_retainers(search).await
+            } else {
+                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+            }
+        }
+    );
 
     let claim = Action::new(move |retainer_id| claim_retainer(*retainer_id));
 
@@ -33,19 +48,36 @@ pub fn EditRetainers() -> impl IntoView {
             assign_retainer_character(*owned_retainer_id, *character_id)
         },
     );
-    let characters = Resource::new(|| (), move |_| get_characters());
+    let characters = Resource::new(
+        move || login.get().map(|res| res.is_ok()).unwrap_or(false),
+        move |logged_in| async move {
+            if logged_in {
+                get_characters().await
+            } else {
+                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+            }
+        }
+    );
     let retainers = Resource::new(
         move || {
-            (
-                claim.version().get(),
-                remove_retainer.version().get(),
-                update_retainers.version().get(),
-                assign_character.version().get(),
-            )
+            if login.get().map(|res| res.is_ok()).unwrap_or(false) {
+                Some((
+                    claim.version().get(),
+                    remove_retainer.version().get(),
+                    update_retainers.version().get(),
+                    assign_character.version().get(),
+                ))
+            } else {
+                None
+            }
         },
-        move |key| {
-            log::info!("getting retainers {key:?}");
-            get_retainers()
+        move |key| async move {
+            if let Some(key) = key {
+                log::info!("getting retainers {key:?}");
+                get_retainers().await
+            } else {
+                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+            }
         },
     );
 
@@ -71,270 +103,289 @@ pub fn EditRetainers() -> impl IntoView {
             <MetaTitle title=t_string!(i18n, retainers_edit_title).to_string() />
             <MetaRobotsNoIndex />
 
-            <div class="retainer-list panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
-                <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_title)}</h2>
-                <Transition fallback=move || {
-                    view! { <div class="loading loading-spinner loading-lg"></div> }
-                }>
-                    {move || {
-                        retainers
-                            .get()
-                            .map(|retainers| {
-                                match retainers {
-                                    Ok(retainers) => {
-                                        Either::Left(
-                                            view! {
-                                                {move || {
-                                                    update_retainers
-                                                        .value()
-                                                        .with(|value| {
-                                                            value.as_ref().map(|value| {
-                                                                match value {
-                                                                    Ok(_) => None,
-                                                                    Err(e) => Some(format!("App error: {e:?}")),
-                                                                }
-                                                            })
-                                                        })
-                                                }}
+            <Suspense fallback=move || view! { <Loading /> }>
+                {move || match login.get() {
+                    None => view! { <Loading /> }.into_any(),
+                    Some(Err(_)) => {
+                        view! {
+                            <ActionableEmptyState
+                                title=t!(i18n, retainers_empty_title)
+                                body=t!(i18n, retainers_empty_body)
+                                action_href="/login?next=/retainers/edit"
+                                action_label=t!(i18n, sign_in_discord)
+                                action_external=true
+                                secondary_action_href="/bot"
+                                secondary_action_label=t!(i18n, retainers_empty_secondary_label)
+                            />
+                        }.into_any()
+                    }
+                    Some(Ok(_)) => {
+                        view! {
+                            <div class="retainer-list panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
+                                <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_title)}</h2>
+                                <Transition fallback=move || {
+                                    view! { <div class="loading loading-spinner loading-lg"></div> }
+                                }>
+                                    {move || {
+                                        retainers
+                                            .get()
+                                            .map(|retainers| {
+                                                match retainers {
+                                                    Ok(retainers) => {
+                                                        Either::Left(
+                                                            view! {
+                                                                {move || {
+                                                                    update_retainers
+                                                                        .value()
+                                                                        .with(|value| {
+                                                                            value.as_ref().map(|value| {
+                                                                                match value {
+                                                                                    Ok(_) => None,
+                                                                                    Err(e) => Some(format!("App error: {e:?}")),
+                                                                                }
+                                                                            })
+                                                                        })
+                                                                }}
 
-                                                <For
-                                                    each=move || retainers.retainers.clone()
-                                                    key=move |(character, retainers)| (
-                                                        character.as_ref().map(|c| c.id).unwrap_or_default(),
-                                                        retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>(),
-                                                    )
+                                                                <For
+                                                                    each=move || retainers.retainers.clone()
+                                                                    key=move |(character, retainers)| (
+                                                                        character.as_ref().map(|c| c.id).unwrap_or_default(),
+                                                                        retainers.iter().map(|(o, _r)| o.id).collect::<Vec<_>>(),
+                                                                    )
 
-                                                    children=move |(character, retainers)| {
-                                                        let retainers = RwSignal::new(retainers);
-                                                        Effect::new(move |_| {
-                                                            let retainers = retainers();
-                                                            let mut changed = false;
-                                                            let retainers = retainers
-                                                                .into_iter()
-                                                                .enumerate()
-                                                                .flat_map(|(i, (mut owned, _retainer))| {
-                                                                    if let Some(weight) = &mut owned.weight {
-                                                                        if *weight != i as i32 {
-                                                                            changed = true;
-                                                                            *weight = i as i32;
-                                                                            return Some(owned);
-                                                                        }
-                                                                    } else {
-                                                                        owned.weight = Some(i as i32);
-                                                                        changed = true;
-                                                                        return Some(owned);
-                                                                    }
-                                                                    None
-                                                                })
-                                                                .collect();
-                                                            if changed {
-                                                                log::info!("Updating retainer list");
-                                                                update_retainers.dispatch(retainers);
-                                                            }
-                                                        });
-                                                        view! {
-                                                            // I have no idea how I would have found that the #[server] macro takes params as a struct
-                                                            // without the compiler just spelling it out for me
-
-                                                            {if let Some(character) = character {
-                                                                Either::Left(
-                                                                    view! {
-                                                                        <h3 class="text-xl font-bold mt-4 mb-2">
-                                                                            {character.first_name} " " {character.last_name}
-                                                                        </h3>
-                                                                    },
-                                                                )
-                                                            } else {
-                                                                Either::Right(view! {
-                                                                    <h3 class="text-xl font-bold mt-4 mb-2 text-gray-500">
-                                                                        {t!(i18n, retainers_unassigned)}
-                                                                    </h3>
-                                                                })
-                                                            }}
-
-                                                            <div class="flex flex-col gap-2">
-                                                                <ReorderableList
-                                                                    items=retainers
-                                                                    item_view=move |(owned, retainer): (OwnedRetainer, Retainer)| {
-                                                                        let owned_id = owned.id;
-                                                                        let retainer_name = retainer.name.to_string();
-                                                                        let world_id = retainer.world_id;
-                                                                        let current_character_id = owned.character_id;
-
-                                                                        view! {
-                                                                            <div class="card bg-base-200 border border-base-300 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
-                                                                                <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden flex-grow">
-                                                                                    <div class="flex flex-col">
-                                                                                        <span class="font-bold truncate text-lg">{retainer_name}</span>
-                                                                                        <div class="opacity-80 text-sm">
-                                                                                            <WorldName id=AnySelector::World(world_id) />
-                                                                                        </div>
-                                                                                    </div>
-
-                                                                                    <div class="flex flex-col gap-1 min-w-[200px]">
-                                                                                        <label class="text-xs opacity-60 ml-1">
-                                                                                            {t!(i18n, retainers_assign_character)}
-                                                                                        </label>
-                                                                                        <select
-                                                                                            class="select select-sm select-bordered w-full"
-                                                                                            class:opacity-50=move || {
-                                                                                                assign_character.pending().get() &&
-                                                                                                assign_character.input().get().map(|(id, _)| id == owned_id).unwrap_or_default()
-                                                                                            }
-                                                                                            prop:value=move || current_character_id.map(|id| id.to_string()).unwrap_or_default()
-                                                                                            on:pointerdown=move |e| e.stop_propagation()
-                                                                                            on:change=move |ev| {
-                                                                                                let val = event_target_value(&ev);
-                                                                                                let id = if val.is_empty() {
-                                                                                                    None
-                                                                                                } else {
-                                                                                                    val.parse::<i32>().ok()
-                                                                                                };
-                                                                                                assign_character.dispatch((owned_id, id));
-                                                                                            }
-                                                                                        >
-                                                                                            <option value="">
-                                                                                                {t!(i18n, retainers_no_character)}
-                                                                                            </option>
-                                                                                            <Suspense>
-                                                                                                {move || characters.get().map(|chars| {
-                                                                                                    chars.ok().map(|chars| {
-                                                                                                        chars.into_iter().map(|c| {
-                                                                                                            let id = c.id;
-                                                                                                            view! {
-                                                                                                                <option
-                                                                                                                    value=id
-                                                                                                                >
-                                                                                                                    {c.first_name} " " {c.last_name}
-                                                                                                                </option>
-                                                                                                            }
-                                                                                                        }).collect_view()
-                                                                                                    })
-                                                                                                })}
-                                                                                            </Suspense>
-                                                                                        </select>
-                                                                                        {move || {
-                                                                                            let input = assign_character.input().get();
-                                                                                            let value = assign_character.value().get();
-                                                                                            if let (Some((input_id, _)), Some(Err(e))) = (input, value)
-                                                                                                && input_id == owned_id
-                                                                                            {
-                                                                                                return Some(view! {
-                                                                                                    <span class="text-error text-xs ml-1">
-                                                                                                        {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
-                                                                                                    </span>
-                                                                                                }.into_any());
-                                                                                            }
-                                                                                            None
-                                                                                        }}
-                                                                                    </div>
-                                                                                </div>
-                                                                                <div class="flex items-center">
-                                                                                    <button
-                                                                                        class="btn btn-sm btn-error btn-outline"
-                                                                                        on:pointerdown=move |e| e.stop_propagation()
-                                                                                        on:click=move |_| {
-                                                                                            let _ = remove_retainer.dispatch(owned_id);
+                                                                    children=move |(character, retainers)| {
+                                                                        let retainers = RwSignal::new(retainers);
+                                                                        Effect::new(move |_| {
+                                                                            let retainers = retainers();
+                                                                            let mut changed = false;
+                                                                            let retainers = retainers
+                                                                                .into_iter()
+                                                                                .enumerate()
+                                                                                .flat_map(|(i, (mut owned, _retainer))| {
+                                                                                    if let Some(weight) = &mut owned.weight {
+                                                                                        if *weight != i as i32 {
+                                                                                            changed = true;
+                                                                                            *weight = i as i32;
+                                                                                            return Some(owned);
                                                                                         }
-                                                                                    >
-                                                                                        {t!(i18n, retainers_unclaim)}
-                                                                                    </button>
-                                                                                </div>
+                                                                                    } else {
+                                                                                        owned.weight = Some(i as i32);
+                                                                                        changed = true;
+                                                                                        return Some(owned);
+                                                                                    }
+                                                                                    None
+                                                                                })
+                                                                                .collect();
+                                                                            if changed {
+                                                                                log::info!("Updating retainer list");
+                                                                                update_retainers.dispatch(retainers);
+                                                                            }
+                                                                        });
+                                                                        view! {
+                                                                            // I have no idea how I would have found that the #[server] macro takes params as a struct
+                                                                            // without the compiler just spelling it out for me
+
+                                                                            {if let Some(character) = character {
+                                                                                Either::Left(
+                                                                                    view! {
+                                                                                        <h3 class="text-xl font-bold mt-4 mb-2">
+                                                                                            {character.first_name} " " {character.last_name}
+                                                                                        </h3>
+                                                                                    },
+                                                                                )
+                                                                            } else {
+                                                                                Either::Right(view! {
+                                                                                    <h3 class="text-xl font-bold mt-4 mb-2 text-gray-500">
+                                                                                        {t!(i18n, retainers_unassigned)}
+                                                                                    </h3>
+                                                                                })
+                                                                            }}
+
+                                                                            <div class="flex flex-col gap-2">
+                                                                                <ReorderableList
+                                                                                    items=retainers
+                                                                                    item_view=move |(owned, retainer): (OwnedRetainer, Retainer)| {
+                                                                                        let owned_id = owned.id;
+                                                                                        let retainer_name = retainer.name.to_string();
+                                                                                        let world_id = retainer.world_id;
+                                                                                        let current_character_id = owned.character_id;
+
+                                                                                        view! {
+                                                                                            <div class="card bg-base-200 border border-base-300 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
+                                                                                                <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden flex-grow">
+                                                                                                    <div class="flex flex-col">
+                                                                                                        <span class="font-bold truncate text-lg">{retainer_name}</span>
+                                                                                                        <div class="opacity-80 text-sm">
+                                                                                                            <WorldName id=AnySelector::World(world_id) />
+                                                                                                        </div>
+                                                                                                    </div>
+
+                                                                                                    <div class="flex flex-col gap-1 min-w-[200px]">
+                                                                                                        <label class="text-xs opacity-60 ml-1">
+                                                                                                            {t!(i18n, retainers_assign_character)}
+                                                                                                        </label>
+                                                                                                        <select
+                                                                                                            class="select select-sm select-bordered w-full"
+                                                                                                            class:opacity-50=move || {
+                                                                                                                assign_character.pending().get() &&
+                                                                                                                assign_character.input().get().map(|(id, _)| id == owned_id).unwrap_or_default()
+                                                                                                            }
+                                                                                                            prop:value=move || current_character_id.map(|id| id.to_string()).unwrap_or_default()
+                                                                                                            on:pointerdown=move |e| e.stop_propagation()
+                                                                                                            on:change=move |ev| {
+                                                                                                                let val = event_target_value(&ev);
+                                                                                                                let id = if val.is_empty() {
+                                                                                                                    None
+                                                                                                                } else {
+                                                                                                                    val.parse::<i32>().ok()
+                                                                                                                };
+                                                                                                                assign_character.dispatch((owned_id, id));
+                                                                                                            }
+                                                                                                        >
+                                                                                                            <option value="">
+                                                                                                                {t!(i18n, retainers_no_character)}
+                                                                                                            </option>
+                                                                                                            <Suspense>
+                                                                                                                {move || characters.get().map(|chars| {
+                                                                                                                    chars.ok().map(|chars| {
+                                                                                                                        chars.into_iter().map(|c| {
+                                                                                                                            let id = c.id;
+                                                                                                                            view! {
+                                                                                                                                <option
+                                                                                                                                    value=id
+                                                                                                                                >
+                                                                                                                                    {c.first_name} " " {c.last_name}
+                                                                                                                                </option>
+                                                                                                                            }
+                                                                                                                        }).collect_view()
+                                                                                                                    })
+                                                                                                                })}
+                                                                                                            </Suspense>
+                                                                                                        </select>
+                                                                                                        {move || {
+                                                                                                            let input = assign_character.input().get();
+                                                                                                            let value = assign_character.value().get();
+                                                                                                            if let (Some((input_id, _)), Some(Err(e))) = (input, value)
+                                                                                                                && input_id == owned_id
+                                                                                                            {
+                                                                                                                return Some(view! {
+                                                                                                                    <span class="text-error text-xs ml-1">
+                                                                                                                        {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
+                                                                                                                    </span>
+                                                                                                                }.into_any());
+                                                                                                            }
+                                                                                                            None
+                                                                                                        }}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                <div class="flex items-center">
+                                                                                                    <button
+                                                                                                        class="btn btn-sm btn-error btn-outline"
+                                                                                                        on:pointerdown=move |e| e.stop_propagation()
+                                                                                                        on:click=move |_| {
+                                                                                                            let _ = remove_retainer.dispatch(owned_id);
+                                                                                                        }
+                                                                                                    >
+                                                                                                        {t!(i18n, retainers_unclaim)}
+                                                                                                    </button>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        }
+                                                                                    }
+                                                                                />
+
                                                                             </div>
                                                                         }
                                                                     }
                                                                 />
+                                                            },
+                                                        )
+                                                    }
+                                                    Err(e) => {
+                                                        Either::Right(
+                                                            view! {
+                                                                <div class="alert alert-error">
+                                                                    <span>{t!(i18n, retainers_error_loading)} {e.to_string()}</span>
+                                                                </div>
+                                                            },
+                                                        )
+                                                    }
+                                                }
+                                            })
+                                    }}
+                                </Transition>
+                            </div>
+                            <div class="retainer-search panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
+                                <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_add_title)}</h2>
+                                <input
+                                    class="input w-full bg-base-200"
+                                    prop:value=retainer_search
+                                    on:input=move |input| set_retainer_search(event_target_value(&input))
+                                    placeholder=t_string!(i18n, retainers_search_placeholder).to_string()
+                                />
+                                <div class="retainer-results flex flex-col gap-2">
+                                    <Suspense fallback=move || {
+                                        view! { <Loading /> }
+                                    }>
+                                        {move || {
+                                            search_results
+                                                .get()
+                                                .map(|retainers| {
+                                                    match retainers {
+                                                        Ok(retainers) => {
+                                                            Either::Left(
+                                                                view! {
+                                                                    <div class="flex flex-col gap-2">
+                                                                        <For
+                                                                            each=move || retainers.clone()
+                                                                            key=move |retainer| retainer.id
+                                                                            children=move |retainer| {
+                                                                                let world = AnySelector::World(retainer.world_id);
+                                                                                view! {
+                                                                                    <div class="card bg-base-200 border border-base-300 flex-row gap-2 p-3 items-center rounded-xl shadow-sm justify-between">
+                                                                                        <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden">
+                                                                                            <span class="font-bold truncate">{retainer.name}</span>
+                                                                                            <div class="opacity-80 text-sm">
+                                                                                                <WorldName id=world />
+                                                                                            </div>
+                                                                                        </div>
+                                                                                        <button
+                                                                                            class:btn-disabled=move || is_retainer_owned(retainer.id)
+                                                                                            class="btn btn-primary btn-sm"
+                                                                                            on:click=move |_| {
+                                                                                                let _ = claim.dispatch(retainer.id);
+                                                                                            }
+                                                                                        >
+                                                                                            {move || match is_retainer_owned(retainer.id) {
+                                                                                                true => Either::Left(t!(i18n, retainers_owned)),
+                                                                                                false => Either::Right(t!(i18n, retainers_claim)),
+                                                                                            }}
 
-                                                            </div>
+                                                                                        </button>
+                                                                                    </div>
+                                                                                }
+                                                                            }
+                                                                        />
+                                                                    </div>
+                                                                },
+                                                            )
+                                                        }
+                                                        Err(e) => {
+                                                            Either::Right(
+                                                                view! { <div class="text-center opacity-70 p-4">{format!("{}\n{e}", t_string!(i18n, retainers_no_found))}</div> },
+                                                            )
                                                         }
                                                     }
-                                                />
-                                            },
-                                        )
-                                    }
-                                    Err(e) => {
-                                        Either::Right(
-                                            view! {
-                                                <div class="alert alert-error">
-                                                    <span>{t!(i18n, retainers_error_loading)} {e.to_string()}</span>
-                                                </div>
-                                            },
-                                        )
-                                    }
-                                }
-                            })
-                    }}
-
-                </Transition>
-            </div>
-            <div class="retainer-search panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
-                <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_add_title)}</h2>
-                <input
-                    class="input w-full bg-base-200"
-                    prop:value=retainer_search
-                    on:input=move |input| set_retainer_search(event_target_value(&input))
-                    placeholder=t_string!(i18n, retainers_search_placeholder).to_string()
-                />
-                <div class="retainer-results flex flex-col gap-2">
-                    <Suspense fallback=move || {
-                        view! { <Loading /> }
-                    }>
-                        {move || {
-                            search_results
-                                .get()
-                                .map(|retainers| {
-                                    match retainers {
-                                        Ok(retainers) => {
-                                            Either::Left(
-                                                view! {
-                                                    <div class="flex flex-col gap-2">
-                                                        <For
-                                                            each=move || retainers.clone()
-                                                            key=move |retainer| retainer.id
-                                                            children=move |retainer| {
-                                                                let world = AnySelector::World(retainer.world_id);
-                                                                view! {
-                                                                    <div class="card bg-base-200 border border-base-300 flex-row gap-2 p-3 items-center rounded-xl shadow-sm justify-between">
-                                                                        <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden">
-                                                                            <span class="font-bold truncate">{retainer.name}</span>
-                                                                            <div class="opacity-80 text-sm">
-                                                                                <WorldName id=world />
-                                                                            </div>
-                                                                        </div>
-                                                                        <button
-                                                                            class:btn-disabled=move || is_retainer_owned(retainer.id)
-                                                                            class="btn btn-primary btn-sm"
-                                                                            on:click=move |_| {
-                                                                                let _ = claim.dispatch(retainer.id);
-                                                                            }
-                                                                        >
-                                                                            {move || match is_retainer_owned(retainer.id) {
-                                                                                true => Either::Left(t!(i18n, retainers_owned)),
-                                                                                false => Either::Right(t!(i18n, retainers_claim)),
-                                                                            }}
-
-                                                                        </button>
-                                                                    </div>
-                                                                }
-                                                            }
-                                                        />
-
-                                                    </div>
-                                                },
-                                            )
-                                        }
-                                        Err(e) => {
-                                            Either::Right(
-                                                view! { <div class="text-center opacity-70 p-4">{format!("{}\n{e}", t_string!(i18n, retainers_no_found))}</div> },
-                                            )
-                                        }
-                                    }
-                                })
-                        }}
-
-                    </Suspense>
-                </div>
-            </div>
+                                                })
+                                        }}
+                                    </Suspense>
+                                </div>
+                            </div>
+                        }.into_any()
+                    }
+                }}
+            </Suspense>
         </div>
     }.into_any()
 }

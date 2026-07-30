@@ -858,7 +858,7 @@
     "analyzer_n_sales": "{{count}} 筆銷售",
     "aria_remove_filter": "移除篩選",
     "analyzer_category_fallback": "分類 {{id}}",
-    "analyzer_budget_lte": "預算 ≤ ",
+    "analyzer_budget_lte": "預算 ≤",
     "aria_clear_all_filters": "清除所有篩選",
     "recipe_analyzer_sales_per_day": "{{sales}} / 天",
     "placeholder_eg_1_0": "例如：1.0",
@@ -1256,7 +1256,6 @@
     "analyzer_add_filter": "篩選",
     "analyzer_rows_count": "%count% 列",
     "analyzer_rows_lacking_data": "· %count% 列缺少篩選資料",
-    "analyzer_budget_lte": "預算 ≤",
     "analyzer_pre_tax": "稅前",
     "analyzer_columns_button": "欄",
     "analyzer_saved_views": "檢視",
@@ -1606,5 +1605,15 @@
     "item_view_nav_related": "相關",
     "item_view_listings_count": "{{count}} 筆在售",
     "item_view_quality_filter_aria": "依品質篩選在售",
-    "item_view_quality_all": "全部"
+    "item_view_quality_all": "全部",
+    "retainers_empty_title": "追蹤你的雇員",
+    "retainers_empty_body": "追蹤你的雇員 — Ultros會監視你的上架商品，並在你被壓價的瞬間，在瀏覽器中或直接向Discord通知你。",
+    "retainers_empty_secondary_label": "機器人指南",
+    "lists_empty_title": "共享購物清單",
+    "lists_empty_body": "共享購物清單 — 建立清單，查看每個道具最便宜的伺服器，並與你的部隊成員一起購物。",
+    "alerts_empty_title": "價格提醒",
+    "alerts_empty_body": "價格提醒 — 當道具達到你設定的價格時，在Discord上接收通知。",
+    "groups_empty_title": "使用者群組",
+    "groups_empty_body": "建立共享使用者群組，輕鬆與你的部隊成員或好友共享購物清單。",
+    "sign_in_discord": "透過Discord登入"
 }

@@ -150,6 +150,14 @@ pub fn ActionableEmptyState(
     /// current page mutated (e.g. filters cleared), not a navigation.
     #[prop(optional, into)]
     on_action: Option<Callback<()>>,
+    /// Render the primary action as a plain `<a rel="external">` rather than a
+    /// client-side `<A>`. Needed for server routes (`/login`) that the leptos
+    /// router must not try to handle.
+    #[prop(optional)]
+    action_external: bool,
+    #[prop(optional, into)] secondary_action_href: Option<Oco<'static, str>>,
+    #[prop(optional, into)] secondary_action_label: Option<Oco<'static, str>>,
+    #[prop(optional)] secondary_action_external: bool,
 ) -> impl IntoView {
     view! {
         <div class="panel p-6 rounded-2xl text-center flex flex-col items-center gap-3">
@@ -158,32 +166,64 @@ pub fn ActionableEmptyState(
             </div>
             <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{title}</h2>
             <p class="max-w-prose text-sm text-[color:var(--color-text-muted)] leading-relaxed">{body}</p>
-            {move || {
-                let label = action_label.clone()?;
-                if let Some(on_action) = on_action {
-                    return Some(
-                        view! {
-                            <button
-                                type="button"
-                                class="btn-primary mt-2"
-                                on:click=move |_| on_action.run(())
-                            >
-                                {label}
-                            </button>
-                        }
-                            .into_any(),
-                    );
-                }
-                let href = action_href.clone()?;
-                Some(
-                    view! {
-                        <A href=href.to_string() attr:class="btn-primary mt-2">
-                            {label}
-                        </A>
+            <div class="flex flex-wrap gap-4 mt-2 justify-center">
+                {move || {
+                    let label = action_label.clone()?;
+                    if let Some(on_action) = on_action {
+                        return Some(
+                            view! {
+                                <button
+                                    type="button"
+                                    class="btn-primary"
+                                    on:click=move |_| on_action.run(())
+                                >
+                                    {label}
+                                </button>
+                            }
+                                .into_any(),
+                        );
                     }
-                        .into_any(),
-                )
-            }}
+                    let href = action_href.clone()?;
+                    Some(
+                        if action_external {
+                            view! {
+                                <a href=href.to_string() rel="external" class="btn-primary">
+                                    {label}
+                                </a>
+                            }
+                                .into_any()
+                        } else {
+                            view! {
+                                <A href=href.to_string() attr:class="btn-primary">
+                                    {label}
+                                </A>
+                            }
+                                .into_any()
+                        },
+                    )
+                }}
+                {move || {
+                    let label = secondary_action_label.clone()?;
+                    let href = secondary_action_href.clone()?;
+                    Some(
+                        if secondary_action_external {
+                            view! {
+                                <a href=href.to_string() rel="external" class="btn-secondary">
+                                    {label}
+                                </a>
+                            }
+                                .into_any()
+                        } else {
+                            view! {
+                                <A href=href.to_string() attr:class="btn-secondary">
+                                    {label}
+                                </A>
+                            }
+                                .into_any()
+                        },
+                    )
+                }}
+            </div>
         </div>
     }
 }
