@@ -1,4 +1,12 @@
 //! Builds `data/icons/images.tar.zst` from the upstream `icon2x` PNGs.
+//!
+//! Ported from the old `ultros-xiv-icons` build script. Deliberate deviations:
+//! - `rayon` instead of tokio, and lossy WebP q85 instead of `image`'s encoder.
+//! - Encodes in memory instead of via a `TempDir` holding ~51k intermediate files.
+//! - Inputs are sorted and gnu headers keep mtime/uid/gid at 0, so the archive is
+//!   reproducible. The build script used readdir order, which was fine for a
+//!   build artifact but not for a file committed to LFS.
+//! - Tar entries get mode `0o644`; the build script left the mode at 0.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -90,8 +98,12 @@ pub fn build_pack(icon_dir: &Path, out_path: &Path) -> anyhow::Result<IconStats>
     })
 }
 
-/// Item ids from the game data that have no `<id>.png` upstream, in the order
-/// they were given.
+/// Item ids from the game data that have no `<id>.png` upstream, preserving the
+/// order of `item_ids` (callers pass them ascending, so the result is ascending
+/// too and its tail is the newest content).
+///
+/// Pass only ids worth reporting — see `db::named_item_ids`. The icon repo ships
+/// far fewer files than the item sheet has rows, so a large result is normal.
 pub fn missing_icon_ids(icon_dir: &Path, item_ids: &[i32]) -> anyhow::Result<Vec<i32>> {
     let available = available_icon_ids(icon_dir)?;
     Ok(item_ids
@@ -126,8 +138,11 @@ fn encode_icon(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
             let px = size.get_px_size();
             let resized = image.resize(px, px, FilterType::CatmullRom).to_rgba8();
             let (width, height) = resized.dimensions();
+            // `Encoder::encode` unwraps internally; go through `encode_simple` so
+            // an encoder failure surfaces as an error instead of a panic.
             let webp = webp::Encoder::from_rgba(resized.as_raw(), width, height)
-                .encode(WEBP_QUALITY)
+                .encode_simple(false, WEBP_QUALITY)
+                .map_err(|e| anyhow!("encoding {} at {size} failed: {e:?}", path.display()))?
                 .to_vec();
             Ok((entry_name(stem, size), webp))
         })

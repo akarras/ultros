@@ -130,6 +130,15 @@ pub fn fetch_all(
     manifest: &Manifest,
     skip_icons: bool,
 ) -> anyhow::Result<Layout> {
+    // Validate before fetching anything: universalis-assets alone is ~500MB on a
+    // cold cache, and failing after that on a manifest problem is a bad trade.
+    if !manifest.sources.contains_key(DATAMINING_SOURCE) {
+        bail!("manifest has no `{DATAMINING_SOURCE}` source");
+    }
+    if !skip_icons && !manifest.sources.contains_key(ICONS_SOURCE) {
+        bail!("manifest has no `{ICONS_SOURCE}` source; pass --skip-icons to build without icons");
+    }
+
     std::fs::create_dir_all(cache_root)
         .with_context(|| format!("creating cache root {}", cache_root.display()))?;
 
@@ -160,12 +169,7 @@ pub fn fetch_all(
         }
     }
 
-    let Some(datamining) = datamining else {
-        bail!("manifest has no `{DATAMINING_SOURCE}` source");
-    };
-    if !skip_icons && icons.is_none() {
-        bail!("manifest has no `{ICONS_SOURCE}` source; pass --skip-icons to build without icons");
-    }
+    let datamining = datamining.expect("presence checked before the fetch loop");
     Ok(Layout { datamining, icons })
 }
 

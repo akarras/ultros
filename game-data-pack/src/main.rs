@@ -114,7 +114,7 @@ fn run() -> anyhow::Result<()> {
                 mib(stats.tar_bytes),
                 mib(stats.packed_bytes),
             );
-            report_missing_icons(icon_dir, &output.en_item_ids)?;
+            report_missing_icons(icon_dir, &output.en_named_item_ids)?;
         }
     }
 
@@ -141,21 +141,31 @@ fn update_pins(manifest: &mut Manifest, run_dir: &Path, skip_icons: bool) -> any
     Ok(())
 }
 
-/// Reports item ids the upstream icon repo has no PNG for. These render as a
-/// blank icon, so a jump in this count after a data bump means the icon repo
-/// has not caught up with the game version yet.
-fn report_missing_icons(icon_dir: &Path, en_item_ids: &[i32]) -> anyhow::Result<()> {
-    let missing = icons::missing_icon_ids(icon_dir, en_item_ids)?;
+/// Reports named items the upstream icon repo has no PNG for; these render as a
+/// blank icon.
+///
+/// The absolute count is inherently large — measured on 7.55 the icon repo ships
+/// 17,209 files against 50,773 named items, so ~33.5k named items legitimately
+/// have no icon of their own. What is actionable is (a) how the count moves
+/// between runs and (b) the preview, which shows the *highest* ids because a new
+/// game version appends its items at the top of the id range. Previewing the low
+/// end would just reprint the same permanently-iconless legacy rows every run.
+fn report_missing_icons(icon_dir: &Path, named_item_ids: &[i32]) -> anyhow::Result<()> {
+    let missing = icons::missing_icon_ids(icon_dir, named_item_ids)?;
     if missing.is_empty() {
-        println!("  every item id has an upstream icon");
+        println!("  every named item has an upstream icon");
         return Ok(());
     }
-    let preview: Vec<String> = missing.iter().take(20).map(i32::to_string).collect();
+    let preview = newest_missing(&missing, 20);
     println!(
-        "  {} of {} item ids have no upstream icon: {}{}",
+        "  {} of {} named items have no upstream icon; highest ids: {}{}",
         missing.len(),
-        en_item_ids.len(),
-        preview.join(", "),
+        named_item_ids.len(),
+        preview
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
         if missing.len() > preview.len() {
             ", ..."
         } else {
@@ -163,6 +173,11 @@ fn report_missing_icons(icon_dir: &Path, en_item_ids: &[i32]) -> anyhow::Result<
         },
     );
     Ok(())
+}
+
+/// The `limit` highest ids from an ascending list, highest first.
+fn newest_missing(missing: &[i32], limit: usize) -> Vec<i32> {
+    missing.iter().rev().take(limit).copied().collect()
 }
 
 fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
@@ -179,6 +194,9 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
             "--skip-icons" => args.skip_icons = true,
             "--offline-source" => {
                 let path = argv.next().context("--offline-source needs a path")?;
+                if path.starts_with("--") {
+                    bail!("--offline-source needs a path, got the flag {path:?}");
+                }
                 args.offline_source = Some(PathBuf::from(path));
             }
             "--help" | "-h" => {
@@ -229,6 +247,22 @@ mod arg_tests {
     fn rejects_unknown_and_incomplete_arguments() {
         assert!(parse(&["--wat"]).is_err());
         assert!(parse(&["--offline-source"]).is_err());
+    }
+
+    #[test]
+    fn offline_source_does_not_swallow_the_next_flag() {
+        assert!(parse(&["--offline-source", "--skip-icons"]).is_err());
+    }
+
+    #[test]
+    fn missing_preview_shows_the_highest_ids_first() {
+        // New game content lands at the top of the id range, so the tail of the
+        // ascending list is the part worth showing.
+        let missing: Vec<i32> = (1..=50).collect();
+        assert_eq!(newest_missing(&missing, 3), vec![50, 49, 48]);
+        // Fewer entries than the limit is fine, and still highest-first.
+        assert_eq!(newest_missing(&[7, 9], 20), vec![9, 7]);
+        assert!(newest_missing(&[], 20).is_empty());
     }
 
     #[test]
