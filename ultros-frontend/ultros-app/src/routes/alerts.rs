@@ -39,10 +39,10 @@ pub fn Alerts() -> impl IntoView {
                     Some(Err(_)) => {
                         view! {
                             <ActionableEmptyState
-                                title=t!(i18n, alerts_empty_title)
-                                body=t!(i18n, alerts_empty_body)
+                                title=t_string!(i18n, alerts_empty_title).to_string()
+                                body=t_string!(i18n, alerts_empty_body).to_string()
                                 action_href="/login?next=/alerts"
-                                action_label=t!(i18n, sign_in_discord)
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
                                 action_external=true
                             />
                         }.into_any()

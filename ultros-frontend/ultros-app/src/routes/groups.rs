@@ -65,10 +65,10 @@ pub fn Groups() -> impl IntoView {
                     Some(None) => {
                         view! {
                             <ActionableEmptyState
-                                title=t!(i18n, groups_empty_title)
-                                body=t!(i18n, groups_empty_body)
+                                title=t_string!(i18n, groups_empty_title).to_string()
+                                body=t_string!(i18n, groups_empty_body).to_string()
                                 action_href="/login?next=/groups"
-                                action_label=t!(i18n, sign_in_discord)
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
                                 action_external=true
                             />
                         }.into_any()

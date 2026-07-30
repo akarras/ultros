@@ -1,14 +1,14 @@
 use crate::api::{
-    UndercutData, get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
-    get_login,
+    UndercutData, get_login, get_retainer_listings, get_retainer_undercuts,
+    get_user_retainer_listings,
 };
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
+use crate::components::tool_help::ActionableEmptyState;
 use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
-use crate::components::tool_help::ActionableEmptyState;
 use crate::global_state::LocalWorldData;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -290,7 +290,9 @@ pub fn RetainerUndercuts() -> impl IntoView {
             if logged_in {
                 get_retainer_undercuts().await
             } else {
-                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
             }
         },
     );
@@ -306,13 +308,13 @@ pub fn RetainerUndercuts() -> impl IntoView {
                     Some(Err(_)) => {
                         view! {
                             <ActionableEmptyState
-                                title=t!(i18n, retainers_empty_title)
-                                body=t!(i18n, retainers_empty_body)
+                                title=t_string!(i18n, retainers_empty_title).to_string()
+                                body=t_string!(i18n, retainers_empty_body).to_string()
                                 action_href="/login?next=/retainers/undercuts"
-                                action_label=t!(i18n, sign_in_discord)
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
                                 action_external=true
                                 secondary_action_href="/bot"
-                                secondary_action_label=t!(i18n, retainers_empty_secondary_label)
+                                secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
                             />
                         }.into_any()
                     }
@@ -383,13 +385,13 @@ pub fn RetainersBasePath() -> impl IntoView {
                 Some(Err(_)) => {
                     view! {
                         <ActionableEmptyState
-                            title=t!(i18n, retainers_empty_title)
-                            body=t!(i18n, retainers_empty_body)
+                            title=t_string!(i18n, retainers_empty_title).to_string()
+                            body=t_string!(i18n, retainers_empty_body).to_string()
                             action_href="/login?next=/retainers"
-                            action_label=t!(i18n, sign_in_discord)
+                            action_label=t_string!(i18n, sign_in_discord).to_string()
                             action_external=true
                             secondary_action_href="/bot"
-                            secondary_action_label=t!(i18n, retainers_empty_secondary_label)
+                            secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
                         />
                     }.into_any()
                 }
@@ -482,9 +484,11 @@ pub fn RetainerListings() -> impl IntoView {
             if logged_in {
                 get_user_retainer_listings().await
             } else {
-                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
             }
-        }
+        },
     );
     view! {
         <span class="content-title">{t!(i18n, retainers_all_listings_title)}</span>
@@ -500,13 +504,13 @@ pub fn RetainerListings() -> impl IntoView {
                     Some(Err(_)) => {
                         view! {
                             <ActionableEmptyState
-                                title=t!(i18n, retainers_empty_title)
-                                body=t!(i18n, retainers_empty_body)
+                                title=t_string!(i18n, retainers_empty_title).to_string()
+                                body=t_string!(i18n, retainers_empty_body).to_string()
                                 action_href="/login?next=/retainers/listings"
-                                action_label=t!(i18n, sign_in_discord)
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
                                 action_external=true
                                 secondary_action_href="/bot"
-                                secondary_action_label=t!(i18n, retainers_empty_secondary_label)
+                                secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
                             />
                         }.into_any()
                     }

@@ -5,11 +5,11 @@ use ultros_api_types::user::OwnedRetainer;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::api::{
-    assign_retainer_character, claim_retainer, get_characters, get_retainers, search_retainers,
-    unclaim_retainer, update_retainer_order, get_login,
+    assign_retainer_character, claim_retainer, get_characters, get_login, get_retainers,
+    search_retainers, unclaim_retainer, update_retainer_order,
 };
-use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
 use crate::components::tool_help::ActionableEmptyState;
+use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
 use crate::i18n::*;
 
 #[component]
@@ -33,9 +33,11 @@ pub fn EditRetainers() -> impl IntoView {
             if let Some(search) = search {
                 search_retainers(search).await
             } else {
-                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
             }
-        }
+        },
     );
 
     let claim = Action::new(move |retainer_id| claim_retainer(*retainer_id));
@@ -54,9 +56,11 @@ pub fn EditRetainers() -> impl IntoView {
             if logged_in {
                 get_characters().await
             } else {
-                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
             }
-        }
+        },
     );
     let retainers = Resource::new(
         move || {
@@ -76,7 +80,9 @@ pub fn EditRetainers() -> impl IntoView {
                 log::info!("getting retainers {key:?}");
                 get_retainers().await
             } else {
-                Err(crate::error::AppError::ApiError(ultros_api_types::result::ApiError::NotAuthenticated))
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
             }
         },
     );
@@ -109,13 +115,13 @@ pub fn EditRetainers() -> impl IntoView {
                     Some(Err(_)) => {
                         view! {
                             <ActionableEmptyState
-                                title=t!(i18n, retainers_empty_title)
-                                body=t!(i18n, retainers_empty_body)
+                                title=t_string!(i18n, retainers_empty_title).to_string()
+                                body=t_string!(i18n, retainers_empty_body).to_string()
                                 action_href="/login?next=/retainers/edit"
-                                action_label=t!(i18n, sign_in_discord)
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
                                 action_external=true
                                 secondary_action_href="/bot"
-                                secondary_action_label=t!(i18n, retainers_empty_secondary_label)
+                                secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
                             />
                         }.into_any()
                     }
