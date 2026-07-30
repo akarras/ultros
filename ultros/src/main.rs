@@ -4,6 +4,7 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
+mod ingest_health;
 mod item_update_service;
 pub mod leptos;
 #[cfg(feature = "profiling")]
@@ -355,6 +356,10 @@ async fn main() -> Result<()> {
         full_sweep_cooldowns: Default::default(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
+    // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
+    // failure looks like a healthy process serving frozen numbers, so this gauge
+    // is the only thing that makes one visible from outside.
+    ingest_health::spawn_staleness_gauge(db.clone(), world_cache.clone(), token.clone());
     // begin listening to universalis events
     // load configuration from environment
     let config = envy::from_env::<Config>()?;

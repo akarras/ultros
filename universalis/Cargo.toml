@@ -13,6 +13,9 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = "2"
 tracing = { workspace = true }
+# Facade only — no-ops until a recorder is installed, which `ultros` does in
+# web_metrics.rs. Matches how ultros-db already reports from library code.
+metrics = "0.24.5"
 bson = { version = "3.1.0", features = ["serde"] }
 async-tungstenite = {version = "0.34", default-features = false, features = ["tokio-runtime", "tokio-rustls-webpki-roots"], optional = true}
 tokio = { workspace = true, optional = true }

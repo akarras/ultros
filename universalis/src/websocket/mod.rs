@@ -21,8 +21,35 @@ use futures::stream::FusedStream;
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
+
+/// How often we send a websocket Ping to keep the connection alive.
+const PING_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How long the socket may go without delivering *any* frame — Pong, data, or
+/// otherwise — before we treat it as dead and reconnect.
+///
+/// Universalis' server replies to our Ping, so silence this long means the
+/// connection is gone. The failure mode this guards against is a half-open TCP
+/// connection: the peer vanished without a FIN/RST, so `websocket.next()` never
+/// yields, never errors, and `is_terminated()` stays false. The socket sits
+/// there looking connected while delivering zero market data, forever, and the
+/// existing reconnect path is never reached because nothing ever signals a
+/// close. Without this deadline the only fix is a process restart.
+///
+/// 2.5× [`PING_INTERVAL`], so one slow round-trip is tolerated and two
+/// consecutive missed Pongs trip it. Override with
+/// `UNIVERSALIS_WEBSOCKET_LIVENESS_TIMEOUT_SECS`.
+const DEFAULT_LIVENESS_TIMEOUT: Duration = Duration::from_secs(150);
+
+fn liveness_timeout() -> Duration {
+    std::env::var("UNIVERSALIS_WEBSOCKET_LIVENESS_TIMEOUT_SECS")
+        .ok()
+        .and_then(|i| i.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_LIVENESS_TIMEOUT)
+}
 
 /// Internal SocketTx. Enables the user to communicate with the worker task.
 #[derive(Debug)]
@@ -143,18 +170,40 @@ impl WebsocketClient {
                     .send(SocketTx::Ping)
                     .await
                     .expect("Unable to push message to message queue");
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(PING_INTERVAL).await;
             }
         });
         tokio::spawn(async move {
             let mut active_subscriptions = SubscriptionTracker {
                 subscriptions: HashSet::new(),
             };
+            let liveness_timeout = liveness_timeout();
+            // Last time the socket handed us anything at all. The ping task
+            // wakes this loop every PING_INTERVAL even when the socket is
+            // silent, so the check below runs on a fixed cadence.
+            let mut last_frame_at = Instant::now();
             loop {
-                if let Some(ws) = websocket {
+                if let Some(mut ws) = websocket {
                     if ws.is_terminated() {
                         websocket = None;
                         warn!("websocket terminated, restarting");
+                        continue;
+                    } else if last_frame_at.elapsed() > liveness_timeout {
+                        warn!(
+                            silent_for_secs = last_frame_at.elapsed().as_secs(),
+                            timeout_secs = liveness_timeout.as_secs(),
+                            "websocket delivered no frames within the liveness deadline, \
+                             assuming it is half-open and reconnecting"
+                        );
+                        metrics::counter!("universalis_websocket_liveness_timeouts_total")
+                            .increment(1);
+                        // Best-effort close; a half-open peer will never answer,
+                        // which is exactly why we drop the socket rather than
+                        // waiting for `is_terminated()` to become true.
+                        if let Err(e) = ws.close(None).await {
+                            warn!("error closing timed-out websocket {e:?}");
+                        }
+                        websocket = None;
                         continue;
                     } else {
                         websocket = Some(ws);
@@ -185,6 +234,9 @@ impl WebsocketClient {
                             error!("error resending subscriptions {e:?}");
                             websocket = None;
                         } else {
+                            // Start the deadline from the fresh connection, not
+                            // from whenever the dead one last spoke.
+                            last_frame_at = Instant::now();
                             websocket = Some(ws);
                         }
                     }
@@ -233,42 +285,48 @@ impl WebsocketClient {
                             break;
                         }
                     },
-                    Either::Right((Some(Ok(message)), _)) => match message {
-                        Message::Text(t) => {
-                            info!(
-                                "Received text {t}, unexpected only BSON messages were expected."
-                            );
-                        }
-                        Message::Binary(b) => {
-                            let sender = listing_sender.clone();
-                            tokio::spawn(async move {
-                                let b = bson::deserialize_from_slice::<WSMessage>(b.as_ref()).map_err(|e| {
+                    Either::Right((Some(Ok(message)), _)) => {
+                        // Any frame proves the socket is alive — a Pong is the
+                        // one we expect during a quiet market, but data, Ping
+                        // and Close all count too.
+                        last_frame_at = Instant::now();
+                        match message {
+                            Message::Text(t) => {
+                                info!(
+                                    "Received text {t}, unexpected only BSON messages were expected."
+                                );
+                            }
+                            Message::Binary(b) => {
+                                let sender = listing_sender.clone();
+                                tokio::spawn(async move {
+                                    let b = bson::deserialize_from_slice::<WSMessage>(b.as_ref()).map_err(|e| {
                                     if let Ok(document) = bson::deserialize_from_slice::<Document>(b.as_ref()) {
                                         error!("valid bson document but not valid struct {document:?}");
                                     }
                                     e.into()
                                 });
-                                if let Err(e) = sender.send(SocketRx::Event(b)).await {
-                                    error!("Error sending websocket data {e:?}");
+                                    if let Err(e) = sender.send(SocketRx::Event(b)).await {
+                                        error!("Error sending websocket data {e:?}");
+                                    }
+                                });
+                            }
+                            Message::Ping(p) => {
+                                info!("responding to ping with payload: {p:?}");
+                                if let Err(e) = websocket.send(Message::Pong(p.clone())).await {
+                                    error!("Error sending ping! {e:?}");
                                 }
-                            });
-                        }
-                        Message::Ping(p) => {
-                            info!("responding to ping with payload: {p:?}");
-                            if let Err(e) = websocket.send(Message::Pong(p.clone())).await {
-                                error!("Error sending ping! {e:?}");
+                            }
+                            Message::Pong(pong) => {
+                                info!("got pong! {pong:?}");
+                            }
+                            Message::Close(closed) => {
+                                info!("Socket closed with reason {closed:?}");
+                            }
+                            Message::Frame(frame) => {
+                                info!("received frame: {frame:?}");
                             }
                         }
-                        Message::Pong(pong) => {
-                            info!("got pong! {pong:?}");
-                        }
-                        Message::Close(closed) => {
-                            info!("Socket closed with reason {closed:?}");
-                        }
-                        Message::Frame(frame) => {
-                            info!("received frame: {frame:?}");
-                        }
-                    },
+                    }
                     Either::Right((None, _)) => {
                         warn!("Web socket closed");
                     }
