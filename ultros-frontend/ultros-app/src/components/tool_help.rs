@@ -140,12 +140,16 @@ pub fn ConfidenceBadge(total_sales: usize, daily_sales: f32) -> impl IntoView {
 }
 
 #[component]
-#[allow(dead_code)]
 pub fn ActionableEmptyState(
     #[prop(into)] title: Oco<'static, str>,
     #[prop(into)] body: Oco<'static, str>,
     #[prop(optional, into)] action_href: Option<Oco<'static, str>>,
     #[prop(optional, into)] action_label: Option<Oco<'static, str>>,
+    /// In-page action rendered as a button. Takes precedence over
+    /// `action_href` when both are provided — a callback caller wants the
+    /// current page mutated (e.g. filters cleared), not a navigation.
+    #[prop(optional, into)]
+    on_action: Option<Callback<()>>,
 ) -> impl IntoView {
     view! {
         <div class="panel p-6 rounded-2xl text-center flex flex-col items-center gap-3">
@@ -155,11 +159,30 @@ pub fn ActionableEmptyState(
             <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{title}</h2>
             <p class="max-w-prose text-sm text-[color:var(--color-text-muted)] leading-relaxed">{body}</p>
             {move || {
-                action_href.clone().zip(action_label.clone()).map(|(href, label)| view! {
-                    <A href=href.to_string() attr:class="btn-primary mt-2">
-                        {label}
-                    </A>
-                })
+                let label = action_label.clone()?;
+                if let Some(on_action) = on_action {
+                    return Some(
+                        view! {
+                            <button
+                                type="button"
+                                class="btn-primary mt-2"
+                                on:click=move |_| on_action.run(())
+                            >
+                                {label}
+                            </button>
+                        }
+                            .into_any(),
+                    );
+                }
+                let href = action_href.clone()?;
+                Some(
+                    view! {
+                        <A href=href.to_string() attr:class="btn-primary mt-2">
+                            {label}
+                        </A>
+                    }
+                        .into_any(),
+                )
             }}
         </div>
     }

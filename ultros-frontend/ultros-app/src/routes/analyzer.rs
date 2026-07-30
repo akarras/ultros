@@ -25,6 +25,7 @@ use crate::{
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
+        tool_help::{ActionableEmptyState, ToolHeader},
         tooltip::*,
         virtual_scroller::*,
         world_picker::*,
@@ -730,27 +731,80 @@ fn format_velocity_floor(v: f32) -> String {
 }
 
 /// Rendered width of the optional columns that are *not* in the default set,
-/// in px.
+/// in px, bucketed by the breakpoint at which each column actually renders.
 ///
 /// The grid's base width lives in the stylesheet, which is the only place that
 /// can know which columns a breakpoint hides. What it cannot know is which
 /// optional columns the user switched on, so that part is measured here and
-/// handed over as `--analyzer-extra-cols`. Under-reserving is the failure that
-/// matters: the two scrollports would stop short of the last column and it
-/// would be unreachable.
-fn extra_column_width_px(visible: &std::collections::HashSet<&'static str>) -> u32 {
-    const EXTRA_COLUMN_WIDTHS: &[(&str, u32)] = &[
-        (COL_ROI, 112),
-        (COL_DATACENTER, 112),
+/// handed over as `--analyzer-extra-cols-{base,md,xl}`. Under-reserving is the
+/// failure that matters: the two scrollports would stop short of the last
+/// column and it would be unreachable.
+///
+/// The bucketing exists for the opposite failure: several opt-in columns are
+/// `hidden md:flex` / `hidden xl:flex`, and reserving their width below the
+/// breakpoint that reveals them gives a phone a horizontal scroll range whose
+/// far end is empty space. Each bucket is only added by the stylesheet's media
+/// query for that breakpoint (see `style/tailwind.css`), which keeps the whole
+/// mechanism CSS-driven — no `matchMedia` read, so SSR and the first client
+/// render stay identical.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ExtraColumnWidths {
+    /// Columns visible at every viewport width.
+    base: u32,
+    /// Columns hidden below `md` (768px).
+    md: u32,
+    /// Columns hidden below `xl` (1280px).
+    xl: u32,
+}
+
+fn extra_column_widths_px(visible: &std::collections::HashSet<&'static str>) -> ExtraColumnWidths {
+    // Width AND breakpoint here must match the column's header/cell markup
+    // (`w-[..]` + `hidden md:flex` etc.) in the view below.
+    const ALWAYS: &[(&str, u32)] = &[(COL_ROI, 112)];
+    const MD: &[(&str, u32)] = &[
         (COL_TREND, 100),
-        (COL_SALES_PER_DAY, 88),
+        (COL_SALES_PER_DAY, 140),
         (COL_VOLUME_30D, 88),
     ];
-    EXTRA_COLUMN_WIDTHS
-        .iter()
-        .filter(|(col, _)| visible.contains(col))
-        .map(|(_, w)| w)
-        .sum()
+    const XL: &[(&str, u32)] = &[(COL_DATACENTER, 112)];
+    let sum = |widths: &[(&str, u32)]| {
+        widths
+            .iter()
+            .filter(|(col, _)| visible.contains(col))
+            .map(|(_, w)| w)
+            .sum()
+    };
+    ExtraColumnWidths {
+        base: sum(ALWAYS),
+        md: sum(MD),
+        xl: sum(XL),
+    }
+}
+
+/// Tailwind class that hides a column's "desktop only" note in the Columns
+/// picker once the viewport is wide enough to actually render the column.
+/// `None` for columns visible at every width. Must mirror the `hidden
+/// md:flex` / `lg:flex` / `xl:flex` classes on the column's own markup.
+///
+/// Ticking a hidden column on a phone changes nothing on screen, which reads
+/// as a broken checkbox; the note explains it. The gating is pure CSS so SSR
+/// and the first client render agree.
+fn col_hidden_note_class(col: &str) -> Option<&'static str> {
+    match col {
+        c if c == COL_VELOCITY
+            || c == COL_DRIFT
+            || c == COL_CONFIDENCE
+            || c == COL_TREND
+            || c == COL_SALES_PER_DAY
+            || c == COL_VOLUME_30D
+            || c == COL_LAST_SOLD =>
+        {
+            Some("md:hidden")
+        }
+        c if c == COL_WORLD => Some("lg:hidden"),
+        c if c == COL_DATACENTER => Some("xl:hidden"),
+        _ => None,
+    }
 }
 
 /// Filters the `+ Filter` menu should offer: everything addable that is not
@@ -884,25 +938,30 @@ fn AnalyzerTable(
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
-    let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // every keystroke in a chip writes the URL, and `query_signal`'s defaults
+    // would push a history entry and yank the window to the top each time.
+    // `sort`/`dir`/`cols` stay on plain `query_signal` — those are deliberate,
+    // discrete actions where a history entry is wanted.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>("profit");
+    let (minimum_profit_per_day, set_minimum_profit_per_day) = filter_query_signal::<i32>("ppd");
+    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>("roi");
     // Seeded to 1d by AnalyzerWorldView so a first-time visitor isn't shown
     // items that sell once a month. The field sits in the primary toolbar and
     // the chip has an X, so the default is visible and one click from gone.
     let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
-    let (world_filter, set_world_filter) = query_signal::<String>("world");
-    let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
-    let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
-    let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
-    let (min_velocity, set_min_velocity) = query_signal::<f32>("vel");
+    let (world_filter, set_world_filter) = filter_query_signal::<String>("world");
+    let (datacenter_filter, set_datacenter_filter) = filter_query_signal::<String>("datacenter");
+    let (tax_enabled, set_tax_enabled) = filter_query_signal::<bool>("tax");
+    let (minimum_sales, set_minimum_sales) = filter_query_signal::<usize>("sales");
+    let (min_velocity, set_min_velocity) = filter_query_signal::<f32>("vel");
     // Single normalization point for the floor — the filter, the summary
     // chip and the toolbar input all read this, never `min_velocity` raw.
     let velocity_floor = Memo::new(move |_| normalize_velocity_floor(min_velocity()));
-    let (category_filter, set_category_filter) = query_signal::<i32>("category");
-    let (max_purchase_price, set_max_purchase_price) = query_signal::<i32>("max-price");
-    let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
-    let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
+    let (category_filter, set_category_filter) = filter_query_signal::<i32>("category");
+    let (max_purchase_price, set_max_purchase_price) = filter_query_signal::<i32>("max-price");
+    let (min_buy_price, set_min_buy_price) = filter_query_signal::<i32>("min-buy");
+    let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
     let (quality_filter, set_quality_filter) = query_signal::<QualityFilter>("quality");
     let (name_filter, set_name_filter) = query_signal::<String>("name");
@@ -959,7 +1018,7 @@ fn AnalyzerTable(
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
 
-    let (last_sold_within, set_last_sold_within) = query_signal::<String>("last-sold");
+    let (last_sold_within, set_last_sold_within) = filter_query_signal::<String>("last-sold");
     let last_sold_duration =
         Memo::new(move |_| last_sold_within().and_then(|d| parse_duration(d.as_str()).ok()));
 
@@ -2045,6 +2104,14 @@ fn AnalyzerTable(
                                                         on:change=on_change
                                                     />
                                                     <span>{label}</span>
+                                                    {col_hidden_note_class(col)
+                                                        .map(|hide_at| view! {
+                                                            <span class=format!(
+                                                                "text-xs text-[color:var(--color-text-muted)] {hide_at}",
+                                                            )>
+                                                                {t!(i18n, analyzer_columns_picker_desktop_only)}
+                                                            </span>
+                                                        })}
                                                 </label>
                                             }
                                         })
@@ -2123,7 +2190,13 @@ fn AnalyzerTable(
             <div
                 class="analyzer-table border border-[color:var(--color-outline)]"
                 style=move || {
-                    format!("--analyzer-extra-cols: {}px;", extra_column_width_px(&visible_cols()))
+                    let widths = extra_column_widths_px(&visible_cols());
+                    format!(
+                        "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
+                        widths.base,
+                        widths.md,
+                        widths.xl,
+                    )
                 }
             >
                 <VirtualScroller
@@ -2163,7 +2236,7 @@ fn AnalyzerTable(
                                     />
                                 </div>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2" title=t_string!(i18n, analyzer_tooltip_profit_per_day)>
                                         <SortHeader
                                             mode=SortMode::ProfitPerDay
                                             label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
@@ -2173,17 +2246,17 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_velocity)>
                                         {t!(i18n, analyzer_col_velocity)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
                                         {t!(i18n, analyzer_col_drift)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center">
+                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
                                         {t!(i18n, analyzer_col_confidence)}
                                     </div>
                                 })}
@@ -2245,7 +2318,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2253,7 +2326,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
 
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
@@ -2262,7 +2335,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2551,9 +2624,15 @@ fn AnalyzerTable(
                                                 let secs = d.as_secs();
                                                 let days = secs / 86_400;
                                                 let hours = (secs % 86_400) / 3_600;
-                                                if days > 0 { format!("{}d ago", days) }
-                                                else if hours > 0 { format!("{}h ago", hours) }
-                                                else { "just now".to_string() }
+                                                if days > 0 {
+                                                    t_string!(i18n, analyzer_last_sold_days_ago)
+                                                        .replace("%count%", &days.to_string())
+                                                } else if hours > 0 {
+                                                    t_string!(i18n, analyzer_last_sold_hours_ago)
+                                                        .replace("%count%", &hours.to_string())
+                                                } else {
+                                                    t_string!(i18n, analyzer_last_sold_just_now).to_string()
+                                                }
                                             })
                                             .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
                                         view! {
@@ -2568,6 +2647,30 @@ fn AnalyzerTable(
                         }
                     />
             </div>
+
+            // Empty state. A *sibling* of the table container, never a
+            // replacement for it: the VirtualScroller (and the `list_scroll`
+            // node the horizontal scroll-sync effect above registered its
+            // listeners on) must stay mounted, or the listeners die with the
+            // node and never re-register. With zero rows the table renders
+            // just its header, which doubles as context for this panel.
+            //
+            // `sorted_data` is computed synchronously from props that only
+            // exist once the route's resources resolved (AnalyzerTable mounts
+            // inside `<Suspense>`), so an empty list here really means "every
+            // row was filtered out" — there is no pending state to flash
+            // through. Both SSR and CSR filter the same serialized data, so
+            // the two sides agree on emptiness at hydration time.
+            {move || {
+                sorted_data.with(|data| data.is_empty()).then(|| view! {
+                    <ActionableEmptyState
+                        title=t_string!(i18n, analyzer_empty_title).to_string()
+                        body=t_string!(i18n, analyzer_empty_all_filtered).to_string()
+                        action_label=t_string!(i18n, analyzer_clear_all).to_string()
+                        on_action=Callback::new(move |_: ()| clear_all_filters())
+                    />
+                })
+            }}
         </div>
     }.into_any()
 }
@@ -2681,7 +2784,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                 t_string!(i18n, analyzer_meta_desc).to_string().replace("%world%", &world())
             } />
             <div class="flex flex-col gap-3">
-                    // Title + world picker. Deliberately kept OUTSIDE the
+                    // Header + world picker. Deliberately kept OUTSIDE the
                     // `<Suspense>` below: `AnalyzerTable` (and the sticky bar
                     // it renders) only exists once every resource has
                     // resolved, so a control placed there vanishes behind
@@ -2689,10 +2792,19 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // which is exactly when a user most needs to be able to
                     // change worlds again. Keeping it here means it is always
                     // on screen, load or no load.
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">
-                            {t!(i18n, flip_finder)}
-                        </h1>
+                    //
+                    // ToolHeader carries the tool's h1 plus the expandable
+                    // "About this tool" summary and the link to
+                    // `/help/flip-finder`, matching every other analyzer
+                    // (see vendor_resale.rs).
+                    <ToolHeader
+                        title=t_string!(i18n, flip_finder).to_string()
+                        summary=t_string!(i18n, flip_finder_tool_summary).to_string()
+                        context=t_string!(i18n, flip_finder_tool_context).to_string()
+                        help_href="/help/flip-finder"
+                        help_body=t_string!(i18n, flip_finder_tool_help).to_string()
+                    />
+                    <div class="flex flex-wrap items-center justify-end gap-3">
                         <AnalyzerWorldNavigator />
                     </div>
 
@@ -3266,8 +3378,14 @@ mod tests {
         // scrolling into empty space.
         let defaults: std::collections::HashSet<&'static str> =
             DEFAULT_VISIBLE_COLS.iter().copied().collect();
-        assert_eq!(extra_column_width_px(&defaults), 0);
-        assert_eq!(extra_column_width_px(&std::collections::HashSet::new()), 0);
+        assert_eq!(
+            extra_column_widths_px(&defaults),
+            ExtraColumnWidths::default()
+        );
+        assert_eq!(
+            extra_column_widths_px(&std::collections::HashSet::new()),
+            ExtraColumnWidths::default()
+        );
     }
 
     #[test]
@@ -3281,10 +3399,54 @@ mod tests {
                 continue;
             }
             let set: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
+            let widths = extra_column_widths_px(&set);
             assert!(
-                extra_column_width_px(&set) > 0,
+                widths.base + widths.md + widths.xl > 0,
                 "{col} reserves no width, so the grid would stop short of it"
             );
+        }
+    }
+
+    #[test]
+    fn breakpoint_hidden_columns_reserve_no_width_below_their_breakpoint() {
+        // The other half of the reservation contract: a `hidden md:flex` /
+        // `hidden xl:flex` column must not widen the scroll range of a
+        // viewport that never renders it, or a phone scrolls into blank
+        // space. `base` is the only bucket a phone-width stylesheet applies,
+        // and `md` is the widest bucket applied below `xl`.
+        let md_gated: std::collections::HashSet<&'static str> =
+            [COL_TREND, COL_SALES_PER_DAY, COL_VOLUME_30D]
+                .into_iter()
+                .collect();
+        let widths = extra_column_widths_px(&md_gated);
+        assert_eq!(widths.base, 0);
+        assert!(widths.md > 0);
+        assert_eq!(widths.xl, 0);
+
+        let xl_gated: std::collections::HashSet<&'static str> =
+            [COL_DATACENTER].into_iter().collect();
+        let widths = extra_column_widths_px(&xl_gated);
+        assert_eq!(widths.base, 0);
+        assert_eq!(widths.md, 0);
+        assert!(widths.xl > 0);
+
+        // ROI renders at every width, so its reservation must too.
+        let always: std::collections::HashSet<&'static str> = [COL_ROI].into_iter().collect();
+        assert!(extra_column_widths_px(&always).base > 0);
+    }
+
+    #[test]
+    fn hidden_note_matches_the_width_buckets() {
+        // Every optional column that is breakpoint-hidden gets a "desktop
+        // only" note in the Columns picker; the two always-visible ones must
+        // not, or the note would be a lie.
+        for col in ALL_OPTIONAL_COLS {
+            let note = col_hidden_note_class(col);
+            if *col == COL_PROFIT_PER_DAY || *col == COL_ROI {
+                assert!(note.is_none(), "{col} is always visible");
+            } else {
+                assert!(note.is_some(), "{col} is breakpoint-hidden");
+            }
         }
     }
 
