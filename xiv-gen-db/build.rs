@@ -4,12 +4,31 @@ use flate2::{Compression, FlushCompress};
 use std::env;
 use std::path::Path;
 use xiv_gen::Language;
-use xiv_gen::csv_to_rkyv::read_data;
+use xiv_gen::csv_to_rkyv::{read_data, resolved_datamining_dir};
 
 fn main() {
-    // The csv source dir is resolved by xiv_gen::csv_to_rkyv::datamining_dir —
-    // env override, then the local submodule, then the main worktree's copy.
+    println!("cargo:rerun-if-changed=build.rs");
+    // The csv source dir is resolved by xiv_gen::csv_to_rkyv — env override,
+    // then the local submodule, then the main worktree's copy.
     println!("cargo:rerun-if-env-changed=FFXIV_DATAMINING_DIR");
+    let datamining = match resolved_datamining_dir() {
+        Ok(resolved) => resolved,
+        Err(message) => panic!("{message}"),
+    };
+    for warning in &datamining.warnings {
+        println!("cargo:warning={warning}");
+    }
+    // Re-run when the CSVs change (i.e. a datamining submodule bump). The
+    // resolved dir may live outside this package (main-worktree fallback) or
+    // even outside the xiv-gen path dependency, so without registering it a
+    // bump would silently never rebuild the rkyv — and the pin-drift warning
+    // above only prints when this script re-runs. Deliberately the
+    // un-canonicalized path: canonicalizing on Windows yields `\\?\` paths
+    // that cargo mishandles.
+    println!(
+        "cargo:rerun-if-changed={}",
+        datamining.path.join("csv").display()
+    );
     let languages = [
         Language::En,
         Language::Ja,
@@ -45,5 +64,4 @@ fn main() {
             lang
         );
     }
-    println!("cargo:rerun-if-changed=build.rs");
 }

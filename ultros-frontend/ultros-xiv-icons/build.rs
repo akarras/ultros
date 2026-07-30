@@ -12,20 +12,26 @@ use tar::{Builder, Header};
 use tempfile::TempDir;
 use ultros_api_types::icon_size::IconSize;
 
+// Worktree-fallback helpers (main-worktree discovery, pin-drift detection)
+// shared with `xiv-gen/src/csv_to_rkyv.rs` — a single source of truth so the
+// two build paths can't drift. Its unit tests run through the xiv-gen side:
+// `cargo test -p xiv-gen --features csv_to_rkyv`.
+include!("../../xiv-gen/src/worktree_fallback.rs");
+
 /// Locate the `universalis-assets` checkout the icons are read from.
 ///
 /// Resolution order: `UNIVERSALIS_ASSETS_DIR` env override, then the submodule
 /// next to this crate, then the main git worktree's copy — linked worktrees
 /// rarely have submodules initialized, but the main checkout usually does.
-///
-/// The same pattern exists in `xiv-gen/src/csv_to_rkyv.rs` for the
-/// `ffxiv-datamining` submodule; keep the two in sync.
+/// Mirrors `resolve_datamining_dir` in `xiv-gen/src/csv_to_rkyv.rs`; the
+/// shared mechanics live in the include!d `worktree_fallback.rs`.
 fn universalis_assets_dir(manifest_dir: &Path) -> PathBuf {
     if let Some(dir) = env::var_os("UNIVERSALIS_ASSETS_DIR") {
         let dir = PathBuf::from(dir);
         assert!(
             assets_populated(&dir),
-            "UNIVERSALIS_ASSETS_DIR is set to {} but icon2x/ is missing or empty there",
+            "UNIVERSALIS_ASSETS_DIR is set to {} but icon2x/ is missing or incomplete there \
+             (fewer than {MIN_ICON_COUNT} files)",
             dir.display()
         );
         return dir;
@@ -40,6 +46,9 @@ fn universalis_assets_dir(manifest_dir: &Path) -> PathBuf {
             .join("ultros-xiv-icons")
             .join("universalis-assets");
         if candidate != local && assets_populated(&candidate) {
+            if let Some(drift) = pin_drift_warning(manifest_dir, "universalis-assets", &candidate) {
+                println!("cargo:warning={drift}");
+            }
             println!(
                 "cargo:warning=universalis-assets submodule not populated in this checkout; \
                  falling back to {}",
@@ -56,25 +65,21 @@ fn universalis_assets_dir(manifest_dir: &Path) -> PathBuf {
     )
 }
 
-/// A failed shallow submodule fetch can leave `universalis-assets` present but
-/// empty, so require icon2x to actually contain files.
-fn assets_populated(dir: &Path) -> bool {
-    std::fs::read_dir(dir.join("icon2x")).is_ok_and(|mut entries| entries.next().is_some())
-}
+/// Minimum number of entries `icon2x/` must contain to count as populated.
+/// The full asset set is ~17.2k PNGs (17,208 as of 2026-07, data version
+/// 7.55); an interrupted shallow fetch typically leaves the dir empty or with
+/// a small partial set. 10k leaves headroom in both directions.
+const MIN_ICON_COUNT: usize = 10_000;
 
-/// Path of the main (first) git worktree, from `git worktree list --porcelain`.
-fn main_worktree(cwd: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(cwd)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    String::from_utf8(output.stdout)
-        .ok()?
-        .lines()
-        .find_map(|line| line.strip_prefix("worktree "))
-        .map(PathBuf::from)
+/// A failed shallow submodule fetch can leave `universalis-assets` present
+/// but empty or partially fetched, so require icon2x to contain a plausible
+/// number of files — not just any single entry — before trusting it. An
+/// incomplete local copy then falls back instead of shipping a truncated
+/// icon tarball.
+fn assets_populated(dir: &Path) -> bool {
+    std::fs::read_dir(dir.join("icon2x"))
+        .map(|entries| entries.take(MIN_ICON_COUNT).count() >= MIN_ICON_COUNT)
+        .unwrap_or(false)
 }
 
 /// Resizes all xiv-icons and bundles them
@@ -192,6 +197,9 @@ async fn compress(path: &PathBuf) {
 #[tokio::main]
 async fn main() {
     println!("cargo:rerun-if-changed=./build.rs");
+    // build.rs textually include!s the shared worktree-fallback helpers, so
+    // watch that file too (the path is relative to this package's root).
+    println!("cargo:rerun-if-changed=../../xiv-gen/src/worktree_fallback.rs");
     println!("cargo:rerun-if-env-changed=UNIVERSALIS_ASSETS_DIR");
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let assets = universalis_assets_dir(Path::new(&manifest_dir)).join("icon2x");

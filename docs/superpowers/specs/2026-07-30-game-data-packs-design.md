@@ -42,10 +42,21 @@ resolve their data dirs through a fallback chain:
 1. `FFXIV_DATAMINING_DIR` / `UNIVERSALIS_ASSETS_DIR` env override
    (`cargo:rerun-if-env-changed` wired in the consuming build scripts);
 2. the local submodule, when populated (probe: `csv/{en,cn,tc}/Item.csv` +
-   `csv/ko/csv/Item.csv`; for icons a non-empty `icon2x/`);
+   `csv/ko/csv/Item.csv`; for icons an `icon2x/` holding ≥10k files — the full
+   set is ~17.2k, so an interrupted fetch falls back instead of shipping a
+   truncated tarball);
 3. the main git worktree's copy, discovered via `git worktree list --porcelain`
    — with a `cargo:warning` when the fallback engages and another when the
-   worktree's pinned submodule SHA differs from what main has checked out.
+   worktree's pinned submodule SHA differs from what main has checked out
+   (both build paths).
+
+The worktree-discovery/pin-drift mechanics live once, in
+`xiv-gen/src/worktree_fallback.rs`, `include!`d by both sides; its tests run
+via `cargo test -p xiv-gen --features csv_to_rkyv`. Both consuming build
+scripts register the *resolved* data dir with `cargo:rerun-if-changed`
+(un-canonicalized — `\\?\` paths from Windows canonicalization confuse cargo),
+so a datamining/assets bump re-runs them even when the data lives outside the
+package under the fallback.
 
 CI and Docker (`actions/checkout` with `submodules: recursive`) hit case 2 and
 are unaffected. The env overrides double as the seam Phase 2's generator uses.

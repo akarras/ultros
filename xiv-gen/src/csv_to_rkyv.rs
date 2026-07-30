@@ -4,10 +4,22 @@
 use crate::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
-/// Locate the `ffxiv-datamining` checkout the CSVs are read from.
+/// A resolved `ffxiv-datamining` checkout.
+pub struct ResolvedDataDir {
+    /// The resolved directory. Deliberately un-canonicalized: build scripts
+    /// register it with `cargo:rerun-if-changed`, and canonicalizing on
+    /// Windows yields `\\?\` paths that cargo mishandles.
+    pub path: PathBuf,
+    /// Messages the consuming build script should surface as `cargo:warning`
+    /// (fallback engaged, submodule pin drift). This module never prints
+    /// cargo directives itself — that's the build script's job.
+    pub warnings: Vec<String>,
+}
+
+/// Locate the `ffxiv-datamining` checkout the CSVs are read from. Resolved
+/// once and cached for the lifetime of the process.
 ///
 /// Resolution order:
 /// 1. `FFXIV_DATAMINING_DIR` — explicit override (the consuming build script
@@ -18,49 +30,77 @@ use std::sync::OnceLock;
 ///    have submodules initialized, but the main checkout usually does — this
 ///    lets worktree builds work with zero setup.
 ///
-/// The same pattern exists in `ultros-frontend/ultros-xiv-icons/build.rs` for
-/// the `universalis-assets` submodule; keep the two in sync.
-fn datamining_dir() -> &'static Path {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        if let Some(dir) = std::env::var_os("FFXIV_DATAMINING_DIR") {
-            let dir = PathBuf::from(dir);
-            assert!(
-                datamining_populated(&dir),
+/// Build scripts should call this before [`read_data`]: emit `cargo:warning`
+/// for each entry in [`ResolvedDataDir::warnings`], register `<path>/csv`
+/// with `cargo:rerun-if-changed` (otherwise a datamining bump never re-runs
+/// the script), and panic on `Err` — see `xiv-gen-db/build.rs`. [`read_data`]
+/// panics on `Err` too, but silently drops the warnings.
+pub fn resolved_datamining_dir() -> &'static Result<ResolvedDataDir, String> {
+    static DIR: OnceLock<Result<ResolvedDataDir, String>> = OnceLock::new();
+    DIR.get_or_init(resolve_datamining_dir)
+}
+
+fn resolve_datamining_dir() -> Result<ResolvedDataDir, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(dir) = std::env::var_os("FFXIV_DATAMINING_DIR") {
+        let dir = PathBuf::from(dir);
+        if !datamining_populated(&dir) {
+            return Err(format!(
                 "FFXIV_DATAMINING_DIR is set to {} but the expected csv files \
                  (csv/{{en,cn,tc}}/Item.csv, csv/ko/csv/Item.csv) are not all present there",
                 dir.display()
-            );
-            return dir;
+            ));
         }
-        let local = manifest_dir.join("ffxiv-datamining");
-        if datamining_populated(&local) {
-            return local;
-        }
-        if let Some(main) = main_worktree(manifest_dir) {
-            let candidate = main.join("xiv-gen").join("ffxiv-datamining");
-            if candidate != local && datamining_populated(&candidate) {
-                warn_on_pin_drift(manifest_dir, &candidate);
-                println!(
-                    "cargo:warning=ffxiv-datamining submodule not populated in this checkout; \
-                     falling back to {}",
-                    candidate.display()
-                );
-                return candidate;
+        return Ok(ResolvedDataDir {
+            path: dir,
+            warnings: Vec::new(),
+        });
+    }
+    let local = manifest_dir.join("ffxiv-datamining");
+    if datamining_populated(&local) {
+        return Ok(ResolvedDataDir {
+            path: local,
+            warnings: Vec::new(),
+        });
+    }
+    if let Some(main) = main_worktree(manifest_dir) {
+        let candidate = main.join("xiv-gen").join("ffxiv-datamining");
+        if candidate != local && datamining_populated(&candidate) {
+            let mut warnings = Vec::new();
+            if let Some(drift) = pin_drift_warning(manifest_dir, "ffxiv-datamining", &candidate) {
+                warnings.push(drift);
             }
+            warnings.push(format!(
+                "ffxiv-datamining submodule not populated in this checkout; \
+                 falling back to {}",
+                candidate.display()
+            ));
+            return Ok(ResolvedDataDir {
+                path: candidate,
+                warnings,
+            });
         }
-        panic!(
-            "could not find a populated ffxiv-datamining checkout. Either initialize the \
-             submodule (see CLAUDE.md), or set FFXIV_DATAMINING_DIR to an existing checkout. \
-             Looked at {} and the main worktree.",
-            local.display()
-        )
-    })
+    }
+    Err(format!(
+        "could not find a populated ffxiv-datamining checkout. Either initialize the \
+         submodule (see CLAUDE.md), or set FFXIV_DATAMINING_DIR to an existing checkout. \
+         Looked at {} and the main worktree.",
+        local.display()
+    ))
 }
 
-/// `true` when every language's data is present, including the nested cn/ko/tc
-/// submodules (a non-recursive init only populates en/ja/de/fr). `csv/ko`
+fn datamining_dir() -> &'static Path {
+    match resolved_datamining_dir() {
+        Ok(resolved) => &resolved.path,
+        Err(message) => panic!("{message}"),
+    }
+}
+
+/// `true` when every language's data is present. The probe set deliberately
+/// includes cn/tc/ko because those live in *nested* submodules — a
+/// non-recursive init only populates en/ja/de/fr, and probing the nested
+/// files catches that half-initialized state up front (falling back or
+/// failing here) instead of dying mid-build on `cn/Item.csv`. `csv/ko`
 /// genuinely nests one level deeper than its siblings — that's the ko repo's
 /// own layout.
 fn datamining_populated(dir: &Path) -> bool {
@@ -72,49 +112,6 @@ fn datamining_populated(dir: &Path) -> bool {
     ]
     .iter()
     .all(|probe| dir.join(probe).is_file())
-}
-
-/// Path of the main (first) git worktree, from `git worktree list --porcelain`.
-fn main_worktree(cwd: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(cwd)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    parse_main_worktree(std::str::from_utf8(&output.stdout).ok()?)
-}
-
-fn parse_main_worktree(porcelain: &str) -> Option<PathBuf> {
-    porcelain
-        .lines()
-        .find_map(|line| line.strip_prefix("worktree "))
-        .map(PathBuf::from)
-}
-
-/// Warn when this checkout pins a different submodule commit than the main
-/// worktree actually has checked out — the fallback would then build against
-/// the wrong data. Best-effort: silent on any git failure.
-fn warn_on_pin_drift(manifest_dir: &Path, fallback: &Path) {
-    let rev_parse = |dir: &Path, rev: &str| -> Option<String> {
-        let output = Command::new("git")
-            .args(["rev-parse", rev])
-            .current_dir(dir)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())?;
-        Some(String::from_utf8(output.stdout).ok()?.trim().to_string())
-    };
-    let pinned = rev_parse(manifest_dir, "HEAD:./ffxiv-datamining");
-    let actual = rev_parse(fallback, "HEAD");
-    if let (Some(pinned), Some(actual)) = (pinned, actual)
-        && pinned != actual
-    {
-        println!(
-            "cargo:warning=ffxiv-datamining pin drift: this checkout pins {pinned} but the \
-             main worktree has {actual} checked out; building against {actual}"
-        );
-    }
 }
 
 pub fn read_data(lang: Language) -> Data {
@@ -186,7 +183,14 @@ fn read_csv_vec<T: FromCsv>(path: &str) -> Vec<T> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(path)
-        .unwrap_or_else(|_| panic!("Failed to open csv at {}", path));
+        .unwrap_or_else(|error| {
+            panic!(
+                "Failed to open csv at {path}: {error}. The datamining dir resolved to {}; \
+                 if that checkout is stale or partial, re-initialize the submodule (see \
+                 CLAUDE.md) or set FFXIV_DATAMINING_DIR to a populated checkout.",
+                datamining_dir().display()
+            )
+        });
     let mut records = reader.records();
 
     let first_row = records.next().expect("Missing header").unwrap();
@@ -232,27 +236,6 @@ fn split_multi_indexed_column<'a>(column: &'a str, prefix: &str) -> Option<(&'a 
     indexes.split_once("][")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_main_worktree;
-    use std::path::Path;
-
-    #[test]
-    fn parses_first_worktree_entry() {
-        let porcelain = "worktree C:/Users/x/code/ultros\nHEAD abc123\nbranch refs/heads/main\n\n\
-                         worktree C:/Users/x/code/ultros/.claude/worktrees/foo\nHEAD def456\n";
-        assert_eq!(
-            parse_main_worktree(porcelain).as_deref(),
-            Some(Path::new("C:/Users/x/code/ultros"))
-        );
-    }
-
-    #[test]
-    fn handles_missing_output() {
-        assert_eq!(parse_main_worktree(""), None);
-    }
-}
-
 fn read_csv_to_map<K, T>(path: &str) -> HashMap<K, T>
 where
     T: FromCsv + HasId<Id = K>,
@@ -263,3 +246,9 @@ where
         .map(|item| (item.get_id(), item))
         .collect()
 }
+
+// Worktree-fallback helpers (main-worktree discovery, pin-drift detection)
+// shared with `ultros-frontend/ultros-xiv-icons/build.rs` via `include!`.
+// Kept last because the file carries its own `#[cfg(test)]` module and
+// clippy's `items_after_test_module` wants nothing after it.
+include!("worktree_fallback.rs");
