@@ -1,27 +1,33 @@
 # Pinned upstream sources for the packs in this directory.
-# Regenerate packs with: cargo run -p game-data-pack -- --pinned
-# Update pins + regenerate with: cargo run -p game-data-pack -- --latest
+# Regenerate packs with: cargo run --release -p game-data-pack -- --pinned
+# Update pins + regenerate with: cargo run --release -p game-data-pack -- --latest
+#
+# `sparse_paths` is optional: when it is absent the generator derives the
+# per-language sheet patterns from SHEETS (see game-data-pack/src/fetch.rs).
+# `checkout_subdir` places a source inside the assembled ffxiv-datamining tree.
+#
+# This header is rewritten by `Manifest::save`; comments added below it are NOT
+# preserved across a --latest run.
 
 [sources.ffxiv-datamining]
 url = "https://github.com/xivapi/ffxiv-datamining.git"
 sha = "c142b1269a76e9e3fffc42f984a5f193ba565ddc"
-# sparse paths are filled per-language by the generator from SHEETS (see fetch.rs)
 
 [sources.ffxiv-datamining-cn]
 url = "https://github.com/thewakingsands/ffxiv-datamining-cn.git"
 sha = "0571a81268cd73f35880cc042f884c23c2d59b81"
 checkout_subdir = "csv/cn"
 
-[sources.ffxiv-datamining-tc]
-url = "https://github.com/thewakingsands/ffxiv-datamining-tc.git"
-sha = "e203c7e46dd80fd2a967e5741b30e3c9fad0c767"
-checkout_subdir = "csv/tc"
-
 [sources.ffxiv-datamining-ko]
 url = "https://github.com/Ra-Workspace/ffxiv-datamining-ko.git"
 sha = "e013ce15a93e17cd4384ee85c4d2d78f043386f6"
 branch = "refactor"
 checkout_subdir = "csv/ko"
+
+[sources.ffxiv-datamining-tc]
+url = "https://github.com/thewakingsands/ffxiv-datamining-tc.git"
+sha = "e203c7e46dd80fd2a967e5741b30e3c9fad0c767"
+checkout_subdir = "csv/tc"
 
 [sources.universalis-assets]
 url = "https://github.com/Universalis-FFXIV/universalis-assets.git"

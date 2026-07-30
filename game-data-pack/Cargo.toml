@@ -8,6 +8,23 @@ license = "MIT OR Apache-2.0"
 anyhow.workspace = true
 serde.workspace = true
 toml = "0.8"
+# `IconSize` is shared with the consumer so the packed entry names cannot drift
+# from `ultros-xiv-icons`' runtime parser.
+ultros-api-types = { path = "../ultros-api-types" }
+xiv-gen = { workspace = true, features = ["csv_to_rkyv"] }
+# rkyv + flate2 must stay byte-for-byte what `xiv-gen-db` expects to decode.
+rkyv = { version = "0.7.42", features = [
+    "validation",
+    "size_32",
+    "std",
+    "hashbrown",
+], default-features = false }
+flate2 = "1.1.9"
+zstd = "0.13"
+tar = "0.4"
+image = { workspace = true, features = ["webp", "png"] }
+webp = "0.3"
+rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"
