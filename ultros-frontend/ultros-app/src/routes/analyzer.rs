@@ -25,6 +25,7 @@ use crate::{
         skeleton::{BoxSkeleton, SingleLineSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
+        tool_help::*,
         tooltip::*,
         virtual_scroller::*,
         world_picker::*,
@@ -1792,6 +1793,14 @@ fn AnalyzerTable(
                         viewport_height=720.0
                         row_height=40.0
                         overscan=8
+                        empty=Callback::new(move |_| {
+                            view! {
+                                <ActionableEmptyState
+                                    title=t_string!(i18n, analyzer_empty_all_filtered).to_string()
+                                    body=""
+                                />
+                            }.into_any()
+                        })
                         // The header row's own height. The rendered element is
                         // up to ~15px taller, because `.analyzer-hscroll`
                         // reserves a horizontal scrollbar, but that height
@@ -2350,10 +2359,14 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // which is exactly when a user most needs to be able to
                     // change worlds again. Keeping it here means it is always
                     // on screen, load or no load.
+                    <ToolHeader
+                        title=t_string!(i18n, flip_finder).to_string()
+                        summary=t_string!(i18n, analyzer_tool_summary).to_string()
+                        context=t_string!(i18n, analyzer_tool_context).to_string()
+                        help_href="/help/flip-finder"
+                        help_body=t_string!(i18n, analyzer_tool_help).to_string()
+                    />
                     <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">
-                            {t!(i18n, flip_finder)}
-                        </h1>
                         <AnalyzerWorldNavigator />
                     </div>
 

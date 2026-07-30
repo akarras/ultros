@@ -117,7 +117,6 @@ pub fn ConfidenceBadge(total_sales: usize, daily_sales: f32) -> impl IntoView {
 }
 
 #[component]
-#[allow(dead_code)]
 pub fn ActionableEmptyState(
     #[prop(into)] title: Oco<'static, str>,
     #[prop(into)] body: Oco<'static, str>,

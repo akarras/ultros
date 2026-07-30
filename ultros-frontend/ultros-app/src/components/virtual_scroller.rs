@@ -167,6 +167,9 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     /// rows in view. When omitted, no extra work is done.
     #[prop(optional, into)]
     visible_range: Option<RwSignal<(usize, usize)>>,
+    /// Optional view to render when the collection is empty.
+    #[prop(optional, into)]
+    empty: Option<Callback<(), AnyView>>,
 ) -> impl IntoView
 where
     D: Fn(T) -> V + 'static + Clone + Send,
@@ -573,122 +576,128 @@ where
             // touch, but a scrollbar on the caller's sticky header is the only
             // affordance a user can actually see. Removing that header
             // scrollbar makes off-screen columns unreachable in practice.
-            <div
-                node_ref=list
-                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
-                style=move || {
-                    format!(
-                        r#"height: {}px;"#,
-                        {
-                            let base = each.with(|children| children.len() as f64) * row_height;
-                            let delta_total = fenwick.with(|f| f.sum(children_len()));
-                            let bottom_pad = 16.0;
-                            (base + delta_total + bottom_pad).ceil() as u32
-                        },
-                    )
-                }>
-                // offset for visible nodes
-                <div style=move || {
-                    format!(
-                        "
-            transform: translateY({}px);
-            {}
-          ",
-                        {
-                            let start = child_start() as usize;
-                            let delta_before = fenwick.with(|f| f.sum(start));
-                            let val = child_start() as f64 * row_height + delta_before;
-                            val.max(0.0).round() as i32
-                        },
-                        row_min_width
-                            .as_ref()
-                            .map(|w| format!("min-width: {w};"))
-                            .unwrap_or_default(),
-                    )
-                }>
-                    <For
-                        each=virtual_children
-                        key=move |(_, t): &(usize, T)| key(t)
-                        children={
-                            let row_class = if variable_height {
-                                "content-auto contain-layout will-change-transform"
-                            } else {
-                                "content-visible contain-layout will-change-transform overflow-hidden"
-                            };
-                            let row_style = if variable_height {
-                                String::new()
-                            } else {
-                                format!("height: {}px;", row_height.round() as u32)
-                            };
+            <Show
+                when=move || each.with(|children| !children.is_empty())
+                fallback=move || empty.map(|e| e.run(())).into_any()
+            >
+                <div
+                    node_ref=list
+                    class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+                    style=move || {
+                        format!(
+                            r#"height: {}px;"#,
+                            {
+                                let base = each.with(|children| children.len() as f64) * row_height;
+                                let delta_total = fenwick.with(|f| f.sum(children_len()));
+                                let bottom_pad = 16.0;
+                                (base + delta_total + bottom_pad).ceil() as u32
+                            },
+                        )
+                    }>
+                    // offset for visible nodes
+                    <div style=move || {
+                        format!(
+                            "
+                transform: translateY({}px);
+                {}
+              ",
+                            {
+                                let start = child_start() as usize;
+                                let delta_before = fenwick.with(|f| f.sum(start));
+                                let val = child_start() as f64 * row_height + delta_before;
+                                val.max(0.0).round() as i32
+                            },
+                            row_min_width
+                                .as_ref()
+                                .map(|w| format!("min-width: {w};"))
+                                .unwrap_or_default(),
+                        )
+                    }>
+                        <For
+                            each=virtual_children
+                            key=move |(_, t): &(usize, T)| key(t)
+                            children={
+                                let row_class = if variable_height {
+                                    "content-auto contain-layout will-change-transform"
+                                } else {
+                                    "content-visible contain-layout will-change-transform overflow-hidden"
+                                };
+                                let row_style = if variable_height {
+                                    String::new()
+                                } else {
+                                    format!("height: {}px;", row_height.round() as u32)
+                                };
 
-                            move |(idx, child)| {
-                                let row = NodeRef::<leptos::html::Div>::new();
-                                let height_deltas = height_deltas;
-                                let fenwick = fenwick;
-                                if variable_height {
-                                    let resize_observer = StoredValue::new_local(
-                                        None::<(ResizeObserver, Closure<dyn FnMut()>)>,
-                                    );
-                                    on_cleanup(move || {
-                                        resize_observer.update_value(|handle| {
-                                            if let Some((observer, _callback)) = handle.take() {
-                                                observer.disconnect();
-                                            }
+                                move |(idx, child)| {
+                                    let row = NodeRef::<leptos::html::Div>::new();
+                                    let height_deltas = height_deltas;
+                                    let fenwick = fenwick;
+                                    if variable_height {
+                                        let resize_observer = StoredValue::new_local(
+                                            None::<(ResizeObserver, Closure<dyn FnMut()>)>,
+                                        );
+                                        on_cleanup(move || {
+                                            resize_observer.update_value(|handle| {
+                                                if let Some((observer, _callback)) = handle.take() {
+                                                    observer.disconnect();
+                                                }
+                                            });
                                         });
-                                    });
 
-                                    Effect::new(move |_| {
-                                        if let Some(el) = row.get() {
-                                            let measure_height = move |measured: f64| {
-                                                let delta = measured - row_height;
-                                                height_deltas.update_value(|v| {
-                                                    if idx < v.len() {
-                                                        let old = v[idx];
-                                                        if (old - delta).abs() > 0.5 {
-                                                            v[idx] = delta;
-                                                            // O(log n) update instead of rebuilding prefix sums
-                                                            fenwick.update(|f| f.add(idx, delta - old));
+                                        Effect::new(move |_| {
+                                            if let Some(el) = row.get() {
+                                                let measure_height = move |measured: f64| {
+                                                    let delta = measured - row_height;
+                                                    height_deltas.update_value(|v| {
+                                                        if idx < v.len() {
+                                                            let old = v[idx];
+                                                            if (old - delta).abs() > 0.5 {
+                                                                v[idx] = delta;
+                                                                // O(log n) update instead of rebuilding prefix sums
+                                                                fenwick.update(|f| f.add(idx, delta - old));
+                                                            }
                                                         }
+                                                    });
+                                                };
+
+                                                measure_height(el.offset_height() as f64);
+
+                                                if resize_observer
+                                                    .with_value(|observer| observer.is_none())
+                                                {
+                                                    let observed_el = el.clone();
+                                                    let callback = Closure::wrap(Box::new(move || {
+                                                        measure_height(observed_el.offset_height() as f64);
+                                                    })
+                                                        as Box<dyn FnMut()>);
+
+                                                    if let Ok(observer) = ResizeObserver::new(
+                                                        callback.as_ref().unchecked_ref(),
+                                                    ) {
+                                                        observer.observe(&el);
+                                                        resize_observer
+                                                            .set_value(Some((observer, callback)));
                                                     }
-                                                });
-                                            };
-
-                                            measure_height(el.offset_height() as f64);
-
-                                            if resize_observer
-                                                .with_value(|observer| observer.is_none())
-                                            {
-                                                let observed_el = el.clone();
-                                                let callback = Closure::wrap(Box::new(move || {
-                                                    measure_height(observed_el.offset_height() as f64);
-                                                })
-                                                    as Box<dyn FnMut()>);
-
-                                                if let Ok(observer) = ResizeObserver::new(
-                                                    callback.as_ref().unchecked_ref(),
-                                                ) {
-                                                    observer.observe(&el);
-                                                    resize_observer
-                                                        .set_value(Some((observer, callback)));
                                                 }
                                             }
-                                        }
-                                    });
-                                }
-                                view! {
-                                    <div
-                                        node_ref=row
-                                        class=row_class
-                                        style=row_style.clone()
-                                    >
-                                        {view(child)}
-                                    </div>
+                                        });
+                                    }
+                                    view! {
+                                        <div
+                                            node_ref=row
+                                            class=row_class
+                                            style=row_style.clone()
+                                        >
+                                            {view(child)}
+                                        </div>
+                                    }
                                 }
                             }
                         }
                     />
                 </div>
             </div>
+        </Show>
         </div>
     }
     .into_any()
