@@ -2,7 +2,7 @@ use super::error::WebError;
 use crate::analyzer_service::AnalyzerService;
 use anyhow::anyhow;
 use axum::{
-    extract::{Path, State},
+    extract::State,
     http::HeaderValue,
     response::{IntoResponse, Response},
 };
@@ -18,12 +18,8 @@ use sitemap_rs::{
     url::{ChangeFrequency, Url},
     url_set::UrlSet,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use ultros_api_types::world_helper::WorldHelper;
-use ultros_db::world_data::world_cache::{AnySelector, WorldCache};
 
 pub(crate) struct Xml(Vec<u8>);
 
@@ -234,10 +230,12 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
                 .filter(|&id| id != 0);
 
             for id in cost_item_ids {
-                if let Some(item) = data.items.get(&xiv_gen::ItemId(id as i32)) {
-                    if allowed_item_ui_categories.contains(&item.item_ui_category) {
-                        currencies.push(item.key_id.0);
-                    }
+                if let Some(item) = data
+                    .items
+                    .get(&xiv_gen::ItemId(id as i32))
+                    .filter(|item| allowed_item_ui_categories.contains(&item.item_ui_category))
+                {
+                    currencies.push(item.key_id.0);
                 }
             }
         }
@@ -248,15 +246,16 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
 
     // Now filter out disallowed items like "Gil", "MGP" and build URLs
     for id in currencies {
-        if let Some(item) = data.items.get(&xiv_gen::ItemId(id)) {
-            if !disallowed_items.contains(&item.name.as_str()) {
-                let mut builder =
-                    Url::builder(format!("https://ultros.app/currency-exchange/{id}"));
-                builder.priority(0.6);
-                builder.change_frequency(ChangeFrequency::Daily);
-                if let Ok(url) = builder.build() {
-                    urls.push(url);
-                }
+        if let Some(item) = data
+            .items
+            .get(&xiv_gen::ItemId(id))
+            .filter(|item| !disallowed_items.contains(&item.name.as_str()))
+        {
+            let mut builder = Url::builder(format!("https://ultros.app/currency-exchange/{id}"));
+            builder.priority(0.6);
+            builder.change_frequency(ChangeFrequency::Daily);
+            if let Ok(url) = builder.build() {
+                urls.push(url);
             }
         }
     }
