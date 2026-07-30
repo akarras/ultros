@@ -181,11 +181,18 @@ pub fn FilterChip(
                                         editing.set(false);
                                     }
                                 }
+                                on:blur=move |_| editing.set(false)
                                 prop:value=move || value.get().unwrap_or_default()
                             >
                                 {opts
                                     .into_iter()
-                                    .map(|(val, lab)| view! { <option value=val>{lab}</option> })
+                                    .map(|(val, lab)| {
+                                        view! {
+                                            <option value=val selected=move || value.get().as_deref() == Some(val)>
+                                                {lab}
+                                            </option>
+                                        }
+                                    })
                                     .collect_view()}
                             </select>
                         }),

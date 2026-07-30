@@ -1208,18 +1208,19 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
-                // Hydration gate — see the comment at the `hydrated` signal.
+                let Some(query) = name_filter() else {
+                    return true;
+                };
+                // Hydration gate — see the comment at the `hydrated` signal. Checked
+                // only when a name filter is active so an idle page never subscribes
+                // the memo to `hydrated`.
                 if !hydrated.get() {
                     return true;
                 }
-                name_filter()
-                    .map(|query| {
-                        items
-                            .get(&ItemId(data.inner.sale_summary.item_id))
-                            .map(|item| matches_item_name(&query, &item.name))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(true)
+                items
+                    .get(&ItemId(data.inner.sale_summary.item_id))
+                    .map(|item| matches_item_name(&query, &item.name))
+                    .unwrap_or(false)
             })
             .filter(move |data| {
                 drift_floor()
