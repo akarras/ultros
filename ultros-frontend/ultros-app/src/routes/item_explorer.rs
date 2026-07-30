@@ -205,7 +205,7 @@ pub fn CategoryItems() -> impl IntoView {
     });
     let canonical_href = move || {
         let params = params();
-        let cat = params.get("category").as_deref().unwrap_or("");
+        let cat = params.get_str("category").unwrap_or("");
         format!("https://ultros.app/items/category/{cat}")
     };
     view! {
@@ -311,7 +311,7 @@ pub fn JobItems() -> impl IntoView {
     });
     let canonical_href = move || {
         let params = params();
-        let jobset = params.get("jobset").as_deref().unwrap_or("");
+        let jobset = params.get_str("jobset").unwrap_or("");
         format!("https://ultros.app/items/jobset/{jobset}")
     };
 
