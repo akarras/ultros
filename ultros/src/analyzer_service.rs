@@ -333,6 +333,28 @@ fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) ->
     }
 }
 
+/// Fraction of the sale price lost to the market board's sales tax.
+/// Matches the frontend Flip Finder's default (`tax_enabled` defaults to
+/// `true` in ultros-frontend/ultros-app/src/routes/analyzer.rs), so the
+/// home-page "Top Opportunities" card and the Flip Finder table agree on
+/// the same flip.
+const MARKET_TAX_RATE: f32 = 0.05;
+
+/// Post-tax profit and ROI for a flip. `cheapest_price` <= 0 is corrupt
+/// listing data rather than a real cost basis, so ROI is reported as `0.0`
+/// in that case — mirroring the frontend's own guard in
+/// `ultros-frontend/ultros-app/src/analysis.rs::return_on_investment`.
+fn calculate_profit_and_roi(est_sale_price: i32, cheapest_price: i32) -> (i32, f32) {
+    let post_tax_sale_price = (est_sale_price as f32 * (1.0 - MARKET_TAX_RATE)) as i32;
+    let profit = post_tax_sale_price - cheapest_price;
+    let roi = if cheapest_price <= 0 {
+        0.0
+    } else {
+        (post_tax_sale_price as f32 / cheapest_price as f32) * 100.0 - 100.0
+    };
+    (profit, roi)
+}
+
 /// Build a short list of all the items in the game that we think would sell well.
 /// Implemented as an easily cloneable Arc monster
 #[derive(Clone)]
@@ -1132,14 +1154,13 @@ impl AnalyzerService {
                     sale_world_listings.item_map.get(item_key).map(|l| l.price);
                 let est_sale_price =
                     calculate_valuation(cheapest_history, current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
+                let (profit, return_on_investment) =
+                    calculate_profit_and_roi(est_sale_price, cheapest_price.price);
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
-                        * 100.0)
-                        - 100.0,
+                    return_on_investment,
                     world_id: cheapest_price.world_id,
                     sold_within,
                     // Pass-1 defaults; the deep-scan pass fills these in.
@@ -1601,7 +1622,34 @@ mod test {
         CheapestListingValue, CheapestListings, ItemKey, SALE_HISTORY_SIZE,
     };
 
-    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_valuation};
+    use super::{
+        SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_profit_and_roi,
+        calculate_valuation,
+    };
+
+    #[test]
+    fn test_calculate_profit_and_roi_applies_market_tax() {
+        // Matches the frontend Flip Finder's default (tax_enabled defaults to
+        // true): post-tax sale price is 95% of the estimate.
+        // post-tax = 950, profit = 950 - 500 = 450, roi = 950/500*100-100 = 90
+        let (profit, roi) = calculate_profit_and_roi(1000, 500);
+        assert_eq!(profit, 450);
+        assert!((roi - 90.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_profit_and_roi_guards_nonpositive_cost() {
+        // A 0-gil or negative "cheapest price" is corrupt listing data, not a
+        // real cost basis. Dividing by it must not produce inf/NaN in the
+        // serialized response; mirror the frontend's own guard (return 0 ROI).
+        let (profit, roi) = calculate_profit_and_roi(1000, 0);
+        assert_eq!(profit, 950);
+        assert_eq!(roi, 0.0);
+
+        let (profit, roi) = calculate_profit_and_roi(1000, -5);
+        assert_eq!(profit, 955);
+        assert_eq!(roi, 0.0);
+    }
 
     #[test]
     fn test_calculate_valuation() {
