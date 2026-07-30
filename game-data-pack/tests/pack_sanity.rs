@@ -6,10 +6,7 @@
 //!
 //! Skips gracefully (rather than failing `cargo test`) when the pack is
 //! absent or still an LFS pointer stub, so a fresh clone that hasn't run
-//! `git lfs pull` stays green. Before the packs existed, a hard-failing
-//! version of this test was run once against an empty `data/xiv-db/` to
-//! confirm it genuinely exercises the decode/search path rather than passing
-//! vacuously.
+//! `git lfs pull` stays green.
 
 use std::io::Read;
 use std::path::PathBuf;
