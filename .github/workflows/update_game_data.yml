@@ -21,8 +21,9 @@ jobs:
           toolchain: nightly-2026-01-06
       - name: Regenerate packs against latest upstream
         id: gen
+        shell: bash
         run: |
-          cargo run --release -p game-data-pack -- --latest | tee gen-summary.txt
+          cargo run --release -p game-data-pack -- --latest | tee "$RUNNER_TEMP/gen-summary.txt"
           if git diff --quiet data/; then
             echo "has_updates=false" >> $GITHUB_OUTPUT
           else
@@ -30,7 +31,7 @@ jobs:
           fi
       - name: Verify consumers build against new packs
         if: steps.gen.outputs.has_updates == 'true'
-        run: cargo check -p xiv-gen-db -p ultros-xiv-icons
+        run: cargo check -p xiv-gen-db --features embed -p ultros-xiv-icons && cargo test -p game-data-pack
       - name: Create Pull Request
         if: steps.gen.outputs.has_updates == 'true'
         uses: peter-evans/create-pull-request@v5
@@ -38,10 +39,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update game data packs"
           title: "chore: update game data packs"
-          body-path: gen-summary.txt
+          body-path: ${{ runner.temp }}/gen-summary.txt
           branch: update-game-data
           delete-branch: true
           base: main
+          add-paths: data/
       - name: Add generation summary to job summary
         if: always()
-        run: cat gen-summary.txt >> $GITHUB_STEP_SUMMARY || true
+        run: cat "${{ runner.temp }}/gen-summary.txt" >> $GITHUB_STEP_SUMMARY || true

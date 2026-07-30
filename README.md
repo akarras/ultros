@@ -39,9 +39,12 @@ See `docs/superpowers/plans/2026-05-11-price-alerts-phase-2-3.md` for the Phase 
 ### Prerequisites
 
 *   **Rust Nightly Toolchain**: Ultros requires a nightly Rust toolchain. You can install it via [rustup.rs](https://rustup.rs).
-*   **Git Submodules**: This project uses git submodules for assets.
-    *   Clone with `git clone --recursive <repo_url>`
-    *   Or update an existing checkout with `git submodule update --init`.
+*   **Git LFS**: Game data ships as LFS packs under `data/`. Clone normally, then run:
+    ```bash
+    git lfs install
+    git lfs pull
+    ```
+    Without `git-lfs` installed, the build fails with an actionable error message.
 *   **Postgres Database**: A running Postgres instance is required.
 *   **cargo-leptos**: The build tool for Leptos apps. Install with:
     ```bash
