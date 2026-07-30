@@ -6,12 +6,13 @@
 Dockerfile
 .dockerignore
 
-# IMPORTANT: do NOT exclude /.git or submodule dirs.
+# IMPORTANT: do NOT exclude /.git or the data/ game-data packs.
 #   - `git-const::git_short_hash!()` is a proc-macro that reads .git at compile time
 #     (ultros/src/main.rs, ultros-app/src/lib.rs, etc.)
 #   - xiv-gen/build.rs runs `git rev-parse HEAD` to embed GIT_HASH
-#   - xiv-gen-db's build script reads from the xiv-gen/ffxiv-datamining/ submodule
-#     (and its nested submodules for cn/ko/tc locale data)
+#   - the LFS-backed pack files under data/ (xiv-db, icons, manifest.toml) must
+#     be present in the build context — they're COPYed into the image and
+#     read by xiv-gen-db / ultros-xiv-icons at compile time
 
 # Agent / editor state
 /.claude

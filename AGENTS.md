@@ -103,4 +103,4 @@ E2E is currently run locally only — not wired into GitHub Actions. Run `./scri
 - **Discord bot panic**: With dummy `DISCORD_TOKEN`, the Discord bot task will panic on startup. This is expected and does not crash the web server (it runs on a spawned task).
 - **`check_ci.sh` vs WASM build**: CI (`cargo clippy --all-targets`) only checks with the default `ssr` feature. The WASM/hydrate client build (via `cargo leptos serve`) may surface additional compile errors in `#[cfg(not(feature = "ssr"))]` code that clippy misses.
 - **First-run initialization**: On first boot the app applies DB migrations and fetches FFXIV world/datacenter data from Universalis. This requires internet access.
-- **Git submodules**: Must be initialized (`git submodule update --init --recursive`) before building. Contains FFXIV game data CSVs and icon assets.
+- **Game data (LFS packs)**: FFXIV game data and icon assets come from pre-generated packs under `data/`, tracked via Git LFS. Run `git lfs install && git lfs pull` before building; no submodule init needed.
