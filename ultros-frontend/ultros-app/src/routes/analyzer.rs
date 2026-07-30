@@ -1,3 +1,4 @@
+use super::analyzer_columns::*;
 use crate::analysis::{
     DerivedConfidence, SaleSummary, derived_confidence, get_sales_cadence, price_drift_pct,
     return_on_investment, roi_badge_class, velocity_per_day,
@@ -63,74 +64,6 @@ impl EnrichmentMaps {
     }
 }
 
-/// Stable URL IDs for optional columns. Required columns (HQ, Item,
-/// Profit, Buy Price) are not in this list — they always render.
-///
-/// Order here is the columns-picker + `?cols=` serialization order:
-/// default-on columns first, opt-ins after. It is deliberately *not* the
-/// DOM order — the markup interleaves the required columns — but with the
-/// default set the two coincide.
-const COL_PROFIT_PER_DAY: &str = "profit_per_day";
-const COL_VELOCITY: &str = "velocity";
-const COL_DRIFT: &str = "drift";
-const COL_CONFIDENCE: &str = "confidence";
-const COL_WORLD: &str = "world";
-const COL_LAST_SOLD: &str = "last_sold";
-const COL_ROI: &str = "roi";
-const COL_DATACENTER: &str = "datacenter";
-const COL_TREND: &str = "trend";
-const COL_SALES_PER_DAY: &str = "sales_per_day";
-const COL_VOLUME_30D: &str = "volume_30d";
-
-const ALL_OPTIONAL_COLS: &[&str] = &[
-    COL_PROFIT_PER_DAY,
-    COL_VELOCITY,
-    COL_DRIFT,
-    COL_CONFIDENCE,
-    COL_WORLD,
-    COL_LAST_SOLD,
-    COL_ROI,
-    COL_DATACENTER,
-    COL_TREND,
-    COL_SALES_PER_DAY,
-    COL_VOLUME_30D,
-];
-
-/// Default visible set when `?cols=` is absent from the URL. Once the
-/// user explicitly sets the param (even to ""), we respect that exact
-/// set instead of falling back to defaults.
-///
-/// ClickHouse-only columns (trend, sales/day, 30d volume) are off because
-/// the rollup covers ~7% of traded items, so they would be blank on most
-/// rows. ROI is off because it ranks by ratio, which is the wrong
-/// objective when retainer slots are the scarce resource.
-const DEFAULT_VISIBLE_COLS: &[&str] = &[
-    COL_PROFIT_PER_DAY,
-    COL_VELOCITY,
-    COL_DRIFT,
-    COL_CONFIDENCE,
-    COL_WORLD,
-    COL_LAST_SOLD,
-];
-
-fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    match raw {
-        None => DEFAULT_VISIBLE_COLS.iter().copied().collect(),
-        Some(s) => s
-            .split(',')
-            .filter_map(|tok| ALL_OPTIONAL_COLS.iter().find(|c| **c == tok).copied())
-            .collect(),
-    }
-}
-
-fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> String {
-    ALL_OPTIONAL_COLS
-        .iter()
-        .filter(|c| visible.contains(*c))
-        .copied()
-        .collect::<Vec<_>>()
-        .join(",")
-}
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
