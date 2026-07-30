@@ -637,6 +637,9 @@ const FILTER_PRE_TAX: &str = "tax";
 const FILTER_SHOW_SUSPICIOUS: &str = "show-suspicious";
 const FILTER_QUALITY: &str = "quality";
 const FILTER_NAME: &str = "name";
+const FILTER_DRIFT: &str = "drift";
+const FILTER_CONFIDENCE: &str = "confidence";
+const FILTER_MIN_VOLUME: &str = "min-volume";
 // Chip-only filters: picked from a list or off a row rather than typed, so
 // they are never offered by the `+ Filter` menu.
 const FILTER_CATEGORY: &str = "category";
@@ -658,6 +661,9 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_SHOW_SUSPICIOUS,
     FILTER_QUALITY,
     FILTER_NAME,
+    FILTER_DRIFT,
+    FILTER_CONFIDENCE,
+    FILTER_MIN_VOLUME,
 ];
 
 /// Value a filter takes when it is added from the `+ Filter` menu.
@@ -684,6 +690,9 @@ fn default_filter_value(id: &str) -> &'static str {
         // Name search deliberately seeds empty: its chip mounts in edit
         // state (`start_editing`) so there is never an empty resting chip.
         FILTER_NAME => "",
+        FILTER_DRIFT => "-10",
+        FILTER_CONFIDENCE => "medium",
+        FILTER_MIN_VOLUME => "10",
         _ => "",
     }
 }
@@ -897,6 +906,12 @@ fn AnalyzerTable(
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
     let (quality_filter, set_quality_filter) = query_signal::<QualityFilter>("quality");
     let (name_filter, set_name_filter) = query_signal::<String>("name");
+    let (min_drift, set_min_drift) = query_signal::<f32>("drift");
+    // Same NaN guard as ?vel= — "NaN".parse::<f32>() succeeds and would
+    // silently empty the table (every comparison with NaN is false).
+    let drift_floor = Memo::new(move |_| normalize_velocity_floor(min_drift()));
+    let (min_confidence, set_min_confidence) = query_signal::<ConfidenceFloor>("confidence");
+    let (min_volume, set_min_volume) = query_signal::<u32>("min-volume");
     // Keeps the name chip mounted (in edit state) between "picked from the
     // + Filter menu" and "first committed value" — an empty ?name= URL
     // param is not relied on to round-trip.
@@ -977,6 +992,9 @@ fn AnalyzerTable(
             name_filter().is_some() || name_chip_pending.get(),
             FILTER_NAME,
         );
+        push_if(drift_floor().is_some(), FILTER_DRIFT);
+        push_if(min_confidence().is_some(), FILTER_CONFIDENCE);
+        push_if(min_volume().is_some(), FILTER_MIN_VOLUME);
         active
     });
 
@@ -1000,6 +1018,9 @@ fn AnalyzerTable(
             FILTER_SHOW_SUSPICIOUS => t_string!(i18n, analyzer_show_suspicious).to_string(),
             FILTER_QUALITY => t_string!(i18n, analyzer_filter_quality_label).to_string(),
             FILTER_NAME => t_string!(i18n, analyzer_filter_name_label).to_string(),
+            FILTER_DRIFT => t_string!(i18n, analyzer_filter_drift_min_label).to_string(),
+            FILTER_CONFIDENCE => t_string!(i18n, analyzer_filter_confidence_min_label).to_string(),
+            FILTER_MIN_VOLUME => t_string!(i18n, analyzer_filter_volume_min_label).to_string(),
             _ => String::new(),
         }
     };
@@ -1022,6 +1043,9 @@ fn AnalyzerTable(
             FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
             FILTER_QUALITY => set_quality_filter(value.parse().ok()),
             FILTER_NAME => name_chip_pending.set(true),
+            FILTER_DRIFT => set_min_drift(value.parse().ok()),
+            FILTER_CONFIDENCE => set_min_confidence(value.parse().ok()),
+            FILTER_MIN_VOLUME => set_min_volume(value.parse().ok()),
             _ => {}
         }
     };
@@ -1093,6 +1117,9 @@ fn AnalyzerTable(
         set_quality_filter(None);
         set_name_filter(None);
         name_chip_pending.set(false);
+        set_min_drift(None);
+        set_min_confidence(None);
+        set_min_volume(None);
     };
 
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
@@ -1191,6 +1218,40 @@ fn AnalyzerTable(
                             .get(&ItemId(data.inner.sale_summary.item_id))
                             .map(|item| matches_item_name(&query, &item.name))
                             .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                drift_floor()
+                    .map(|min| passes_drift_floor(min, price_drift_pct(&data.inner.prices)))
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                // CH band first, derived fallback — the same preference the
+                // Confidence column renders, so the label shown is the label
+                // filtered. Reading `enrichment` here follows the velocity
+                // filter's pattern; the non-reactive `requested` dedupe is
+                // what keeps recompute -> refetch from looping.
+                min_confidence()
+                    .map(|floor| {
+                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                        let ch = enrichment
+                            .with(|maps| maps.quality_for(&key).map(|q| q.confidence_band));
+                        passes_confidence_floor(
+                            floor,
+                            ch,
+                            derived_confidence(&data.inner.sale_summary),
+                        )
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                min_volume()
+                    .map(|min| {
+                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                        let ch =
+                            enrichment.with(|maps| maps.quality_for(&key).map(|q| q.sample_size));
+                        passes_volume_floor(min, ch)
                     })
                     .unwrap_or(true)
             })
@@ -1754,6 +1815,68 @@ fn AnalyzerTable(
                                             on_commit=Callback::new(move |v: Option<String>| {
                                                 set_name_filter(v);
                                                 name_chip_pending.set(false);
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            drift_floor()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_drift_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                drift_floor().map(format_velocity_floor)
+                                            })
+                                            numeric=true
+                                            step="1"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_drift(
+                                                    commit_numeric(drift_floor.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            min_confidence()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_confidence_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                min_confidence().map(|c| c.to_string())
+                                            })
+                                            options=vec![
+                                                ("low", t_string!(i18n, analyzer_confidence_low).to_string()),
+                                                ("medium", t_string!(i18n, analyzer_confidence_medium).to_string()),
+                                                ("high", t_string!(i18n, analyzer_confidence_high).to_string()),
+                                            ]
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_confidence(v.and_then(|s| s.parse().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            min_volume()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_volume_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                min_volume().map(|v| v.to_string())
+                                            })
+                                            numeric=true
+                                            min="0"
+                                            step="10"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_volume(
+                                                    commit_numeric(min_volume.get_untracked(), v),
+                                                );
                                             })
                                         />
                                     }
