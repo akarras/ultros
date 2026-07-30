@@ -1783,8 +1783,7 @@ pub fn ItemView() -> impl IntoView {
                                                 view! {
                                                     <a
                                                         class="text-brand-300 hover:text-brand-200 transition-colors"
-                                                        href=["/items/category/", &s.name.replace("/", "%2F")]
-                                                            .concat()
+                                                        href=format!("/items/category/{}", s.key_id.0)
                                                     >
                                                         {c.name.as_str()}
                                                     </a>
