@@ -9,6 +9,10 @@ Run `./check_ci.sh` from the repo root. It runs `cargo fmt --all -- --check` and
 
 ## When the submodule isn't initialized
 
+**Worktrees usually need no submodule setup.** The `xiv-gen-db` and `ultros-xiv-icons` build scripts resolve their data dirs with a fallback chain: `FFXIV_DATAMINING_DIR` / `UNIVERSALIS_ASSETS_DIR` env override → the local submodule if populated → **the main worktree's copy** (discovered via `git worktree list`). As long as the main checkout has its submodules populated, builds in a linked worktree just work; a `cargo:warning` tells you when the fallback (or a pin drift between the worktree's recorded submodule SHA and what main has checked out) is in play. `ultros/static/classjob-icons` is runtime-only static content — not needed to build.
+
+The rest of this section is about populating the **main checkout** (or a standalone clone).
+
 `./check_ci.sh` runs clippy which compiles the whole workspace, and the `xiv-gen-db` build script reads from `xiv-gen/ffxiv-datamining/` — a git submodule. The csv data for `cn`, `ko`, `tc` lives in *nested* submodules of `ffxiv-datamining` (separate xivapi-adjacent repos), so a non-recursive init only gets you en/ja/de/fr and the build still panics on `cn/Item.csv`.
 
 ### Use `--reference`, not `--init --recursive`

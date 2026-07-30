@@ -12,11 +12,75 @@ use tar::{Builder, Header};
 use tempfile::TempDir;
 use ultros_api_types::icon_size::IconSize;
 
+/// Locate the `universalis-assets` checkout the icons are read from.
+///
+/// Resolution order: `UNIVERSALIS_ASSETS_DIR` env override, then the submodule
+/// next to this crate, then the main git worktree's copy — linked worktrees
+/// rarely have submodules initialized, but the main checkout usually does.
+///
+/// The same pattern exists in `xiv-gen/src/csv_to_rkyv.rs` for the
+/// `ffxiv-datamining` submodule; keep the two in sync.
+fn universalis_assets_dir(manifest_dir: &Path) -> PathBuf {
+    if let Some(dir) = env::var_os("UNIVERSALIS_ASSETS_DIR") {
+        let dir = PathBuf::from(dir);
+        assert!(
+            assets_populated(&dir),
+            "UNIVERSALIS_ASSETS_DIR is set to {} but icon2x/ is missing or empty there",
+            dir.display()
+        );
+        return dir;
+    }
+    let local = manifest_dir.join("universalis-assets");
+    if assets_populated(&local) {
+        return local;
+    }
+    if let Some(main) = main_worktree(manifest_dir) {
+        let candidate = main
+            .join("ultros-frontend")
+            .join("ultros-xiv-icons")
+            .join("universalis-assets");
+        if candidate != local && assets_populated(&candidate) {
+            println!(
+                "cargo:warning=universalis-assets submodule not populated in this checkout; \
+                 falling back to {}",
+                candidate.display()
+            );
+            return candidate;
+        }
+    }
+    panic!(
+        "could not find a populated universalis-assets checkout. Either initialize the \
+         submodule (see CLAUDE.md), or set UNIVERSALIS_ASSETS_DIR to an existing checkout. \
+         Looked at {} and the main worktree.",
+        local.display()
+    )
+}
+
+/// A failed shallow submodule fetch can leave `universalis-assets` present but
+/// empty, so require icon2x to actually contain files.
+fn assets_populated(dir: &Path) -> bool {
+    std::fs::read_dir(dir.join("icon2x")).is_ok_and(|mut entries| entries.next().is_some())
+}
+
+/// Path of the main (first) git worktree, from `git worktree list --porcelain`.
+fn main_worktree(cwd: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+}
+
 /// Resizes all xiv-icons and bundles them
-async fn resize_all_images(out_dir: &Path) {
-    let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let assets = format!("{dir}/universalis-assets/icon2x");
-    let path = std::fs::canonicalize(&assets).unwrap_or_else(|error| panic!("{error}\n{assets}"));
+async fn resize_all_images(assets: &Path, out_dir: &Path) {
+    let path = std::fs::canonicalize(assets)
+        .unwrap_or_else(|error| panic!("{error}\n{}", assets.display()));
     println!("opening {path:?}");
     let mut paths = vec![];
     for file in read_dir(&path).unwrap_or_else(|error| panic!("{error}\n{path:?}")) {
@@ -127,11 +191,17 @@ async fn compress(path: &PathBuf) {
 
 #[tokio::main]
 async fn main() {
-    println!("cargo:rerun-if-changed=./universalis-assets/icon2x");
-    println!("cargo:rerun-if-change=./build.rs");
+    println!("cargo:rerun-if-changed=./build.rs");
+    println!("cargo:rerun-if-env-changed=UNIVERSALIS_ASSETS_DIR");
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let assets = universalis_assets_dir(Path::new(&manifest_dir)).join("icon2x");
+    // Register the *resolved* dir: a fixed `./universalis-assets/icon2x` would
+    // not exist in a worktree using the fallback, and cargo re-runs the build
+    // script on every build when a rerun-if-changed path is missing.
+    println!("cargo:rerun-if-changed={}", assets.display());
     let instant = Instant::now();
     let temp_dir = TempDir::new().unwrap();
-    resize_all_images(temp_dir.path()).await;
+    resize_all_images(&assets, temp_dir.path()).await;
     compress(&temp_dir.path().to_path_buf()).await;
     println!(
         "Finished resizing {}ms",

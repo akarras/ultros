@@ -7,6 +7,9 @@ use xiv_gen::Language;
 use xiv_gen::csv_to_rkyv::read_data;
 
 fn main() {
+    // The csv source dir is resolved by xiv_gen::csv_to_rkyv::datamining_dir —
+    // env override, then the local submodule, then the main worktree's copy.
+    println!("cargo:rerun-if-env-changed=FFXIV_DATAMINING_DIR");
     let languages = [
         Language::En,
         Language::Ja,
