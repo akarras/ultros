@@ -26,7 +26,7 @@ use ultros_db::{
 };
 use universalis::{ItemId, WorldId};
 
-use crate::event::{EventReceivers, handle_bus_recv};
+use crate::event::{BusRecv, EventReceivers, handle_bus_recv};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -579,6 +579,22 @@ impl AnalyzerService {
                     continue;
                 }
             };
+            if age < Duration::zero() {
+                // A future-dated filename means clock skew or a file copied
+                // from another machine. A negative age would sail straight
+                // through the `> MAX_SNAPSHOT_AGE` check below no matter how
+                // wrong the clock is, and would poison the age gauge with a
+                // negative value — treat "from the future" like "unknown age":
+                // skip this file and keep looking at older ones.
+                warn!(
+                    ?path,
+                    age_seconds = age.num_seconds(),
+                    "snapshot filename is dated in the future (clock skew?), ignoring"
+                );
+                metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "future_dated")
+                    .increment(1);
+                continue;
+            }
             if age > MAX_SNAPSHOT_AGE {
                 // Entries are sorted by name, i.e. by timestamp, and we walk them
                 // newest-first — so everything left is older still.
@@ -726,8 +742,8 @@ impl AnalyzerService {
                         break;
                     }
                     history = event_receivers.history.recv() => {
-                        if let Some(history) = handle_bus_recv("history", history) {
-                            match history {
+                        match handle_bus_recv("history", history) {
+                            BusRecv::Msg(history) => match history {
                                 crate::event::EventType::Remove(_) => {}
                                 crate::event::EventType::Add(sales) => {
                                     for (sale, _) in sales.sales.iter() {
@@ -742,7 +758,14 @@ impl AnalyzerService {
                                     }
                                 }
                                 crate::event::EventType::Update(_) => {}
-                            }
+                            },
+                            // Still live, positioned at the oldest survivor.
+                            BusRecv::Lagged => {}
+                            // recv() on a closed bus returns instantly forever;
+                            // looping here would hot-spin and emit one warn per
+                            // iteration. Only happens at shutdown, when the
+                            // cancellation arm above races us to the exit.
+                            BusRecv::Closed => break,
                         }
                     }
                 }
@@ -754,8 +777,8 @@ impl AnalyzerService {
                     break;
                 }
                 listings = event_receivers.listings.recv() => {
-                    if let Some(listings) = handle_bus_recv("listings", listings) {
-                        match listings {
+                    match handle_bus_recv("listings", listings) {
+                        BusRecv::Msg(listings) => match listings {
                             crate::event::EventType::Remove(remove) => {
                                 let region = if let Some(region) = remove
                                     .listings
@@ -779,7 +802,14 @@ impl AnalyzerService {
                                 self.add_listings(&add.listings, &world_cache).await;
                             }
                             crate::event::EventType::Update(_) => todo!(),
-                        }
+                        },
+                        // Still live, positioned at the oldest survivor.
+                        BusRecv::Lagged => {}
+                        // recv() on a closed bus returns instantly forever;
+                        // looping here would hot-spin and emit one warn per
+                        // iteration. Only happens at shutdown, when the
+                        // cancellation arm above races us to the exit.
+                        BusRecv::Closed => break,
                     }
                 }
             }
@@ -2411,6 +2441,13 @@ mod tests {
                 .await,
             "a snapshot past MAX_SNAPSHOT_AGE must be rejected so run_worker falls back to the DB"
         );
+        assert!(
+            !restore_target
+                .try_restore_from_snapshot_at(Utc::now() - chrono::Duration::hours(1))
+                .await,
+            "a future-dated snapshot (clock skew / copied file) must be rejected, \
+             not treated as fresh because its negative age passes the max-age check"
+        );
     }
 
     #[test]
@@ -2424,6 +2461,12 @@ mod tests {
         assert_eq!(
             snapshot_age("snapshot-10000.bin", now),
             Some(chrono::Duration::zero())
+        );
+        // A future-dated name yields a negative age, which the restore path
+        // must reject rather than let slide under MAX_SNAPSHOT_AGE.
+        assert_eq!(
+            snapshot_age("snapshot-10600.bin.gz", now),
+            Some(chrono::Duration::seconds(-600))
         );
     }
 

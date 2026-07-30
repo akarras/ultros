@@ -85,7 +85,12 @@ impl WebsocketClient {
     /// * `world_id` - Optional [WorldId](World ID), used if you wish to only receive data from a certain world. If None, you will receive data from all worlds.
     ///
     /// ###Example:
-    /// ```
+    ///
+    /// (`no_run`: executing this would dial the live Universalis websocket
+    /// from `cargo test` — and it panics in the doctest harness anyway, since
+    /// the workspace enables both rustls backends and only real binaries
+    /// install a process-level CryptoProvider first.)
+    /// ```no_run
     /// use universalis::{WebsocketClient, websocket::event_types::{SubscribeMode, EventChannel}, WorldId};
     ///
     /// #[tokio::main]
@@ -183,7 +188,7 @@ impl WebsocketClient {
             // silent, so the check below runs on a fixed cadence.
             let mut last_frame_at = Instant::now();
             loop {
-                if let Some(mut ws) = websocket {
+                if let Some(ws) = websocket {
                     if ws.is_terminated() {
                         websocket = None;
                         warn!("websocket terminated, restarting");
@@ -195,14 +200,16 @@ impl WebsocketClient {
                             "websocket delivered no frames within the liveness deadline, \
                              assuming it is half-open and reconnecting"
                         );
-                        metrics::counter!("universalis_websocket_liveness_timeouts_total")
-                            .increment(1);
-                        // Best-effort close; a half-open peer will never answer,
-                        // which is exactly why we drop the socket rather than
-                        // waiting for `is_terminated()` to become true.
-                        if let Err(e) = ws.close(None).await {
-                            warn!("error closing timed-out websocket {e:?}");
-                        }
+                        metrics::counter!("ultros_websocket_liveness_timeouts_total").increment(1);
+                        // Deliberately NOT `ws.close(None).await` here: close()
+                        // sends a Close frame and awaits the flush, and against
+                        // a half-open peer that write sits in the kernel's
+                        // retransmit queue for tcp_retries2 (~13-30 minutes) —
+                        // stalling this single worker loop, which is the exact
+                        // silent stall the liveness deadline exists to break.
+                        // Dropping the stream closes the fd immediately without
+                        // waiting on the vanished peer.
+                        drop(ws);
                         websocket = None;
                         continue;
                     } else {

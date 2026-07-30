@@ -50,6 +50,11 @@ pub(crate) fn spawn_staleness_gauge(
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(REFRESH_INTERVAL);
+        // The default (Burst) fires every missed tick back-to-back, so one
+        // slow staleness query — the very thing this task exists to notice —
+        // would be followed by a storm of catch-up queries against the same
+        // slow database. Delay just resumes the normal cadence.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut last_reported = LastReported::default();
         loop {
             tokio::select! {

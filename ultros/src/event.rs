@@ -124,7 +124,23 @@ pub(crate) struct EventReceivers {
     pub(crate) lists: EventBus<ListEventData>,
 }
 
-/// Unwraps a broadcast `recv()` result, reporting lag instead of swallowing it.
+/// Outcome of a broadcast `recv()`, distinguished so callers can react
+/// correctly to each case — see [`handle_bus_recv`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BusRecv<T> {
+    /// A value arrived; process it.
+    Msg(T),
+    /// The channel discarded events this receiver was too slow to read. The
+    /// receiver is still live and positioned at the oldest surviving value, so
+    /// the caller should keep looping.
+    Lagged,
+    /// Every sender is gone; `recv()` will return `Closed` *immediately,
+    /// forever*. The caller must break out of its loop — looping on a closed
+    /// bus is a hot spin that emits a warning per iteration.
+    Closed,
+}
+
+/// Classifies a broadcast `recv()` result, reporting lag instead of swallowing it.
 ///
 /// `if let Ok(..) = rx.recv().await` looks harmless but hides the one error that
 /// actually costs data: [`RecvError::Lagged`] means the channel already threw
@@ -132,12 +148,14 @@ pub(crate) struct EventReceivers {
 /// them (every producer writes there first), so nothing 500s — the in-RAM caches
 /// and the ClickHouse mirror just quietly drift away from the truth.
 ///
-/// Returns `Some` when a value arrived and `None` on lag or close. Callers
-/// should keep looping on `None`: after a lag the receiver is still live and
-/// positioned at the oldest surviving value.
-pub(crate) fn handle_bus_recv<T>(bus: &'static str, result: Result<T, RecvError>) -> Option<T> {
+/// Callers should keep looping on [`BusRecv::Lagged`] but **must break on
+/// [`BusRecv::Closed`]**: a closed channel fails every subsequent `recv()`
+/// immediately, so treating it like lag turns the consumer loop into a hot
+/// spin that floods tracing (and therefore Glitchtip) with one warning per
+/// iteration.
+pub(crate) fn handle_bus_recv<T>(bus: &'static str, result: Result<T, RecvError>) -> BusRecv<T> {
     match result {
-        Ok(value) => Some(value),
+        Ok(value) => BusRecv::Msg(value),
         Err(RecvError::Lagged(skipped)) => {
             metrics::counter!("ultros_analyzer_bus_lagged_total", "bus" => bus).increment(skipped);
             warn!(
@@ -146,11 +164,11 @@ pub(crate) fn handle_bus_recv<T>(bus: &'static str, result: Result<T, RecvError>
                 "consumer fell behind the event bus; dropped events never reach the \
                  in-RAM caches or ClickHouse (Postgres is unaffected)"
             );
-            None
+            BusRecv::Lagged
         }
         Err(RecvError::Closed) => {
             warn!(bus, "event bus closed, no further events will arrive");
-            None
+            BusRecv::Closed
         }
     }
 }
@@ -174,16 +192,24 @@ mod tests {
 
     #[test]
     fn a_delivered_value_passes_through() {
-        assert_eq!(handle_bus_recv::<i32>("test", Ok(7)), Some(7));
+        assert_eq!(handle_bus_recv::<i32>("test", Ok(7)), BusRecv::Msg(7));
     }
 
+    /// Lag and close are *different* outcomes and must stay distinguishable:
+    /// lag means "keep looping", close means "break". Collapsing them (the
+    /// bug this replaces) made a closed bus spin hot — `recv()` on a closed
+    /// channel returns immediately, forever, so a keep-looping caller burned a
+    /// core and emitted one warning per iteration into tracing/Glitchtip.
     #[test]
-    fn lag_and_close_yield_nothing() {
+    fn lag_and_close_are_distinguished() {
         assert_eq!(
             handle_bus_recv::<i32>("test", Err(RecvError::Lagged(12))),
-            None
+            BusRecv::Lagged
         );
-        assert_eq!(handle_bus_recv::<i32>("test", Err(RecvError::Closed)), None);
+        assert_eq!(
+            handle_bus_recv::<i32>("test", Err(RecvError::Closed)),
+            BusRecv::Closed
+        );
     }
 
     /// The bug this replaces: `if let Ok(..) = recv()` treats a lag exactly like
@@ -199,14 +225,31 @@ mod tests {
         }
 
         // The oldest three were dropped by the channel; the next recv says so.
-        assert_eq!(handle_bus_recv("test", rx.recv().await), None);
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Lagged);
 
         // Everything still in the ring is delivered normally afterwards.
-        assert_eq!(handle_bus_recv("test", rx.recv().await), Some(3));
-        assert_eq!(handle_bus_recv("test", rx.recv().await), Some(4));
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Msg(3));
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Msg(4));
 
         // And the receiver keeps working for values sent after the lag.
         tx.send(5).unwrap();
-        assert_eq!(handle_bus_recv("test", rx.recv().await), Some(5));
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Msg(5));
+    }
+
+    /// Once every sender is dropped the receiver drains what's left in the
+    /// ring and then reports `Closed` on every subsequent recv — which is why
+    /// callers must break rather than loop.
+    #[tokio::test]
+    async fn a_closed_bus_drains_then_reports_closed_forever() {
+        let (tx, mut rx) = channel::<i32>(4);
+        tx.send(1).unwrap();
+        drop(tx);
+
+        // The value that was already in the ring still arrives.
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Msg(1));
+
+        // After that, Closed — immediately, on every call.
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Closed);
+        assert_eq!(handle_bus_recv("test", rx.recv().await), BusRecv::Closed);
     }
 }

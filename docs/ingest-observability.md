@@ -12,11 +12,11 @@ the Prometheus endpoint at `:9091/metrics` (see `ultros/src/web_metrics.rs`).
 | --- | --- | --- | --- |
 | `ultros_world_ingest_staleness_seconds` | gauge | `world` | Seconds since the newest `listing_last_updated` row for that world. The single best "is ingest alive" signal. |
 | `ultros_worlds_never_ingested` | gauge | — | Worlds in `WorldCache` with no `listing_last_updated` rows at all. |
-| `ultros_analyzer_bus_lagged_total` | counter | `bus` | Events the analyzer's broadcast receiver was too slow to read, and the channel discarded. Nonzero means the in-RAM caches and ClickHouse have drifted from Postgres. |
+| `ultros_analyzer_bus_lagged_total` | counter | `bus` | Events the analyzer's broadcast receiver was too slow to read, and the channel discarded. Nonzero means the in-RAM caches and ClickHouse have drifted from Postgres. **Analyzer-only**: the other bus consumers (the discord alert loops and the `/alerts/websocket` fan-out) still swallow lag silently, so this counter is a floor, not the whole picture. |
 | `ultros_analyzer_skipped_events_total` | counter | `op`, `reason` | Listing/sale events dropped because a world, datacenter or region was missing from the analyzer's maps. |
-| `ultros_analyzer_snapshot_rejected_total` | counter | `reason` | Startup snapshots refused (`too_old`, `unparseable_name`), causing a fall back to the Postgres reload. |
-| `ultros_analyzer_snapshot_age_seconds` | gauge | — | Age of the snapshot this process booted from. Set once at startup. |
-| `universalis_websocket_liveness_timeouts_total` | counter | — | Websocket connections torn down for delivering no frames within the liveness deadline. |
+| `ultros_analyzer_snapshot_rejected_total` | counter | `reason` | Startup snapshots refused (`too_old`, `unparseable_name`, `future_dated`), causing a fall back to the Postgres reload. |
+| `ultros_analyzer_snapshot_age_seconds` | gauge | — | Age of the snapshot this process booted from. Set exactly once, at startup, and only when a snapshot restore succeeded — it does not tick upward afterwards, and a process that reloaded from Postgres has no sample at all. |
+| `ultros_websocket_liveness_timeouts_total` | counter | — | Websocket connections torn down for delivering no frames within the liveness deadline. |
 
 Pre-existing and still useful alongside these:
 `ultros_websocket_rx{WorldId}`, `ultros_catchup_items_recovered{world}`,
@@ -32,7 +32,7 @@ explains *why* it went up.
   quiet at once does not.
 - **Every world went silent** — the same expression firing across most series at
   once points at the websocket or the process, not the market. Correlate with
-  `universalis_websocket_liveness_timeouts_total`.
+  `ultros_websocket_liveness_timeouts_total`.
 - **Silent data loss** — `increase(ultros_analyzer_bus_lagged_total[1h]) > 0` or
   `increase(ultros_analyzer_skipped_events_total[1h]) > 0`. Neither should ever
   be nonzero in steady state. Sustained `bus_lagged` means the ring sizes in
