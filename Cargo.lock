@@ -9974,7 +9974,6 @@ dependencies = [
  "mime_guess",
  "oauth2",
  "openssl",
- "percent-encoding",
  "poise",
  "reqwest 0.11.27",
  "resvg",

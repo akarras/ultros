@@ -19,7 +19,7 @@ use sitemap_rs::{
     url_set::UrlSet,
 };
 use std::{collections::HashMap, sync::Arc};
-use ultros_api_types::world_helper::WorldHelper;
+use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
 pub(crate) struct Xml(Vec<u8>);
 
@@ -186,11 +186,14 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
         .values()
         .filter(|cat| (1..=4).contains(&cat.category))
     {
-        let encoded_name =
-            percent_encoding::utf8_percent_encode(&cat.name, percent_encoding::NON_ALPHANUMERIC)
-                .to_string();
-        let mut builder =
-            Url::builder(["https://ultros.app/items/category/", &encoded_name].concat());
+        // Keyed by id, not `cat.name`: the name is localized, and the SSR that
+        // answers these URLs always renders with English game data, so a
+        // name-keyed link only resolves for English visitors. See
+        // `resolve_category_param` in `item_explorer.rs`.
+        let mut builder = Url::builder(format!(
+            "https://ultros.app/items/category/{}",
+            cat.key_id.0
+        ));
         builder.priority(0.6);
         builder.change_frequency(ChangeFrequency::Weekly);
         if let Ok(url) = builder.build() {
@@ -205,37 +208,62 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
     let mut currencies = Vec::new();
 
     for special_shop in data.special_shops.values() {
-        // We want to check if any received item is marketable (item_search_category != 0)
-        let has_marketable_receive = special_shop
-            .item_receive_0
-            .iter()
-            .copied()
-            .chain(special_shop.item_receive_1.iter().copied())
-            .filter(|&id| id != 0)
-            .any(|id| {
-                data.items
-                    .get(&xiv_gen::ItemId(id as i32))
-                    .map(|item| item.item_search_category != 0)
-                    .unwrap_or(false)
-            });
+        // Iterate over the rows of the shop
+        let len = special_shop.item_receive_0.len();
+        for i in 0..len {
+            // Check if any received item in this row is marketable
+            let mut has_marketable_receive = false;
 
-        if has_marketable_receive {
-            // Collect the cost items
-            let cost_item_ids = special_shop
-                .item_cost_0
-                .iter()
-                .copied()
-                .chain(special_shop.item_cost_1.iter().copied())
-                .chain(special_shop.item_cost_2.iter().copied())
-                .filter(|&id| id != 0);
+            let recv_0 = special_shop.item_receive_0[i];
+            let count_0 = special_shop.count_receive_0[i];
+            if recv_0 != 0 && count_0 != 0 {
+                if let Some(item) = data.items.get(&xiv_gen::ItemId(recv_0 as i32)) {
+                    if item.item_search_category != 0 {
+                        has_marketable_receive = true;
+                    }
+                }
+            }
 
-            for id in cost_item_ids {
-                if let Some(item) = data
-                    .items
-                    .get(&xiv_gen::ItemId(id as i32))
-                    .filter(|item| allowed_item_ui_categories.contains(&item.item_ui_category))
-                {
-                    currencies.push(item.key_id.0);
+            let recv_1 = special_shop.item_receive_1[i];
+            let count_1 = special_shop.count_receive_1[i];
+            if recv_1 != 0 && count_1 != 0 {
+                if let Some(item) = data.items.get(&xiv_gen::ItemId(recv_1 as i32)) {
+                    if item.item_search_category != 0 {
+                        has_marketable_receive = true;
+                    }
+                }
+            }
+
+            if has_marketable_receive {
+                // Collect the cost items for this row
+                let cost_0 = special_shop.item_cost_0[i];
+                let amt_0 = special_shop.count_cost_0[i];
+                if cost_0 != 0 && amt_0 != 0 {
+                    if let Some(item) = data.items.get(&xiv_gen::ItemId(cost_0 as i32)) {
+                        if allowed_item_ui_categories.contains(&item.item_ui_category) {
+                            currencies.push(item.key_id.0);
+                        }
+                    }
+                }
+
+                let cost_1 = special_shop.item_cost_1[i];
+                let amt_1 = special_shop.count_cost_1[i];
+                if cost_1 != 0 && amt_1 != 0 {
+                    if let Some(item) = data.items.get(&xiv_gen::ItemId(cost_1 as i32)) {
+                        if allowed_item_ui_categories.contains(&item.item_ui_category) {
+                            currencies.push(item.key_id.0);
+                        }
+                    }
+                }
+
+                let cost_2 = special_shop.item_cost_2[i];
+                let amt_2 = special_shop.count_cost_2[i];
+                if cost_2 != 0 && amt_2 != 0 {
+                    if let Some(item) = data.items.get(&xiv_gen::ItemId(cost_2 as i32)) {
+                        if allowed_item_ui_categories.contains(&item.item_ui_category) {
+                            currencies.push(item.key_id.0);
+                        }
+                    }
                 }
             }
         }
@@ -246,10 +274,11 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
 
     // Now filter out disallowed items like "Gil", "MGP" and build URLs
     for id in currencies {
-        if let Some(item) = data
+        if data
             .items
             .get(&xiv_gen::ItemId(id))
             .filter(|item| !disallowed_items.contains(&item.name.as_str()))
+            .is_some()
         {
             let mut builder = Url::builder(format!("https://ultros.app/currency-exchange/{id}"));
             builder.priority(0.6);
