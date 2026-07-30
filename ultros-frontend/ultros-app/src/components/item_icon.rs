@@ -38,7 +38,7 @@ pub fn ItemIcon(
             style:height=icon_size.get_size_px()
         >
             <img
-                prop:alt=item_name
+                alt=item_name
                 class=format!("{} max-w-full max-h-full object-contain", icon_size.get_class())
                 src=move || {
                     if !failed_item() && valid_search_category.get() {
