@@ -6,11 +6,16 @@ on:
 jobs:
   update-game-data:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install system packages
+        run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev fontconfig libfontconfig1-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-01-06
