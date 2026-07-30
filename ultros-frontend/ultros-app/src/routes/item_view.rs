@@ -22,7 +22,7 @@ use crate::i18n::{t, t_string};
 use crate::routes::item_view_scope::item_href;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
-use leptos_meta::{Link, Meta};
+use leptos_meta::Meta;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
@@ -1761,7 +1761,7 @@ pub fn ItemView() -> impl IntoView {
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
         />
-        <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
+        <MetaCanonical href=move || format!("https://ultros.app/item/{}", item_id()) />
         <div class="min-h-screen">
             <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
