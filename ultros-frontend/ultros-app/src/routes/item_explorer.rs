@@ -2,12 +2,6 @@ use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
-
-const PATH_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;

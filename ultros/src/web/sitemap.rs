@@ -19,7 +19,8 @@ use sitemap_rs::{
     url_set::UrlSet,
 };
 use std::{collections::HashMap, sync::Arc};
-use ultros_api_types::world_helper::{AnySelector, WorldHelper};
+use ultros_api_types::world_helper::WorldHelper;
+use ultros_db::world_data::world_cache::AnySelector;
 
 pub(crate) struct Xml(Vec<u8>);
 
