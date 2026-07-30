@@ -21,10 +21,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Row, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct SaleRow {
     /// Carries the Postgres `sale_history.id` so each PG row maps to a
-    /// distinct CH row. Without this, two sales sharing
-    /// `(item_id, hq, world_id, sold_date, buying_character_id)` collapse
-    /// under the `ReplacingMergeTree` dedup — and Universalis-side replays
-    /// produce a non-trivial number of those.
+    /// distinct CH row. It is the last component of the `sales` ORDER BY key,
+    /// so without a real value two sales sharing
+    /// `(item_id, hq, world_id, sold_date)` collapse under the
+    /// `ReplacingMergeTree` dedup — and Universalis-side replays produce a
+    /// non-trivial number of those. Every producer must supply the real id:
+    /// a placeholder makes the live path and the backfill disagree on row
+    /// identity, so the same sale is stored twice and never merges.
     pub pg_id: i32,
     #[serde(with = "clickhouse::serde::chrono::datetime")]
     pub sold_date: chrono::DateTime<chrono::Utc>,
@@ -113,6 +116,67 @@ mod tests {
         assert_eq!(row.hq, 1);
         assert_eq!(row.buying_character_id, 42);
         assert_eq!(row.buyer_name, "Test Buyer");
+    }
+
+    /// The dual-write path is `update_sales` -> `sale_history::Model` (from
+    /// `INSERT ... RETURNING`) -> `SaleHistory` -> `SaleRow`. `pg_id` has to
+    /// survive all of it: it's the last component of the `sales` ORDER BY key,
+    /// so a zero here collapses distinct sales on merge *and* leaves the
+    /// backfill (which reads real ids from Postgres) writing a second copy of
+    /// every row that never merges with the live one.
+    #[test]
+    fn freshly_recorded_sale_carries_a_nonzero_pg_id() {
+        let recorded = ultros_db::entity::sale_history::Model {
+            id: 918_273,
+            quantity: 3,
+            price_per_item: 2500,
+            buying_character_id: 42,
+            hq: false,
+            sold_item_id: 7,
+            sold_date: NaiveDate::from_ymd_opt(2026, 5, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap(),
+            world_id: 40,
+        };
+        let api_sale: ultros_api_types::SaleHistory =
+            ultros_db::common_type_conversions::SaleHistoryReturn(recorded, None).into();
+
+        let row = SaleRow::from_api_sale(&api_sale);
+
+        assert_ne!(row.pg_id, 0, "pg_id must not be a placeholder");
+        assert_eq!(row.pg_id, 918_273);
+    }
+
+    /// Both writers must agree on `pg_id` for the same Postgres row, otherwise
+    /// the live insert and the backfill insert are two distinct keys and
+    /// ReplacingMergeTree never collapses them.
+    #[test]
+    fn live_and_backfill_paths_agree_on_pg_id() {
+        let recorded = ultros_db::entity::sale_history::Model {
+            id: 555,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 42,
+            hq: true,
+            sold_item_id: 7,
+            sold_date: NaiveDate::from_ymd_opt(2026, 5, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap(),
+            world_id: 40,
+        };
+        let backfill_row = SaleRow::from_db_model(&recorded, "Test Buyer".to_string());
+        let api_sale: ultros_api_types::SaleHistory =
+            ultros_db::common_type_conversions::SaleHistoryReturn(recorded.clone(), None).into();
+        let live_row = SaleRow::from_api_sale(&api_sale);
+
+        assert_eq!(live_row.pg_id, backfill_row.pg_id);
+        // Every column of the ReplacingMergeTree sort key must match.
+        assert_eq!(live_row.item_id, backfill_row.item_id);
+        assert_eq!(live_row.hq, backfill_row.hq);
+        assert_eq!(live_row.world_id, backfill_row.world_id);
+        assert_eq!(live_row.sold_date, backfill_row.sold_date);
     }
 
     #[test]
