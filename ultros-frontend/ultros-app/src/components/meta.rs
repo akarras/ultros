@@ -43,5 +43,5 @@ pub fn MetaRobotsNoIndex() -> impl IntoView {
 /// or that accept query params that don't change page content.
 #[component]
 pub fn MetaCanonical(#[prop(into)] href: TextProp) -> impl IntoView {
-    view! { <Link rel="canonical" href=href /> }
+    view! { <Link rel="canonical" prop:href=move || href.get() /> }
 }
