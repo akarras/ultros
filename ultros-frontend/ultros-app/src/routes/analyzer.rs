@@ -635,6 +635,8 @@ const FILTER_NEXT_SALE: &str = "next-sale";
 const FILTER_LAST_SOLD: &str = "last-sold";
 const FILTER_PRE_TAX: &str = "tax";
 const FILTER_SHOW_SUSPICIOUS: &str = "show-suspicious";
+const FILTER_QUALITY: &str = "quality";
+const FILTER_NAME: &str = "name";
 // Chip-only filters: picked from a list or off a row rather than typed, so
 // they are never offered by the `+ Filter` menu.
 const FILTER_CATEGORY: &str = "category";
@@ -654,13 +656,15 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_LAST_SOLD,
     FILTER_PRE_TAX,
     FILTER_SHOW_SUSPICIOUS,
+    FILTER_QUALITY,
+    FILTER_NAME,
 ];
 
 /// Value a filter takes when it is added from the `+ Filter` menu.
 ///
 /// A filter with no starting value would render a chip with nothing in it,
-/// so every entry in [`ADDABLE_FILTERS`] must have one. These mirror the
-/// example values the old toolbar carried as input placeholders.
+/// so every entry in [`ADDABLE_FILTERS`] must have one, except `FILTER_NAME`,
+/// whose chip deliberately mounts in edit state instead (see the arm below).
 fn default_filter_value(id: &str) -> &'static str {
     match id {
         FILTER_PROFIT => "100000",
@@ -676,6 +680,10 @@ fn default_filter_value(id: &str) -> &'static str {
         // default (post-tax, suspicious rows hidden).
         FILTER_PRE_TAX => "false",
         FILTER_SHOW_SUSPICIOUS => "true",
+        FILTER_QUALITY => "hq",
+        // Name search deliberately seeds empty: its chip mounts in edit
+        // state (`start_editing`) so there is never an empty resting chip.
+        FILTER_NAME => "",
         _ => "",
     }
 }
@@ -887,6 +895,21 @@ fn AnalyzerTable(
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let (quality_filter, set_quality_filter) = query_signal::<QualityFilter>("quality");
+    let (name_filter, set_name_filter) = query_signal::<String>("name");
+    // Keeps the name chip mounted (in edit state) between "picked from the
+    // + Filter menu" and "first committed value" — an empty ?name= URL
+    // param is not relied on to round-trip.
+    let name_chip_pending = RwSignal::new(false);
+    // SSR renders SSR_FALLBACK_ROWS rows with *English* item names; the
+    // client hydrates localized ones. Localized-name matching therefore
+    // must not run until after hydration or an active ?name= produces
+    // different row sets and trips the tachys hydration panic. Same
+    // Effect-driven gate as item_explorer.rs / job_set_card.rs.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
@@ -949,6 +972,11 @@ fn AnalyzerTable(
         push_if(category_filter().is_some(), FILTER_CATEGORY);
         push_if(world_filter().is_some(), FILTER_WORLD);
         push_if(datacenter_filter().is_some(), FILTER_DATACENTER);
+        push_if(quality_filter().is_some(), FILTER_QUALITY);
+        push_if(
+            name_filter().is_some() || name_chip_pending.get(),
+            FILTER_NAME,
+        );
         active
     });
 
@@ -970,6 +998,8 @@ fn AnalyzerTable(
             FILTER_LAST_SOLD => t_string!(i18n, analyzer_last_sold_within).to_string(),
             FILTER_PRE_TAX => t_string!(i18n, analyzer_pre_tax).to_string(),
             FILTER_SHOW_SUSPICIOUS => t_string!(i18n, analyzer_show_suspicious).to_string(),
+            FILTER_QUALITY => t_string!(i18n, analyzer_filter_quality_label).to_string(),
+            FILTER_NAME => t_string!(i18n, analyzer_filter_name_label).to_string(),
             _ => String::new(),
         }
     };
@@ -990,6 +1020,8 @@ fn AnalyzerTable(
             FILTER_LAST_SOLD => set_last_sold_within(Some(value.to_string())),
             FILTER_PRE_TAX => set_tax_enabled(Some(false)),
             FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
+            FILTER_QUALITY => set_quality_filter(value.parse().ok()),
+            FILTER_NAME => name_chip_pending.set(true),
             _ => {}
         }
     };
@@ -1058,6 +1090,9 @@ fn AnalyzerTable(
         set_last_sold_within(None);
         set_show_suspicious(None);
         set_tax_enabled(None);
+        set_quality_filter(None);
+        set_name_filter(None);
+        name_chip_pending.set(false);
     };
 
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
@@ -1136,6 +1171,25 @@ fn AnalyzerTable(
                         items
                             .get(&ItemId(data.inner.sale_summary.item_id))
                             .map(|item| item.item_search_category == cat_id)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                quality_filter()
+                    .map(|q| passes_quality(q, data.inner.sale_summary.hq))
+                    .unwrap_or(true)
+            })
+            .filter(move |data| {
+                // Hydration gate — see the comment at the `hydrated` signal.
+                if !hydrated.get() {
+                    return true;
+                }
+                name_filter()
+                    .map(|query| {
+                        items
+                            .get(&ItemId(data.inner.sale_summary.item_id))
+                            .map(|item| matches_item_name(&query, &item.name))
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)
@@ -1662,6 +1716,45 @@ fn AnalyzerTable(
                                             readonly=true
                                             value=Signal::derive(|| None::<String>)
                                             on_commit=Callback::new(move |_| set_show_suspicious(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            quality_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_quality_label).to_string()
+                                            value=Signal::derive(move || {
+                                                quality_filter().map(|q| q.to_string())
+                                            })
+                                            options=vec![
+                                                ("hq", t_string!(i18n, analyzer_col_hq).to_string()),
+                                                ("nq", t_string!(i18n, analyzer_quality_nq).to_string()),
+                                            ]
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_quality_filter(v.and_then(|s| s.parse().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            (name_filter().is_some() || name_chip_pending.get())
+                                .then(|| {
+                                    // Fresh from the menu (no committed value yet) the
+                                    // chip mounts editing so the user can type at once.
+                                    let start_editing = name_filter().is_none();
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_name_contains).to_string()
+                                            value=Signal::derive(name_filter)
+                                            start_editing=start_editing
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_name_filter(v);
+                                                name_chip_pending.set(false);
+                                            })
                                         />
                                     }
                                 })
@@ -3164,6 +3257,12 @@ mod tests {
     #[test]
     fn every_addable_filter_has_a_starting_value() {
         for id in ADDABLE_FILTERS {
+            // FILTER_NAME is the deliberate exception: its chip mounts in
+            // edit state instead of seeding a resting value (see
+            // `default_filter_value`'s doc comment).
+            if *id == FILTER_NAME {
+                continue;
+            }
             assert!(
                 !default_filter_value(id).is_empty(),
                 "{id} has no default, so the + Filter menu would add an empty chip"
