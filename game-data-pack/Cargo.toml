@@ -1,0 +1,13 @@
+[package]
+name = "game-data-pack"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
