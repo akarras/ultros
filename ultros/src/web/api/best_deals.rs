@@ -26,11 +26,25 @@ pub(crate) struct BestDealsQuery {
 
 #[derive(Debug, Serialize, Clone)]
 pub(crate) struct ResaleStatsDto {
+    /// Post-tax gil: the estimated sale price net of the 5% marketboard cut,
+    /// minus the buy price. Same math as the Flip Finder with its `include_tax`
+    /// toggle in the default (on) position, so the home page's Top
+    /// Opportunities card and the analyzer table agree on a given flip.
     pub(crate) profit: i32,
     pub(crate) item_id: i32,
     pub(crate) hq: bool,
     pub(crate) sold_within: String,
+    /// `profit / buy_price * 100`, so it is post-tax too. Always finite:
+    /// nonpositive-cost rows are dropped upstream and the value is clamped to
+    /// ±100000 to match the frontend's display ceiling.
     pub(crate) return_on_investment: f32,
+    /// Gil paid — the cheapest listing in the region. Sent explicitly so
+    /// clients don't have to back-solve it out of `profit / roi`, which the
+    /// ROI clamp makes wrong for very cheap buys.
+    pub(crate) buy_price: i32,
+    /// Gil to *list* at, before the marketboard's cut. Note that
+    /// `buy_price + profit` is the post-tax take, which is a smaller number.
+    pub(crate) est_sale_price: i32,
     pub(crate) world_id: i32,
     // Phase 2 deep-scan enrichment. All default to "unknown/zero" when the
     // ClickHouse rollup is missing — older API consumers ignore these
@@ -49,6 +63,8 @@ impl From<ResaleStats> for ResaleStatsDto {
             hq: stats.hq,
             sold_within: stats.sold_within.to_string(),
             return_on_investment: stats.return_on_investment,
+            buy_price: stats.buy_price,
+            est_sale_price: stats.est_sale_price,
             world_id: stats.world_id,
             confidence_band: stats.confidence_band,
             vwap_30d: stats.vwap_30d,
