@@ -1223,6 +1223,7 @@
     "analyzer_volume_gte": "30d volume ≥",
     "analyzer_add_filter": "Filter",
     "analyzer_rows_count": "%count% rows",
+    "analyzer_rows_lacking_data": "· %count% rows lack data for these filters",
     "analyzer_budget_lte": "Budget ≤",
     "analyzer_pre_tax": "Pre-tax",
     "analyzer_columns_button": "Columns",

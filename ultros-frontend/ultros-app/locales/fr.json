@@ -1220,6 +1220,7 @@
     "analyzer_volume_gte": "Vol. 30 j ≥",
     "analyzer_add_filter": "Filtre",
     "analyzer_rows_count": "%count% lignes",
+    "analyzer_rows_lacking_data": "· %count% lignes sans données pour ces filtres",
     "analyzer_budget_lte": "Budget ≤",
     "analyzer_pre_tax": "Hors taxe",
     "analyzer_columns_button": "Colonnes",

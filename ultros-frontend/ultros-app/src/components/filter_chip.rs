@@ -79,8 +79,10 @@ pub fn FilterChip(
     let editing = RwSignal::new(start_editing);
     let input_ref = NodeRef::<Input>::new();
     let select_ref = NodeRef::<leptos::html::Select>::new();
-    // StoredValue: both `Show` branches are `Fn` closures and both need the
-    // options; storing once avoids a clone per render.
+    // StoredValue: both `Show` branches are `Fn` closures, so neither can
+    // take the options by value — this is about shared ownership, not about
+    // avoiding clones (the editing branch still clones the options each time
+    // it renders, which is fine: a handful of token/label pairs).
     let options = StoredValue::new(options);
     // Same treatment for the input attributes: the input now sits inside an
     // extra `move ||` closure (the select/input dispatch), and a `move`
@@ -172,16 +174,37 @@ pub fn FilterChip(
                             <select
                                 node_ref=select_ref
                                 class="input input-sm"
-                                on:change=move |ev| {
-                                    on_commit.run(committed_value(&event_target_value(&ev)));
-                                    editing.set(false);
-                                }
+                                // Deliberately no `change` handler: keyboard
+                                // browsing (Firefox, and screen readers
+                                // generally) fires `change` on every arrow
+                                // key, and committing there tears the select
+                                // down mid-navigation — the parent recreates
+                                // the chip whenever the committed value
+                                // changes, so "commit but stay open" is not
+                                // achievable from here. The selection stays
+                                // local until Enter or blur commits it;
+                                // Escape discards it.
                                 on:keydown=move |ev| {
-                                    if ev.key() == "Escape" {
+                                    if ev.key() == "Enter" {
+                                        on_commit.run(committed_value(
+                                            &event_target::<web_sys::HtmlSelectElement>(&ev).value(),
+                                        ));
+                                        editing.set(false);
+                                    } else if ev.key() == "Escape" {
                                         editing.set(false);
                                     }
                                 }
-                                on:blur=move |_| editing.set(false)
+                                on:blur=move |ev| {
+                                    // Escape tears the select down, which can
+                                    // raise a trailing blur — same guard as
+                                    // the text input's `commit_from_blur`.
+                                    if editing.get_untracked() {
+                                        on_commit.run(committed_value(
+                                            &event_target::<web_sys::HtmlSelectElement>(&ev).value(),
+                                        ));
+                                        editing.set(false);
+                                    }
+                                }
                                 prop:value=move || value.get().unwrap_or_default()
                             >
                                 {opts
@@ -211,6 +234,15 @@ pub fn FilterChip(
                                         commit_from(&event_target::<web_sys::HtmlInputElement>(&ev));
                                     } else if ev.key() == "Escape" {
                                         editing.set(false);
+                                        // A fresh chip (mounted via
+                                        // `start_editing`, nothing committed
+                                        // yet) has no resting value to fall
+                                        // back to — escaping must clear it,
+                                        // or an empty "label + x" chip is
+                                        // left behind permanently.
+                                        if value.get_untracked().is_none() {
+                                            on_commit.run(None);
+                                        }
                                     }
                                 }
                             />
