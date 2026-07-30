@@ -190,7 +190,11 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
         .values()
         .filter(|cat| (1..=4).contains(&cat.category))
     {
-        let mut builder = Url::builder(["https://ultros.app/items/category/", &cat.name].concat());
+        let encoded_name =
+            percent_encoding::utf8_percent_encode(&cat.name, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
+        let mut builder =
+            Url::builder(["https://ultros.app/items/category/", &encoded_name].concat());
         builder.priority(0.6);
         builder.change_frequency(ChangeFrequency::Weekly);
         if let Ok(url) = builder.build() {
@@ -198,45 +202,66 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
         }
     }
 
-    let url_set = UrlSet::new(urls)?;
-    let mut url_xml = Vec::new();
-    url_set
-        .write(&mut url_xml)
-        .map_err(|_| anyhow!("Error creating sitemap"))?;
-    Ok(Xml(url_xml))
-}
+    // Currency exchange per-currency pages.
+    // This matches the logic inside CurrencySelection in currency_exchange.rs.
+    let disallowed_items = &["Gil", "MGP"];
+    let allowed_item_ui_categories = [100, 61, 63];
+    let mut currencies = Vec::new();
 
-pub(crate) async fn world_sitemap(
-    State(db): State<AnalyzerService>,
-    State(world_cache): State<Arc<WorldCache>>,
-    Path(world_name): Path<String>,
-) -> Result<Xml, WebError> {
-    // validate that this is a valid world name, then repeat back a sitemap using all the item ids
-
-    // handle .xml being in the path potentially
-    let world_name = match world_name.split_once('.') {
-        Some((left, _)) => left,
-        None => &world_name,
-    };
-
-    let result = world_cache.lookup_value_by_name(world_name)?;
-    // Create a unique list of item ids
-    let items: HashSet<_> = db
-        .read_cheapest_items(&AnySelector::from(&result), |items| {
-            items.item_map.keys().map(|k| k.item_id).collect()
-        })
-        .await?;
-    // format those item ids into urls based on the world name and generate a url set
-    let url_set = UrlSet::new(
-        items
+    for special_shop in data.special_shops.values() {
+        // We want to check if any received item is marketable (item_search_category != 0)
+        let has_marketable_receive = special_shop
+            .item_receive_0
             .iter()
-            .map(|i| {
-                Url::builder(format!("https://ultros.app/item/{world_name}/{i}"))
-                    .build()
-                    .unwrap()
-            })
-            .collect(),
-    )?;
+            .copied()
+            .chain(special_shop.item_receive_1.iter().copied())
+            .filter(|&id| id != 0)
+            .any(|id| {
+                data.items
+                    .get(&xiv_gen::ItemId(id as i32))
+                    .map(|item| item.item_search_category != 0)
+                    .unwrap_or(false)
+            });
+
+        if has_marketable_receive {
+            // Collect the cost items
+            let cost_item_ids = special_shop
+                .item_cost_0
+                .iter()
+                .copied()
+                .chain(special_shop.item_cost_1.iter().copied())
+                .chain(special_shop.item_cost_2.iter().copied())
+                .filter(|&id| id != 0);
+
+            for id in cost_item_ids {
+                if let Some(item) = data.items.get(&xiv_gen::ItemId(id as i32)) {
+                    if allowed_item_ui_categories.contains(&item.item_ui_category) {
+                        currencies.push(item.key_id.0);
+                    }
+                }
+            }
+        }
+    }
+
+    currencies.sort();
+    currencies.dedup();
+
+    // Now filter out disallowed items like "Gil", "MGP" and build URLs
+    for id in currencies {
+        if let Some(item) = data.items.get(&xiv_gen::ItemId(id)) {
+            if !disallowed_items.contains(&item.name.as_str()) {
+                let mut builder =
+                    Url::builder(format!("https://ultros.app/currency-exchange/{id}"));
+                builder.priority(0.6);
+                builder.change_frequency(ChangeFrequency::Daily);
+                if let Ok(url) = builder.build() {
+                    urls.push(url);
+                }
+            }
+        }
+    }
+
+    let url_set = UrlSet::new(urls)?;
     let mut url_xml = Vec::new();
     url_set
         .write(&mut url_xml)

@@ -192,7 +192,7 @@ pub(crate) async fn create_leptos_app(
     let cargo_leptos_service = SetResponseHeader::appending(
         cargo_leptos_service,
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=86400, immutable"),
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     let worlds = Ok(worlds);

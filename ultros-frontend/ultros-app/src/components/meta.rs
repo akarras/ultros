@@ -5,7 +5,7 @@ use leptos_meta::*;
 pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
     view! {
         <Title text=title.clone() />
-        <Meta name="og:title" content=title.clone() />
+        <Meta name="og:title" property="og:title" content=title.clone() />
         <Meta name="twitter:title" content=title />
     }
 }
@@ -42,6 +42,6 @@ pub fn MetaRobotsNoIndex() -> impl IntoView {
 /// reachable via multiple URLs (e.g. /item/{world}/{id} and /item/{id})
 /// or that accept query params that don't change page content.
 #[component]
-pub fn MetaCanonical(href: &'static str) -> impl IntoView {
+pub fn MetaCanonical(#[prop(into)] href: TextProp) -> impl IntoView {
     view! { <Link rel="canonical" href=href /> }
 }

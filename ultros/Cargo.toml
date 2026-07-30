@@ -53,6 +53,7 @@ smallvec = { version = "1.10.0", features = [
     "union",
 ] }
 itertools = "0.14.0"
+percent-encoding = "2.3.2"
 sitemap-rs = "0.4.0"
 ultros-api-types = { path = "../ultros-api-types", features = ["rkyv"] }
 ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }

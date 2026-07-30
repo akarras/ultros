@@ -203,7 +203,13 @@ pub fn CategoryItems() -> impl IntoView {
             .map(|c| c.to_string())
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, category_view_default).to_string())
     });
+    let canonical_href = move || {
+        let params = params();
+        let cat = params.get("category").map(|s| s.as_str()).unwrap_or("");
+        format!("https://ultros.app/items/category/{cat}")
+    };
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &category_view_name()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("%category%", &category_view_name()) />
         <h3 class="text-xl">{category_view_name}</h3>
@@ -303,8 +309,14 @@ pub fn JobItems() -> impl IntoView {
             .map(|s| s.to_string())
             .unwrap_or_default()
     });
+    let canonical_href = move || {
+        let params = params();
+        let jobset = params.get("jobset").map(|s| s.as_str()).unwrap_or("");
+        format!("https://ultros.app/items/jobset/{jobset}")
+    };
 
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("%job%", &job_set()) />
         <h3 class="text-xl">{job_set}</h3>
@@ -350,6 +362,7 @@ pub fn JobItems() -> impl IntoView {
 pub fn DefaultItems() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <MetaCanonical href="https://ultros.app/items" />
         <MetaTitle title=t_string!(i18n, item_explorer_default_title).to_string() />
         <MetaDescription text=t_string!(i18n, item_explorer_default_desc).to_string() />
         <div class="flex flex-col">
