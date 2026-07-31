@@ -1787,7 +1787,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                    <HeaderCell col=COL_ROI>
+                                    <HeaderCell col=COL_ROI class="justify-end">
                                         <SortHeader
                                             mode=SortMode::Roi
                                             label=t_string!(i18n, analyzer_col_roi).to_string()
@@ -1860,7 +1860,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <HeaderCell col=COL_VOLUME_30D class="flex-col items-end text-right leading-tight !gap-0">
+                                    <HeaderCell col=COL_VOLUME_30D class="flex-col !items-end text-right leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1868,7 +1868,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <HeaderCell col=COL_LAST_SOLD class="flex-col items-start leading-tight !gap-0">
+                                    <HeaderCell col=COL_LAST_SOLD class="flex-col !items-start leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
