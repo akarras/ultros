@@ -243,7 +243,19 @@ pub fn CategoryItems() -> impl IntoView {
             })
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, category_view_default).to_string())
     });
+    // Legacy name-keyed links still resolve (see `resolve_category_param`), so
+    // the same category is reachable under several URLs. Point them all at the
+    // id-keyed form so the duplicates consolidate instead of competing.
+    let canonical_href = move || {
+        let params = params();
+        let raw = params.get_str("category").unwrap_or("");
+        match resolve_category_param(data, raw) {
+            Some(category) => format!("https://ultros.app/items/category/{}", category.key_id.0),
+            None => format!("https://ultros.app/items/category/{raw}"),
+        }
+    };
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &category_view_name()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("%category%", &category_view_name()) />
         <h3 class="text-xl">{category_view_name}</h3>
@@ -344,7 +356,15 @@ pub fn JobItems() -> impl IntoView {
             .unwrap_or_default()
     });
 
+    // `?show-non-market=` genuinely changes the item set, but the default
+    // (marketable items only) is the representative view; canonicalising to it
+    // keeps the toggled variant from being crawled as thin duplicate content.
+    // The param is already percent-encoded in the URL, so it is passed through
+    // rather than re-encoded.
+    let canonical_href = move || format!("https://ultros.app/items/jobset/{}", jobset_param.get());
+
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("%job%", &job_set()) />
         <h3 class="text-xl">{job_set}</h3>
@@ -390,6 +410,7 @@ pub fn JobItems() -> impl IntoView {
 pub fn DefaultItems() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <MetaCanonical href="https://ultros.app/items" />
         <MetaTitle title=t_string!(i18n, item_explorer_default_title).to_string() />
         <MetaDescription text=t_string!(i18n, item_explorer_default_desc).to_string() />
         <div class="flex flex-col">
