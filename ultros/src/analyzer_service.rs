@@ -326,10 +326,28 @@ struct AnalyzerState {
     cheapest_items: BTreeMap<AnySelector, CheapestListings>,
 }
 
+/// Ratio above the median at which a listing is presumed to be a "troll"
+/// price meant to game rankings rather than a real sale opportunity.
+/// Mirrors `TROLL_MULTIPLE` in
+/// ultros-frontend/ultros-app/src/routes/analyzer.rs so both surfaces treat
+/// the same rows as implausible.
+const TROLL_MULTIPLE: i64 = 50;
+
+fn is_troll_listing(price: i32, median: i32) -> bool {
+    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
+}
+
+/// Estimated sale price for a flip: the median recent sale price, capped by
+/// the current world floor when one exists. Mirrors the frontend Flip
+/// Finder's `estimated_sale_price` computation
+/// (ultros-frontend/ultros-app/src/routes/analyzer.rs) so the home-page
+/// "Top Opportunities" card and the Flip Finder table agree on the same
+/// flip. Callers should filter troll listings (see `is_troll_listing`) out
+/// of `current_listing_price` before calling this.
 fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) -> i32 {
     match current_listing_price {
-        Some(price) => std::cmp::min(std::cmp::max(1, price - 1), median_price),
-        None => (median_price as f32 * 1.2) as i32,
+        Some(floor) => median_price.min(floor),
+        None => median_price,
     }
 }
 
@@ -1150,8 +1168,20 @@ impl AnalyzerService {
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
                 let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
-                let current_cheapest_on_sale_world =
-                    sale_world_listings.item_map.get(item_key).map(|l| l.price);
+                // Troll-listing guard: if the region floor (our purchase
+                // cost) is implausibly high vs the median, the "deal" is
+                // fictional — drop the row entirely. Mirrors the frontend's
+                // row-drop in ultros-frontend/ultros-app/src/routes/analyzer.rs.
+                if is_troll_listing(cheapest_price.price, cheapest_history) {
+                    return None;
+                }
+                // Same guard on the local sale-world floor — if it's a
+                // troll, ignore it and fall through to the median estimate.
+                let current_cheapest_on_sale_world = sale_world_listings
+                    .item_map
+                    .get(item_key)
+                    .map(|l| l.price)
+                    .filter(|price| !is_troll_listing(*price, cheapest_history));
                 let est_sale_price =
                     calculate_valuation(cheapest_history, current_cheapest_on_sale_world);
                 let (profit, return_on_investment) =
@@ -1624,7 +1654,7 @@ mod test {
 
     use super::{
         SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_profit_and_roi,
-        calculate_valuation,
+        calculate_valuation, is_troll_listing,
     };
 
     #[test]
@@ -1653,33 +1683,40 @@ mod test {
 
     #[test]
     fn test_calculate_valuation() {
-        // Case 1: Market empty (None), use 1.2 * median
-        assert_eq!(calculate_valuation(100, None), 120);
-        assert_eq!(calculate_valuation(10, None), 12);
+        // Matches the frontend Flip Finder's estimated_sale_price
+        // (ultros-frontend/ultros-app/src/routes/analyzer.rs): median capped
+        // by the current world floor, with no undercut or empty-market bump.
 
-        // Case 2: Market has listing higher than median
-        // min(listing - 1, median) -> min(200 - 1, 100) -> 100
+        // Case 1: Market empty (None) -> just the median.
+        assert_eq!(calculate_valuation(100, None), 100);
+        assert_eq!(calculate_valuation(10, None), 10);
+
+        // Case 2: Floor higher than median -> median wins.
         assert_eq!(calculate_valuation(100, Some(200)), 100);
 
-        // Case 3: Market has listing lower than median
-        // min(listing - 1, median) -> min(90 - 1, 100) -> 89
-        assert_eq!(calculate_valuation(100, Some(90)), 89);
+        // Case 3: Floor lower than median -> floor wins.
+        assert_eq!(calculate_valuation(100, Some(90)), 90);
 
-        // Case 4: Market has listing equal to median
-        // min(100 - 1, 100) -> 99
-        assert_eq!(calculate_valuation(100, Some(100)), 99);
+        // Case 4: Floor equal to median -> either, same value.
+        assert_eq!(calculate_valuation(100, Some(100)), 100);
+    }
 
-        // Case 5: Listing is 1 gil
-        // min(max(1, 1 - 1), median) -> min(1, 100) -> 1
-        assert_eq!(calculate_valuation(100, Some(1)), 1);
+    #[test]
+    fn test_is_troll_listing() {
+        // Mirrors the frontend's TROLL_MULTIPLE = 50 threshold.
 
-        // Case 6: Listing is 2 gil
-        // min(2 - 1, 100) -> 1
-        assert_eq!(calculate_valuation(100, Some(2)), 1);
+        // Price is far more than 50x the median -> troll.
+        assert!(is_troll_listing(100_000, 100));
 
-        // Case 7: Listing is 1 gil, median is 1 gil
-        // min(1, 1) -> 1
-        assert_eq!(calculate_valuation(1, Some(1)), 1);
+        // Price is within 50x the median -> not a troll.
+        assert!(!is_troll_listing(4_000, 100));
+
+        // Exactly at the boundary is not a troll (strictly greater-than).
+        assert!(!is_troll_listing(5_000, 100));
+        assert!(is_troll_listing(5_001, 100));
+
+        // Zero/negative median can't establish a ratio -> never a troll.
+        assert!(!is_troll_listing(1_000_000, 0));
     }
 
     #[test]
