@@ -316,6 +316,15 @@ struct PriceSeriesQuery {
     hq: Option<String>,
 }
 
+#[derive(serde::Deserialize, Debug)]
+struct PriceDensityQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+    bucket: Option<i64>,
+    hq: Option<String>,
+    price_bins: Option<u16>,
+}
+
 /// Above this many sales in the window we stop shipping raw rows and the
 /// chart draws buckets only. Raw dots become a zoomed-in affordance rather
 /// than a default — which is the entire point of this endpoint.
@@ -424,6 +433,12 @@ fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
         Some(requested) if requested > 0 => snap_bucket_seconds(requested),
         _ => bucket_seconds_for_span(span_secs),
     }
+}
+
+/// Uniform bin height covering `[lo, hi]` inclusive in `bins` steps, floored
+/// at 1 gil so degenerate windows (every sale at one price) still bin sanely.
+fn density_bin_width(lo: u32, hi: u32, bins: u16) -> f64 {
+    (((hi - lo) as f64 + 1.0) / bins as f64).max(1.0)
 }
 
 /// Request shape for [`build_price_series`], bundled into one struct so the
@@ -658,6 +673,7 @@ async fn price_series(
         bucket: bucket_seconds,
         group: group.as_str(),
         hq: hq.as_str(),
+        bins: 0,
     };
     // A closed window is immutable; an open one only changes when the current
     // bucket rolls over.
@@ -709,9 +725,156 @@ fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Respon
         .into_response()
 }
 
+/// `GET /api/v1/price_density/{world}/{itemid}` — sale counts on a
+/// time × price grid for the chart's density mode. Same window/HQ semantics,
+/// bucket ladder, cache, and `Cache-Control` plumbing as [`price_series`];
+/// the payload is bounded by `buckets × price_bins` regardless of volume.
+///
+/// Named `price_density` like the query function it wraps; calls into
+/// `ultros_clickhouse::queries` are fully qualified to disambiguate.
+async fn price_density(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceDensityQuery>,
+) -> Result<axum::response::Response, WebError> {
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let bins = query.price_bins.unwrap_or(32).clamp(8, 96);
+
+    let now = chrono::Utc::now();
+    let to = query
+        .to
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or(now);
+    let from = query
+        .from
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    if from >= to {
+        return Err(WebError::BadRequest);
+    }
+
+    let span_secs = (to - from).num_seconds().max(1);
+    let mut bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
+    // Unlike price_series there is no post-query widening loop: the grid's
+    // time-axis bucket count is exactly span / width, known up front, so
+    // widen arithmetically until it fits under MAX_BUCKETS.
+    while span_secs / bucket_seconds > MAX_BUCKETS as i64 {
+        match widen_bucket(bucket_seconds) {
+            Some(wider) => bucket_seconds = wider,
+            None => break,
+        }
+    }
+
+    // Snap an open-ended `to` to the bucket boundary — same cache-sharing
+    // rationale as price_series.
+    let to = if query.to.is_none() {
+        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
+        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    } else {
+        to
+    };
+
+    let cache_key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: from.timestamp(),
+        to: to.timestamp(),
+        bucket: bucket_seconds,
+        group: "density",
+        hq: hq.as_str(),
+        bins,
+    };
+    let ttl = if query.to.is_some() {
+        std::time::Duration::from_secs(3_600)
+    } else {
+        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
+    };
+    if let Some(hit) = cache.get(&cache_key) {
+        return Ok(cached_json(hit, ttl));
+    }
+
+    let selected_value = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+
+    let extent = ultros_clickhouse::queries::price_min_max(&ch, item_id, &worlds, hq, from, to)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
+            anyhow::anyhow!("ClickHouse price_min_max query failed: {e}")
+        })?;
+
+    let payload = match extent {
+        None => ultros_api_types::price_density::PriceDensity {
+            bucket_seconds,
+            from: from.naive_utc(),
+            to: to.naive_utc(),
+            price_lo: 0,
+            bin_width: 1.0,
+            price_bins: bins,
+            cells: Vec::new(),
+        },
+        Some((lo, hi)) => {
+            let bin_width = density_bin_width(lo, hi, bins);
+            let rows = ultros_clickhouse::queries::price_density(
+                &ch,
+                item_id,
+                &worlds,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+                lo,
+                bin_width,
+                bins,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_density CH query failed");
+                anyhow::anyhow!("ClickHouse price_density query failed: {e}")
+            })?;
+            ultros_api_types::price_density::PriceDensity {
+                bucket_seconds,
+                from: from.naive_utc(),
+                to: to.naive_utc(),
+                price_lo: lo as i32,
+                bin_width,
+                price_bins: bins,
+                cells: rows
+                    .into_iter()
+                    .map(|r| ultros_api_types::price_density::DensityCell {
+                        ts: r.bucket.naive_utc(),
+                        bin: r.price_bin,
+                        n: u32::try_from(r.n).unwrap_or(u32::MAX),
+                    })
+                    .collect(),
+            }
+        }
+    };
+
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(cache_key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
 #[cfg(test)]
 mod price_series_tests {
     use super::*;
+
+    #[test]
+    fn density_bin_width_covers_the_inclusive_range() {
+        // [100, 400] over 4 bins -> width 75.25 (301 distinct prices).
+        assert_eq!(density_bin_width(100, 400, 4), 301.0 / 4.0);
+        // Degenerate flat price: floor at 1.0 so floor((p-lo)/w) stays 0.
+        assert_eq!(density_bin_width(100, 100, 32), 1.0);
+    }
 
     // `world_group_map` at `SeriesGroup::World` is intentionally not tested
     // here: it short-circuits before touching `world_cache` (see the
@@ -2024,6 +2187,7 @@ pub(crate) async fn start_web(
             get(extended_sale_history),
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
+        .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),
