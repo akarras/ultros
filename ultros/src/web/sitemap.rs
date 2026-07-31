@@ -85,9 +85,10 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
     // run out of budget on long-tail category pages.
     //
     // Excluded on purpose: /alerts, /retainers/*, /list, /list/*, /history,
-    // /settings, /profile, /welcome (onboarding), /privacy, /cookie-policy,
-    // and other login-gated or user-state pages — they emit `<meta robots
-    // noindex>` from the route and don't belong in the sitemap.
+    // /settings, /profile, /welcome (onboarding), and other login-gated or
+    // user-state pages — they emit `<meta robots noindex>` from the route
+    // and don't belong in the sitemap. /privacy and /cookie-policy ARE
+    // indexable (trust signal) and listed below.
     let tool_pages: &[(&str, f32, ChangeFrequency)] = &[
         ("https://ultros.app/", 1.0, ChangeFrequency::Hourly),
         ("https://ultros.app/items", 0.9, ChangeFrequency::Daily),
@@ -135,6 +136,12 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
         ("https://ultros.app/bot", 0.6, ChangeFrequency::Monthly),
         ("https://ultros.app/about", 0.5, ChangeFrequency::Monthly),
         ("https://ultros.app/help", 0.6, ChangeFrequency::Monthly),
+        ("https://ultros.app/privacy", 0.3, ChangeFrequency::Yearly),
+        (
+            "https://ultros.app/cookie-policy",
+            0.3,
+            ChangeFrequency::Yearly,
+        ),
     ];
 
     let mut urls: Vec<Url> = tool_pages
