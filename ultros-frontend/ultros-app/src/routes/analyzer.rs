@@ -689,14 +689,32 @@ fn ColResizeHandle(
                 }
             }
             on:pointerup=move |ev: web_sys::PointerEvent| {
-                if let Some(w) = width_from(&ev) {
-                    set_col_widths.update(|m| {
-                        m.insert(col.to_string(), w.round());
-                    });
+                if let (Some(w), Some((_, start_w))) = (width_from(&ev), drag.get_untracked()) {
+                    // A zero-movement click must not pin today's default into
+                    // localStorage — only a real drag commits an override.
+                    if w.round() != start_w.round() {
+                        set_col_widths.update(|m| {
+                            m.insert(col.to_string(), w.round());
+                        });
+                    }
                 }
                 drag.set(None);
             }
-            on:pointercancel=move |_| drag.set(None)
+            on:pointercancel=move |_| {
+                // A canceled drag (incoming call, browser gesture takeover)
+                // must repaint the committed width: the signal never changed,
+                // so the reactive style attr won't rewrite itself — and
+                // tachys skips DOM writes when the computed string is
+                // unchanged, so a later no-op reset can't recover either.
+                if drag.get_untracked().is_some()
+                    && let Some(el) = pane.get_untracked()
+                {
+                    let w = effective_width(spec, &col_widths.get_untracked());
+                    let _ = web_sys::HtmlElement::style(&el)
+                        .set_property(&format!("--colw-{col}"), &format!("{w}px"));
+                }
+                drag.set(None);
+            }
             on:dblclick=move |_| {
                 // Double-click a handle = reset that column to its default.
                 set_col_widths.update(|m| {

@@ -198,14 +198,23 @@ pub fn column_spec(id: &str) -> Option<&'static ColumnSpec> {
     COLUMNS.iter().find(|c| c.id == id)
 }
 
-/// Effective width of a column: the stored override clamped to the spec's
-/// minimum, or the default. Unknown override ids are simply ignored by the
-/// callers (they iterate [`COLUMNS`], never the map).
+/// Ceiling for stored width overrides, px. localStorage is user-editable:
+/// a hand-typed huge or infinite value would render an absurd (or invalid
+/// — `infpx`) row min-width. Far above any width a drag can want.
+const MAX_OVERRIDE_WIDTH: f64 = 2000.0;
+
+/// Effective width of a column: the stored override clamped to
+/// `[spec.min_width, MAX_OVERRIDE_WIDTH]`, or the default. Unknown override
+/// ids are simply ignored by the callers (they iterate [`COLUMNS`], never
+/// the map).
 pub fn effective_width(spec: &ColumnSpec, overrides: &HashMap<String, f64>) -> f64 {
     overrides
         .get(spec.id)
         .copied()
-        .map(|w| w.max(spec.min_width))
+        // `clamp` propagates NaN (unlike `max`), so screen non-finite
+        // values out first — a corrupt entry falls back to the default.
+        .filter(|w| w.is_finite())
+        .map(|w| w.clamp(spec.min_width, MAX_OVERRIDE_WIDTH))
         .unwrap_or(spec.default_width)
 }
 
@@ -291,6 +300,14 @@ mod tests {
         assert_eq!(effective_width(spec, &overrides), spec.min_width);
         overrides.insert(COL_ITEM.to_string(), 400.0);
         assert_eq!(effective_width(spec, &overrides), 400.0);
+        // localStorage is user-editable: huge / non-finite entries must not
+        // produce an absurd or invalid (`NaNpx`, `infpx`) width.
+        overrides.insert(COL_ITEM.to_string(), 1e308);
+        assert_eq!(effective_width(spec, &overrides), MAX_OVERRIDE_WIDTH);
+        overrides.insert(COL_ITEM.to_string(), f64::NAN);
+        assert_eq!(effective_width(spec, &overrides), spec.default_width);
+        overrides.insert(COL_ITEM.to_string(), f64::INFINITY);
+        assert_eq!(effective_width(spec, &overrides), spec.default_width);
     }
 
     #[test]
