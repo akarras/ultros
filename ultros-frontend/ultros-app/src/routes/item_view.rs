@@ -8,10 +8,10 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_panel::ListingsPanel,
-    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
-    toggle::Toggle, ui_text::*,
+    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, item_tooltip::ItemTooltip,
+    listings_panel::ListingsPanel, meta::*, realtime_status::RealtimeStatus,
+    recently_viewed::RecentItems, related_items::*, sale_history_table::*, section_nav::SectionNav,
+    skeleton::BoxSkeleton, stats_display::*, toggle::Toggle,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -1716,15 +1716,6 @@ pub fn ItemView() -> impl IntoView {
 
     let item = move || tracked_data().items.get(&ItemId(item_id()));
 
-    let item_description = move || {
-        tracked_data()
-            .items
-            .get(&ItemId(item_id()))
-            .map(|item| item.description.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
-
     let item_category = move || {
         let data = tracked_data();
         data.items.get(&ItemId(item_id())).and_then(|item| {
@@ -1767,7 +1758,9 @@ pub fn ItemView() -> impl IntoView {
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
-                            <ItemIcon item_id icon_size=IconSize::Large />
+                            <ItemTooltip item_id=item_id>
+                                <ItemIcon item_id icon_size=IconSize::Large />
+                            </ItemTooltip>
                             <div class="flex flex-col min-w-0">
                                 <h1 class="text-3xl sm:text-4xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
@@ -1833,12 +1826,6 @@ pub fn ItemView() -> impl IntoView {
                             </span>
                         </div>
                         <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
-                        <div
-                            class="lg:col-span-2 text-sm sm:text-base text-[color:var(--color-text-muted)] line-clamp-3"
-                            class:hidden=move || { item_description().is_empty() }
-                        >
-                            {move || view! { <UIText text=item_description().to_string() /> }}
-                        </div>
                     </div>
                 </div>
             </div>
