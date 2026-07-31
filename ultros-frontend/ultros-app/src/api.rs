@@ -165,6 +165,16 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) sample_size_30d: u32,
     #[serde(default)]
     pub(crate) launder_suspicion: f32,
+    // Buffer-derived stats. Present on every row, unlike the deep-scan
+    // fields above — which is why the card's credibility signals use these.
+    #[serde(default)]
+    pub(crate) velocity_per_day: Option<f32>,
+    #[serde(default)]
+    pub(crate) buffer_sale_count: u8,
+    #[serde(default)]
+    pub(crate) recent_price_low: i32,
+    #[serde(default)]
+    pub(crate) recent_price_high: i32,
 }
 
 /// Query parameters for [`get_best_deals`]. All optional — server applies
@@ -177,13 +187,19 @@ pub(crate) struct BestDealsParams {
     pub filter_sale: Option<&'static str>,
     pub limit: Option<u32>,
     pub show_suspicious: Option<bool>,
+    /// Reject rows selling slower than this many per day.
+    pub min_velocity: Option<f32>,
+    /// Reject rows with fewer than this many sales in the recent buffer.
+    pub min_buffer_sales: Option<u8>,
+    /// Reject rows above this ROI percentage.
+    pub max_roi: Option<f32>,
 }
 
 pub(crate) async fn get_best_deals(
     world_name: &str,
     params: BestDealsParams,
 ) -> AppResult<Vec<ResaleStatsDto>> {
-    let mut qs: Vec<String> = Vec::with_capacity(4);
+    let mut qs: Vec<String> = Vec::with_capacity(7);
     if let Some(p) = params.min_profit {
         qs.push(format!("min_profit={p}"));
     }
@@ -195,6 +211,15 @@ pub(crate) async fn get_best_deals(
     }
     if let Some(b) = params.show_suspicious {
         qs.push(format!("show_suspicious={}", if b { 1 } else { 0 }));
+    }
+    if let Some(v) = params.min_velocity {
+        qs.push(format!("min_velocity={v}"));
+    }
+    if let Some(n) = params.min_buffer_sales {
+        qs.push(format!("min_buffer_sales={n}"));
+    }
+    if let Some(r) = params.max_roi {
+        qs.push(format!("max_roi={r}"));
     }
     let query = if qs.is_empty() {
         String::new()

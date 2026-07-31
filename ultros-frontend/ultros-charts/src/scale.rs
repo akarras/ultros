@@ -12,6 +12,20 @@ pub fn short_number(value: i32) -> String {
     }
 }
 
+/// Format a percent-change axis value: signed, one decimal only when it
+/// carries information (`+12.3%`, `-5%`, `0%`).
+pub fn format_percent(value: f64) -> String {
+    if value == 0.0 {
+        return "0%".to_string();
+    }
+    let rounded = (value * 10.0).round() / 10.0;
+    if rounded == rounded.trunc() {
+        format!("{rounded:+.0}%")
+    } else {
+        format!("{rounded:+.1}%")
+    }
+}
+
 /// Maps a numeric domain onto a pixel range. The range may be inverted
 /// (`range.0 > range.1`) — SVG y grows downward, so price scales pass
 /// `(bottom, top)`.
@@ -168,6 +182,15 @@ mod tests {
         chrono::DateTime::from_timestamp(secs, 0)
             .unwrap()
             .naive_utc()
+    }
+
+    #[test]
+    fn percent_labels_format_with_sign_and_symbol() {
+        assert_eq!(format_percent(0.0), "0%");
+        assert_eq!(format_percent(12.34), "+12.3%");
+        assert_eq!(format_percent(-5.0), "-5%");
+        assert_eq!(format_percent(100.0), "+100%");
+        assert_eq!(format_percent(-0.25), "-0.3%");
     }
 
     #[test]

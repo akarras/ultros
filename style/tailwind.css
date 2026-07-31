@@ -818,31 +818,49 @@
     cursor: pointer;
 }
 
-a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ) {
+/* `.side-nav-item`, `.menu-item` and `.mobile-bar-slot` opt out like
+   `.nav-link` does: this selector's stack of `:not()` classes outweighs their
+   own hover and active-page styles, which need to win. Each is used on both
+   `<a>` and `<button>` elements, so without the opt-out the two variants
+   render differently inside the same menu or bar.
+
+   `.card-link` opts out: on a card-sized anchor the blanket hover:underline
+   underlines every text node inside it at once (label, price, badge, …),
+   which reads as broken rather than interactive. Those links style their own
+   hover — a background tint plus an underline on the title only. */
+a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link) {
     @apply hover:underline rounded-md;
     color: var(--brand-fg);
     background-color: transparent;
 }
-a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):hover {
+a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):hover {
     color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
     background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
 }
 
 /* Light-mode link tuning for higher contrast */
 [data-theme="light"]
-    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ) {
+    a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link) {
     color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
 }
 [data-theme="light"]
-    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):hover {
+    a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
+        .mobile-bar-slot
+    ):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):hover {
     color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }
@@ -1808,8 +1826,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .side-nav-item:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
 }
+/* Current page. The left accent bar carries the highlight when the sidebar is
+   collapsed to icons and the label is hidden. */
 .side-nav-item[aria-current="page"] {
     background-color: color-mix(in srgb, var(--brand-ring) 24%, transparent);
+    color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 0 var(--brand-ring);
+}
+.side-nav-item[aria-current="page"]:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 32%, transparent);
 }
 .side-nav-item > svg {
     width: 1.1em;
@@ -1860,23 +1886,13 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 /* ----- Drop-up menu primitives (account menu + language accordion) ----- */
-/* `!important` here (and on `.mobile-bar-slot` / `.side-nav-item-hero`
-   below) beats the global `a:not(.nav-link):not(.btn)...` link-styling
-   rule (specificity 0,5,1) that would otherwise force its purple link
-   color / underline onto the `<a>` variants of these classes (Profile,
-   Settings, Logout are anchors; Language and Theme are buttons and were
-   never affected) while leaving the `<button>` variants alone — two
-   different-looking rows in the same drop-up. This file's rules live
-   outside any `@layer`, so ordinary Tailwind utilities never need this,
-   but `a:not(...)` is itself a plain unlayered rule and outranks
-   anything without `!important` regardless of source order. */
 .menu-item {
     display: flex;
     align-items: center;
     width: 100%;
     padding: 0.4rem 0.55rem;
     border-radius: 0.375rem;
-    color: var(--color-text) !important;
+    color: var(--color-text);
     background: transparent;
     border: none;
     font-size: 0.85rem;
@@ -1884,8 +1900,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     text-decoration: none;
 }
 .menu-item:hover {
-    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent) !important;
-    text-decoration: none !important;
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    text-decoration: none;
 }
 .menu-item-selected {
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
@@ -2026,18 +2042,19 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         gap: 0.15rem;
         padding: 0.35rem 0;
         border-radius: 0.5rem;
-        /* See the .menu-item comment above — Items is an `<a>` while
-           Menu/Search are `<button>`s, so without `!important` the global
-           `a:not(...)` rule recolors only Items and this active-state
-           highlight never wins either. */
-        color: var(--color-text-muted) !important;
-        background: transparent !important;
+        /* Items is an `<a>` while Menu/Search are `<button>`s.
+           `.mobile-bar-slot` is in the global `a:not(...)` opt-out list near
+           the top of this file, so all three render identically and the
+           active-page highlight below survives — Items is the only slot that
+           can ever be the current page. */
+        color: var(--color-text-muted);
+        background: transparent;
         border: none;
         text-decoration: none;
     }
     .mobile-bar-slot[aria-current="page"] {
-        color: var(--color-text) !important;
-        background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent) !important;
+        color: var(--color-text);
+        background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
     }
     .mobile-bar-label {
         font-size: 0.6rem;
@@ -2380,11 +2397,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 .side-nav-item-hero {
-    /* Search (a <button>) and Item Explorer (an <a>) share this class and
-       are meant to render identically; without `!important` the global
-       `a:not(...)` rule's `background-color: transparent` wins on the
-       `<a>` only. See the .menu-item comment above for why. */
-    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent) !important;
+    /* No `!important`: `.side-nav-item` already opts out of the global
+       `a:not(...)` rule, and an important background here would beat
+       `.side-nav-item[aria-current="page"]`, so Item Explorer would show the
+       pairing tint instead of the active-page highlight when you are on
+       /items. */
+    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent);
     border: 1px solid var(--color-outline);
     width: 100%;
 }

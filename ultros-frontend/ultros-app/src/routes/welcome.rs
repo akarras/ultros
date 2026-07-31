@@ -5,6 +5,7 @@ use leptos_router::components::A;
 use crate::components::icon::Icon;
 use crate::components::language_picker::LanguagePicker;
 use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::components::theme_picker::PalettePicker;
 use crate::components::world_picker::{WorldOnlyPicker, WorldPicker};
 use crate::global_state::home_world::{
     get_price_zone, result_to_selector_read, selector_to_setter_signal, use_home_world,
@@ -132,6 +133,19 @@ pub fn Welcome() -> impl IntoView {
                     <div class="max-w-md">
                         <LanguagePicker />
                     </div>
+                </div>
+
+                // Step 4: color palette
+                <div class="panel p-6 rounded-xl space-y-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, welcome_step_palette_label)}
+                        </h2>
+                        <p class="text-sm text-[color:var(--color-text-muted)] mt-1">
+                            {t!(i18n, welcome_step_palette_help)}
+                        </p>
+                    </div>
+                    <PalettePicker show_label=false />
                 </div>
 
                 // CTA
