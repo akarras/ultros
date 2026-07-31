@@ -4,6 +4,7 @@ use xiv_gen::Item;
 use crate::global_state::home_world::get_price_zone;
 
 use super::item_icon::*;
+use super::item_tooltip::ItemTooltip;
 use leptos_router::components::A;
 
 #[component]
@@ -24,7 +25,10 @@ fn ItemDetails(item: &'static Item) -> impl IntoView {
 pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
     let (price_zone, _) = get_price_zone();
     view! {
-        <div class="flex flex-row items-center gap-2 min-w-0">
+        <ItemTooltip
+            item_id=item.key_id.0
+            class="flex flex-row items-center gap-2 min-w-0"
+        >
             // If the item isn't marketable then do not display a market link
             {if item.item_search_category == 0 {
                 Either::Left(view! { <ItemDetails item /> })
@@ -51,7 +55,7 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
                 )
             }}
 
-        </div>
+        </ItemTooltip>
     }
     .into_any()
 }
