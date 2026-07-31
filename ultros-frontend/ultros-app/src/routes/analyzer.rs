@@ -726,6 +726,184 @@ fn ColResizeHandle(
     .into_any()
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct HeaderMenuState {
+    col: &'static str,
+    /// Viewport (client) coordinates of the triggering event; the menu is
+    /// `position: fixed` so these are used directly.
+    x: f64,
+    y: f64,
+}
+
+/// Which SortMode a column header sorts by, if any. Only these three exist;
+/// adding sort modes for other columns is out of scope (spec).
+fn sort_mode_for_col(col: &str) -> Option<SortMode> {
+    match col {
+        c if c == COL_PROFIT => Some(SortMode::Profit),
+        c if c == COL_PROFIT_PER_DAY => Some(SortMode::ProfitPerDay),
+        c if c == COL_ROI => Some(SortMode::Roi),
+        _ => None,
+    }
+}
+
+/// Right-click / long-press menu for a header cell. `position: fixed` at
+/// the event's viewport coordinates — the pane scroller would clip an
+/// absolutely-positioned child.
+#[component]
+fn HeaderContextMenu(
+    menu: RwSignal<Option<HeaderMenuState>>,
+    visible_cols: Memo<std::collections::HashSet<&'static str>>,
+    set_cols_param: SignalSetter<Option<String>>,
+    col_widths: Signal<HashMap<String, f64>>,
+    set_col_widths: WriteSignal<HashMap<String, f64>>,
+    set_sort_mode: SignalSetter<Option<SortMode>>,
+    set_sort_dir: SignalSetter<Option<SortDir>>,
+    show_columns_picker: RwSignal<bool>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    let node = NodeRef::<leptos::html::Div>::new();
+    // Client-only listeners, same idiom as tooltip.rs / grouped_nav_popover.
+    // `on_click_outside` closes on the bubbling click *after* the opening
+    // gesture: the opening right-click fires contextmenu (no click event),
+    // and a long-press's synthetic click is swallowed by HeaderCell.
+    #[cfg(feature = "hydrate")]
+    {
+        let _ = leptos_use::on_click_outside(node, move |_| menu.set(None));
+        // Escape closes; capture-phase scroll closes (pane scrolling happens
+        // on an element, so a bubbling listener on window would never see it).
+        let _ = leptos_use::use_event_listener(
+            leptos_use::use_window(),
+            leptos::ev::keydown,
+            move |ev: web_sys::KeyboardEvent| {
+                if ev.key() == "Escape" && menu.get_untracked().is_some() {
+                    menu.set(None);
+                }
+            },
+        );
+        let _ = leptos_use::use_event_listener_with_options(
+            leptos_use::use_window(),
+            leptos::ev::scroll,
+            move |_| {
+                if menu.get_untracked().is_some() {
+                    menu.set(None);
+                }
+            },
+            leptos_use::UseEventListenerOptions::default().capture(true),
+        );
+    }
+    (move || {
+        menu.get().map(|state| {
+            let col = state.col;
+            let optional = column_spec(col).map(|s| s.optional).unwrap_or(false);
+            let has_width_override = col_widths.with(|m| m.contains_key(col));
+            view! {
+                <div
+                    node_ref=node
+                    role="menu"
+                    class="analyzer-context-menu"
+                    style=format!(
+                        "left:min({}px, calc(100vw - 15rem));top:{}px;",
+                        state.x,
+                        state.y,
+                    )
+                >
+                    {sort_mode_for_col(col)
+                        .map(|mode| {
+                            view! {
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    class="analyzer-context-item"
+                                    on:click=move |_| {
+                                        set_sort_mode.set(Some(mode));
+                                        // None keeps the URL clean — Desc is the default.
+                                        set_sort_dir.set(None);
+                                        menu.set(None);
+                                    }
+                                >
+                                    {t!(i18n, analyzer_menu_sort_desc)}
+                                </button>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    class="analyzer-context-item"
+                                    on:click=move |_| {
+                                        set_sort_mode.set(Some(mode));
+                                        set_sort_dir.set(Some(SortDir::Asc));
+                                        menu.set(None);
+                                    }
+                                >
+                                    {t!(i18n, analyzer_menu_sort_asc)}
+                                </button>
+                            }
+                        })}
+                    {optional
+                        .then(|| {
+                            view! {
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    class="analyzer-context-item"
+                                    on:click=move |_| {
+                                        let mut set = visible_cols.get_untracked();
+                                        set.remove(col);
+                                        set_cols_param.set(Some(serialize_visible_cols(&set)));
+                                        menu.set(None);
+                                    }
+                                >
+                                    {t!(i18n, analyzer_menu_hide_column)}
+                                </button>
+                            }
+                        })}
+                    {has_width_override
+                        .then(|| {
+                            view! {
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    class="analyzer-context-item"
+                                    on:click=move |_| {
+                                        set_col_widths
+                                            .update(|m| {
+                                                m.remove(col);
+                                            });
+                                        menu.set(None);
+                                    }
+                                >
+                                    {t!(i18n, analyzer_menu_reset_width)}
+                                </button>
+                            }
+                        })}
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="analyzer-context-item"
+                        on:click=move |_| {
+                            set_col_widths.update(|m| m.clear());
+                            menu.set(None);
+                        }
+                    >
+                        {t!(i18n, analyzer_menu_reset_all_widths)}
+                    </button>
+                    <div class="my-1 border-t border-[color:var(--color-outline)]"></div>
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="analyzer-context-item"
+                        on:click=move |_| {
+                            show_columns_picker.set(true);
+                            menu.set(None);
+                        }
+                    >
+                        {t!(i18n, analyzer_menu_manage_columns)}
+                    </button>
+                </div>
+            }
+        })
+    })
+    .into_any()
+}
+
 /// One header cell, sized by its column's `--colw-*` variable. Tasks
 /// layered on top: the resize handle and the context-menu hookup.
 #[component]
@@ -738,14 +916,65 @@ fn HeaderCell(
     pane: NodeRef<leptos::html::Div>,
     col_widths: Signal<HashMap<String, f64>>,
     set_col_widths: WriteSignal<HashMap<String, f64>>,
+    menu: RwSignal<Option<HeaderMenuState>>,
     children: Children,
 ) -> impl IntoView {
     let resizable = column_spec(col).map(|s| s.resizable).unwrap_or(false);
+    // Touch long-press → same menu as right-click (iOS Safari fires no
+    // contextmenu on long-press). Canceled by lift-off or movement (a
+    // drag/scroll is not a long-press). The resize handle stops propagation
+    // on its own pointerdown, so drags there never start the timer.
+    let longpress = StoredValue::new_local(None::<leptos::leptos_dom::helpers::TimeoutHandle>);
+    // A fired long-press is often followed by a synthetic click on the cell;
+    // left to bubble, `on_click_outside` would close the menu it just opened.
+    let longpress_fired = StoredValue::new_local(false);
+    let cancel_longpress = move || {
+        longpress.update_value(|h| {
+            if let Some(h) = h.take() {
+                h.clear();
+            }
+        });
+    };
     view! {
         <div
             role="columnheader"
             class=format!("relative shrink-0 px-3 py-2 flex items-center gap-2 min-w-0 {class}")
             style=format!("width:var(--colw-{col})")
+            on:contextmenu=move |ev: web_sys::MouseEvent| {
+                ev.prevent_default();
+                menu.set(
+                    Some(HeaderMenuState {
+                        col,
+                        x: ev.client_x(),
+                        y: ev.client_y(),
+                    }),
+                );
+            }
+            on:pointerdown=move |ev: web_sys::PointerEvent| {
+                longpress_fired.set_value(false);
+                if ev.pointer_type() == "touch" {
+                    let (x, y) = (ev.client_x(), ev.client_y());
+                    let handle = leptos::leptos_dom::helpers::set_timeout_with_handle(
+                        move || {
+                            longpress_fired.set_value(true);
+                            menu.set(Some(HeaderMenuState { col, x, y }));
+                        },
+                        std::time::Duration::from_millis(500),
+                    )
+                    .ok();
+                    longpress.set_value(handle);
+                }
+            }
+            on:pointerup=move |_| cancel_longpress()
+            on:pointercancel=move |_| cancel_longpress()
+            on:pointermove=move |_| cancel_longpress()
+            on:click=move |ev: web_sys::MouseEvent| {
+                if longpress_fired.get_value() {
+                    longpress_fired.set_value(false);
+                    ev.prevent_default();
+                    ev.stop_propagation();
+                }
+            }
         >
             {children()}
             {resizable.then(|| view! {
@@ -801,8 +1030,8 @@ fn AnalyzerTable(
     );
 
     let items = &tracked_data().items;
-    let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+    let (sort_mode, set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
@@ -839,6 +1068,7 @@ fn AnalyzerTable(
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
     let show_filter_menu = RwSignal::new(false);
+    let header_menu = RwSignal::new(None::<HeaderMenuState>);
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1848,13 +2078,13 @@ fn AnalyzerTable(
                         row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
                             <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
-                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_HQ class="!px-2 justify-center">
+                                <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_HQ class="!px-2 justify-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </HeaderCell>
-                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_ITEM>
+                                <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_ITEM>
                                     {t!(i18n, analyzer_col_item)}
                                 </HeaderCell>
-                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_PROFIT class="justify-end">
+                                <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_PROFIT class="justify-end">
                                     <SortHeader
                                         mode=SortMode::Profit
                                         label=t_string!(i18n, analyzer_col_profit).to_string()
@@ -1863,7 +2093,7 @@ fn AnalyzerTable(
                                     />
                                 </HeaderCell>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_PROFIT_PER_DAY class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_PROFIT_PER_DAY class="justify-end">
                                         <SortHeader
                                             mode=SortMode::ProfitPerDay
                                             label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
@@ -1873,22 +2103,22 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_VELOCITY class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_VELOCITY class="justify-end">
                                         {t!(i18n, analyzer_col_velocity)}
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_DRIFT class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_DRIFT class="justify-end">
                                         {t!(i18n, analyzer_col_drift)}
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_CONFIDENCE class="justify-center">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_CONFIDENCE class="justify-center">
                                         {t!(i18n, analyzer_col_confidence)}
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_ROI class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_ROI class="justify-end">
                                         <SortHeader
                                             mode=SortMode::Roi
                                             label=t_string!(i18n, analyzer_col_roi).to_string()
@@ -1897,11 +2127,11 @@ fn AnalyzerTable(
                                         />
                                     </HeaderCell>
                                 })}
-                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_BUY_PRICE class="justify-end">
+                                <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_BUY_PRICE class="justify-end">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </HeaderCell>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_WORLD>
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_WORLD>
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -1923,7 +2153,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_DATACENTER>
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_DATACENTER>
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -1945,7 +2175,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_TREND class="flex-col justify-center text-center leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_TREND class="flex-col justify-center text-center leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1953,7 +2183,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_SALES_PER_DAY class="flex-col justify-center text-center leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_SALES_PER_DAY class="flex-col justify-center text-center leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1961,7 +2191,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_VOLUME_30D class="flex-col !items-end text-right leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_VOLUME_30D class="flex-col !items-end text-right leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1969,7 +2199,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_LAST_SOLD class="flex-col !items-start leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_LAST_SOLD class="flex-col !items-start leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2267,6 +2497,19 @@ fn AnalyzerTable(
                         }
                     />
             </div>
+
+            // Mounted outside the pane: the menu is position:fixed, and the
+            // pane's scroller would clip it.
+            <HeaderContextMenu
+                menu=header_menu
+                visible_cols
+                set_cols_param
+                col_widths
+                set_col_widths
+                set_sort_mode
+                set_sort_dir
+                show_columns_picker
+            />
         </div>
     }.into_any()
 }

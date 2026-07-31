@@ -2083,6 +2083,35 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     background: var(--brand-ring);
 }
 
+/* Header context menu: fixed-position, viewport-anchored (the pane scroller
+   would clip an absolutely-positioned child). */
+.analyzer-context-menu {
+    position: fixed;
+    z-index: 50;
+    min-width: 13rem;
+    padding: 0.375rem;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.5rem;
+    background-color: var(--color-background-panel);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.analyzer-context-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-align: left;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.85rem;
+    border-radius: 0.375rem;
+    color: var(--color-text);
+    cursor: pointer;
+}
+.analyzer-context-item:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the
    standard .btn-secondary padding would overflow them. */
 .sticky-bar-button {
