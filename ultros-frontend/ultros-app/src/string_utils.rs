@@ -1,6 +1,6 @@
-/// Zero-allocation case-insensitive string operations.
-/// These functions are designed to avoid allocating a new `String` (e.g. via `to_lowercase()`)
-/// in hot paths like filtering lists.
+//! Zero-allocation case-insensitive string operations.
+//! These functions are designed to avoid allocating a new `String` (e.g. via `to_lowercase()`)
+//! in hot paths like filtering lists.
 
 /// Checks if `haystack` contains `needle_lower`, ignoring ASCII case.
 /// `needle_lower` must be pre-converted to lowercase.
