@@ -1,7 +1,10 @@
 # Flip Finder spreadsheet redesign — design
 
 Date: 2026-07-30
-Status: approved by user (chat), pending spec review
+Status: implemented (all tasks of the 2026-07-30 plan landed; deviations:
+`ScrollSource::Window` kept with an allow instead of other routes using it —
+no route constructs it anymore; the standalone `next-sale` seed was folded
+into the Realistic defaults rather than kept alongside)
 
 ## Problem
 
