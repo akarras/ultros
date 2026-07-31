@@ -858,7 +858,7 @@
     "analyzer_n_sales": "{{count}}건 판매",
     "aria_remove_filter": "필터 제거",
     "analyzer_category_fallback": "카테고리 {{id}}",
-    "analyzer_budget_lte": "예산 ≤ ",
+    "analyzer_budget_lte": "예산 ≤",
     "aria_clear_all_filters": "모든 필터 지우기",
     "recipe_analyzer_sales_per_day": "{{sales}} / 일",
     "placeholder_eg_1_0": "예: 1.0",
@@ -1256,7 +1256,6 @@
     "analyzer_add_filter": "필터",
     "analyzer_rows_count": "%count%개",
     "analyzer_rows_lacking_data": "· %count%개 행은 필터용 데이터 부족",
-    "analyzer_budget_lte": "예산 ≤",
     "analyzer_pre_tax": "세전",
     "analyzer_columns_button": "열",
     "analyzer_saved_views": "뷰",
@@ -1606,5 +1605,15 @@
     "item_view_nav_related": "관련",
     "item_view_listings_count": "{{count}}개 판매 중",
     "item_view_quality_filter_aria": "품질별로 판매 목록 필터",
-    "item_view_quality_all": "전체"
+    "item_view_quality_all": "전체",
+    "retainers_empty_title": "친구상인 추적",
+    "retainers_empty_body": "Ultros가 출품한 물품들을 감시하여 가격 경쟁에서 밀리는 순간 브라우저 또는 Discord로 즉시 알려줍니다.",
+    "retainers_empty_secondary_label": "봇 가이드",
+    "lists_empty_title": "공유 쇼핑 목록",
+    "lists_empty_body": "목록을 작성하고, 모든 아이템에 대해 가장 저렴한 서버를 확인하고, 자유부대원들과 함께 쇼핑하세요.",
+    "alerts_empty_title": "가격 알림",
+    "alerts_empty_body": "아이템 가격이 설정한 가격 범위에 도달하면 Discord로 알림을 받습니다.",
+    "groups_empty_title": "사용자 그룹",
+    "groups_empty_body": "공유 사용자 그룹을 만들어 자유부대원이나 친구들과 쇼핑 목록을 쉽게 공유하세요.",
+    "sign_in_discord": "Discord로 로그인"
 }

@@ -5,6 +5,7 @@ use crate::api::{
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+use crate::components::tool_help::ActionableEmptyState;
 use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
 use icondata as i;
@@ -58,93 +59,113 @@ pub fn Groups() -> impl IntoView {
         <MetaRobotsNoIndex />
 
         <div class="flex flex-col gap-4">
-            <div class="flex items-center gap-2 md:gap-3">
-                <A exact=true attr:class="nav-link" href="/groups">
-                    <Icon height="1.25em" width="1.25em" icon=i::BiGroupSolid />
-                    <span>{t!(i18n, groups)}</span>
-                </A>
-            </div>
-
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, groups_page_heading)}</h1>
-                <button class="btn-primary" on:click=move |_| set_creating(!creating())>
-                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                    {move || if creating() { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_group)) }}
-                </button>
-            </div>
-
-            <Show when=creating>
-                <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
-                    <h3 class="text-lg font-bold mb-4">{t!(i18n, groups_create_group)}</h3>
-                    <div class="flex flex-col gap-4">
-                        <div class="flex flex-col gap-1">
-                            <label for="new-group-name" class="label font-semibold">{t!(i18n, list_name)}</label>
-                            <input
-                                class="input w-full"
-                                id="new-group-name"
-                                placeholder=t_string!(i18n, groups_new_group_placeholder)
-                                prop:value=new_group_name
-                                on:input=move |input| set_new_group_name(event_target_value(&input))
-                            />
-                        </div>
-                        <div class="flex justify-end">
-                            <button
-                                prop:disabled=move || new_group_name().is_empty()
-                                class="btn-primary"
-                                on:click=move |_| {
-                                    create_group_action.dispatch(CreateGroup { name: new_group_name() });
-                                    set_new_group_name(String::new());
-                                    set_creating(false);
-                                }
-                            >
-                                <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </Show>
-
             <Suspense fallback=move || view! { <Loading /> }>
-                {move || {
-                    groups_resource.get().map(|res| {
-                        match res {
-                            Ok(groups) => {
-                                if groups.is_empty() {
-                                    view! {
-                                        <div class="flex flex-col items-center justify-center py-12 text-gray-400">
-                                            <Icon icon=i::BiGroupSolid width="4em" height="4em" attr:class="mb-4 opacity-50"/>
-                                            <h3 class="text-xl font-semibold">{t!(i18n, groups_no_groups_found)}</h3>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                            <For
-                                                each=move || groups.clone()
-                                                key=move |group| group.id
-                                                children=move |group| {
-                                                    view! {
-                                                        <GroupCard
-                                                            group=group
-                                                            delete_group_action=delete_group_action
-                                                            user_id=Signal::derive(move || user_resource.get().flatten().map(|u| u.id))
-                                                        />
-                                                    }
-                                                }
+                {move || match user_resource.get() {
+                    None => view! { <Loading /> }.into_any(),
+                    Some(None) => {
+                        view! {
+                            <ActionableEmptyState
+                                title=t_string!(i18n, groups_empty_title).to_string()
+                                body=t_string!(i18n, groups_empty_body).to_string()
+                                action_href="/login?next=/groups"
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
+                                action_external=true
+                            />
+                        }.into_any()
+                    }
+                    Some(Some(_)) => {
+                        view! {
+                            <div class="flex items-center gap-2 md:gap-3">
+                                <A exact=true attr:class="nav-link" href="/groups">
+                                    <Icon height="1.25em" width="1.25em" icon=i::BiGroupSolid />
+                                    <span>{t!(i18n, groups)}</span>
+                                </A>
+                            </div>
+
+                            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, groups_page_heading)}</h1>
+                                <button class="btn-primary" on:click=move |_| set_creating(!creating())>
+                                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
+                                    {move || if creating() { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_group)) }}
+                                </button>
+                            </div>
+
+                            <Show when=creating>
+                                <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
+                                    <h3 class="text-lg font-bold mb-4">{t!(i18n, groups_create_group)}</h3>
+                                    <div class="flex flex-col gap-4">
+                                        <div class="flex flex-col gap-1">
+                                            <label for="new-group-name" class="label font-semibold">{t!(i18n, list_name)}</label>
+                                            <input
+                                                class="input w-full"
+                                                id="new-group-name"
+                                                placeholder=t_string!(i18n, groups_new_group_placeholder)
+                                                prop:value=new_group_name
+                                                on:input=move |input| set_new_group_name(event_target_value(&input))
                                             />
                                         </div>
-                                    }.into_any()
-                                }
-                            }
-                            Err(e) => {
-                                view! {
-                                    <div class="alert alert-error">
-                                        {move || t!(i18n, groups_error_loading, error = e.to_string())}
+                                        <div class="flex justify-end">
+                                            <button
+                                                prop:disabled=move || new_group_name().is_empty()
+                                                class="btn-primary"
+                                                on:click=move |_| {
+                                                    create_group_action.dispatch(CreateGroup { name: new_group_name() });
+                                                    set_new_group_name(String::new());
+                                                    set_creating(false);
+                                                }
+                                            >
+                                                <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
+                                            </button>
+                                        </div>
                                     </div>
-                                }.into_any()
-                            }
-                        }
-                    })
+                                </div>
+                            </Show>
+
+                            <Suspense fallback=move || view! { <Loading /> }>
+                                {move || {
+                                    groups_resource.get().map(|res| {
+                                        match res {
+                                            Ok(groups) => {
+                                                if groups.is_empty() {
+                                                    view! {
+                                                        <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                                                            <Icon icon=i::BiGroupSolid width="4em" height="4em" attr:class="mb-4 opacity-50"/>
+                                                            <h3 class="text-xl font-semibold">{t!(i18n, groups_no_groups_found)}</h3>
+                                                        </div>
+                                                    }.into_any()
+                                                } else {
+                                                    view! {
+                                                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                            <For
+                                                                each=move || groups.clone()
+                                                                key=move |group| group.id
+                                                                children=move |group| {
+                                                                    view! {
+                                                                        <GroupCard
+                                                                            group=group
+                                                                            delete_group_action=delete_group_action
+                                                                            user_id=Signal::derive(move || user_resource.get().flatten().map(|u| u.id))
+                                                                        />
+                                                                    }
+                                                                }
+                                                            />
+                                                        </div>
+                                                    }.into_any()
+                                                }
+                                            }
+                                            Err(e) => {
+                                                view! {
+                                                    <div class="alert alert-error">
+                                                        {move || t!(i18n, groups_error_loading, error = e.to_string())}
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                        }
+                                    })
+                                }}
+                            </Suspense>
+                        }.into_any()
+                    }
                 }}
             </Suspense>
         </div>

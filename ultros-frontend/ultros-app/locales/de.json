@@ -858,7 +858,7 @@
     "analyzer_n_sales": "{{count}} Verkäufe",
     "aria_remove_filter": "Filter entfernen",
     "analyzer_category_fallback": "Kategorie {{id}}",
-    "analyzer_budget_lte": "Budget ≤ ",
+    "analyzer_budget_lte": "Budget ≤",
     "aria_clear_all_filters": "Alle Filter zurücksetzen",
     "recipe_analyzer_sales_per_day": "{{sales}} / Tag",
     "placeholder_eg_1_0": "z.B. 1.0",
@@ -1256,7 +1256,6 @@
     "analyzer_add_filter": "Filter",
     "analyzer_rows_count": "%count% Zeilen",
     "analyzer_rows_lacking_data": "· %count% Zeilen ohne Daten für diese Filter",
-    "analyzer_budget_lte": "Budget ≤",
     "analyzer_pre_tax": "Ohne Steuer",
     "analyzer_columns_button": "Spalten",
     "analyzer_saved_views": "Ansichten",
@@ -1606,5 +1605,15 @@
     "item_view_nav_related": "Verwandte",
     "item_view_listings_count": "{{count}} Angebote",
     "item_view_quality_filter_aria": "Angebote nach Qualität filtern",
-    "item_view_quality_all": "Alle"
+    "item_view_quality_all": "Alle",
+    "retainers_empty_title": "Verfolge deine Gehilfen",
+    "retainers_empty_body": "Ultros überwacht deine Angebote und informiert dich, sobald du unterboten wirst, im Browser oder direkt auf Discord.",
+    "retainers_empty_secondary_label": "Bot-Leitfaden",
+    "lists_empty_title": "Gemeinsame Einkaufslisten",
+    "lists_empty_body": "Erstelle eine Liste, finde die günstigste Welt für jedes Item und kaufe gemeinsam mit deiner Freien Gesellschaft ein.",
+    "alerts_empty_title": "Preiswecker",
+    "alerts_empty_body": "Lass dich auf Discord benachrichtigen, wenn ein Item deinen Wunschpreis erreicht.",
+    "groups_empty_title": "Benutzergruppen",
+    "groups_empty_body": "Erstelle gemeinsame Benutzergruppen, um Einkaufslisten ganz einfach mit deiner Freien Gesellschaft oder deinen Freunden zu teilen.",
+    "sign_in_discord": "Mit Discord anmelden"
 }

@@ -858,7 +858,7 @@
     "analyzer_n_sales": "{{count}} 件の取引",
     "aria_remove_filter": "フィルター削除",
     "analyzer_category_fallback": "カテゴリ {{id}}",
-    "analyzer_budget_lte": "予算 ≤ ",
+    "analyzer_budget_lte": "予算 ≤",
     "aria_clear_all_filters": "すべてのフィルターをクリア",
     "recipe_analyzer_sales_per_day": "{{sales}} 件／日",
     "placeholder_eg_1_0": "例: 1.0",
@@ -1256,7 +1256,6 @@
     "analyzer_add_filter": "フィルター",
     "analyzer_rows_count": "%count%件",
     "analyzer_rows_lacking_data": "・%count%件はフィルター用データ不足",
-    "analyzer_budget_lte": "予算 ≤",
     "analyzer_pre_tax": "税抜",
     "analyzer_columns_button": "列",
     "analyzer_saved_views": "ビュー",
@@ -1606,5 +1605,15 @@
     "item_view_nav_related": "関連",
     "item_view_listings_count": "出品{{count}}件",
     "item_view_quality_filter_aria": "品質で出品を絞り込む",
-    "item_view_quality_all": "すべて"
+    "item_view_quality_all": "すべて",
+    "retainers_empty_title": "リテイナーを追跡する",
+    "retainers_empty_body": "Ultrosがあなたの出品を監視し、アンダーカット（最安値更新）された瞬間にブラウザやDiscordに直接通知します。",
+    "retainers_empty_secondary_label": "ボットガイド",
+    "lists_empty_title": "共有ショッピングリスト",
+    "lists_empty_body": "リストを作成し、すべてのアイテムの最安値のワールドを確認して、FCのメンバーと一緒に買い物をしましょう。",
+    "alerts_empty_title": "価格アラート",
+    "alerts_empty_body": "アイテムが設定した価格を下回った（または上回った）時に、Discordでピン留め通知を受け取ります。",
+    "groups_empty_title": "ユーザーグループ",
+    "groups_empty_body": "共有ユーザーグループを作成して、FCの仲間やフレンドと簡単にショッピングリストを共有しましょう。",
+    "sign_in_discord": "Discordでサインイン"
 }

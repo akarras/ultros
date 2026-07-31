@@ -858,7 +858,7 @@
     "analyzer_n_sales": "{{count}} ventes",
     "aria_remove_filter": "Retirer le filtre",
     "analyzer_category_fallback": "Catégorie {{id}}",
-    "analyzer_budget_lte": "Budget ≤ ",
+    "analyzer_budget_lte": "Budget ≤",
     "aria_clear_all_filters": "Effacer tous les filtres",
     "recipe_analyzer_sales_per_day": "{{sales}} / jour",
     "placeholder_eg_1_0": "par ex. 1.0",
@@ -1256,7 +1256,6 @@
     "analyzer_add_filter": "Filtre",
     "analyzer_rows_count": "%count% lignes",
     "analyzer_rows_lacking_data": "· %count% lignes sans données pour ces filtres",
-    "analyzer_budget_lte": "Budget ≤",
     "analyzer_pre_tax": "Hors taxe",
     "analyzer_columns_button": "Colonnes",
     "analyzer_saved_views": "Vues",
@@ -1606,5 +1605,15 @@
     "item_view_nav_related": "Objets liés",
     "item_view_listings_count": "{{count}} annonces",
     "item_view_quality_filter_aria": "Filtrer les annonces par qualité",
-    "item_view_quality_all": "Toutes"
+    "item_view_quality_all": "Toutes",
+    "retainers_empty_title": "Suivez vos servants",
+    "retainers_empty_body": "Ultros surveille vos ventes et vous avertit dès que vous êtes dépassé, dans le navigateur ou directement sur Discord.",
+    "retainers_empty_secondary_label": "Guide du bot",
+    "lists_empty_title": "Listes de courses partagées",
+    "lists_empty_body": "Créez une liste, découvrez le monde le moins cher pour chaque objet et faites vos achats avec votre CL.",
+    "alerts_empty_title": "Alertes de prix",
+    "alerts_empty_body": "Soyez mentionné sur Discord lorsqu'un objet franchit le prix que vous avez fixé.",
+    "groups_empty_title": "Groupes d'utilisateurs",
+    "groups_empty_body": "Créez des groupes d'utilisateurs partagés pour partager facilement vos listes de courses avec votre CL ou vos amis.",
+    "sign_in_discord": "Se connecter avec Discord"
 }
