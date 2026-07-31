@@ -672,6 +672,12 @@ fn ColResizeHandle(
         <div
             class="analyzer-col-resize"
             on:pointerdown=move |ev: web_sys::PointerEvent| {
+                // Only a primary-button (or first-touch) press arms a resize —
+                // a right-button drag must not resize while contextmenu
+                // bubbles to the cell and opens the menu at the same time.
+                if !ev.is_primary() || ev.button() != 0 {
+                    return;
+                }
                 ev.prevent_default();
                 ev.stop_propagation();
                 let target = event_target::<web_sys::HtmlElement>(&ev);
@@ -763,12 +769,19 @@ fn HeaderContextMenu(
     let i18n = use_i18n();
     let node = NodeRef::<leptos::html::Div>::new();
     // Client-only listeners, same idiom as tooltip.rs / grouped_nav_popover.
-    // `on_click_outside` closes on the bubbling click *after* the opening
-    // gesture: the opening right-click fires contextmenu (no click event),
-    // and a long-press's synthetic click is swallowed by HeaderCell.
+    // Outside-close fires on the click *after* the opening gesture: the
+    // opening right-click fires contextmenu (no click event), and a
+    // long-press's synthetic click is swallowed by HeaderCell — which only
+    // works if this listener runs in the *bubble* phase (`capture(false)`;
+    // the leptos-use default is capture, which would run before the cell's
+    // stop_propagation could shield it).
     #[cfg(feature = "hydrate")]
     {
-        let _ = leptos_use::on_click_outside(node, move |_| menu.set(None));
+        let _ = leptos_use::on_click_outside_with_options(
+            node,
+            move |_| menu.set(None),
+            leptos_use::OnClickOutsideOptions::default().capture(false),
+        );
         // Escape closes; capture-phase scroll closes (pane scrolling happens
         // on an element, so a bubbling listener on window would never see it).
         let _ = leptos_use::use_event_listener(
@@ -802,7 +815,7 @@ fn HeaderContextMenu(
                     role="menu"
                     class="analyzer-context-menu"
                     style=format!(
-                        "left:min({}px, calc(100vw - 15rem));top:{}px;",
+                        "left:min({}px, calc(100vw - 15rem));top:min({}px, calc(100vh - 16rem));",
                         state.x,
                         state.y,
                     )
@@ -921,12 +934,16 @@ fn HeaderCell(
 ) -> impl IntoView {
     let resizable = column_spec(col).map(|s| s.resizable).unwrap_or(false);
     // Touch long-press → same menu as right-click (iOS Safari fires no
-    // contextmenu on long-press). Canceled by lift-off or movement (a
-    // drag/scroll is not a long-press). The resize handle stops propagation
-    // on its own pointerdown, so drags there never start the timer.
+    // contextmenu on long-press). Canceled by lift-off or >10px movement (a
+    // drag/scroll is not a long-press, but touch jitter must not cancel).
+    // The resize handle stops propagation on its own pointerdown, so drags
+    // there never start the timer.
     let longpress = StoredValue::new_local(None::<leptos::leptos_dom::helpers::TimeoutHandle>);
+    // Where the press started, for the movement threshold.
+    let longpress_start = StoredValue::new_local(None::<(f64, f64)>);
     // A fired long-press is often followed by a synthetic click on the cell;
-    // left to bubble, `on_click_outside` would close the menu it just opened.
+    // left to bubble, the outside-close listener would close the menu it
+    // just opened.
     let longpress_fired = StoredValue::new_local(false);
     let cancel_longpress = move || {
         longpress.update_value(|h| {
@@ -934,11 +951,17 @@ fn HeaderCell(
                 h.clear();
             }
         });
+        longpress_start.set_value(None);
     };
+    // A pending timer must not open a menu for a column that unmounted
+    // mid-press (e.g. `?cols=` changed while the finger was down).
+    on_cleanup(cancel_longpress);
     view! {
         <div
             role="columnheader"
-            class=format!("relative shrink-0 px-3 py-2 flex items-center gap-2 min-w-0 {class}")
+            class=format!(
+                "relative shrink-0 px-3 py-2 flex items-center gap-2 min-w-0 select-none {class}",
+            )
             style=format!("width:var(--colw-{col})")
             on:contextmenu=move |ev: web_sys::MouseEvent| {
                 ev.prevent_default();
@@ -954,6 +977,7 @@ fn HeaderCell(
                 longpress_fired.set_value(false);
                 if ev.pointer_type() == "touch" {
                     let (x, y) = (ev.client_x(), ev.client_y());
+                    longpress_start.set_value(Some((x, y)));
                     let handle = leptos::leptos_dom::helpers::set_timeout_with_handle(
                         move || {
                             longpress_fired.set_value(true);
@@ -967,7 +991,14 @@ fn HeaderCell(
             }
             on:pointerup=move |_| cancel_longpress()
             on:pointercancel=move |_| cancel_longpress()
-            on:pointermove=move |_| cancel_longpress()
+            on:pointermove=move |ev: web_sys::PointerEvent| {
+                if let Some((sx, sy)) = longpress_start.get_value() {
+                    let (dx, dy) = (ev.client_x() - sx, ev.client_y() - sy);
+                    if dx * dx + dy * dy > 100.0 {
+                        cancel_longpress();
+                    }
+                }
+            }
             on:click=move |ev: web_sys::MouseEvent| {
                 if longpress_fired.get_value() {
                     longpress_fired.set_value(false);
