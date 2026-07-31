@@ -33,7 +33,9 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
-    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    query_defaults::{
+        DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_defaults_when_unfiltered,
+    },
 };
 use ultros_api_types::{
     resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
@@ -467,6 +469,42 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_SHOW_SUSPICIOUS,
 ];
 
+/// Params whose presence means the visitor already chose filters, so the
+/// Realistic-flips default must not be seeded on top. Everything in
+/// [`ADDABLE_FILTERS`], the chip-only filters, and the sort params. View
+/// configuration (`cols`, `cross`, `filter-outliers`, per-region toggles)
+/// deliberately does not suppress: a columns bookmark still deserves the
+/// default filters.
+pub(crate) const SEED_SUPPRESSING_PARAMS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_PROFIT_PER_DAY,
+    FILTER_ROI,
+    FILTER_SALES,
+    FILTER_VELOCITY,
+    FILTER_MIN_BUY,
+    FILTER_MAX_PRICE,
+    FILTER_NEXT_SALE,
+    FILTER_LAST_SOLD,
+    FILTER_PRE_TAX,
+    FILTER_SHOW_SUSPICIOUS,
+    FILTER_CATEGORY,
+    FILTER_WORLD,
+    FILTER_DATACENTER,
+    "sort",
+    "dir",
+];
+
+/// The "Realistic flips" built-in view's params (saved_views.rs) plus the
+/// long-standing `next-sale=1d` velocity default — what a first-time
+/// visitor lands on, rendered as removable chips.
+pub(crate) const REALISTIC_DEFAULT_PARAMS: &[(&str, &str)] = &[
+    ("min-buy", "5000"),
+    ("last-sold", "1d"),
+    ("roi", "30"),
+    ("sort", "profit-per-day"),
+    ("next-sale", DEFAULT_MAX_SALE_TIME),
+];
+
 /// Value a filter takes when it is added from the `+ Filter` menu.
 ///
 /// A filter with no starting value would render a chip with nothing in it,
@@ -681,9 +719,10 @@ fn AnalyzerTable(
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_profit_per_day, set_minimum_profit_per_day) = query_signal::<i32>("ppd");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    // Seeded to 1d by AnalyzerWorldView so a first-time visitor isn't shown
-    // items that sell once a month. The field sits in the primary toolbar and
-    // the chip has an X, so the default is visible and one click from gone.
+    // Defaults to 1d, seeded by AnalyzerWorldView as part of the
+    // Realistic-flips defaults — but only for fully unfiltered URLs, so a
+    // shared link with explicit filters is honored verbatim. The chip has an
+    // X, so the default is visible and one click from gone.
     let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
     let (world_filter, set_world_filter) = query_signal::<String>("world");
     let (datacenter_filter, set_datacenter_filter) = query_signal::<String>("datacenter");
@@ -2171,8 +2210,11 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
     // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
     // closure and remounts on every market refetch, which would keep undoing a
-    // filter the user had cleared.
-    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    // filter the user had cleared. A URL with no filter/sort params at all
+    // gets the Realistic-flips defaults (as removable chips); a URL carrying
+    // any explicit filter is honored verbatim — including no longer getting
+    // `next-sale=1d` silently appended.
+    seed_query_defaults_when_unfiltered(SEED_SUPPRESSING_PARAMS, REALISTIC_DEFAULT_PARAMS);
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
     let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
@@ -2455,6 +2497,58 @@ mod tests {
             item_id,
             hq,
             sales: prices_and_days.iter().map(|(p, d)| sale(*p, *d)).collect(),
+        }
+    }
+
+    #[test]
+    fn realistic_defaults_match_the_realistic_preset_plus_next_sale() {
+        // The seeded set must stay in lockstep with the "Realistic flips"
+        // built-in view (saved_views.rs) — same values, plus next-sale.
+        let params: std::collections::HashMap<&str, &str> =
+            REALISTIC_DEFAULT_PARAMS.iter().copied().collect();
+        assert_eq!(params.get("min-buy"), Some(&"5000"));
+        assert_eq!(params.get("last-sold"), Some(&"1d"));
+        assert_eq!(params.get("roi"), Some(&"30"));
+        assert_eq!(params.get("sort"), Some(&"profit-per-day"));
+        assert_eq!(params.get("next-sale"), Some(&"1d"));
+        assert_eq!(params.len(), 5);
+        // The humantime values must actually parse, or the filter silently
+        // becomes a no-op.
+        assert!(humantime::parse_duration("1d").is_ok());
+    }
+
+    #[test]
+    fn seeding_is_idempotent_because_every_seeded_key_suppresses_seeding() {
+        for (key, _) in REALISTIC_DEFAULT_PARAMS {
+            assert!(
+                SEED_SUPPRESSING_PARAMS.contains(key),
+                "seeded key {key} must also suppress seeding, or a reload loops"
+            );
+        }
+    }
+
+    #[test]
+    fn suppression_covers_every_filter_but_not_view_config() {
+        // Every addable filter + the chip-only filters + sort/dir suppress.
+        for id in ADDABLE_FILTERS {
+            assert!(SEED_SUPPRESSING_PARAMS.contains(id), "{id} must suppress");
+        }
+        for id in [
+            FILTER_CATEGORY,
+            FILTER_WORLD,
+            FILTER_DATACENTER,
+            "sort",
+            "dir",
+        ] {
+            assert!(SEED_SUPPRESSING_PARAMS.contains(&id), "{id} must suppress");
+        }
+        // View configuration is NOT a filter: a ?cols= bookmark or a region
+        // toggle must still receive the default filters.
+        for id in ["cols", "cross", "filter-outliers", "Europe", "Japan"] {
+            assert!(
+                !SEED_SUPPRESSING_PARAMS.contains(&id),
+                "{id} must NOT suppress"
+            );
         }
     }
 

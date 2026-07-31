@@ -65,6 +65,40 @@ where
     });
 }
 
+/// Seed a whole set of defaults in one navigation, but only when the URL
+/// carries none of `suppressing_keys`.
+///
+/// One navigation rather than one [`seed_query_default`] per key: separate
+/// seeds are separate effects, and an earlier one changing the URL makes a
+/// later one's "is my key absent?" check race against router state — with a
+/// presence *predicate* (not just per-key absence) that race would corrupt
+/// the outcome, not just reorder it.
+///
+/// Same rule as [`seed_query_default`]: call from the **route** component,
+/// never from inside a `Suspense` closure.
+pub fn seed_query_defaults_when_unfiltered(
+    suppressing_keys: &'static [&'static str],
+    defaults: &'static [(&'static str, &'static str)],
+) {
+    let query = leptos_router::hooks::use_query_map();
+    let location = leptos_router::hooks::use_location();
+    let navigate = leptos_router::hooks::use_navigate();
+    Effect::new(move |_| {
+        let mut map = query.get_untracked();
+        if suppressing_keys.iter().any(|k| map.get_str(k).is_some()) {
+            return;
+        }
+        for (key, value) in defaults {
+            map.insert(key.to_string(), value.to_string());
+        }
+        let path = location.pathname.get_untracked();
+        navigate(
+            &format!("{path}{}", map.to_query_string()),
+            filter_nav_options(),
+        );
+    });
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
