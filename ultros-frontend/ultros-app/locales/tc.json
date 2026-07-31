@@ -41,6 +41,7 @@
     "currency_exchange": "通貨兌換",
     "currency_exchange_desc": "消耗神典石，換取金幣",
     "datacenter": "大區",
+    "region": "區域",
     "worlds": "伺服器",
     "vendor_available": "NPC 可購買",
     "exchange_available": "可兌換",
