@@ -39,6 +39,9 @@ web-sys = { version = "0.3", optional = true, features = [
     "HtmlInputElement",
     "ValidityState",
     "PointerEvent",
+    # Flip Finder column drag-resize writes `--colw-*` straight to the pane
+    # element's style during the drag (HtmlElement::style()).
+    "CssStyleDeclaration",
     "ResizeObserver",
     "WebSocket",
     "MessageEvent",

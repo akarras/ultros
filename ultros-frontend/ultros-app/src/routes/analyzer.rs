@@ -67,6 +67,7 @@ impl EnrichmentMaps {
 }
 
 use chrono::{Duration, Utc};
+use codee::string::JsonSerdeCodec;
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
 use icondata as i;
@@ -76,6 +77,7 @@ use leptos_router::{
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
     location::Location,
 };
+use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use leptos_use::{use_element_bounding, use_window_scroll, use_window_size};
 use std::{
     cmp::Reverse,
@@ -644,6 +646,68 @@ fn SortHeader(
     .into_any()
 }
 
+/// Drag handle on a header cell's right edge. Pointer events + pointer
+/// capture give mouse and touch one code path. During the drag the new
+/// width is written straight to the pane element's `--colw-*` property
+/// (no reactive churn at 60fps); the signal — and through it localStorage
+/// — commits once on release, and the pane's reactive `style` re-render
+/// then agrees with what the drag already painted.
+#[component]
+fn ColResizeHandle(
+    col: &'static str,
+    pane: NodeRef<leptos::html::Div>,
+    col_widths: Signal<HashMap<String, f64>>,
+    set_col_widths: WriteSignal<HashMap<String, f64>>,
+) -> impl IntoView {
+    // (start_client_x, width_at_start)
+    let drag = RwSignal::new(None::<(f64, f64)>);
+    let spec = column_spec(col).expect("resize handle on unregistered column");
+
+    let width_from = move |ev: &web_sys::PointerEvent| -> Option<f64> {
+        let (start_x, start_w) = drag.get_untracked()?;
+        Some((start_w + (ev.client_x() - start_x)).max(spec.min_width))
+    };
+
+    view! {
+        <div
+            class="analyzer-col-resize"
+            on:pointerdown=move |ev: web_sys::PointerEvent| {
+                ev.prevent_default();
+                ev.stop_propagation();
+                let target = event_target::<web_sys::HtmlElement>(&ev);
+                let _ = target.set_pointer_capture(ev.pointer_id());
+                let start_w = effective_width(spec, &col_widths.get_untracked());
+                drag.set(Some((ev.client_x(), start_w)));
+            }
+            on:pointermove=move |ev: web_sys::PointerEvent| {
+                if let (Some(w), Some(el)) = (width_from(&ev), pane.get_untracked()) {
+                    // Fully qualified: leptos's `style` attribute-builder
+                    // trait method otherwise shadows web_sys's inherent
+                    // `HtmlElement::style()` on the deref chain.
+                    let _ = web_sys::HtmlElement::style(&el)
+                        .set_property(&format!("--colw-{col}"), &format!("{}px", w.round()));
+                }
+            }
+            on:pointerup=move |ev: web_sys::PointerEvent| {
+                if let Some(w) = width_from(&ev) {
+                    set_col_widths.update(|m| {
+                        m.insert(col.to_string(), w.round());
+                    });
+                }
+                drag.set(None);
+            }
+            on:pointercancel=move |_| drag.set(None)
+            on:dblclick=move |_| {
+                // Double-click a handle = reset that column to its default.
+                set_col_widths.update(|m| {
+                    m.remove(col);
+                });
+            }
+        ></div>
+    }
+    .into_any()
+}
+
 /// One header cell, sized by its column's `--colw-*` variable. Tasks
 /// layered on top: the resize handle and the context-menu hookup.
 #[component]
@@ -653,8 +717,12 @@ fn HeaderCell(
     /// anything cell-specific.
     #[prop(optional, into)]
     class: String,
+    pane: NodeRef<leptos::html::Div>,
+    col_widths: Signal<HashMap<String, f64>>,
+    set_col_widths: WriteSignal<HashMap<String, f64>>,
     children: Children,
 ) -> impl IntoView {
+    let resizable = column_spec(col).map(|s| s.resizable).unwrap_or(false);
     view! {
         <div
             role="columnheader"
@@ -662,6 +730,9 @@ fn HeaderCell(
             style=format!("width:var(--colw-{col})")
         >
             {children()}
+            {resizable.then(|| view! {
+                <ColResizeHandle col pane col_widths set_col_widths />
+            })}
         </div>
     }
     .into_any()
@@ -736,6 +807,17 @@ fn AnalyzerTable(
     let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
+    // User column-width overrides, px, keyed by column id. Device-local
+    // preference like saved views — deliberately NOT in the URL.
+    // `delay_during_hydration` is load-bearing (see saved_views.rs).
+    let (col_widths, set_col_widths, _) =
+        use_local_storage_with_options::<HashMap<String, f64>, JsonSerdeCodec>(
+            COL_WIDTHS_KEY,
+            UseStorageOptions::default().delay_during_hydration(true),
+        );
+    // Target for the drag's direct `--colw-*` style writes: the pane div
+    // that carries the column-width variables.
+    let pane_ref = NodeRef::<leptos::html::Div>::new();
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
     let show_filter_menu = RwSignal::new(false);
@@ -1729,8 +1811,9 @@ fn AnalyzerTable(
             // VirtualScroller inside it (fill mode) is the single scrollport
             // for both axes, with the column header sticky inside it.
             <div
+                node_ref=pane_ref
                 class="analyzer-table border border-[color:var(--color-outline)] flex-1 min-h-0"
-                style=move || colw_style(&visible_cols(), &std::collections::HashMap::new())
+                style=move || colw_style(&visible_cols(), &col_widths())
             >
                 <VirtualScroller
                         viewport_height=640.0
@@ -1747,13 +1830,13 @@ fn AnalyzerTable(
                         row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
                             <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
-                                <HeaderCell col=COL_HQ class="!px-2 justify-center">
+                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_HQ class="!px-2 justify-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </HeaderCell>
-                                <HeaderCell col=COL_ITEM>
+                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_ITEM>
                                     {t!(i18n, analyzer_col_item)}
                                 </HeaderCell>
-                                <HeaderCell col=COL_PROFIT class="justify-end">
+                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_PROFIT class="justify-end">
                                     <SortHeader
                                         mode=SortMode::Profit
                                         label=t_string!(i18n, analyzer_col_profit).to_string()
@@ -1762,7 +1845,7 @@ fn AnalyzerTable(
                                     />
                                 </HeaderCell>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <HeaderCell col=COL_PROFIT_PER_DAY class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_PROFIT_PER_DAY class="justify-end">
                                         <SortHeader
                                             mode=SortMode::ProfitPerDay
                                             label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
@@ -1772,22 +1855,22 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <HeaderCell col=COL_VELOCITY class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_VELOCITY class="justify-end">
                                         {t!(i18n, analyzer_col_velocity)}
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <HeaderCell col=COL_DRIFT class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_DRIFT class="justify-end">
                                         {t!(i18n, analyzer_col_drift)}
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <HeaderCell col=COL_CONFIDENCE class="justify-center">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_CONFIDENCE class="justify-center">
                                         {t!(i18n, analyzer_col_confidence)}
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                    <HeaderCell col=COL_ROI class="justify-end">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_ROI class="justify-end">
                                         <SortHeader
                                             mode=SortMode::Roi
                                             label=t_string!(i18n, analyzer_col_roi).to_string()
@@ -1796,11 +1879,11 @@ fn AnalyzerTable(
                                         />
                                     </HeaderCell>
                                 })}
-                                <HeaderCell col=COL_BUY_PRICE class="justify-end">
+                                <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_BUY_PRICE class="justify-end">
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </HeaderCell>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <HeaderCell col=COL_WORLD>
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_WORLD>
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -1822,7 +1905,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <HeaderCell col=COL_DATACENTER>
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_DATACENTER>
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -1844,7 +1927,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <HeaderCell col=COL_TREND class="flex-col justify-center text-center leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_TREND class="flex-col justify-center text-center leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1852,7 +1935,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <HeaderCell col=COL_SALES_PER_DAY class="flex-col justify-center text-center leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_SALES_PER_DAY class="flex-col justify-center text-center leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1860,7 +1943,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <HeaderCell col=COL_VOLUME_30D class="flex-col !items-end text-right leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_VOLUME_30D class="flex-col !items-end text-right leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -1868,7 +1951,7 @@ fn AnalyzerTable(
                                     </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <HeaderCell col=COL_LAST_SOLD class="flex-col !items-start leading-tight !gap-0">
+                                    <HeaderCell pane=pane_ref col_widths set_col_widths col=COL_LAST_SOLD class="flex-col !items-start leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}

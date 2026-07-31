@@ -2052,6 +2052,37 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     min-width: var(--analyzer-row-min-width, 0px);
 }
 
+/* Column-resize handle: a 12px hit area straddling the header cell's right
+   edge (half over the neighbor — standard spreadsheet affordance), with a
+   1px visual line that thickens on hover/drag. `touch-action: none` is
+   what makes pointer-capture drags work on touch instead of panning the
+   pane. */
+.analyzer-col-resize {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: -6px;
+    width: 12px;
+    cursor: col-resize;
+    touch-action: none;
+    z-index: 5;
+}
+.analyzer-col-resize::after {
+    content: "";
+    position: absolute;
+    top: 15%;
+    bottom: 15%;
+    left: 5px;
+    width: 1px;
+    background: var(--color-outline);
+}
+.analyzer-col-resize:hover::after,
+.analyzer-col-resize:active::after {
+    left: 4px;
+    width: 3px;
+    background: var(--brand-ring);
+}
+
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the
    standard .btn-secondary padding would overflow them. */
 .sticky-bar-button {

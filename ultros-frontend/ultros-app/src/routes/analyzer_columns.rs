@@ -67,7 +67,6 @@ pub const DEFAULT_VISIBLE_COLS: &[&str] = &[
 ];
 
 /// localStorage key for user width overrides (`HashMap<String, f64>`, px).
-#[allow(dead_code)] // consumed by the drag-resize task
 pub const COL_WIDTHS_KEY: &str = "ultros.flipfinder.colwidths";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,7 +194,6 @@ pub const COLUMNS: &[ColumnSpec] = &[
     },
 ];
 
-#[allow(dead_code)] // consumed by the drag-resize task
 pub fn column_spec(id: &str) -> Option<&'static ColumnSpec> {
     COLUMNS.iter().find(|c| c.id == id)
 }
