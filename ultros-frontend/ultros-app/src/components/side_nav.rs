@@ -1,3 +1,4 @@
+use crate::components::account_menu::AccountMenu;
 use crate::components::icon::Icon;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::side_nav::use_side_nav_settings;
@@ -126,6 +127,8 @@ pub fn SideNav() -> impl IntoView {
                     <span class="side-nav-label">{t!(i18n, help_label)}</span>
                 </A>
             </nav>
+
+            <AccountMenu />
 
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
