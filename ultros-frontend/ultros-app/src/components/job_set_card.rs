@@ -313,6 +313,9 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                 </div>
             </div>
 
+            // The icon art already reads as a framed tile, so the swatch
+            // gets no card of its own — the image fills the square and the
+            // hover state is a ring rather than a background swap.
             <div class="grid grid-cols-6 sm:grid-cols-5 gap-1.5 mb-3">
                 {group_for_view.items.iter().map(|item| {
                     let id = item.id.0;
@@ -320,12 +323,12 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                     view! {
                         <A
                             href=format!("/item/{}", id)
-                            attr:class="flex items-center justify-center aspect-square rounded bg-white/5 hover:bg-white/10 \
-                                       border border-white/5 hover:border-brand-500/30 \
-                                       transition-colors p-0.5"
+                            attr:class="block aspect-square rounded-md overflow-hidden \
+                                       ring-1 ring-white/5 hover:ring-brand-500/50 \
+                                       transition-all hover:scale-105"
                             attr:title=title
                         >
-                            <ItemIcon item_id=id icon_size=IconSize::Small />
+                            <ItemIcon item_id=id icon_size=IconSize::Large fill=true />
                         </A>
                     }
                 }).collect::<Vec<_>>()}
