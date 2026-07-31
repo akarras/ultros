@@ -4,6 +4,7 @@ use leptos_use::{UseElementSizeReturn, use_element_size};
 use ultros_api_types::price_density::PriceDensity;
 use ultros_api_types::price_series::{PriceSeries, SeriesGroup};
 use ultros_charts::charts::ChartMode;
+use ultros_charts::charts::grid::{GridOptions, GridSort, build_price_grid, nearest_x};
 use ultros_charts::charts::price_density::{DensityChartOptions, build_price_density_chart};
 use ultros_charts::charts::price_history::{
     PriceChartModel, PriceChartOptions, build_price_history_chart,
@@ -15,7 +16,7 @@ use ultros_charts::theme::Theme;
 use web_sys::PointerEvent;
 use web_sys::wasm_bindgen::JsCast;
 
-use crate::components::chart_toolbar::ChartToolbar;
+use crate::components::chart_toolbar::{ChartToolbar, ChartView};
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
 
@@ -580,6 +581,15 @@ pub fn PriceHistoryChart(
     // Patch milestone bands (spec 4): on by default — under 30 days the LOD
     // tier empties the mark set anyway, so narrow zooms stay clean.
     let (show_patches, set_show_patches) = signal(true);
+    // Overlay vs small-multiples grid. Owned here (not item_view): nothing
+    // about the view gates a fetch — grid cells re-divide the same payload.
+    let (view, set_view) = signal(ChartView::Overlay);
+    let (percent_change, set_percent_change) = signal(false);
+    let (grid_per_cell_scale, set_grid_per_cell_scale) = signal(false);
+    let (grid_sort, set_grid_sort) = signal(GridSort::Name);
+    // Lifted so the grid's "+N more" affordance can open the toolbar's
+    // world-filter popover.
+    let world_filter_open = RwSignal::new(false);
     // Local truth for the slicer's own rendering (handle positions, drag
     // state). Every commit is mirrored out via `on_range_change` below so the
     // caller can debounce it into a refetch (Task 14) — this signal itself
@@ -802,7 +812,78 @@ pub fn PriceHistoryChart(
                 hidden_series: hidden_series.get(),
                 mode: mode.get(),
                 milestones: milestones.get(),
+                index_to_percent: percent_change.get()
+                    && mode.get() == ChartMode::Price
+                    && view.get() == ChartView::Overlay,
                 theme: Theme::site(),
+            },
+        )
+    });
+
+    // Series names of the current grouping level, grouped for the filter
+    // popover. The filter lists whatever the legend lists — hiding a name
+    // that isn't a current series name would silently do nothing.
+    let helper_for_filter = helper.clone();
+    let filter_groups = Memo::new(move |_| {
+        let scope = scope_name.get();
+        let level = group.get();
+        let Some(result) = helper_for_filter.lookup_world_by_name(&scope) else {
+            return Vec::<(String, Vec<String>)>::new();
+        };
+        if let Some(region) = result.as_region() {
+            match level {
+                GroupLevel::World => region
+                    .datacenters
+                    .iter()
+                    .map(|dc| {
+                        (
+                            dc.name.clone(),
+                            dc.worlds.iter().map(|w| w.name.clone()).collect(),
+                        )
+                    })
+                    .collect(),
+                GroupLevel::Datacenter => vec![(
+                    region.name.clone(),
+                    region
+                        .datacenters
+                        .iter()
+                        .map(|dc| dc.name.clone())
+                        .collect(),
+                )],
+                GroupLevel::Region => Vec::new(),
+            }
+        } else if let Some(dc) = result.as_datacenter() {
+            match level {
+                GroupLevel::World => vec![(
+                    dc.name.clone(),
+                    dc.worlds.iter().map(|w| w.name.clone()).collect(),
+                )],
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        }
+    });
+
+    let helper_for_grid = helper.clone();
+    let grid_model = Memo::new(move |_| {
+        let series_value = resolved_series.get();
+        // Density never reaches the grid (the view toggle disables it);
+        // guard anyway so a stale combination degrades to Price cells.
+        let grid_mode = match mode.get() {
+            ChartMode::Density => ChartMode::Price,
+            m => m,
+        };
+        build_price_grid(
+            &helper_for_grid,
+            &series_value,
+            &GridOptions {
+                mode: grid_mode,
+                shared_y: !grid_per_cell_scale.get(),
+                sort: grid_sort.get(),
+                hidden_series: hidden_series.get(),
+                theme: Theme::site(),
+                ..Default::default()
             },
         )
     });
@@ -835,6 +916,7 @@ pub fn PriceHistoryChart(
     Effect::new(move |_| {
         model.track();
         density_model.track();
+        grid_model.track();
         hover_index.set(None);
     });
 
@@ -848,6 +930,11 @@ pub fn PriceHistoryChart(
         };
         let rect = target.get_bounding_client_rect();
         if rect.width() <= 0.0 {
+            return;
+        }
+        // Grid cells resolve their own pointer position (per-cell svg rects
+        // share one x space); the container handler is overlay/density only.
+        if view.get_untracked() == ChartView::Grid && mode.get_untracked() != ChartMode::Density {
             return;
         }
         let x_css = evt.client_x() - rect.left();
@@ -884,6 +971,17 @@ pub fn PriceHistoryChart(
                 quantity_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
                 show_patches=show_patches
                 set_show_patches=set_show_patches
+                view=view
+                set_view=set_view
+                grid_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
+                filter_groups=filter_groups
+                hidden_series=hidden_series
+                filter_open=world_filter_open
+                percent_change=percent_change
+                set_percent_change=set_percent_change
+                percent_disabled=Signal::derive(move || {
+                    !(mode.get() == ChartMode::Price && view.get() == ChartView::Overlay)
+                })
             />
             // Mode-cap hint: modes that draw fewer series than are visible
             // say so instead of silently dropping data.
@@ -908,7 +1006,28 @@ pub fn PriceHistoryChart(
                                     } else {
                                         t_string!(i18n, chart_hint_range_limit).to_string()
                                     };
-                                    view! { <div class="text-xs text-amber-200/85">{text}</div> }
+                                    // Grid rescues single-series modes: offer
+                                    // it as the hint's action rather than only
+                                    // explaining the limitation (spec 3).
+                                    let offer_grid = view.get() == ChartView::Overlay
+                                        && mode.get() != ChartMode::Density;
+                                    view! {
+                                        <div class="flex flex-wrap items-center gap-2 text-xs text-amber-200/85">
+                                            <span>{text}</span>
+                                            {offer_grid
+                                                .then(|| {
+                                                    view! {
+                                                        <button
+                                                            type="button"
+                                                            class="rounded-md border border-amber-300/40 px-2 py-0.5 text-amber-100 transition-colors hover:bg-amber-500/15"
+                                                            on:click=move |_| set_view.set(ChartView::Grid)
+                                                        >
+                                                            {t_string!(i18n, chart_hint_use_grid).to_string()}
+                                                        </button>
+                                                    }
+                                                })}
+                                        </div>
+                                    }
                                 })
                         })
                     })
@@ -962,6 +1081,209 @@ pub fn PriceHistoryChart(
                 on:pointerleave=move |_| hover_index.set(None)
             >
                 {move || {
+                    // ── Grid view: small multiples under one crosshair ──
+                    if view.get() == ChartView::Grid && mode.get() != ChartMode::Density {
+                        let gm = grid_model.get();
+                        if gm.cells.is_empty() {
+                            let msg = t_string!(i18n, chart_no_sales_in_window).to_string();
+                            return view! {
+                                <div class="flex items-center justify-center w-full h-full text-[color:var(--color-text)]/60 text-sm">
+                                    {msg}
+                                </div>
+                            }
+                                .into_any();
+                        }
+                        let bucket_secs =
+                            resolved_series.with(|s| s.bucket_seconds.max(1));
+                        let hover_x = Signal::derive(move || {
+                            hover_index
+                                .get()
+                                .and_then(|i| grid_model.with(|g| g.xs.get(i).copied()))
+                        });
+                        let xs_for_move = gm.xs.clone();
+                        let cell_width = gm.cell_width;
+                        let on_cell_pointer_move = move |evt: web_sys::PointerEvent| {
+                            let Some(target) = evt
+                                .current_target()
+                                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                            else {
+                                return;
+                            };
+                            let rect = target.get_bounding_client_rect();
+                            if rect.width() <= 0.0 {
+                                return;
+                            }
+                            let x_css = evt.client_x() - rect.left();
+                            hover_index.set(nearest_x(
+                                &xs_for_move,
+                                (x_css / rect.width()) as f32 * cell_width,
+                            ));
+                        };
+                        return view! {
+                            <div class="flex flex-col gap-2">
+                                // Grid header: sort + per-cell scaling
+                                <div class="flex flex-wrap items-center gap-3 text-xs text-[color:var(--color-text-muted)]">
+                                    <select
+                                        class="rounded-md border border-[color:var(--color-outline)] bg-transparent px-2 py-1"
+                                        on:change=move |event| {
+                                            set_grid_sort
+                                                .set(
+                                                    if event_target_value(&event) == "change" {
+                                                        GridSort::Change
+                                                    } else {
+                                                        GridSort::Name
+                                                    },
+                                                );
+                                        }
+                                    >
+                                        <option value="name" selected=move || grid_sort.get() == GridSort::Name>
+                                            {t_string!(i18n, chart_sort_name).to_string()}
+                                        </option>
+                                        <option value="change" selected=move || grid_sort.get() == GridSort::Change>
+                                            {t_string!(i18n, chart_sort_change).to_string()}
+                                        </option>
+                                    </select>
+                                    <label class="inline-flex cursor-pointer select-none items-center gap-1.5">
+                                        <input
+                                            type="checkbox"
+                                            class="accent-violet-500"
+                                            prop:checked=grid_per_cell_scale
+                                            on:change=move |event| {
+                                                set_grid_per_cell_scale.set(event_target_checked(&event))
+                                            }
+                                        />
+                                        {t_string!(i18n, chart_scale_per_cell).to_string()}
+                                    </label>
+                                </div>
+                                <div
+                                    class="grid gap-2"
+                                    style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"
+                                    on:pointerleave=move |_| hover_index.set(None)
+                                >
+                                    {gm
+                                        .cells
+                                        .iter()
+                                        .map(|cell| {
+                                            let scene = cell.scene.clone();
+                                            let name = cell.name.clone();
+                                            let color = cell.color;
+                                            let handler = on_cell_pointer_move.clone();
+                                            view! {
+                                                <div class="rounded-md border border-[color:var(--color-outline)]/60 p-1.5">
+                                                    <div class="mb-1 flex items-center gap-1.5 text-xs text-[color:var(--color-text)]">
+                                                        <span
+                                                            class="h-2 w-2 rounded-full"
+                                                            style:background-color=color_attr(&color)
+                                                        ></span>
+                                                        {name}
+                                                    </div>
+                                                    <svg
+                                                        class="block w-full h-auto"
+                                                        viewBox=format!(
+                                                            "0 0 {:.0} {:.0}",
+                                                            scene.width,
+                                                            scene.height,
+                                                        )
+                                                        preserveAspectRatio="none"
+                                                        on:pointermove=handler
+                                                    >
+                                                        {scene_view(&scene)}
+                                                        {move || {
+                                                            hover_x
+                                                                .get()
+                                                                .map(|x| {
+                                                                    grid_model
+                                                                        .with(|g| {
+                                                                            view! {
+                                                                                <line
+                                                                                    x1=px(x)
+                                                                                    y1=px(g.plot_top)
+                                                                                    x2=px(x)
+                                                                                    y2=px(g.plot_bottom)
+                                                                                    stroke="#9ca3af"
+                                                                                    stroke-opacity="0.45"
+                                                                                    stroke-width="1"
+                                                                                />
+                                                                            }
+                                                                        })
+                                                                })
+                                                        }}
+                                                    </svg>
+                                                </div>
+                                            }
+                                        })
+                                        .collect_view()}
+                                    {(gm.overflow > 0)
+                                        .then(|| {
+                                            let more = t_string!(i18n, chart_grid_more)
+                                                .to_string()
+                                                .replace("{n}", &gm.overflow.to_string());
+                                            view! {
+                                                <button
+                                                    type="button"
+                                                    class="flex min-h-24 items-center justify-center rounded-md border border-dashed border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)]"
+                                                    on:click=move |_| world_filter_open.set(true)
+                                                >
+                                                    {more}
+                                                </button>
+                                            }
+                                        })}
+                                </div>
+                                // Single tooltip for the whole grid: every
+                                // cell's value at the hovered bucket.
+                                {move || {
+                                    hover_index
+                                        .get()
+                                        .and_then(|i| {
+                                            grid_model
+                                                .with(|g| {
+                                                    let ts = g.union.timestamps.get(i)?;
+                                                    let label = format_timeline_ts(
+                                                        ts.and_utc().timestamp() + bucket_secs / 2,
+                                                        utc_offset.get(),
+                                                    );
+                                                    let rows = g
+                                                        .cells
+                                                        .iter()
+                                                        .filter_map(|cell| {
+                                                            let value = (*cell.values.get(i)?)?;
+                                                            Some(
+                                                                view! {
+                                                                    <div class="flex items-center justify-between gap-3">
+                                                                        <span class="inline-flex items-center gap-1.5">
+                                                                            <span
+                                                                                class="inline-block h-2 w-2 rounded-full"
+                                                                                style:background-color=color_attr(&cell.color)
+                                                                            ></span>
+                                                                            <span class="text-[color:var(--color-text-muted)]">
+                                                                                {cell.name.clone()}
+                                                                            </span>
+                                                                        </span>
+                                                                        <span class="tabular-nums text-[color:var(--color-text)]">
+                                                                            {short_number(value.round() as i32)}
+                                                                        </span>
+                                                                    </div>
+                                                                },
+                                                            )
+                                                        })
+                                                        .collect_view();
+                                                    Some(
+                                                        view! {
+                                                            <div class="pointer-events-none absolute right-2 top-2 z-10 min-w-40 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg">
+                                                                <div class="mb-1 font-semibold text-[color:var(--color-text)]">
+                                                                    {label}
+                                                                </div>
+                                                                {rows}
+                                                            </div>
+                                                        },
+                                                    )
+                                                })
+                                        })
+                                }}
+                            </div>
+                        }
+                            .into_any();
+                    }
                     let empty_state = || {
                         let msg = t_string!(i18n, chart_no_sales_in_window).to_string();
                         view! {
@@ -1030,7 +1352,13 @@ pub fn PriceHistoryChart(
                     }
                         .into_any()
                 }}
-                <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                // Overlay-only: grid renders its own container tooltip and
+                // density's crosshair index doesn't map onto `model.hover`.
+                <Show when=move || {
+                    view.get() == ChartView::Overlay && mode.get() != ChartMode::Density
+                }>
+                    <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                </Show>
             </div>
             // Caption line: the resolved state spelled out once — what makes
             // an icon-only toolbar viable (works on touch, read by screen
@@ -1057,9 +1385,17 @@ pub fn PriceHistoryChart(
                             .to_string()
                             .replace("{group}", &group_label)
                     });
+                let view_label = (view.get() == ChartView::Grid)
+                    .then(|| t_string!(i18n, chart_view_grid).to_string());
+                let percent_label = (percent_change.get()
+                    && mode.get() == ChartMode::Price
+                    && view.get() == ChartView::Overlay)
+                    .then(|| t_string!(i18n, chart_percent_change).to_string());
                 view! {
                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-[color:var(--color-text)]/70">
                         <span>{mode_label}</span>
+                        {view_label.map(|v| view! { <span>"· " {v}</span> })}
+                        {percent_label.map(|p| view! { <span>"· " {p}</span> })}
                         {grouped.map(|g| view! { <span>"· " {g}</span> })}
                         {(show_patches.get() && milestone_track.get().is_none())
                             .then(|| {

@@ -29,7 +29,11 @@ fn dash_attr(stroke: &Stroke) -> Option<String> {
 
 /// Render the scene's nodes (plus its background) as SVG children. Embed
 /// inside an `<svg viewBox="0 0 {scene.width} {scene.height}">`.
-pub fn scene_view(scene: &Scene) -> impl IntoView {
+///
+/// `use<>`: the body clones everything it needs, so the returned view is
+/// `'static` — without the bound, edition-2024 RPIT capture ties it to the
+/// `&Scene` borrow and callers can't return it past a local scene.
+pub fn scene_view(scene: &Scene) -> impl IntoView + use<> {
     let background = scene.background.as_ref().map(|bg| {
         view! {
             <rect x="0" y="0" width=px(scene.width) height=px(scene.height) fill=color_attr(bg) />

@@ -15,6 +15,15 @@ use ultros_charts::data::grouping::GroupLevel;
 use crate::components::icon::Icon;
 use crate::i18n::{t_string, use_i18n};
 
+/// Overlay = one chart with every series overlaid; Grid = one small chart
+/// per series with a shared crosshair (spec 3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChartView {
+    #[default]
+    Overlay,
+    Grid,
+}
+
 fn mode_icon(mode: ChartMode) -> icondata_core::Icon {
     match mode {
         ChartMode::Price => i::TbChartLineOutline,
@@ -56,10 +65,32 @@ pub fn ChartToolbar(
     #[prop(into)]
     show_patches: Signal<bool>,
     set_show_patches: WriteSignal<bool>,
+    #[prop(into)] view: Signal<ChartView>,
+    set_view: WriteSignal<ChartView>,
+    /// Grid is per-series; density's payload is scope-wide, so grid
+    /// disables with a reason in density mode.
+    #[prop(into)]
+    grid_disabled: Signal<bool>,
+    /// Every world of the current scope grouped by datacenter, for the
+    /// filter popover: `(datacenter name, world names)`.
+    #[prop(into)]
+    filter_groups: Signal<Vec<(String, Vec<String>)>>,
+    /// The same signal the legend writes — the filter is a legend at scale,
+    /// so the two can never disagree.
+    hidden_series: RwSignal<Vec<String>>,
+    /// Popover-open state lifted to the caller so the grid's "+N more"
+    /// affordance can open the filter too.
+    filter_open: RwSignal<bool>,
+    #[prop(into)] percent_change: Signal<bool>,
+    set_percent_change: WriteSignal<bool>,
+    /// `% change` applies to overlay Price view only.
+    #[prop(into)]
+    percent_disabled: Signal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (group_open, set_group_open) = signal(false);
     let (overlays_open, set_overlays_open) = signal(false);
+    let (filter_query, set_filter_query) = signal(String::new());
 
     let mode_name = move |m: ChartMode| match m {
         ChartMode::Price => t_string!(i18n, chart_mode_price).to_string(),
@@ -124,7 +155,58 @@ pub fn ChartToolbar(
                     })
                     .collect_view()}
             </div>
-            // (slot: spec 3 view toggle)
+            // ── View: overlay / grid segmented group ──
+            <div
+                role="group"
+                aria-label=move || t_string!(i18n, chart_view_group).to_string()
+                class="inline-flex shrink-0 overflow-hidden rounded-md border border-[color:var(--color-outline)]"
+            >
+                {[
+                    (ChartView::Overlay, i::LuChartNoAxesCombined),
+                    (ChartView::Grid, i::LuLayoutGrid),
+                ]
+                    .into_iter()
+                    .map(|(v, icon)| {
+                        let disabled =
+                            Signal::derive(move || v == ChartView::Grid && grid_disabled.get());
+                        view! {
+                            <button
+                                type="button"
+                                aria-label=move || match v {
+                                    ChartView::Overlay => {
+                                        t_string!(i18n, chart_view_overlay).to_string()
+                                    }
+                                    ChartView::Grid => t_string!(i18n, chart_view_grid).to_string(),
+                                }
+                                aria-pressed=move || (view.get() == v).to_string()
+                                prop:disabled=disabled
+                                title=move || {
+                                    if disabled.get() {
+                                        t_string!(i18n, chart_grid_density_unavailable).to_string()
+                                    } else {
+                                        String::new()
+                                    }
+                                }
+                                class=move || {
+                                    let active = view.get() == v;
+                                    [
+                                        "border-l border-[color:var(--color-outline)] px-2.5 py-1.5 transition-colors first:border-l-0 disabled:cursor-not-allowed disabled:opacity-45",
+                                        if active {
+                                            "bg-brand-600/30 text-brand-100"
+                                        } else {
+                                            "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                        },
+                                    ]
+                                        .join(" ")
+                                }
+                                on:click=move |_| set_view.set(v)
+                            >
+                                <Icon height="1.1em" width="1.1em" icon=icon />
+                            </button>
+                        }
+                    })
+                    .collect_view()}
+            </div>
             // ── Group by: dropdown chip ──
             <Show when=move || group_options.with(|o| o.len() > 1)>
                 <div class="relative shrink-0">
@@ -184,7 +266,156 @@ pub fn ChartToolbar(
                     </Show>
                 </div>
             </Show>
-            // (slot: spec 3 world filter)
+            // ── World filter: chip + searchable multi-select popover ──
+            // Drives the SAME `hidden_series` the legend writes — a legend
+            // at scale, so the two stay in sync by construction. Filtering
+            // is purely client-side visibility: no refetch, ever.
+            <Show when=move || {
+                filter_groups.with(|g| g.iter().map(|(_, w)| w.len()).sum::<usize>() > 1)
+            }>
+                <div class="relative shrink-0">
+                    <button
+                        type="button"
+                        class=CHIP
+                        aria-haspopup="menu"
+                        aria-expanded=move || filter_open.get().to_string()
+                        on:click=move |_| filter_open.update(|open| *open = !*open)
+                    >
+                        <Icon height="1.0em" width="1.0em" icon=i::TbFilterOutline />
+                        {move || t_string!(i18n, chart_world_filter).to_string()}
+                        // A hidden filter that silently omits data is a
+                        // correctness hazard — the count badge keeps a
+                        // non-default filter visible without opening it.
+                        <span class="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-600/40 px-1 text-[10px] tabular-nums text-brand-100">
+                            {move || {
+                                filter_groups
+                                    .with(|groups| {
+                                        let total: usize =
+                                            groups.iter().map(|(_, w)| w.len()).sum();
+                                        let hidden = hidden_series
+                                            .with(|h| {
+                                                groups
+                                                    .iter()
+                                                    .flat_map(|(_, w)| w.iter())
+                                                    .filter(|w| h.contains(w))
+                                                    .count()
+                                            });
+                                        format!("{}/{}", total - hidden, total)
+                                    })
+                            }}
+                        </span>
+                    </button>
+                    <Show when=move || filter_open.get()>
+                        <div class="absolute left-0 top-full z-20 mt-1 max-h-80 min-w-56 overflow-y-auto rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 shadow-lg">
+                            <input
+                                type="text"
+                                class="mb-2 w-full rounded-md border border-[color:var(--color-outline)] bg-transparent px-2 py-1 text-xs text-[color:var(--color-text)] placeholder:text-[color:var(--color-text-muted)]"
+                                placeholder=move || t_string!(i18n, chart_filter_search).to_string()
+                                prop:value=filter_query
+                                on:input=move |event| set_filter_query.set(event_target_value(&event))
+                            />
+                            {move || {
+                                let query = filter_query.get().to_lowercase();
+                                filter_groups
+                                    .get()
+                                    .into_iter()
+                                    .filter_map(|(dc, worlds)| {
+                                        let shown: Vec<String> = worlds
+                                            .iter()
+                                            .filter(|w| {
+                                                query.is_empty()
+                                                    || w.to_lowercase().contains(&query)
+                                            })
+                                            .cloned()
+                                            .collect();
+                                        if shown.is_empty() {
+                                            return None;
+                                        }
+                                        let all_worlds = worlds.clone();
+                                        let none_worlds = worlds.clone();
+                                        Some(view! {
+                                            <div class="mb-1">
+                                                <div class="flex items-center justify-between gap-2 py-1">
+                                                    <span class="text-[10px] font-semibold uppercase text-[color:var(--color-text-muted)]">
+                                                        {dc}
+                                                    </span>
+                                                    <span class="flex gap-1">
+                                                        <button
+                                                            type="button"
+                                                            class="rounded px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                                            on:click=move |_| {
+                                                                hidden_series
+                                                                    .update(|list| {
+                                                                        list.retain(|n| !all_worlds.contains(n));
+                                                                    });
+                                                            }
+                                                        >
+                                                            {t_string!(i18n, chart_filter_all).to_string()}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="rounded px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                                            on:click=move |_| {
+                                                                hidden_series
+                                                                    .update(|list| {
+                                                                        for w in &none_worlds {
+                                                                            if !list.contains(w) {
+                                                                                list.push(w.clone());
+                                                                            }
+                                                                        }
+                                                                        list.sort();
+                                                                    });
+                                                            }
+                                                        >
+                                                            {t_string!(i18n, chart_filter_none).to_string()}
+                                                        </button>
+                                                    </span>
+                                                </div>
+                                                {shown
+                                                    .into_iter()
+                                                    .map(|world| {
+                                                        let toggle_name = world.clone();
+                                                        let checked_name = world.clone();
+                                                        view! {
+                                                            <label class="flex cursor-pointer select-none items-center justify-between gap-3 py-0.5">
+                                                                <span class="text-[color:var(--color-text)]">
+                                                                    {world}
+                                                                </span>
+                                                                <input
+                                                                    type="checkbox"
+                                                                    class="accent-violet-500"
+                                                                    prop:checked=move || {
+                                                                        hidden_series
+                                                                            .with(|h| !h.contains(&checked_name))
+                                                                    }
+                                                                    on:change=move |_| {
+                                                                        hidden_series
+                                                                            .update(|list| {
+                                                                                if let Some(pos) = list
+                                                                                    .iter()
+                                                                                    .position(|n| n == &toggle_name)
+                                                                                {
+                                                                                    list.remove(pos);
+                                                                                } else {
+                                                                                    list.push(toggle_name.clone());
+                                                                                    list.sort();
+                                                                                }
+                                                                            });
+                                                                    }
+                                                                />
+                                                            </label>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </div>
+                                        })
+                                    })
+                                    .collect_view()
+                            }}
+                        </div>
+                    </Show>
+                </div>
+            </Show>
             // ── Overlays: chip + count badge + popover ──
             <div class="relative shrink-0">
                 <button
@@ -208,8 +439,12 @@ pub fn ChartToolbar(
                             })
                             checked=show_market_average
                             set_checked=set_show_market_average
-                            disabled=Signal::derive(|| false)
-                            disabled_reason=Signal::derive(String::new)
+                            disabled=Signal::derive(move || {
+                                percent_change.get() && !percent_disabled.get()
+                            })
+                            disabled_reason=Signal::derive(move || {
+                                t_string!(i18n, chart_percent_disables_overlays).to_string()
+                            })
                         />
                         <OverlayRow
                             label=Signal::derive(move || {
@@ -217,8 +452,12 @@ pub fn ChartToolbar(
                             })
                             checked=show_trend
                             set_checked=set_show_trend
-                            disabled=Signal::derive(|| false)
-                            disabled_reason=Signal::derive(String::new)
+                            disabled=Signal::derive(move || {
+                                percent_change.get() && !percent_disabled.get()
+                            })
+                            disabled_reason=Signal::derive(move || {
+                                t_string!(i18n, chart_percent_disables_overlays).to_string()
+                            })
                         />
                         <OverlayRow
                             label=Signal::derive(move || {
@@ -229,6 +468,17 @@ pub fn ChartToolbar(
                             disabled=quantity_disabled
                             disabled_reason=Signal::derive(move || {
                                 t_string!(i18n, chart_density_quantity_unavailable).to_string()
+                            })
+                        />
+                        <OverlayRow
+                            label=Signal::derive(move || {
+                                t_string!(i18n, chart_percent_change).to_string()
+                            })
+                            checked=percent_change
+                            set_checked=set_percent_change
+                            disabled=percent_disabled
+                            disabled_reason=Signal::derive(move || {
+                                t_string!(i18n, chart_percent_overlay_only).to_string()
                             })
                         />
                         <OverlayRow

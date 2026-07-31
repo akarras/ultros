@@ -9,6 +9,7 @@ mod item_update_service;
 pub mod leptos;
 #[cfg(feature = "profiling")]
 pub mod profiling;
+pub(crate) mod resale_eligibility;
 pub(crate) mod search_service;
 pub(crate) mod utils;
 mod web;

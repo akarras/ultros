@@ -1258,6 +1258,7 @@ impl AnalyzerService {
         });
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = self.recent_sale_history.get(&world_id)?;
+        let now = Utc::now().naive_utc();
         let sale_history: BTreeMap<_, _> = sale
             .read()
             .await
@@ -1273,10 +1274,7 @@ impl AnalyzerService {
                             .as_ref()
                             .map(|sale_within| {
                                 let sale_within = Duration::from(sale_within);
-                                Utc::now()
-                                    .naive_utc()
-                                    .signed_duration_since(sale.sale_date)
-                                    .lt(&sale_within)
+                                now.signed_duration_since(sale.sale_date).lt(&sale_within)
                             })
                             .unwrap_or(true)
                     })
@@ -1285,16 +1283,37 @@ impl AnalyzerService {
                 if prices.is_empty() {
                     return None;
                 }
-                let len = prices.len();
-                // Get median. If even, pick the lower one to be conservative?
-                // Actually, let's pick the one at len / 2.
-                // 1 item: idx 0. 2 items: idx 1. 3 items: idx 1. 4 items: idx 2.
-                // This essentially picks the slightly higher one in even cases, or middle in odd.
-                // Let's pick len / 2.
+                let price_low = *prices.iter().min()?;
+                let price_high = *prices.iter().max()?;
+                // Lower-middle median: the upper-middle pick resolves a
+                // two-sale laundering pair to the higher of the two.
                 // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
                 // This reduces time complexity from O(N log N) to O(N).
-                let (_, &mut price, _) = prices.select_nth_unstable(len / 2);
-                Some((*item, (price, sold_within)))
+                let median = crate::resale_eligibility::conservative_median(&mut prices);
+
+                // Velocity uses the whole buffer, not the filtered window: it
+                // is a rate estimate, and `sold_within` already carries the
+                // windowed view.
+                let span_days = values
+                    .iter()
+                    .map(|s| s.sale_date)
+                    .min()
+                    .map(|oldest| now.signed_duration_since(oldest).num_seconds() as f32 / 86_400.0)
+                    .unwrap_or(0.0);
+                let velocity_per_day =
+                    crate::resale_eligibility::velocity_per_day(values.len(), span_days);
+
+                Some((
+                    *item,
+                    SaleHistoryStats {
+                        median,
+                        sold_within,
+                        price_low,
+                        price_high,
+                        buffer_sale_count: values.len().min(u8::MAX as usize) as u8,
+                        velocity_per_day,
+                    },
+                ))
             })
             .collect();
 
@@ -1308,11 +1327,23 @@ impl AnalyzerService {
             .get(&AnySelector::World(world_id))?
             .read()
             .await;
+        // Eligibility runs here, inside the flat_map, so it is applied
+        // *before* the DEEP_SCAN_TOP_N truncation below. Filtering after the
+        // truncation would leave the deep-scan budget being spent on
+        // laundering rows — the original bug in a subtler form.
+        let policy = crate::resale_eligibility::EligibilityPolicy {
+            min_velocity_per_day: resale_options.min_velocity_per_day,
+            min_buffer_sales: resale_options.min_buffer_sales,
+            max_roi: resale_options.max_roi,
+        };
+        let game_data = xiv_gen_db::data();
         let mut possible_sales: Vec<_> = region
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
+                let stats = *sale_history.get(item_key)?;
+                let cheapest_history = stats.median;
+                let sold_within = stats.sold_within;
                 let current_cheapest_on_sale_world =
                     sale_world_listings.item_map.get(item_key).map(|l| l.price);
                 let est_sale_price =
@@ -1321,6 +1352,24 @@ impl AnalyzerService {
                 // emitting an inf/NaN ROI.
                 let (profit, return_on_investment) =
                     flip_profit_and_roi(est_sale_price, cheapest_price.price)?;
+                // Eligibility judges the pre-tax list price against the
+                // vendor anchor (that is the price a laundering listing
+                // actually claims) but the post-tax ROI, since that is the
+                // figure both this card and the Flip Finder display.
+                let vendor_price = game_data
+                    .items
+                    .get(&xiv_gen::ItemId(item_key.item_id))
+                    .map(|i| i.price_mid)
+                    .unwrap_or(0);
+                if !policy.accepts(&crate::resale_eligibility::Candidate {
+                    est_sale_price,
+                    return_on_investment,
+                    velocity_per_day: stats.velocity_per_day,
+                    buffer_sale_count: stats.buffer_sale_count,
+                    vendor_price,
+                }) {
+                    return None;
+                }
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
@@ -1330,6 +1379,10 @@ impl AnalyzerService {
                     est_sale_price,
                     world_id: cheapest_price.world_id,
                     sold_within,
+                    velocity_per_day: stats.velocity_per_day,
+                    buffer_sale_count: stats.buffer_sale_count,
+                    recent_price_low: stats.price_low,
+                    recent_price_high: stats.price_high,
                     // Pass-1 defaults; the deep-scan pass fills these in.
                     confidence_band: ultros_api_types::trends::ConfidenceBand::Unknown,
                     vwap_30d: 0,
@@ -1781,6 +1834,21 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
     }
 }
 
+/// Per-item statistics derived from the bounded recent-sales buffer.
+/// Everything here has 100% coverage — no ClickHouse dependency.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SaleHistoryStats {
+    /// Lower-middle median of the in-window prices.
+    pub(crate) median: i32,
+    pub(crate) sold_within: SoldWithin,
+    /// Lowest and highest in-window price, for the card's "recent" range.
+    pub(crate) price_low: i32,
+    pub(crate) price_high: i32,
+    /// Number of sales in the buffer (not the window) — the velocity basis.
+    pub(crate) buffer_sale_count: u8,
+    pub(crate) velocity_per_day: Option<f32>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
@@ -1796,6 +1864,11 @@ pub(crate) struct ResaleStats {
     /// `buy_price + profit` is what you *keep*, not what you list at.
     pub(crate) est_sale_price: i32,
     pub(crate) world_id: i32,
+    // === Buffer-derived, 100% coverage ===
+    pub(crate) velocity_per_day: Option<f32>,
+    pub(crate) buffer_sale_count: u8,
+    pub(crate) recent_price_low: i32,
+    pub(crate) recent_price_high: i32,
     // === Phase 2 deep-scan enrichment ===
     //
     // Filled in by the second pass against ClickHouse. Pass-1 results
@@ -1817,6 +1890,13 @@ pub(crate) struct ResaleOptions {
     /// sees suspicious (`Unusable` / high-launder) rows. Used by the
     /// analyzer's "Show suspicious" toggle.
     pub(crate) include_suspicious: bool,
+    /// Reject rows selling slower than this. `None` disables the floor.
+    pub(crate) min_velocity_per_day: Option<f32>,
+    /// Reject rows with fewer than this many sales in the buffer.
+    pub(crate) min_buffer_sales: Option<u8>,
+    /// Reject rows above this ROI percentage. Covers the velocity floor's
+    /// blind spot: laundering compressed into a short burst.
+    pub(crate) max_roi: Option<f32>,
 }
 
 #[cfg(test)]
