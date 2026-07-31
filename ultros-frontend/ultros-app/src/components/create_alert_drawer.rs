@@ -47,10 +47,11 @@ pub fn CreateAlertDrawer(
         }
         let s_lower = s.to_lowercase();
         let items = &tracked_data().items;
+        use crate::string_utils::contains_ignore_ascii_case;
         let mut matches: Vec<(&ItemId, &'static Item)> = items
             .iter()
             .filter(|(_, i)| i.item_search_category > 0)
-            .filter(|(_, i)| i.name.to_lowercase().contains(&s_lower))
+            .filter(|(_, i)| contains_ignore_ascii_case(&i.name, &s_lower))
             .collect();
         matches.sort_by_key(|(_, i)| Reverse(i.level_item));
         matches

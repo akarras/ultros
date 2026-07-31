@@ -42,9 +42,10 @@ pub fn AddRecipeToCurrentListModal(
                 return vec![];
             }
             let s_lower = s.to_lowercase();
+            use crate::string_utils::contains_ignore_ascii_case;
             let mut results = recipe_list.with_value(|list| {
                 list.iter()
-                    .filter(|(_, _, lower)| lower.contains(&s_lower))
+                    .filter(|(i, _, _)| contains_ignore_ascii_case(&i.name, &s_lower))
                     .take(50)
                     .map(|(i, r, _)| (*i, *r))
                     .collect::<Vec<(&Item, &Recipe)>>()

@@ -9,6 +9,7 @@ pub(crate) mod math;
 pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
+pub(crate) mod string_utils;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));

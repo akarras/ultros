@@ -629,12 +629,13 @@ pub fn ListView() -> impl IntoView {
                                 search
                                     .with(|s| {
                                         let s_lower = s.to_lowercase();
+                                        use crate::string_utils::contains_ignore_ascii_case;
                                         let mut score = items
                                             .iter()
                                             .filter(|(_, i)| i.item_search_category > 0)
                                             .filter(|_| !s.is_empty())
                                             .filter_map(|(id, i)| {
-                                                if i.name.to_lowercase().contains(&s_lower) {
+                                                if contains_ignore_ascii_case(&i.name, &s_lower) {
                                                     Some((id, i))
                                                 } else {
                                                     None

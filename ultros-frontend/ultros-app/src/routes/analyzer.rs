@@ -583,10 +583,9 @@ fn normalize_name_query(raw: &str) -> Option<String> {
 }
 
 /// Case-insensitive substring match against a query pre-normalized by
-/// [`normalize_name_query`]. Runs per row, so only the item name is
-/// lowercased here.
+/// [`normalize_name_query`]. Runs per row, avoiding a String allocation per row.
 fn matches_normalized_name(query_lower: &str, item_name: &str) -> bool {
-    item_name.to_lowercase().contains(query_lower)
+    crate::string_utils::contains_ignore_ascii_case(item_name, query_lower)
 }
 
 /// Does a row clear the `?drift=` floor? Drift comes off the row's own

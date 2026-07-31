@@ -190,17 +190,19 @@ pub fn SearchBox() -> impl IntoView {
                 return;
             }
 
+            use crate::string_utils::{contains_ignore_ascii_case, starts_with_ignore_ascii_case};
+
             let s_lower = s.to_lowercase();
             let mut matched_pages: Vec<SearchResult> = get_static_pages()
                 .iter()
-                .filter(|p| p.title.to_lowercase().contains(&s_lower))
+                .filter(|p| contains_ignore_ascii_case(&p.title, &s_lower))
                 .cloned()
                 .collect();
 
             // Sort matched pages so exact matches or starts_with come first
             matched_pages.sort_by(|a, b| {
-                let a_starts = a.title.to_lowercase().starts_with(&s_lower);
-                let b_starts = b.title.to_lowercase().starts_with(&s_lower);
+                let a_starts = starts_with_ignore_ascii_case(&a.title, &s_lower);
+                let b_starts = starts_with_ignore_ascii_case(&b.title, &s_lower);
                 b_starts.cmp(&a_starts) // true (starts with) comes first
             });
 
