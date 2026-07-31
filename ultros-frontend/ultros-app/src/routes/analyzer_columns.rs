@@ -4,19 +4,13 @@
 //! of truth for column ids, default/minimum widths, resizability, and
 //! `?cols=` visibility — replacing widths that used to be encoded three
 //! times (Tailwind class on the header cell, again on the row cell, and a
-//! px table in `extra_column_width_px`).
+//! now-deleted px lookup table in `analyzer.rs`).
 //!
 //! Widths render as CSS custom properties (`--colw-<id>`) on the table
 //! pane; header and row cells both size themselves with
 //! `width: var(--colw-<id>)`, and the row min-width is a `calc()` sum of
 //! the visible columns' variables so a live drag updates everything in one
 //! style write.
-
-// TEMPORARY: the width/registry surface (ColumnSpec, COLUMNS, colw_style, …)
-// lands ahead of the table markup that consumes it; until that wiring exists
-// only the tests reference it, which `-D warnings` treats as dead code.
-// Remove this allow when the analyzer markup consumes the registry.
-#![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};
 
@@ -73,6 +67,7 @@ pub const DEFAULT_VISIBLE_COLS: &[&str] = &[
 ];
 
 /// localStorage key for user width overrides (`HashMap<String, f64>`, px).
+#[allow(dead_code)] // consumed by the drag-resize task
 pub const COL_WIDTHS_KEY: &str = "ultros.flipfinder.colwidths";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -200,6 +195,7 @@ pub const COLUMNS: &[ColumnSpec] = &[
     },
 ];
 
+#[allow(dead_code)] // consumed by the drag-resize task
 pub fn column_spec(id: &str) -> Option<&'static ColumnSpec> {
     COLUMNS.iter().find(|c| c.id == id)
 }

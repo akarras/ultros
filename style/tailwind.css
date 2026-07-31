@@ -2033,8 +2033,10 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
    is the single scrollport for both axes and the header is sticky inside
    it. `.analyzer-hscroll` survives only until the CSS-var width task
    removes it; rows scroll underneath the sticky header, which draws its own
-   opaque background. Width comes from `--analyzer-row-min-width` on every
-   grid row. */
+   opaque background. Column widths are `--colw-<id>` variables set inline on
+   `.analyzer-table` by the route (from the column registry), and
+   `--analyzer-row-min-width` is a `calc()` sum of the visible columns'
+   variables set by the same inline style. */
 .analyzer-hscroll {
     overflow-x: auto;
     overflow-y: hidden;
@@ -2044,26 +2046,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     scrollbar-width: thin;
 }
 /* One width for the header row, every data row, and the spacer that holds the
-   rows, so the two scrollports scroll through the same range and the row
-   striping covers it.
-
-   The base value tracks the columns each breakpoint actually reveals (several
-   are `hidden md:flex` / `lg:flex`). `--analyzer-extra-cols` is set inline by
-   the route and carries the optional columns the user has switched on beyond
-   the default set — the stylesheet cannot know those. */
-.analyzer-table {
-    --analyzer-row-min-width: calc(38rem + var(--analyzer-extra-cols, 0px));
-}
-@media (min-width: 768px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(61rem + var(--analyzer-extra-cols, 0px));
-    }
-}
-@media (min-width: 1024px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(68rem + var(--analyzer-extra-cols, 0px));
-    }
-}
+   rows, so the scrollport scrolls through the same range for all of them and
+   the row striping covers it. */
 .analyzer-grid-row {
     min-width: var(--analyzer-row-min-width, 0px);
 }

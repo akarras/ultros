@@ -560,30 +560,6 @@ fn format_velocity_floor(v: f32) -> String {
     }
 }
 
-/// Rendered width of the optional columns that are *not* in the default set,
-/// in px.
-///
-/// The grid's base width lives in the stylesheet, which is the only place that
-/// can know which columns a breakpoint hides. What it cannot know is which
-/// optional columns the user switched on, so that part is measured here and
-/// handed over as `--analyzer-extra-cols`. Under-reserving is the failure that
-/// matters: the two scrollports would stop short of the last column and it
-/// would be unreachable.
-fn extra_column_width_px(visible: &std::collections::HashSet<&'static str>) -> u32 {
-    const EXTRA_COLUMN_WIDTHS: &[(&str, u32)] = &[
-        (COL_ROI, 112),
-        (COL_DATACENTER, 112),
-        (COL_TREND, 100),
-        (COL_SALES_PER_DAY, 88),
-        (COL_VOLUME_30D, 88),
-    ];
-    EXTRA_COLUMN_WIDTHS
-        .iter()
-        .filter(|(col, _)| visible.contains(col))
-        .map(|(_, w)| w)
-        .sum()
-}
-
 /// Filters the `+ Filter` menu should offer: everything addable that is not
 /// already on screen as a chip.
 fn available_filters(active: &[&str]) -> Vec<&'static str> {
@@ -664,6 +640,29 @@ fn SortHeader(
                 }}
             </div>
         </a>
+    }
+    .into_any()
+}
+
+/// One header cell, sized by its column's `--colw-*` variable. Tasks
+/// layered on top: the resize handle and the context-menu hookup.
+#[component]
+fn HeaderCell(
+    col: &'static str,
+    /// Extra classes: alignment (`justify-end`, `justify-center`) and
+    /// anything cell-specific.
+    #[prop(optional, into)]
+    class: String,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <div
+            role="columnheader"
+            class=format!("relative shrink-0 px-3 py-2 flex items-center gap-2 min-w-0 {class}")
+            style=format!("width:var(--colw-{col})")
+        >
+            {children()}
+        </div>
     }
     .into_any()
 }
@@ -1731,9 +1730,7 @@ fn AnalyzerTable(
             // for both axes, with the column header sticky inside it.
             <div
                 class="analyzer-table border border-[color:var(--color-outline)] flex-1 min-h-0"
-                style=move || {
-                    format!("--analyzer-extra-cols: {}px;", extra_column_width_px(&visible_cols()))
-                }
+                style=move || colw_style(&visible_cols(), &std::collections::HashMap::new())
             >
                 <VirtualScroller
                         viewport_height=640.0
@@ -1750,60 +1747,60 @@ fn AnalyzerTable(
                         row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
                             <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
+                                <HeaderCell col=COL_HQ class="!px-2 justify-center">
                                     {t!(i18n, analyzer_col_hq)}
-                                </div>
-                                <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
+                                </HeaderCell>
+                                <HeaderCell col=COL_ITEM>
                                     {t!(i18n, analyzer_col_item)}
-                                </div>
-                                <div role="columnheader" class="w-28 shrink-0 px-3 text-right">
+                                </HeaderCell>
+                                <HeaderCell col=COL_PROFIT class="justify-end">
                                     <SortHeader
                                         mode=SortMode::Profit
                                         label=t_string!(i18n, analyzer_col_profit).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
+                                </HeaderCell>
                                 {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                    <HeaderCell col=COL_PROFIT_PER_DAY class="justify-end">
                                         <SortHeader
                                             mode=SortMode::ProfitPerDay
                                             label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
                                             sort_mode
                                             sort_dir
                                         />
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
+                                    <HeaderCell col=COL_VELOCITY class="justify-end">
                                         {t!(i18n, analyzer_col_velocity)}
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end">
+                                    <HeaderCell col=COL_DRIFT class="justify-end">
                                         {t!(i18n, analyzer_col_drift)}
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center">
+                                    <HeaderCell col=COL_CONFIDENCE class="justify-center">
                                         {t!(i18n, analyzer_col_confidence)}
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                    <HeaderCell col=COL_ROI>
                                         <SortHeader
                                             mode=SortMode::Roi
                                             label=t_string!(i18n, analyzer_col_roi).to_string()
                                             sort_mode
                                             sort_dir
                                         />
-                                    </div>
+                                    </HeaderCell>
                                 })}
-                                <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                <HeaderCell col=COL_BUY_PRICE class="justify-end">
                                     {t!(i18n, analyzer_col_buy_price)}
-                                </div>
+                                </HeaderCell>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
+                                    <HeaderCell col=COL_WORLD>
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -1822,10 +1819,10 @@ fn AnalyzerTable(
                                                     })
                                             }}
                                         </div>
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
+                                    <HeaderCell col=COL_DATACENTER>
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -1844,40 +1841,39 @@ fn AnalyzerTable(
                                                     })
                                             }}
                                         </div>
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
+                                    <HeaderCell col=COL_TREND class="flex-col justify-center text-center leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight">
-
+                                    <HeaderCell col=COL_SALES_PER_DAY class="flex-col justify-center text-center leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight">
+                                    <HeaderCell col=COL_VOLUME_30D class="flex-col items-end text-right leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
-                                    </div>
+                                    </HeaderCell>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 hidden md:flex flex-col leading-tight">
+                                    <HeaderCell col=COL_LAST_SOLD class="flex-col items-start leading-tight !gap-0">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
-                                    </div>
+                                    </HeaderCell>
                                 })}
                             </div>
                         }.into_any()
@@ -1933,14 +1929,14 @@ fn AnalyzerTable(
                             };
                             view! {
                                 <div class=classes role="row-group">
-                                    <div role="cell" class="px-2 py-2 w-[44px] shrink-0 flex items-center justify-center">
+                                    <div role="cell" class="px-2 py-2 shrink-0 flex items-center justify-center" style="width:var(--colw-hq)">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
                                             None
                                         }}
                                     </div>
-                                    <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
+                                    <div role="cell" class="px-4 py-2 flex flex-row items-center gap-2 shrink-0 min-w-0" style="width:var(--colw-item)">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=format!("/item/{}/{item_id}", world())
@@ -1964,11 +1960,11 @@ fn AnalyzerTable(
                                         <Clipboard clipboard_text=item.to_string() />
                                         <AddToList item_id />
                                     </div>
-                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 shrink-0 text-right flex items-center justify-end" style="width:var(--colw-profit)">
                                         <Gil amount=data.profit />
                                     </div>
                                     {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                        <div role="cell" class="px-3 py-2 shrink-0 text-right flex items-center justify-end" style="width:var(--colw-profit_per_day)">
                                             <Gil amount=data.profit_per_day />
                                         </div>
                                     })}
@@ -1988,7 +1984,7 @@ fn AnalyzerTable(
                                             None => "—".to_string(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 shrink-0 flex items-center justify-end font-mono tabular-nums" style="width:var(--colw-velocity)">
                                                 {text}
                                             </div>
                                         }
@@ -2010,7 +2006,8 @@ fn AnalyzerTable(
                                             <div
                                                 role="cell"
                                                 title=title
-                                                class=format!("px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums {class}")
+                                                class=format!("px-3 py-2 shrink-0 flex items-center justify-end font-mono tabular-nums {class}")
+                                                style="width:var(--colw-drift)"
                                             >
                                                 {text}
                                             </div>
@@ -2031,23 +2028,23 @@ fn AnalyzerTable(
                                             },
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 shrink-0 flex items-center justify-center" style="width:var(--colw-confidence)">
                                                 <span class=format!("text-xs font-semibold {class}")>{label}</span>
                                             </div>
                                         }
                                     })}
                                     {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                        <div role="cell" class="px-3 py-2 shrink-0 text-right flex items-center justify-end" style="width:var(--colw-roi)">
                                             <span class=roi_badge_class(row_roi)>
                                                 {format!("{row_roi}%")}
                                             </span>
                                         </div>
                                     })}
-                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    <div role="cell" class="px-3 py-2 shrink-0 text-right flex items-center justify-end" style="width:var(--colw-buy_price)">
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden lg:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 shrink-0 flex items-center min-w-0" style="width:var(--colw-world)">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                             })>
@@ -2064,7 +2061,7 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden xl:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 shrink-0 flex items-center min-w-0" style="width:var(--colw-datacenter)">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                             })>
@@ -2101,7 +2098,7 @@ fn AnalyzerTable(
                                             view! { <SingleLineSkeleton /> }.into_any()
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 shrink-0 flex items-center justify-center" style="width:var(--colw-trend)">
                                                 {inner}
                                             </div>
                                         }
@@ -2127,7 +2124,7 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 shrink-0 flex items-center justify-center" style="width:var(--colw-sales_per_day)">
                                                 {inner}
                                             </div>
                                         }
@@ -2140,7 +2137,7 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 shrink-0 flex items-center justify-end font-mono tabular-nums" style="width:var(--colw-volume_30d)">
                                                 {inner}
                                             </div>
                                         }
@@ -2158,7 +2155,7 @@ fn AnalyzerTable(
                                             })
                                             .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
+                                            <div role="cell" class="px-3 py-2 shrink-0 truncate flex items-center" style="width:var(--colw-last_sold)">
                                                 {last}
                                             </div>
                                         }
@@ -2934,35 +2931,6 @@ mod tests {
         let table = ProfitTable::new(sales, region, world, vec![], false);
         assert_eq!(table.0.len(), 1);
         assert_eq!(table.0[0].prices, vec![90, 95, 100, 300, 110, 105]);
-    }
-
-    #[test]
-    fn the_default_column_set_adds_no_extra_width() {
-        // The stylesheet's per-breakpoint baseline already covers these, so
-        // counting them here would reserve the width twice and leave the grid
-        // scrolling into empty space.
-        let defaults: std::collections::HashSet<&'static str> =
-            DEFAULT_VISIBLE_COLS.iter().copied().collect();
-        assert_eq!(extra_column_width_px(&defaults), 0);
-        assert_eq!(extra_column_width_px(&std::collections::HashSet::new()), 0);
-    }
-
-    #[test]
-    fn every_opt_in_column_reserves_width() {
-        // A column that neither the CSS baseline nor this function accounts
-        // for is one the scrollports stop short of — the column renders and
-        // cannot be reached, which is the bug this whole mechanism exists to
-        // prevent.
-        for col in ALL_OPTIONAL_COLS {
-            if DEFAULT_VISIBLE_COLS.contains(col) {
-                continue;
-            }
-            let set: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
-            assert!(
-                extra_column_width_px(&set) > 0,
-                "{col} reserves no width, so the grid would stop short of it"
-            );
-        }
     }
 
     #[test]
