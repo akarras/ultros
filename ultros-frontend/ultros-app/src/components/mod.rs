@@ -25,6 +25,7 @@ pub mod history_panel;
 pub mod hover_card;
 pub mod icon;
 pub mod item_icon;
+pub mod item_tooltip;
 pub mod job_set_card;
 pub mod job_set_grouping;
 pub mod language_picker;
