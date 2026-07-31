@@ -204,7 +204,6 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
 
     // Currency exchange per-currency pages.
     // This matches the logic inside CurrencySelection in currency_exchange.rs.
-    let disallowed_items = &["Gil", "MGP"];
     let allowed_item_ui_categories = [100, 61, 63];
     let mut currencies = Vec::new();
 
@@ -273,14 +272,9 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
     currencies.sort();
     currencies.dedup();
 
-    // Now filter out disallowed items like "Gil", "MGP" and build URLs
+    // Now filter out disallowed items like "Gil" (ID 1) and "MGP" (ID 29) and build URLs
     for id in currencies {
-        if data
-            .items
-            .get(&xiv_gen::ItemId(id))
-            .filter(|item| !disallowed_items.contains(&item.name.as_str()))
-            .is_some()
-        {
+        if id != 1 && id != 29 {
             let mut builder = Url::builder(format!("https://ultros.app/currency-exchange/{id}"));
             builder.priority(0.6);
             builder.change_frequency(ChangeFrequency::Daily);
