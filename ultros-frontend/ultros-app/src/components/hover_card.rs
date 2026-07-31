@@ -104,8 +104,10 @@ where
 {
     let (hover_open, set_hover_open) = signal(false);
     let (is_focused, set_is_focused) = signal(false);
-    // Pending open-delay timer. `new_local`: timers only exist client-side.
-    let pending = StoredValue::new_local(None::<TimeoutHandle>);
+    // Pending open-delay timer (`TimeoutHandle` wraps an i32, so plain
+    // sync storage is fine — `new_local`'s SendWrapper would panic when the
+    // SSR arena drops it from a different tokio worker thread).
+    let pending = StoredValue::new(None::<TimeoutHandle>);
 
     let clear_pending = move || {
         if let Some(handle) = pending.get_value() {
