@@ -152,8 +152,8 @@ pub fn visible_patches(track: PatchTrack, span_secs: i64) -> Vec<&'static GamePa
     let tier = mark_tier(span_secs);
     patches_for_track(track)
         .filter(|p| match tier {
-            MarkTier::ExpansionsOnly => p.version % 100 == 0,
-            MarkTier::Major => p.version % 10 == 0,
+            MarkTier::ExpansionsOnly => p.version.is_multiple_of(100),
+            MarkTier::Major => p.version.is_multiple_of(10),
             MarkTier::Point => true,
             MarkTier::None => false,
         })
@@ -165,7 +165,7 @@ pub fn visible_patches(track: PatchTrack, span_secs: i64) -> Vec<&'static GamePa
 pub fn version_label(version: u16) -> String {
     let major = version / 100;
     let minor = version % 100;
-    if minor % 10 == 0 {
+    if minor.is_multiple_of(10) {
         format!("{major}.{}", minor / 10)
     } else {
         format!("{major}.{minor:02}")

@@ -418,7 +418,7 @@ pub fn build_price_history_chart(
                 rx: 0.0,
                 fill: hue.with_alpha(if parity { 0.09 } else { 0.05 }),
             });
-            if spec.version % 100 == 0 && spec.start > first_ts && spec.start < last_ts {
+            if spec.version.is_multiple_of(100) && spec.start > first_ts && spec.start < last_ts {
                 scene.nodes.push(Node::Line {
                     x1,
                     y1: plot_top,
