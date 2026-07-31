@@ -183,6 +183,17 @@ struct CalculatedProfitData {
     profit_per_day: i32,
 }
 
+/// Output of the filter + sort pass over the profit table.
+#[derive(Clone, Debug, PartialEq, Default)]
+struct FilteredRows {
+    rows: Vec<(usize, CalculatedProfitData)>,
+    /// Rows an active drift / confidence / volume floor could not evaluate
+    /// on real data — dropped for lack of it (drift) or passed / judged on
+    /// a substitute (volume, confidence). Zero whenever none of those
+    /// floors is active. Drives the sticky bar's transparency note.
+    rows_lacking_data: usize,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
@@ -562,20 +573,28 @@ fn passes_quality(filter: QualityFilter, hq: bool) -> bool {
     }
 }
 
-/// Case-insensitive substring match for the `?name=` filter. A blank query
-/// matches everything — the chip seeds empty so the user can type into it,
-/// and that state must not blank the table.
-fn matches_item_name(query: &str, item_name: &str) -> bool {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return true;
-    }
-    item_name.to_lowercase().contains(&q)
+/// Normalize a raw `?name=` query for matching: trim + lowercase, once per
+/// recompute rather than once per row. A blank query maps to `None` (no
+/// filter) — the chip seeds empty so the user can type into it, and that
+/// state must not blank the table.
+fn normalize_name_query(raw: &str) -> Option<String> {
+    let q = raw.trim().to_lowercase();
+    (!q.is_empty()).then_some(q)
+}
+
+/// Case-insensitive substring match against a query pre-normalized by
+/// [`normalize_name_query`]. Runs per row, so only the item name is
+/// lowercased here.
+fn matches_normalized_name(query_lower: &str, item_name: &str) -> bool {
+    item_name.to_lowercase().contains(query_lower)
 }
 
 /// Does a row clear the `?drift=` floor? Drift comes off the row's own
-/// price buffer, so coverage is near-universal; a row with too few sales
-/// to compute a drift fails an explicit floor — the velocity floor's rule.
+/// price buffer, but `price_drift_pct` needs at least 4 of the (up to 6)
+/// buffered sales, so thinly-traded rows have no drift at all. A row with
+/// too few sales to compute a drift fails an explicit floor — the velocity
+/// floor's rule — and the sticky bar counts it toward the "rows lack data"
+/// note so the drop is visible rather than silent.
 fn passes_drift_floor(min: f32, drift: Option<f32>) -> bool {
     drift.map(|d| d >= min).unwrap_or(false)
 }
@@ -637,8 +656,12 @@ const FILTER_PRE_TAX: &str = "tax";
 const FILTER_SHOW_SUSPICIOUS: &str = "show-suspicious";
 const FILTER_QUALITY: &str = "quality";
 const FILTER_NAME: &str = "name";
-const FILTER_DRIFT: &str = "drift";
-const FILTER_CONFIDENCE: &str = "confidence";
+// The *values* of the next two deliberately equal the COL_DRIFT /
+// COL_CONFIDENCE tokens — they live in different namespaces (`?cols=`
+// tokens vs. query-param keys) and the param names are public wire format
+// (bookmarks, saved views), so only the Rust identifiers disambiguate.
+const FILTER_MIN_DRIFT: &str = "drift";
+const FILTER_MIN_CONFIDENCE: &str = "confidence";
 const FILTER_MIN_VOLUME: &str = "min-volume";
 // Chip-only filters: picked from a list or off a row rather than typed, so
 // they are never offered by the `+ Filter` menu.
@@ -661,8 +684,8 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_SHOW_SUSPICIOUS,
     FILTER_QUALITY,
     FILTER_NAME,
-    FILTER_DRIFT,
-    FILTER_CONFIDENCE,
+    FILTER_MIN_DRIFT,
+    FILTER_MIN_CONFIDENCE,
     FILTER_MIN_VOLUME,
 ];
 
@@ -690,8 +713,8 @@ fn default_filter_value(id: &str) -> &'static str {
         // Name search deliberately seeds empty: its chip mounts in edit
         // state (`start_editing`) so there is never an empty resting chip.
         FILTER_NAME => "",
-        FILTER_DRIFT => "-10",
-        FILTER_CONFIDENCE => "medium",
+        FILTER_MIN_DRIFT => "-10",
+        FILTER_MIN_CONFIDENCE => "medium",
         FILTER_MIN_VOLUME => "10",
         _ => "",
     }
@@ -860,6 +883,18 @@ fn AnalyzerTable(
     set_cross_region_enabled: SignalSetter<Option<bool>>,
     set_filter_outliers: SignalSetter<Option<bool>>,
     on_market_update: Callback<()>,
+    /// Keeps the name chip mounted (in edit state) between "picked from the
+    /// + Filter menu" and "first committed value" — an empty ?name= URL
+    /// param is not relied on to round-trip. Owned by `AnalyzerWorldView`:
+    /// this component lives inside the Suspense closure and remounts on
+    /// every realtime market tick, so a signal declared here would be
+    /// destroyed mid-keystroke along with the chip being typed into.
+    name_chip_pending: RwSignal<bool>,
+    /// True once client hydration has finished (Effect-set by the caller).
+    /// Also owned by `AnalyzerWorldView` — declared here it would reset to
+    /// false on every market-tick remount, rendering one full unfiltered
+    /// pass per tick whenever `?name=` is active.
+    hydrated: RwSignal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
@@ -904,27 +939,17 @@ fn AnalyzerTable(
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
-    let (quality_filter, set_quality_filter) = query_signal::<QualityFilter>("quality");
-    let (name_filter, set_name_filter) = query_signal::<String>("name");
-    let (min_drift, set_min_drift) = query_signal::<f32>("drift");
+    // The five column filters use `filter_query_signal` (replace: true,
+    // scroll: false) — editing a filter must not push a history entry per
+    // keystroke or yank the window back to the top.
+    let (quality_filter, set_quality_filter) = filter_query_signal::<QualityFilter>("quality");
+    let (name_filter, set_name_filter) = filter_query_signal::<String>("name");
+    let (min_drift, set_min_drift) = filter_query_signal::<f32>("drift");
     // Same NaN guard as ?vel= — "NaN".parse::<f32>() succeeds and would
     // silently empty the table (every comparison with NaN is false).
     let drift_floor = Memo::new(move |_| normalize_velocity_floor(min_drift()));
-    let (min_confidence, set_min_confidence) = query_signal::<ConfidenceFloor>("confidence");
-    let (min_volume, set_min_volume) = query_signal::<u32>("min-volume");
-    // Keeps the name chip mounted (in edit state) between "picked from the
-    // + Filter menu" and "first committed value" — an empty ?name= URL
-    // param is not relied on to round-trip.
-    let name_chip_pending = RwSignal::new(false);
-    // SSR renders SSR_FALLBACK_ROWS rows with *English* item names; the
-    // client hydrates localized ones. Localized-name matching therefore
-    // must not run until after hydration or an active ?name= produces
-    // different row sets and trips the tachys hydration panic. Same
-    // Effect-driven gate as item_explorer.rs / job_set_card.rs.
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
+    let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
+    let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
@@ -992,8 +1017,8 @@ fn AnalyzerTable(
             name_filter().is_some() || name_chip_pending.get(),
             FILTER_NAME,
         );
-        push_if(drift_floor().is_some(), FILTER_DRIFT);
-        push_if(min_confidence().is_some(), FILTER_CONFIDENCE);
+        push_if(drift_floor().is_some(), FILTER_MIN_DRIFT);
+        push_if(min_confidence().is_some(), FILTER_MIN_CONFIDENCE);
         push_if(min_volume().is_some(), FILTER_MIN_VOLUME);
         active
     });
@@ -1018,8 +1043,10 @@ fn AnalyzerTable(
             FILTER_SHOW_SUSPICIOUS => t_string!(i18n, analyzer_show_suspicious).to_string(),
             FILTER_QUALITY => t_string!(i18n, analyzer_filter_quality_label).to_string(),
             FILTER_NAME => t_string!(i18n, analyzer_filter_name_label).to_string(),
-            FILTER_DRIFT => t_string!(i18n, analyzer_filter_drift_min_label).to_string(),
-            FILTER_CONFIDENCE => t_string!(i18n, analyzer_filter_confidence_min_label).to_string(),
+            FILTER_MIN_DRIFT => t_string!(i18n, analyzer_filter_drift_min_label).to_string(),
+            FILTER_MIN_CONFIDENCE => {
+                t_string!(i18n, analyzer_filter_confidence_min_label).to_string()
+            }
             FILTER_MIN_VOLUME => t_string!(i18n, analyzer_filter_volume_min_label).to_string(),
             _ => String::new(),
         }
@@ -1043,8 +1070,8 @@ fn AnalyzerTable(
             FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
             FILTER_QUALITY => set_quality_filter(value.parse().ok()),
             FILTER_NAME => name_chip_pending.set(true),
-            FILTER_DRIFT => set_min_drift(value.parse().ok()),
-            FILTER_CONFIDENCE => set_min_confidence(value.parse().ok()),
+            FILTER_MIN_DRIFT => set_min_drift(value.parse().ok()),
+            FILTER_MIN_CONFIDENCE => set_min_confidence(value.parse().ok()),
             FILTER_MIN_VOLUME => set_min_volume(value.parse().ok()),
             _ => {}
         }
@@ -1127,8 +1154,28 @@ fn AnalyzerTable(
     // world change). Cells + the suspicious filter read it reactively.
     let enrichment = RwSignal::new(EnrichmentMaps::default());
 
-    let sorted_data = Memo::new(move |_| {
+    let filtered_rows = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
+        // Normalized (trimmed + lowercased) once per recompute — the rows
+        // loop below runs 20k+ times, and lowercasing the query per row
+        // was an allocation per row. `None` when the filter is off, blank,
+        // or the hydration gate is still down.
+        let name_query: Option<String> = name_filter().and_then(|raw| {
+            // SSR renders SSR_FALLBACK_ROWS rows with *English* item names;
+            // the client hydrates localized ones. Localized-name matching
+            // therefore must not run until after hydration or an active
+            // ?name= produces different row sets and trips the tachys
+            // hydration panic. Same Effect-driven gate as item_explorer.rs /
+            // job_set_card.rs. Checked only when a name filter is active so
+            // an idle page never subscribes this memo to `hydrated`.
+            if !hydrated.get() {
+                return None;
+            }
+            normalize_name_query(&raw)
+        });
+        // See `FilteredRows::rows_lacking_data`. Counted by the combined
+        // drift/confidence/volume closure below.
+        let mut rows_lacking_data = 0usize;
         let mut sorted_data = profits
             .0
             .iter()
@@ -1207,54 +1254,69 @@ fn AnalyzerTable(
                     .map(|q| passes_quality(q, data.inner.sale_summary.hq))
                     .unwrap_or(true)
             })
-            .filter(move |data| {
-                let Some(query) = name_filter() else {
+            .filter(|data| {
+                let Some(query) = name_query.as_deref() else {
                     return true;
                 };
-                // Hydration gate — see the comment at the `hydrated` signal. Checked
-                // only when a name filter is active so an idle page never subscribes
-                // the memo to `hydrated`.
-                if !hydrated.get() {
-                    return true;
-                }
                 items
                     .get(&ItemId(data.inner.sale_summary.item_id))
-                    .map(|item| matches_item_name(&query, &item.name))
+                    .map(|item| matches_normalized_name(query, &item.name))
                     .unwrap_or(false)
             })
-            .filter(move |data| {
-                drift_floor()
-                    .map(|min| passes_drift_floor(min, price_drift_pct(&data.inner.prices)))
-                    .unwrap_or(true)
-            })
-            .filter(move |data| {
+            .filter(|data| {
+                // Drift, confidence and volume floors in one pass: they share
+                // the "row may lack data" problem (drift needs >= 4 buffered
+                // sales; the other two need CH enrichment, ~7% coverage), so
+                // this is where `rows_lacking_data` is counted — and the two
+                // enrichment-backed floors share a single map lookup.
+                //
                 // CH band first, derived fallback — the same preference the
                 // Confidence column renders, so the label shown is the label
                 // filtered. Reading `enrichment` here follows the velocity
                 // filter's pattern; the non-reactive `requested` dedupe is
                 // what keeps recompute -> refetch from looping.
-                min_confidence()
-                    .map(|floor| {
-                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                        let ch = enrichment
-                            .with(|maps| maps.quality_for(&key).map(|q| q.confidence_band));
-                        passes_confidence_floor(
+                let drift_min = drift_floor();
+                let confidence_min = min_confidence();
+                let volume_min = min_volume();
+                if drift_min.is_none() && confidence_min.is_none() && volume_min.is_none() {
+                    return true;
+                }
+                let mut lacks_data = false;
+                let mut pass = true;
+                if let Some(min) = drift_min {
+                    let drift = price_drift_pct(&data.inner.prices);
+                    lacks_data |= drift.is_none();
+                    pass &= passes_drift_floor(min, drift);
+                }
+                if confidence_min.is_some() || volume_min.is_some() {
+                    let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                    // One lookup serves both floors.
+                    let ch = enrichment.with(|maps| {
+                        maps.quality_for(&key)
+                            .map(|q| (q.confidence_band, q.sample_size))
+                    });
+                    if let Some(floor) = confidence_min {
+                        let band = ch.map(|(band, _)| band);
+                        // CH `Unknown` is "no deep scan yet": the floor is
+                        // then judged on the derived band, so that row also
+                        // counts as lacking real data.
+                        lacks_data |= matches!(band, None | Some(ConfidenceBand::Unknown));
+                        pass &= passes_confidence_floor(
                             floor,
-                            ch,
+                            band,
                             derived_confidence(&data.inner.sale_summary),
-                        )
-                    })
-                    .unwrap_or(true)
-            })
-            .filter(move |data| {
-                min_volume()
-                    .map(|min| {
-                        let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                        let ch =
-                            enrichment.with(|maps| maps.quality_for(&key).map(|q| q.sample_size));
-                        passes_volume_floor(min, ch)
-                    })
-                    .unwrap_or(true)
+                        );
+                    }
+                    if let Some(min) = volume_min {
+                        let volume = ch.map(|(_, sample_size)| sample_size);
+                        lacks_data |= volume.is_none();
+                        pass &= passes_volume_floor(min, volume);
+                    }
+                }
+                if lacks_data {
+                    rows_lacking_data += 1;
+                }
+                pass
             })
             .filter(move |data| {
                 max_purchase_price()
@@ -1323,11 +1385,17 @@ fn AnalyzerTable(
             sort_mode().unwrap_or(SortMode::ProfitPerDay),
             sort_dir().unwrap_or_default(),
         );
-        sorted_data
-            .into_iter()
-            .enumerate()
-            .collect::<Vec<(usize, CalculatedProfitData)>>()
+        FilteredRows {
+            rows: sorted_data.into_iter().enumerate().collect(),
+            rows_lacking_data,
+        }
     });
+    // Split views over `filtered_rows`. The clone in `sorted_data` runs once
+    // per filter recompute (Memo caches it), not per access, and each element
+    // is an Arc bump — the VirtualScroller needs a `Signal<Vec<_>>` and this
+    // keeps its `each` wiring unchanged.
+    let sorted_data = Memo::new(move |_| filtered_rows.with(|f| f.rows.clone()));
+    let rows_lacking_data = Memo::new(move |_| filtered_rows.with(|f| f.rows_lacking_data));
 
     // --- Visible-window lazy enrichment -------------------------------------
     // Dedupe / loop-breaker: keys we've already scheduled a fetch for. Non-
@@ -1497,9 +1565,29 @@ fn AnalyzerTable(
                         {move || {
                             t_string!(i18n, analyzer_rows_count)
                                 .to_string()
-                                .replace("%count%", &sorted_data().len().to_string())
+                                .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
                         }}
                     </span>
+                    // Data-transparency note: the drift / confidence / volume
+                    // floors each meet rows with no underlying data (drift
+                    // needs >= 4 buffered sales; the other two need CH
+                    // enrichment) and resolve it differently — drop, judge on
+                    // a derived band, pass. Say how many rows that was rather
+                    // than letting the row count move for invisible reasons.
+                    // Zero (and absent) whenever none of those floors is set.
+                    {move || {
+                        let n = rows_lacking_data();
+                        (n > 0)
+                            .then(|| {
+                                view! {
+                                    <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                        {t_string!(i18n, analyzer_rows_lacking_data)
+                                            .to_string()
+                                            .replace("%count%", &n.to_string())}
+                                    </span>
+                                }
+                            })
+                    }}
                     // Live-market indicator, carried over from the realtime work on
                     // main. It sat in the results-summary panel this bar replaced.
                     <RealtimeStatus status=realtime_status last_update=last_update />
@@ -2579,6 +2667,18 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     // closure and remounts on every market refetch, which would keep undoing a
     // filter the user had cleared.
     seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    // Owned here for the same reason as the seed above — AnalyzerTable
+    // remounts on every realtime market tick, and this state must survive
+    // those remounts. `name_chip_pending` keeps a not-yet-committed name
+    // chip alive while the user is still typing into it; `hydrated` is the
+    // one-shot hydration gate for localized-name matching (see the name
+    // filter inside AnalyzerTable), which must not flip back to false and
+    // re-render an unfiltered pass on every tick.
+    let name_chip_pending = RwSignal::new(false);
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
     let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
@@ -2731,6 +2831,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     set_cross_region_enabled=set_cross_region_enabled
                                                     set_filter_outliers=set_filter_outliers
                                                     on_market_update=refetch_market_data
+                                                    name_chip_pending=name_chip_pending
+                                                    hydrated=hydrated
                                                 />
                                             },
                                         )
@@ -3488,22 +3590,56 @@ mod tests {
         assert!(!passes_quality(QualityFilter::Nq, true));
     }
 
+    /// The production pairing: normalize once (per recompute), match many
+    /// (per row). Composed here so the tests exercise the same path.
+    fn name_matches(raw_query: &str, item_name: &str) -> bool {
+        match normalize_name_query(raw_query) {
+            Some(q) => matches_normalized_name(&q, item_name),
+            None => true,
+        }
+    }
+
     #[test]
     fn name_match_is_case_insensitive_substring() {
-        assert!(matches_item_name("grade", "Grade 8 Tincture of Strength"));
-        assert!(matches_item_name(
-            "TINCTURE",
-            "Grade 8 Tincture of Strength"
-        ));
-        assert!(!matches_item_name("potion", "Grade 8 Tincture of Strength"));
+        assert!(name_matches("grade", "Grade 8 Tincture of Strength"));
+        assert!(name_matches("TINCTURE", "Grade 8 Tincture of Strength"));
+        assert!(!name_matches("potion", "Grade 8 Tincture of Strength"));
     }
 
     #[test]
     fn blank_or_whitespace_name_query_matches_everything() {
         // The chip seeds empty and the user may commit whitespace; neither
         // should silently empty the table.
-        assert!(matches_item_name("", "Anything"));
-        assert!(matches_item_name("   ", "Anything"));
+        assert!(name_matches("", "Anything"));
+        assert!(name_matches("   ", "Anything"));
+    }
+
+    #[test]
+    fn name_query_normalizes_once_to_trimmed_lowercase() {
+        // The per-row side must be able to assume a pre-lowercased,
+        // pre-trimmed query — that is the whole point of hoisting the
+        // normalization out of the 20k-row loop.
+        assert_eq!(
+            normalize_name_query("  TiNcTuRe "),
+            Some("tincture".to_string())
+        );
+        assert_eq!(normalize_name_query("   "), None);
+        assert_eq!(normalize_name_query(""), None);
+    }
+
+    #[test]
+    fn filter_param_keys_are_pinned_wire_format() {
+        // `?drift=` / `?confidence=` deliberately share their *values* with
+        // the COL_DRIFT / COL_CONFIDENCE `?cols=` tokens — different
+        // namespaces. The values are public wire format (bookmarks, saved
+        // views); only the Rust const names may change.
+        assert_eq!(FILTER_MIN_DRIFT, COL_DRIFT);
+        assert_eq!(FILTER_MIN_DRIFT, "drift");
+        assert_eq!(FILTER_MIN_CONFIDENCE, COL_CONFIDENCE);
+        assert_eq!(FILTER_MIN_CONFIDENCE, "confidence");
+        assert_eq!(FILTER_MIN_VOLUME, "min-volume");
+        assert_eq!(FILTER_NAME, "name");
+        assert_eq!(FILTER_QUALITY, "quality");
     }
 
     #[test]
