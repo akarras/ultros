@@ -14,6 +14,7 @@ use crate::api::{
 };
 use crate::components::list::share_list_modal::ShareListModal;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+use crate::components::modal::Modal;
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{
@@ -76,7 +77,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 view! {
                                     <div class="space-y-4">
                                         <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4 text-sm text-[color:var(--color-text-muted)]">
-                                            "This invite is tied to your Ultros account, so you need to log in before accepting it."
+                                            {t!(i18n, lists_invite_login_required)}
                                         </div>
                                         <a class="btn-primary" rel="external" href=href>
                                             <Icon icon=i::BsPersonCircle />
@@ -86,7 +87,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 }.into_any()
                             } else {
                                 view! {
-                                    <div class="alert alert-error">{format!("Could not load invite: {e}")}</div>
+                                    <div class="alert alert-error">{t!(i18n, lists_invite_load_error, error = e.to_string())}</div>
                                 }.into_any()
                             }
                         }
@@ -97,13 +98,17 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 }.into_any(),
                                 Some(Err(e)) => view! {
                                     <div class="space-y-3">
-                                        <div class="alert alert-error">{format!("Could not accept invite: {e}")}</div>
+                                        <div class="alert alert-error">{t!(i18n, lists_invite_accept_error, error = e.to_string())}</div>
                                         <A href="/list" attr:class="btn-secondary">{t!(i18n, lists_back_to_lists_link)}</A>
                                     </div>
                                 }.into_any(),
                                 None => view! {
                                     <div class="text-sm text-[color:var(--color-text-muted)]">
-                                        {move || if redeem_invite.pending().get() { "Accepting invite..." } else { "Preparing invite..." }}
+                                        {move || if redeem_invite.pending().get() {
+                                            t_string!(i18n, lists_invite_accepting).to_string()
+                                        } else {
+                                            t_string!(i18n, lists_invite_preparing).to_string()
+                                        }}
                                     </div>
                                 }.into_any(),
                             }
@@ -148,6 +153,9 @@ fn ListCard(
     let list = list.list;
     let (is_edit, set_is_edit) = signal(false);
     let (share_open, set_share_open) = signal(false);
+    let (confirm_delete, set_confirm_delete) = signal(false);
+    let delete_list_id = list.id;
+    let delete_list_name = StoredValue::new(list.name.clone());
     // Local state for editing
     let (name, set_name) = signal(list.name.clone());
     let (current_world, set_current_world) = signal(Some(list.wdr_filter));
@@ -170,7 +178,6 @@ fn ListCard(
                     let list_id = list.id;
                     if caps.can_admin {
                         let list_for_save = list.clone();
-                        let list_for_delete = list.clone();
                         view! {
                             <div class="flex flex-col gap-3 w-full">
                                 <div>
@@ -213,9 +220,7 @@ fn ListCard(
                                     <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, delete).to_string())>
                                         <button
                                             class="btn-danger btn-sm"
-                                            on:click=move |_| {
-                                                let _ = delete_list.dispatch(list_for_delete.id);
-                                            }
+                                            on:click=move |_| set_confirm_delete(true)
                                         >
                                             <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
                                         </button>
@@ -273,8 +278,12 @@ fn ListCard(
                                 </div>
                                 <div class="flex items-center gap-1">
                                     <Show when=move || { caps.can_admin }>
-                                        <Tooltip tooltip_text=Signal::derive(move || "Share list".to_string())>
-                                            <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_share_open(true) aria_label="Share list">
+                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, lists_share_list).to_string())>
+                                            <button
+                                                class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                                on:click=move |_| set_share_open(true)
+                                                aria-label=move || t_string!(i18n, lists_share_list).to_string()
+                                            >
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
                                         </Tooltip>
@@ -302,6 +311,36 @@ fn ListCard(
                     }.into_any()
                 }
             }}
+            <Show when=confirm_delete>
+                <Modal set_visible=set_confirm_delete>
+                    <div class="flex flex-col gap-4">
+                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, list_delete_confirm_title)}
+                        </h2>
+                        <p class="text-sm text-[color:var(--color-text-muted)]">
+                            {move || t!(
+                                i18n,
+                                list_delete_confirm_body,
+                                name = delete_list_name.with_value(|n| n.clone()),
+                            )}
+                        </p>
+                        <div class="flex justify-end gap-2">
+                            <button class="btn-secondary" on:click=move |_| set_confirm_delete(false)>
+                                <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
+                            </button>
+                            <button
+                                class="btn-danger"
+                                on:click=move |_| {
+                                    let _ = delete_list.dispatch(delete_list_id);
+                                    set_confirm_delete(false);
+                                }
+                            >
+                                <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            </Show>
             <Show when=share_open>
                 <ShareListModal list=list_for_share.clone() set_visible=set_share_open />
             </Show>
@@ -460,7 +499,7 @@ pub fn EditLists() -> impl IntoView {
                         }
                     }
                 >
-                    <Icon icon=i::BiLinkRegular /> "Redeem"
+                    <Icon icon=i::BiLinkRegular /> {t!(i18n, lists_redeem_button)}
                 </button>
             </div>
 
