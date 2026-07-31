@@ -27,6 +27,10 @@ pub struct Theme {
     /// Sequential ramp for the density mode, darkest (fewest sales) to
     /// lightest, quantised to 8 steps so cells batch into <= 8 Path nodes.
     pub density_ramp: Vec<Color>,
+    /// One muted hue per expansion (ARR..DT) for the patch milestone bands.
+    /// Deliberately distinct from `palette`: bands are background context,
+    /// drawn at low alpha, and must not read as a data series.
+    pub expansion_hues: Vec<Color>,
     pub font_family: String,
 }
 
@@ -46,6 +50,12 @@ impl Theme {
             density_ramp: [
                 "#1e1b4b", "#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#818cf8",
                 "#c7d2fe",
+            ]
+            .iter()
+            .map(|c| Color::hex(c))
+            .collect(),
+            expansion_hues: [
+                "#94a3b8", "#38bdf8", "#f472b6", "#a78bfa", "#fbbf24", "#34d399",
             ]
             .iter()
             .map(|c| Color::hex(c))

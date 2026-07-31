@@ -725,6 +725,36 @@ fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Respon
         .into_response()
 }
 
+#[derive(serde::Deserialize, Debug)]
+struct GameHistoryQuery {
+    track: Option<String>,
+}
+
+/// `GET /api/v1/game-history` — the patch/expansion release calendar
+/// backing the chart's milestone bands. The WASM chart reads the seed table
+/// directly from `ultros_api_types::game_history` (no round trip); this
+/// endpoint exists for external consumers and as the future seam where a
+/// Postgres-backed table could override the seed. A few KB, changes ~4
+/// times a year, hence the day-long `Cache-Control`.
+async fn game_history(
+    axum::extract::Query(query): axum::extract::Query<GameHistoryQuery>,
+) -> Result<axum::response::Response, WebError> {
+    use ultros_api_types::game_history::{GAME_PATCHES, PatchTrack};
+    let track = match query.track.as_deref() {
+        Some("global") => Some(PatchTrack::Global),
+        Some("china") => Some(PatchTrack::China),
+        Some("korea") => Some(PatchTrack::Korea),
+        Some(_) => return Err(WebError::BadRequest),
+        None => None,
+    };
+    let patches: Vec<_> = GAME_PATCHES
+        .iter()
+        .filter(|p| track.is_none_or(|t| p.track == t))
+        .collect();
+    let body = serde_json::to_string(&patches).map_err(anyhow::Error::from)?;
+    Ok(cached_json(body, std::time::Duration::from_secs(86_400)))
+}
+
 /// `GET /api/v1/price_density/{world}/{itemid}` — sale counts on a
 /// time × price grid for the chart's density mode. Same window/HQ semantics,
 /// bucket ladder, cache, and `Cache-Control` plumbing as [`price_series`];
@@ -2188,6 +2218,7 @@ pub(crate) async fn start_web(
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
         .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
+        .route("/api/v1/game-history", get(game_history))
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),

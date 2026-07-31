@@ -64,6 +64,10 @@ pub struct PriceChartOptions {
     /// Price-lane rendering mode. `Density` falls back to `Price` here —
     /// density has its own layout and payload.
     pub mode: crate::charts::ChartMode,
+    /// Patch milestone bands (spec 4); empty = off. See
+    /// [`crate::charts::MilestoneSpec`] for the contract (sorted, includes
+    /// the latest patch before the window).
+    pub milestones: Vec<crate::charts::MilestoneSpec>,
     pub theme: Theme,
 }
 
@@ -84,6 +88,7 @@ impl Default for PriceChartOptions {
             utc_offset_minutes: 0,
             hidden_series: Vec::new(),
             mode: crate::charts::ChartMode::Price,
+            milestones: Vec::new(),
             theme: Theme::dark_card(),
         }
     }
@@ -369,6 +374,76 @@ pub fn build_price_history_chart(
         ),
         (price_bottom, plot_top),
     );
+
+    // ── Patch milestone bands (behind everything, spec 4) ───────────────
+    // Each spec starts a band tinted by its expansion's hue, alternating
+    // lightness between consecutive patches so neighbours separate without
+    // a line; a single edge line marks expansion boundaries. Bands clamp to
+    // the visible window; the caller includes the latest patch released
+    // before the window so the leading stretch is tinted too. Nothing is
+    // drawn over the data, so bands compose with candles and ribbons
+    // identically.
+    if !options.milestones.is_empty() {
+        let mut parity_ex = u8::MAX;
+        let mut parity = false;
+        for (i, spec) in options.milestones.iter().enumerate() {
+            // Alternation follows the patch sequence, not the render set,
+            // so a band half-outside the window still alternates correctly
+            // against its neighbour.
+            if spec.ex_version == parity_ex {
+                parity = !parity;
+            } else {
+                parity_ex = spec.ex_version;
+                parity = false;
+            }
+            let band_end = options
+                .milestones
+                .get(i + 1)
+                .map(|next| next.start)
+                .unwrap_or(last_ts)
+                .min(last_ts);
+            let band_start = spec.start.max(first_ts);
+            if band_end <= band_start {
+                continue;
+            }
+            let x1 = time.scale(band_start);
+            let x2 = time.scale(band_end);
+            let hue =
+                theme.expansion_hues[spec.ex_version as usize % theme.expansion_hues.len().max(1)];
+            scene.nodes.push(Node::Rect {
+                x: x1,
+                y: plot_top,
+                width: x2 - x1,
+                height: plot_bottom - plot_top,
+                rx: 0.0,
+                fill: hue.with_alpha(if parity { 0.09 } else { 0.05 }),
+            });
+            if spec.version % 100 == 0 && spec.start > first_ts && spec.start < last_ts {
+                scene.nodes.push(Node::Line {
+                    x1,
+                    y1: plot_top,
+                    x2: x1,
+                    y2: plot_bottom,
+                    stroke: Stroke {
+                        color: theme.text_muted.with_alpha(0.35),
+                        width: 1.0,
+                        dash: None,
+                    },
+                });
+            }
+            if x2 - x1 >= 48.0 {
+                scene.nodes.push(Node::Text {
+                    x: (x1 + x2) / 2.0,
+                    y: plot_top + 14.0,
+                    content: ultros_api_types::game_history::version_label(spec.version),
+                    size: 12.0,
+                    color: theme.text_muted.with_alpha(0.8),
+                    anchor: TextAnchor::Middle,
+                    bold: false,
+                });
+            }
+        }
+    }
 
     // ── Grid + axis labels ──────────────────────────────────────────────
     for tick in price.ticks(5) {
@@ -780,6 +855,141 @@ mod tests {
 
     fn count(scene: &crate::scene::Scene, predicate: impl Fn(&Node) -> bool) -> usize {
         scene.nodes.iter().filter(|n| predicate(n)).count()
+    }
+
+    fn milestone_specs() -> Vec<crate::charts::MilestoneSpec> {
+        // Fixture data spans 10 days from 1_700_006_400. One spec before
+        // the window (leading band), two inside — the second starting a new
+        // expansion.
+        let spec = |secs: i64, version: u16, ex: u8| crate::charts::MilestoneSpec {
+            start: crate::test_util::ts(secs),
+            version,
+            ex_version: ex,
+        };
+        vec![
+            spec(1_700_006_400 - 5 * 86_400, 650, 4),
+            spec(1_700_006_400 + 2 * 86_400, 655, 4),
+            spec(1_700_006_400 + 6 * 86_400, 700, 5),
+        ]
+    }
+
+    #[test]
+    fn milestone_bands_tile_the_window_behind_the_data() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                milestones: milestone_specs(),
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        // Bands are the very first nodes — behind grid lines and data.
+        assert!(
+            matches!(scene.nodes[0], Node::Rect { .. }),
+            "first node must be a milestone band"
+        );
+        let bands: Vec<(f32, f32, f32)> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Rect { x, width, rx, .. } if *rx == 0.0 => Some((*x, *width, x + width)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bands.len(), 3, "leading band + two in-window bands");
+        // Tiling: each band ends where the next begins, and together they
+        // span the plot area (68 .. 960-16) with no gaps or overlaps.
+        for pair in bands.windows(2) {
+            assert!(
+                (pair[0].2 - pair[1].0).abs() < 0.51,
+                "bands must tile without gaps/overlaps: {pair:?}"
+            );
+        }
+        assert!(
+            (bands[0].0 - 68.0).abs() < 0.51,
+            "first band starts at plot left"
+        );
+        assert!(
+            (bands.last().unwrap().2 - (960.0 - 16.0)).abs() < 0.51,
+            "last band ends at plot right"
+        );
+        // Expansion boundary: exactly one solid vertical line at the 7.0
+        // band start (dashed lines are overlays; market avg is off).
+        let boundary_lines = scene
+            .nodes
+            .iter()
+            .filter(|n| {
+                matches!(n, Node::Line { x1, x2, stroke, .. }
+                    if x1 == x2 && stroke.dash.is_none() && stroke.width == 1.0
+                        && stroke.color.a < 0.5)
+            })
+            .count();
+        assert_eq!(boundary_lines, 1, "one expansion-boundary line (7.0)");
+    }
+
+    #[test]
+    fn milestone_bands_alternate_within_an_expansion_and_recolor_across() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                milestones: milestone_specs(),
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let fills: Vec<crate::scene::Color> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Rect { rx, fill, .. } if *rx == 0.0 => Some(*fill),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 3);
+        // 6.5 and 6.55 share a hue but alternate alpha; 7.0 changes hue.
+        assert_eq!(
+            (fills[0].r, fills[0].g, fills[0].b),
+            (fills[1].r, fills[1].g, fills[1].b)
+        );
+        assert_ne!(
+            fills[0].a, fills[1].a,
+            "consecutive patches alternate lightness"
+        );
+        assert_ne!(
+            (fills[1].r, fills[1].g, fills[1].b),
+            (fills[2].r, fills[2].g, fills[2].b),
+            "a new expansion changes hue"
+        );
+        // Wide bands carry their version label.
+        let labels: Vec<&str> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Text { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&"6.55"), "band label present: {labels:?}");
+    }
+
+    #[test]
+    fn empty_milestones_render_identically_to_before() {
+        let with = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions::default(),
+        );
+        let without = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                milestones: Vec::new(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(with, without);
     }
 
     #[test]
