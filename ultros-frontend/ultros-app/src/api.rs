@@ -19,6 +19,7 @@ use ultros_api_types::{
     },
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
+    price_density::PriceDensity,
     price_series::{HqFilter, PriceSeries, SeriesGroup},
     recent_sales::RecentSales,
     resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
@@ -66,6 +67,28 @@ pub(crate) async fn get_price_series(
     let mut url = format!(
         "/api/v1/price_series/{world}/{item_id}?group={}&hq={}",
         group.as_str(),
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
+/// Time × price sale-count grid for the chart's density mode. Fetched only
+/// while density mode is active — see the gated LocalResource in item_view.
+pub(crate) async fn get_price_density(
+    item_id: i32,
+    world: &str,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+    price_bins: u16,
+) -> AppResult<PriceDensity> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    let mut url = format!(
+        "/api/v1/price_density/{world}/{item_id}?hq={}&price_bins={price_bins}",
         hq.as_str()
     );
     if let Some((from, to)) = range {
