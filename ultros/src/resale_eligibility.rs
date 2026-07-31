@@ -74,20 +74,20 @@ impl EligibilityPolicy {
         {
             return false;
         }
-        if let Some(min) = self.min_velocity_per_day {
-            if row.velocity_per_day.map(|v| v < min).unwrap_or(true) {
-                return false;
-            }
+        if let Some(min) = self.min_velocity_per_day
+            && row.velocity_per_day.map(|v| v < min).unwrap_or(true)
+        {
+            return false;
         }
-        if let Some(min) = self.min_buffer_sales {
-            if row.buffer_sale_count < min {
-                return false;
-            }
+        if let Some(min) = self.min_buffer_sales
+            && row.buffer_sale_count < min
+        {
+            return false;
         }
-        if let Some(max) = self.max_roi {
-            if row.return_on_investment > max {
-                return false;
-            }
+        if let Some(max) = self.max_roi
+            && row.return_on_investment > max
+        {
+            return false;
         }
         true
     }
