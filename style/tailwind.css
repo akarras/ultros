@@ -2110,11 +2110,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .analyzer-table [role="columnheader"] {
     border-right: 1px solid color-mix(in srgb, var(--color-outline) 55%, transparent);
 }
-.analyzer-grid-row > :last-child {
+.analyzer-table .analyzer-grid-row > :last-child {
     border-right: none;
 }
 .analyzer-table .analyzer-grid-row {
     border-bottom: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent);
+}
+/* The sticky header row is the one boundary rows slide under — it gets the
+   full-strength separator, not the 35% hairline data rows share. */
+.analyzer-table .sticky > .analyzer-grid-row {
+    border-bottom-color: var(--color-outline);
 }
 
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the

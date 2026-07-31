@@ -2109,7 +2109,7 @@ fn AnalyzerTable(
                         visible_range=visible_range
                         row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
-                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] bg-[color:var(--color-background-panel)]" role="row">
+                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,var(--color-background-panel))]" role="row">
                                 <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_HQ class="!px-2 justify-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </HeaderCell>
