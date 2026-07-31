@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_use::{UseElementSizeReturn, use_element_size};
 use std::hash::Hash;
 use std::{cell::RefCell, rc::Rc};
 use web_sys::wasm_bindgen::JsCast;
@@ -162,6 +163,15 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     /// in the stylesheet where it belongs.
     #[prop(optional, into)]
     row_min_width: Option<String>,
+    /// Container-mode only: size the scroller to its parent (`height: 100%`)
+    /// instead of `viewport_height`, measure the element's real height for
+    /// the visible-row math (`viewport_height` remains the pre-measurement
+    /// fallback), and make this element the single scrollport for BOTH axes
+    /// — the row area keeps `overflow: visible` so its width propagates and
+    /// the sticky header scrolls horizontally in lockstep with the rows.
+    /// Ignored under [`ScrollSource::Window`].
+    #[prop(optional)]
+    fill: bool,
     /// Optional writeback of the rendered row range `(start, end)` (end
     /// exclusive, includes overscan). Lets a parent fetch data only for
     /// rows in view. When omitted, no extra work is done.
@@ -227,6 +237,16 @@ where
         Some(r) => r,
         None => NodeRef::<leptos::html::Div>::new(),
     };
+
+    // `fill` mode: the element's real height drives the row math. Signal is
+    // 0.0 until the ResizeObserver first fires (and always on the server),
+    // in which case `effective_viewport` below falls back to
+    // `viewport_height`.
+    let fill_height = RwSignal::new(0.0f64);
+    if fill && !is_window {
+        let UseElementSizeReturn { height, .. } = use_element_size(scroller);
+        Effect::new(move |_| fill_height.set(height.get()));
+    }
 
     // Window-scroll mode: the container no longer scrolls, so its `on:scroll`
     // handler is inert. Drive `scroll_offset` and `window_height` from the
@@ -365,10 +385,16 @@ where
 
         lo_u32.saturating_sub(render_ahead / 2)
     });
-    // In container mode this tracks `window_height` and `hydrated` needlessly,
-    // but neither ever changes the result there, so the memo's own diffing
-    // absorbs it and downstream signals never see a change.
+    // In non-fill container mode this tracks `window_height` and `hydrated`
+    // needlessly, but neither ever changes the result there, so the memo's
+    // own diffing absorbs it and downstream signals never see a change.
     let effective_viewport = Memo::new(move |_| {
+        if fill && !is_window {
+            let h = fill_height.get() - header_h;
+            if h > 0.0 {
+                return h;
+            }
+        }
         viewport_px(
             source,
             window_height.get(),
@@ -497,9 +523,15 @@ where
     };
     let container_style = if is_window {
         String::new()
+    } else if fill {
+        "height: 100%;".to_string()
     } else {
         format!("height: {}px;", viewport_height.ceil() as u32)
     };
+    // `row_min_width` is needed by two closures below (the list div's style
+    // under `fill`, and the inner translateY div's style always — both must
+    // agree so the spacer and the rendered slice share one width).
+    let row_min_width_list = row_min_width.clone();
     let virtual_children = Memo::new(move |_| {
         each.with(|children| {
             let array_size = children.len();
@@ -548,7 +580,16 @@ where
             {header_opt
                 .map(|h| match source {
                     ScrollSource::Container { .. } => {
-                        view! { <div class="sticky top-0 z-10">{h}</div> }.into_any()
+                        // `w-max min-w-full` under `fill`: the wrapper must be
+                        // as wide as the (overflowing) rows so the header
+                        // scrolls horizontally with them instead of clipping
+                        // at the pane width.
+                        let class = if fill {
+                            "sticky top-0 z-10 w-max min-w-full"
+                        } else {
+                            "sticky top-0 z-10"
+                        };
+                        view! { <div class=class>{h}</div> }.into_any()
                     }
                     ScrollSource::Window { sticky_offset } => {
                         view! {
@@ -562,30 +603,47 @@ where
                             .into_any()
                     }
                 })}
-            // Row area. `overflow-y: hidden` forces the visible x-axis to
-            // compute to `auto`, so this box is also the list's horizontal
-            // scrollport (see `list_ref` / `row_min_width`).
+            // Row area. Outside `fill`, `overflow-y: hidden` forces the
+            // visible x-axis to compute to `auto`, so this box is also the
+            // list's horizontal scrollport (see `list_ref` / `row_min_width`).
             //
-            // Note for anyone tidying a caller's header later: this box is as
-            // tall as the *whole* virtual list, so its horizontal scrollbar
-            // sits at the bottom of all of it — hundreds of thousands of px
-            // down, i.e. never on screen. It scrolls by wheel, trackpad and
-            // touch, but a scrollbar on the caller's sticky header is the only
-            // affordance a user can actually see. Removing that header
-            // scrollbar makes off-screen columns unreachable in practice.
+            // Note for anyone tidying a caller's header later (non-`fill`
+            // modes only): this box is as tall as the *whole* virtual list,
+            // so its horizontal scrollbar sits at the bottom of all of it —
+            // hundreds of thousands of px down, i.e. never on screen. It
+            // scrolls by wheel, trackpad and touch, but a scrollbar on the
+            // caller's sticky header is the only affordance a user can
+            // actually see. Removing that header scrollbar makes off-screen
+            // columns unreachable in practice.
+            //
+            // Under `fill` none of that applies: this box keeps
+            // `overflow: visible` and drops `contain-layout`, so its width
+            // (including `row_min_width`) propagates to the outer container,
+            // which is then the single scrollport for both axes and owns a
+            // horizontal scrollbar the user can actually reach.
             <div
                 node_ref=list
-                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+                class=if fill && !is_window {
+                    "will-change-[transform] relative w-full"
+                } else {
+                    "overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+                }
                 style=move || {
-                    format!(
-                        r#"height: {}px;"#,
-                        {
-                            let base = each.with(|children| children.len() as f64) * row_height;
-                            let delta_total = fenwick.with(|f| f.sum(children_len()));
-                            let bottom_pad = 16.0;
-                            (base + delta_total + bottom_pad).ceil() as u32
-                        },
-                    )
+                    let height = {
+                        let base = each.with(|children| children.len() as f64) * row_height;
+                        let delta_total = fenwick.with(|f| f.sum(children_len()));
+                        let bottom_pad = 16.0;
+                        (base + delta_total + bottom_pad).ceil() as u32
+                    };
+                    let min_width = if fill && !is_window {
+                        row_min_width_list
+                            .as_ref()
+                            .map(|w| format!("min-width: {w};"))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    format!(r#"height: {height}px;{min_width}"#)
                 }>
                 // offset for visible nodes
                 <div style=move || {
