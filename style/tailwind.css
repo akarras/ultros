@@ -2028,15 +2028,13 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .filter-chip-row::-webkit-scrollbar {
     display: none;
 }
-/* ----- Flip Finder grid: horizontal scrollports -----
-   The grid is wider than the viewport at every breakpoint, and `html`/`body`
-   are `overflow-x: hidden`, so something has to scroll or the right-hand
-   columns are simply unreachable. It cannot be a wrapper around the list: in
-   window-scroll mode that wrapper becomes the nearest scrollport for the
-   sticky table header (an `overflow-x` forces `overflow-y` to compute to
-   `auto`), and since it never scrolls vertically the header would never
-   stick. So the header and the row area are two *sibling* scrollports of
-   equal width whose scrollLeft is synchronized in analyzer.rs. */
+/* ----- Flip Finder grid -----
+   The table is a contained pane (VirtualScroller `fill` mode): the scroller
+   is the single scrollport for both axes and the header is sticky inside
+   it. `.analyzer-hscroll` survives only until the CSS-var width task
+   removes it; rows scroll underneath the sticky header, which draws its own
+   opaque background. Width comes from `--analyzer-row-min-width` on every
+   grid row. */
 .analyzer-hscroll {
     overflow-x: auto;
     overflow-y: hidden;

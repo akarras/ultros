@@ -11,15 +11,6 @@ use leptos::either::Either;
 use leptos::html::Input;
 use leptos::prelude::*;
 
-/// Height reserved for the sticky control bar. Feeds
-/// `ScrollSource::Window { sticky_offset }` so rows hidden behind the bar
-/// are not counted as visible.
-///
-/// The bar's markup pins this exact height (`h-[76px]`) rather than letting
-/// content grow it: the table header sticks at `top: STICKY_BAR_HEIGHT`, so
-/// a bar that is taller than the constant hides its own column headers.
-pub const STICKY_BAR_HEIGHT: f64 = 76.0;
-
 /// Normalize raw input text into a filter value.
 ///
 /// Trims, and maps blank input to "no filter". Without the trim, a value of

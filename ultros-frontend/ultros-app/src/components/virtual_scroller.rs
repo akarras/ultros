@@ -64,6 +64,11 @@ pub enum ScrollSource {
     /// scrollport instead of the viewport, which would silently defeat the
     /// sticky header. A caller that needs horizontal scrolling must put
     /// `overflow-x-auto` *inside* the header/row views, not around the list.
+    // Since the flip finder moved to a `fill` container pane, no route
+    // constructs this variant — it stays as a supported mode of this
+    // reusable component (the window-scroll machinery and its tests are
+    // intact) rather than being ripped out and re-grown later.
+    #[allow(dead_code)]
     Window { sticky_offset: f64 },
 }
 

@@ -14,7 +14,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
-        filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
+        filter_chip::FilterChip,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -76,6 +76,7 @@ use leptos_router::{
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
     location::Location,
 };
+use leptos_use::{use_element_bounding, use_window_scroll, use_window_size};
 use std::{
     cmp::Reverse,
     collections::{HashMap, hash_map::Entry},
@@ -88,8 +89,6 @@ use ultros_api_types::{
     websocket::{FilterPredicate, SocketMessageType, is_analyzer_market_update_relevant},
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
-use web_sys::wasm_bindgen::JsCast;
-use web_sys::wasm_bindgen::closure::Closure;
 use xiv_gen::ItemId;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
@@ -844,53 +843,24 @@ fn AnalyzerTable(
         }
     };
 
-    // --- Horizontal scroll sync ---------------------------------------------
-    // Two sibling scrollports: one on the sticky header, one on the row area
-    // (the list's own row container, which already computes to
-    // `overflow-x: auto`). A single scrollport wrapping the list is not an
-    // option — it would become the nearest scrollport for the sticky header
-    // and stop it sticking to the viewport — and no scrollport at all leaves
-    // the right-hand columns clipped by `html { overflow-x: hidden }` with no
-    // way to reach them.
-    let header_scroll = NodeRef::<leptos::html::Div>::new();
-    let list_scroll = NodeRef::<leptos::html::Div>::new();
-    // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
-    // firing after the component is disposed.
-    let hscroll_listeners =
-        StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
-    on_cleanup(move || {
-        hscroll_listeners.update_value(|listeners| {
-            for (el, cb) in listeners.drain(..) {
-                let _ =
-                    el.remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
-            }
-        });
-    });
-    Effect::new(move |_| {
-        // Re-runs when the refs are populated; the guard keeps a second run
-        // from double-registering.
-        let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
-            return;
-        };
-        if hscroll_listeners.with_value(|l| !l.is_empty()) {
-            return;
+    // --- Pane height -------------------------------------------------------
+    // The table is a contained pane filling the viewport below the control
+    // bar: height = window height − the pane root's document-space top. Both
+    // terms are reactive (resize, and any reflow above the pane); the
+    // document-space top (viewport top + scroll y) is constant under page
+    // scroll, so the pane does not jiggle while the user scrolls to the
+    // footer. 0.0 before hydration → the SSR fallback height.
+    let pane_root = NodeRef::<leptos::html::Div>::new();
+    let pane_bounds = use_element_bounding(pane_root);
+    let (_, window_scroll_y) = use_window_scroll();
+    let window_size = use_window_size();
+    let pane_height = Memo::new(move |_| {
+        let window_h = window_size.height.get();
+        if window_h <= 0.0 {
+            return 640.0; // SSR / pre-hydration fallback
         }
-        // Mirroring writes `scrollLeft` on the other element, which fires its
-        // scroll event in turn; the equality check is what keeps that from
-        // ping-ponging.
-        let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
-            Closure::wrap(Box::new(move || {
-                let x = from.scroll_left();
-                if to.scroll_left() != x {
-                    to.set_scroll_left(x);
-                }
-            }) as Box<dyn FnMut()>)
-        };
-        let head_cb = mirror(head.clone(), body.clone());
-        let body_cb = mirror(body.clone(), head.clone());
-        let _ = head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
-        let _ = body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
-        hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
+        let doc_top = pane_bounds.top.get() + window_scroll_y.get();
+        ((window_h - doc_top) - 8.0).max(320.0)
     });
 
     let clear_all_filters = move || {
@@ -1220,10 +1190,14 @@ fn AnalyzerTable(
     });
 
     view! {
-        <div class="flex flex-col gap-4">
-            // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
-            // header sticks directly beneath it at that offset, so a bar that
-            // grew with its content would cover its own column headers.
+        <div
+            node_ref=pane_root
+            class="flex flex-col gap-2 min-h-0"
+            style=move || format!("height:{}px;", pane_height().round() as i32)
+        >
+            // Control bar. Height still fixed so the pane-height measurement
+            // is stable; no longer load-bearing for any sticky offset — the
+            // table header now sticks inside the pane's own scrollport.
             <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1">
                 // Row 1 — result count and view-level controls.
                 <div class="h-8 flex items-center gap-3 min-w-0">
@@ -1749,37 +1723,29 @@ fn AnalyzerTable(
                 }}
             </div>
 
-            // Results table. Deliberately no `overflow` on this wrapper: in
-            // window mode an overflow on any ancestor of the sticky table
-            // header re-parents its scrollport away from the viewport, which
-            // silently defeats `sticky_offset`.
+            // The pane: fills the rest of the root's fixed height; the
+            // VirtualScroller inside it (fill mode) is the single scrollport
+            // for both axes, with the column header sticky inside it.
             <div
-                class="analyzer-table border border-[color:var(--color-outline)]"
+                class="analyzer-table border border-[color:var(--color-outline)] flex-1 min-h-0"
                 style=move || {
                     format!("--analyzer-extra-cols: {}px;", extra_column_width_px(&visible_cols()))
                 }
             >
                 <VirtualScroller
-                        scroll_source=ScrollSource::Window { sticky_offset: STICKY_BAR_HEIGHT }
-                        viewport_height=720.0
+                        viewport_height=640.0
+                        fill=true
                         row_height=40.0
                         overscan=8
-                        // The header row's own height. The rendered element is
-                        // up to ~15px taller, because `.analyzer-hscroll`
-                        // reserves a horizontal scrollbar, but that height
-                        // depends on the platform's scrollbar and on whether
-                        // the grid currently overflows — neither of which is
-                        // knowable here. The row math only uses this to offset
-                        // the scroll position, and `overscan=8` (320px) covers
-                        // the error many times over, so the content height is
-                        // deliberately the value passed.
+                        // The header row's own content height. In fill mode
+                        // the header lives inside the single scrollport, so
+                        // no scrollbar is reserved on it; `overscan=8`
+                        // absorbs any residual off-by-a-few-px.
                         header_height=56.0
                         variable_height=false
                         visible_range=visible_range
-                        list_ref=list_scroll
                         row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
-                            <div class="analyzer-hscroll" node_ref=header_scroll>
                             <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
@@ -1910,7 +1876,6 @@ fn AnalyzerTable(
                                         </span>
                                     </div>
                                 })}
-                            </div>
                             </div>
                         }.into_any()
                         each=sorted_data.into()
