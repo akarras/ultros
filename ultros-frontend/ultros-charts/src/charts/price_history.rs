@@ -55,6 +55,9 @@ pub struct PriceChartOptions {
     /// `series` metadata (flagged `hidden`) but draw nothing, feed no hover
     /// values, and don't influence the axes.
     pub hidden_series: Vec<String>,
+    /// Price-lane rendering mode. `Density` falls back to `Price` here —
+    /// density has its own layout and payload.
+    pub mode: crate::charts::ChartMode,
     pub theme: Theme,
 }
 
@@ -74,6 +77,7 @@ impl Default for PriceChartOptions {
             group_level: None,
             utc_offset_minutes: 0,
             hidden_series: Vec::new(),
+            mode: crate::charts::ChartMode::Price,
             theme: Theme::dark_card(),
         }
     }
