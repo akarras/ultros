@@ -1,3 +1,4 @@
+pub mod price_density;
 pub mod price_history;
 pub mod sparkline;
 
