@@ -1299,3 +1299,27 @@ git commit -m "chore: fmt and clippy fixes for top opportunities redesign"
 - The spec's `last 6: {{low}}–{{high}}` wording became `recent {{low}}–{{high}}`
   here — the window filter means the count varies, so naming a fixed count would
   sometimes be wrong.
+
+## Known merge conflict — `calculate_profit_and_roi`
+
+A parallel branch (`claude/flip-profit-roi-mismatch-9f666c`, also based on
+`c4df0cb7`) introduces `calculate_profit_and_roi(est_sale_price, cheapest_price)
+-> (i32, f32)` in `analyzer_service.rs`. It applies a 5% market tax (post-tax sale
+= 95% of estimate) and returns `roi = 0.0` when the cost basis is non-positive.
+
+It replaces the same two lines this plan rewrote in `get_best_resale`. Whichever
+lands second resolves it like this — keep both changes:
+
+```rust
+let (profit, return_on_investment) =
+    calculate_profit_and_roi(est_sale_price, cheapest_price.price);
+```
+
+then feed that `return_on_investment` into the `Candidate` as this plan already
+does. The eligibility gates are unaffected in kind: the ROI ceiling and vendor
+anchor still apply, just against post-tax figures.
+
+**Do not skip their tax change to avoid the conflict.** If Flip Finder shows
+post-tax profit and this card shows pre-tax, the `?sort=profit&vel=0.2` handoff
+link opens a page whose numbers disagree with the card — which is the exact
+coherence problem that link was added to solve.

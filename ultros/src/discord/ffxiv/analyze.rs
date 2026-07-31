@@ -78,10 +78,14 @@ pub(crate) async fn profit(
                 for sale in sales {
                     let item_name = localized_item_name(sale.item_id, user_lang);
                     let item_name: String = item_name.chars().take(30).collect();
+                    // Beyond this the exact figure carries no decision value
+                    // and just blows out the column. Mirrors
+                    // ROI_DISPLAY_CEILING on the frontend.
+                    let roi = sale.return_on_investment.min(100_000.0);
                     writeln!(
                         &mut content,
                         "`{item_name:<30} | {:7.2}% | {:<10}` [url](https://universalis.app/market/{})",
-                        sale.return_on_investment, sale.profit, sale.item_id
+                        roi, sale.profit, sale.item_id
                     )
                     .unwrap();
                 }
