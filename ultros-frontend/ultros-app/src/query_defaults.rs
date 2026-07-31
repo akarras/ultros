@@ -65,14 +65,20 @@ where
     });
 }
 
-/// Seed a whole set of defaults in one navigation, but only when the URL
-/// carries none of `suppressing_keys`.
+/// Seed a whole set of defaults, but only when the URL carries none of
+/// `suppressing_keys`.
 ///
-/// One navigation rather than one [`seed_query_default`] per key: separate
-/// seeds are separate effects, and an earlier one changing the URL makes a
-/// later one's "is my key absent?" check race against router state — with a
-/// presence *predicate* (not just per-key absence) that race would corrupt
-/// the outcome, not just reorder it.
+/// One *predicate*, evaluated once, then every key written through its
+/// [`filter_query_signal`] setter. The setters matter: they feed the
+/// router's query-mutation queue, which coalesces the writes into a single
+/// navigation *and* composes with any other navigation in flight — the
+/// flip finder's world navigator rebuilds the URL from a query snapshot on
+/// mount, and a plain `use_navigate` call from here demonstrably loses that
+/// race (the navigator's rebuild lands last and wipes the seeded params;
+/// observed in the browser, not hypothetical). Per-key `seed_query_default`
+/// calls would survive the navigator but reintroduce the other race: each
+/// effect re-checks its own key's absence against whatever URL the previous
+/// effect produced, while this seeding must be all-or-nothing.
 ///
 /// Same rule as [`seed_query_default`]: call from the **route** component,
 /// never from inside a `Suspense` closure.
@@ -80,24 +86,22 @@ pub fn seed_query_defaults_when_unfiltered(
     suppressing_keys: &'static [&'static str],
     defaults: &'static [(&'static str, &'static str)],
 ) {
+    // Signal pairs are created unconditionally, outside the effect —
+    // `filter_query_signal` registers reactive state and may not be called
+    // conditionally.
+    let setters: Vec<SignalSetter<Option<String>>> = defaults
+        .iter()
+        .map(|(key, _)| filter_query_signal::<String>(key).1)
+        .collect();
     let query = leptos_router::hooks::use_query_map();
-    let location = leptos_router::hooks::use_location();
-    let navigate = leptos_router::hooks::use_navigate();
     Effect::new(move |_| {
-        let mut map = query.get_untracked();
+        let map = query.get_untracked();
         if suppressing_keys.iter().any(|k| map.get_str(k).is_some()) {
             return;
         }
-        for (key, value) in defaults {
-            // `insert` appends a second value for an existing key; `replace`
-            // has the "set the default" semantics we want.
-            map.replace(key.to_string(), value.to_string());
+        for (set_value, (_, value)) in setters.iter().zip(defaults) {
+            set_value.set(Some(value.to_string()));
         }
-        let path = location.pathname.get_untracked();
-        navigate(
-            &format!("{path}{}", map.to_query_string()),
-            filter_nav_options(),
-        );
     });
 }
 
