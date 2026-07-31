@@ -8,10 +8,11 @@
 //! suppressing rows with `launder_suspicion > 0.7` in case the server's
 //! `show_suspicious` ever flips on by accident.
 //!
-//! Buy / Sell aren't on the wire today; we derive them from
-//! `profit + ROI`:
-//!     buy  = profit * 100 / ROI
-//!     sell = buy + profit
+//! Buy / Sell come from the wire (`buy_price` / `est_sale_price`). They
+//! used to be back-solved from `profit + ROI`, which broke once `profit`
+//! went post-tax: `buy + profit` is the gil you keep, not the price you
+//! list at. `derive_buy_sell` keeps the old derivation only as a fallback
+//! for a server that predates those fields.
 
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -114,14 +115,24 @@ pub fn TopOpportunities(world: Signal<Option<String>>) -> impl IntoView {
     }
 }
 
+/// Buy and (pre-tax) sell prices for the card's "Buy X · Sell Y" line.
+///
+/// Both come straight off the wire. They used to be back-solved from
+/// `profit` and `return_on_investment`, which stopped working once `profit`
+/// went post-tax — `buy + profit` is the gil you keep, not the price you
+/// list at — and which was already wrong whenever the server clamped ROI.
+///
+/// The fallback only fires against a server too old to send the fields.
 fn derive_buy_sell(deal: &ResaleStatsDto) -> (i32, i32) {
+    if deal.buy_price > 0 {
+        return (deal.buy_price, deal.est_sale_price);
+    }
     let buy = if deal.return_on_investment > 0.0 {
         (deal.profit as f64 * 100.0 / deal.return_on_investment as f64).round() as i32
     } else {
         0
     };
-    let sell = buy + deal.profit;
-    (buy, sell)
+    (buy, buy + deal.profit)
 }
 
 #[component]
@@ -219,5 +230,55 @@ fn CompactDeal(deal: ResaleStatsDto, world_name: String) -> impl IntoView {
                 </span>
             </div>
         </a>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deal(profit: i32, roi: f32, buy_price: i32, est_sale_price: i32) -> ResaleStatsDto {
+        ResaleStatsDto {
+            profit,
+            item_id: 5,
+            hq: false,
+            sold_within: "Week".to_string(),
+            return_on_investment: roi,
+            buy_price,
+            est_sale_price,
+            world_id: 63,
+            confidence_band: Default::default(),
+            vwap_30d: 0,
+            sample_size_30d: 0,
+            launder_suspicion: 0.0,
+        }
+    }
+
+    /// Sell must be the pre-tax list price, not `buy + profit` — with the
+    /// 5% cut applied server-side those differ, and quoting the take as a
+    /// list price would have users listing 5% too low.
+    #[test]
+    fn buy_sell_come_from_the_wire_fields() {
+        // Buy 500, list 1000, net 950, keep 450.
+        let (buy, sell) = derive_buy_sell(&deal(450, 90.0, 500, 1000));
+        assert_eq!(buy, 500);
+        assert_eq!(sell, 1000);
+    }
+
+    /// A clamped ROI made the old back-solve produce a nonsense buy price.
+    #[test]
+    fn clamped_roi_does_not_distort_buy_price() {
+        let (buy, sell) = derive_buy_sell(&deal(94_999, 100_000.0, 1, 100_000));
+        assert_eq!(buy, 1);
+        assert_eq!(sell, 100_000);
+    }
+
+    /// Pre-`buy_price` servers send 0 for the new fields; fall back to the
+    /// old derivation rather than rendering a 0-gil buy.
+    #[test]
+    fn falls_back_when_the_server_omits_the_fields() {
+        let (buy, sell) = derive_buy_sell(&deal(500, 100.0, 0, 0));
+        assert_eq!(buy, 500);
+        assert_eq!(sell, 1000);
     }
 }

@@ -333,11 +333,55 @@ struct AnalyzerState {
     cheapest_items: BTreeMap<AnySelector, CheapestListings>,
 }
 
-fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) -> i32 {
+/// Estimate what an item will actually **sell** for on the target world.
+///
+/// This is intentionally the same formula the Flip Finder uses client-side
+/// (`ultros-app/src/routes/analyzer.rs`): the recent-sale median, capped by
+/// the world's current floor when there is one — you don't reliably sell
+/// above the cheapest competing listing, nor above what the item has been
+/// going for lately. On an empty board the median stands on its own.
+///
+/// It is *not* "what should I list at" — no undercut is applied, and an
+/// empty board gets no scarcity bump. Both of those used to live here, and
+/// they made `/api/v1/best_deals` (the home page's Top Opportunities card)
+/// quote different gil than the analyzer table it links to. If a
+/// lister-facing valuation is ever needed, add a separate function next to
+/// this one rather than skewing it back.
+fn estimate_sale_price(median_price: i32, current_listing_price: Option<i32>) -> i32 {
     match current_listing_price {
-        Some(price) => std::cmp::min(std::cmp::max(1, price - 1), median_price),
-        None => (median_price as f32 * 1.2) as i32,
+        Some(price) => median_price.min(price),
+        None => median_price,
     }
+}
+
+/// Marketboard tax: the seller nets 95% of the sale price. The Flip Finder
+/// applies this by default (its `include_tax` toggle starts on), so applying
+/// it here too keeps the two surfaces quoting the same profit.
+///
+/// Retainer-city tax variation is deliberately not modeled, here or in the
+/// frontend.
+const POST_TAX_MULTIPLIER: f32 = 0.95;
+
+/// Mirrors `ROI_DISPLAY_CEILING` in `ultros-app/src/analysis.rs`. A 1-gil buy
+/// against a seven-figure sale yields an ROI in the millions of percent,
+/// which is noise wearing a percentage sign.
+const ROI_CEILING: f32 = 100_000.0;
+
+/// Post-tax profit and ROI for buying at `cost` and reselling at
+/// `est_sale_price`, matching the Flip Finder's default (taxed) math.
+///
+/// Returns `None` when `cost` is nonpositive: a 0-gil listing is bad data or
+/// a trade-channel handoff, and dividing by it puts `inf`/`NaN` into an `f32`
+/// that goes on the wire (serde_json encodes non-finite floats as `null`,
+/// which then fails to deserialize into the client's `f32`).
+fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
+    if cost <= 0 {
+        return None;
+    }
+    let net_sale_price = (est_sale_price as f32 * POST_TAX_MULTIPLIER) as i32;
+    let profit = net_sale_price - cost;
+    let roi = (profit as f32 / cost as f32 * 100.0).clamp(-ROI_CEILING, ROI_CEILING);
+    Some((profit, roi))
 }
 
 /// Oldest snapshot we're willing to boot from instead of reloading Postgres.
@@ -1272,15 +1316,18 @@ impl AnalyzerService {
                 let current_cheapest_on_sale_world =
                     sale_world_listings.item_map.get(item_key).map(|l| l.price);
                 let est_sale_price =
-                    calculate_valuation(cheapest_history, current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
+                    estimate_sale_price(cheapest_history, current_cheapest_on_sale_world);
+                // `?` drops rows whose buy price is nonpositive rather than
+                // emitting an inf/NaN ROI.
+                let (profit, return_on_investment) =
+                    flip_profit_and_roi(est_sale_price, cheapest_price.price)?;
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
-                        * 100.0)
-                        - 100.0,
+                    return_on_investment,
+                    buy_price: cheapest_price.price,
+                    est_sale_price,
                     world_id: cheapest_price.world_id,
                     sold_within,
                     // Pass-1 defaults; the deep-scan pass fills these in.
@@ -1741,6 +1788,13 @@ pub(crate) struct ResaleStats {
     pub(crate) hq: bool,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
+    /// What the flip costs: the cheapest region listing. Always > 0 — rows
+    /// with a nonpositive buy price are dropped by `flip_profit_and_roi`.
+    pub(crate) buy_price: i32,
+    /// Pre-tax estimate of what the item sells for, i.e. the price to list
+    /// at. `profit` is this net of the 5% cut, minus `buy_price`, so
+    /// `buy_price + profit` is what you *keep*, not what you list at.
+    pub(crate) est_sale_price: i32,
     pub(crate) world_id: i32,
     // === Phase 2 deep-scan enrichment ===
     //
@@ -1774,37 +1828,64 @@ mod test {
         CheapestListingValue, CheapestListings, ItemKey, SALE_HISTORY_SIZE,
     };
 
-    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_valuation};
+    use super::{
+        SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
+    };
+
+    /// The formula here must stay identical to the Flip Finder's
+    /// `estimated_sale_price` in `ultros-app/src/routes/analyzer.rs`, which is
+    /// `median.min(world_floor)` with the bare median on an empty board.
+    #[test]
+    fn test_estimate_sale_price() {
+        // Empty board: the median, with no scarcity bump.
+        assert_eq!(estimate_sale_price(100, None), 100);
+        assert_eq!(estimate_sale_price(10, None), 10);
+
+        // Floor above the median: the median caps it.
+        assert_eq!(estimate_sale_price(100, Some(200)), 100);
+
+        // Floor below the median: the floor caps it. No undercut is applied,
+        // so this is the floor itself and not floor - 1.
+        assert_eq!(estimate_sale_price(100, Some(90)), 90);
+
+        // Floor equal to the median.
+        assert_eq!(estimate_sale_price(100, Some(100)), 100);
+
+        // Degenerate floors pass straight through; `flip_profit_and_roi` is
+        // what keeps a nonpositive *buy* price out of the results.
+        assert_eq!(estimate_sale_price(100, Some(1)), 1);
+        assert_eq!(estimate_sale_price(1, Some(1)), 1);
+        assert_eq!(estimate_sale_price(100, Some(0)), 0);
+    }
 
     #[test]
-    fn test_calculate_valuation() {
-        // Case 1: Market empty (None), use 1.2 * median
-        assert_eq!(calculate_valuation(100, None), 120);
-        assert_eq!(calculate_valuation(10, None), 12);
+    fn profit_and_roi_apply_the_market_tax() {
+        // 1000 gil sale nets 950 post-tax; buying at 500 profits 450, not 500.
+        let (profit, roi) = flip_profit_and_roi(1000, 500).expect("positive cost is kept");
+        assert_eq!(profit, 450);
+        assert!((roi - 90.0).abs() < 1e-3, "roi was {roi}");
 
-        // Case 2: Market has listing higher than median
-        // min(listing - 1, median) -> min(200 - 1, 100) -> 100
-        assert_eq!(calculate_valuation(100, Some(200)), 100);
+        // The tax alone can flip a "profitable" row negative: 1000 gil sale
+        // bought at 960 loses 10 gil once the marketboard takes its cut.
+        let (profit, roi) = flip_profit_and_roi(1000, 960).expect("positive cost is kept");
+        assert_eq!(profit, -10);
+        assert!(roi < 0.0);
+    }
 
-        // Case 3: Market has listing lower than median
-        // min(listing - 1, median) -> min(90 - 1, 100) -> 89
-        assert_eq!(calculate_valuation(100, Some(90)), 89);
+    #[test]
+    fn profit_and_roi_reject_nonpositive_cost() {
+        // A 0-gil listing used to divide by zero and serialize inf/NaN.
+        assert_eq!(flip_profit_and_roi(1_000_000, 0), None);
+        assert_eq!(flip_profit_and_roi(1_000_000, -5), None);
+        // 1 gil is the cheapest legitimate buy and must survive.
+        assert!(flip_profit_and_roi(1_000_000, 1).is_some());
+    }
 
-        // Case 4: Market has listing equal to median
-        // min(100 - 1, 100) -> 99
-        assert_eq!(calculate_valuation(100, Some(100)), 99);
-
-        // Case 5: Listing is 1 gil
-        // min(max(1, 1 - 1), median) -> min(1, 100) -> 1
-        assert_eq!(calculate_valuation(100, Some(1)), 1);
-
-        // Case 6: Listing is 2 gil
-        // min(2 - 1, 100) -> 1
-        assert_eq!(calculate_valuation(100, Some(2)), 1);
-
-        // Case 7: Listing is 1 gil, median is 1 gil
-        // min(1, 1) -> 1
-        assert_eq!(calculate_valuation(1, Some(1)), 1);
+    #[test]
+    fn roi_is_clamped_and_always_finite() {
+        let (_, roi) = flip_profit_and_roi(i32::MAX, 1).expect("positive cost is kept");
+        assert!(roi.is_finite());
+        assert_eq!(roi, super::ROI_CEILING);
     }
 
     #[test]
