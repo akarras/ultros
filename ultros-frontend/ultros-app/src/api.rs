@@ -124,6 +124,13 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) hq: bool,
     pub(crate) sold_within: String,
     pub(crate) return_on_investment: f32,
+    /// Gil paid. `profit` is post-tax, so `buy_price + profit` is the take,
+    /// not the list price — use `est_sale_price` for the latter.
+    #[serde(default)]
+    pub(crate) buy_price: i32,
+    /// Pre-tax gil to list at.
+    #[serde(default)]
+    pub(crate) est_sale_price: i32,
     pub(crate) world_id: i32,
     // Phase 2 deep-scan enrichment from the server. Defaulted so older
     // backends (or CH-degraded responses) still deserialize cleanly.

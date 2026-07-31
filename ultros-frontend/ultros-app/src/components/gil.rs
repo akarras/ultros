@@ -77,7 +77,7 @@ fn spawn_gil_party(mut x: f64, mut y: f64) {
 }
 
 #[component]
-fn GilIcon() -> impl IntoView {
+pub fn GilIcon() -> impl IntoView {
     let i18n = use_i18n();
     view! {
         <button

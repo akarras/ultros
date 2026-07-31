@@ -23,10 +23,19 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
 
 /// Raw mirror of Postgres `sale_history`.
 ///
-/// Engine: `ReplacingMergeTree(inserted_at)` on the natural key
-/// `(item_id, hq, world_id, sold_date, buying_character_id)` makes dual-writes
-/// idempotent — replaying the event bus or re-running backfill against an
-/// already-populated partition is a no-op on merge.
+/// Engine: `ReplacingMergeTree(inserted_at)` on the key
+/// `(item_id, hq, world_id, sold_date, pg_id)` makes dual-writes idempotent —
+/// replaying the event bus or re-running backfill against an already-populated
+/// partition is a no-op on merge.
+///
+/// `pg_id` (the Postgres `sale_history.id`) is the discriminator that keeps two
+/// distinct same-second sales of the same item/hq/world apart, and it's what
+/// lets the live dual-write and the backfill agree on a row identity. Both
+/// paths must therefore supply the *real* Postgres id — a placeholder `0`
+/// silently merges distinct sales together and makes the backfill write a
+/// second, never-merging copy of every row the live path already inserted.
+/// `buying_character_id` is deliberately *not* in the key: it's a payload
+/// column only.
 ///
 /// Partitioning by month keeps retention / drop operations cheap and aligns
 /// with the backfill chunk size.
