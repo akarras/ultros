@@ -761,6 +761,112 @@ pub async fn raw_sales(
     Ok(ch.client().query(&sql).fetch_all::<RawSaleRow>().await?)
 }
 
+/// One populated `(bucket, price_bin)` cell. Column order matches the SELECT.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct PriceDensityRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub bucket: chrono::DateTime<chrono::Utc>,
+    pub price_bin: u16,
+    pub n: u64,
+}
+
+#[derive(Debug, Clone, Row, Deserialize)]
+struct MinMaxRow {
+    count: u64,
+    lo: u32,
+    hi: u32,
+}
+
+/// Price extent over the window — the density endpoint derives its bin
+/// layout from this before running [`price_density`]. `None` when the
+/// window holds no sales (ClickHouse `min`/`max` over zero rows return 0,
+/// which must not be mistaken for a real price of 0).
+///
+/// Same conventions as [`price_series`]: no `FINAL`, no join, and only
+/// numeric interpolation into the SQL string via [`window_predicate`].
+pub async fn price_min_max(
+    ch: &ClickHouseClient,
+    item_id: i32,
+    world_ids: &[i32],
+    hq: HqFilter,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<(u32, u32)>, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(None);
+    }
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let predicate = window_predicate(item_id, &worlds, from, to, hq_predicate(hq));
+    let sql = format!(
+        r#"
+        SELECT
+            toUInt64(count())             AS count,
+            toUInt32(min(price_per_item)) AS lo,
+            toUInt32(max(price_per_item)) AS hi
+        FROM sales
+        WHERE {predicate}
+        "#
+    );
+    let row = ch.client().query(&sql).fetch_one::<MinMaxRow>().await?;
+    Ok((row.count > 0).then_some((row.lo, row.hi)))
+}
+
+/// Sale counts on a time × price grid for the chart's density mode: same
+/// predicate shape as [`price_series`]/[`raw_sales`], grouped by bucket and
+/// price bin. Bins are `floor((price - lo) / bin_width)` clamped into
+/// `0..bins` — the clamp covers the top edge (`price == hi` lands exactly on
+/// `bins` without it) and guards against a stale `lo` from a caller racing
+/// new sales.
+///
+/// Same conventions as [`price_series`], including the argument-count allow:
+/// the 9 non-handle parameters are all independent, mandatory pieces of the
+/// grid definition (item, scope, filter, window, resolution, bin layout).
+#[allow(clippy::too_many_arguments)]
+pub async fn price_density(
+    ch: &ClickHouseClient,
+    item_id: i32,
+    world_ids: &[i32],
+    hq: HqFilter,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    bucket_seconds: i64,
+    lo: u32,
+    bin_width: f64,
+    bins: u16,
+) -> Result<Vec<PriceDensityRow>, ClickHouseError> {
+    if world_ids.is_empty() || bins == 0 || bin_width <= 0.0 {
+        return Ok(Vec::new());
+    }
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let predicate = window_predicate(item_id, &worlds, from, to, hq_predicate(hq));
+    let max_bin = bins - 1;
+    let sql = format!(
+        r#"
+        SELECT
+            toStartOfInterval(sold_date, INTERVAL {bucket_seconds} SECOND) AS bucket,
+            toUInt16(least(greatest(floor((toFloat64(price_per_item) - {lo}) / {bin_width}), 0), {max_bin})) AS price_bin,
+            toUInt64(count())                                              AS n
+        FROM sales
+        WHERE {predicate}
+        GROUP BY bucket, price_bin
+        ORDER BY bucket, price_bin
+        "#
+    );
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<PriceDensityRow>()
+        .await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

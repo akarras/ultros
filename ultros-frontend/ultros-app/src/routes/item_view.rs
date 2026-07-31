@@ -1,4 +1,4 @@
-use crate::api::{get_item_stats, get_listings, get_price_series};
+use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
@@ -38,6 +38,7 @@ use ultros_api_types::world::Datacenter;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer};
+use ultros_charts::charts::ChartMode;
 use ultros_charts::data::grouping::GroupLevel;
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
@@ -1254,6 +1255,11 @@ pub fn ChartWrapper(
     // request always matches what's on screen; `selected_range` is the
     // timeline slicer's committed selection (`None` = full history).
     let (group, set_group) = signal(GroupLevel::World);
+    // Deliberately resets to Price per visit (no persistence) so a shared
+    // link and a fresh visit agree on what the chart shows. Mode switches
+    // never touch `selected_range` or `group` — spec: "switching mode
+    // preserves the time window and grouping".
+    let (mode, set_mode) = signal(ChartMode::Price);
     let hq = Signal::derive(move || {
         if hq_only.get() {
             HqFilter::Hq
@@ -1290,6 +1296,26 @@ pub fn ChartWrapper(
         async move { get_price_series(id, &world_name, series_group, hq_filter, range).await }
     });
     let series = Signal::derive(move || series_resource.get().and_then(|r| r.ok()));
+
+    // Fetched only while density mode is active — the mode is the gate, so
+    // flipping to Density triggers the fetch and every other mode costs
+    // nothing. Same LocalResource/hydration rationale as series_resource.
+    let density_resource = LocalResource::new(move || {
+        let active = mode.get() == ChartMode::Density;
+        let id = item_id.get();
+        let world_name = world.get();
+        let hq_filter = hq.get();
+        let range = debounced_range.get();
+        async move {
+            if !active {
+                return None;
+            }
+            get_price_density(id, &world_name, hq_filter, range, 32)
+                .await
+                .ok()
+        }
+    });
+    let density = Signal::derive(move || density_resource.get().flatten());
 
     view! {
         <Transition fallback=move || {
@@ -1392,7 +1418,10 @@ pub fn ChartWrapper(
 
                                 <PriceHistoryChart
                                     series=series
+                                    density=density
                                     scope_name=world
+                                    mode=mode
+                                    set_mode=set_mode
                                     group=group
                                     set_group=set_group
                                     on_range_change=Callback::new(move |r| set_selected_range.set(r))
