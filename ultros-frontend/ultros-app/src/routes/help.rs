@@ -5,7 +5,20 @@ use crate::components::{
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_router::{components::A, hooks::use_params_map};
+
+/// A screenshot illustrating a help topic, served from `ultros/static/help/`.
+///
+/// Width and height are the intrinsic pixel dimensions of the image file and
+/// are rendered as explicit `width`/`height` attributes so the browser can
+/// reserve the layout box before the lazy-loaded image arrives (no CLS).
+#[derive(Clone, Copy, PartialEq)]
+pub struct HelpImage {
+    pub src: &'static str,
+    pub width: u32,
+    pub height: u32,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct HelpTopic {
@@ -18,6 +31,7 @@ pub struct HelpTopic {
     pub assumptions: &'static [&'static str],
     pub results: &'static [&'static str],
     pub next_actions: &'static [&'static str],
+    pub image: Option<HelpImage>,
 }
 
 pub const HELP_TOPICS: &[HelpTopic] = &[
@@ -39,6 +53,11 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Open Settings to adjust your home world.",
             "Use global search to jump to an item or tool.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/settings-home-world.webp",
+            width: 2333,
+            height: 208,
+        }),
     },
     HelpTopic {
         slug: "flip-finder",
@@ -68,6 +87,11 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Add candidates to a list.",
             "Tighten filters for sales speed or purchase budget.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/flip-finder.webp",
+            width: 1160,
+            height: 844,
+        }),
     },
     HelpTopic {
         slug: "vendor-resale",
@@ -95,6 +119,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Favor items with recent sales.",
             "Check the item page before buying in bulk.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "recipe-analyzer",
@@ -123,6 +148,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Open item details.",
             "Add profitable recipes to a list.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "leve-analyzer",
@@ -150,6 +176,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Filter by job.",
             "Check item supply before relying on expected rewards.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "fc-crafting",
@@ -176,6 +203,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Review material breakdowns.",
             "Prefer projects with both profit and sales activity.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "scrip-sources",
@@ -203,6 +231,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Filter to the scrip color you need.",
             "Open the item before buying ingredients.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "venture-analyzer",
@@ -229,6 +258,7 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Filter by retainer job.",
             "Check item history for slow-moving drops.",
         ],
+        image: None,
     },
     HelpTopic {
         slug: "market-trends",
@@ -248,6 +278,11 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Add watched items to a list.",
             "Compare with sale history.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/market-trends.webp",
+            width: 1160,
+            height: 844,
+        }),
     },
     HelpTopic {
         slug: "lists-alerts-retainers",
@@ -275,11 +310,30 @@ pub const HELP_TOPICS: &[HelpTopic] = &[
             "Add item alerts from list rows.",
             "Claim characters in Settings.",
         ],
+        image: Some(HelpImage {
+            src: "/static/help/discord-undercut-alert.webp",
+            width: 1128,
+            height: 266,
+        }),
     },
 ];
 
 pub fn help_topic(slug: &str) -> Option<HelpTopic> {
     HELP_TOPICS.iter().copied().find(|topic| topic.slug == slug)
+}
+
+/// Localized alt text for a topic's screenshot. Falls back to the topic title
+/// for any topic without a dedicated key (should not happen for shipped images).
+fn help_image_alt(i18n: I18nContext<Locale, I18nKeys>, topic: &HelpTopic) -> String {
+    match topic.slug {
+        "getting-started" => t_string!(i18n, help_img_alt_getting_started).to_string(),
+        "flip-finder" => t_string!(i18n, help_img_alt_flip_finder).to_string(),
+        "market-trends" => t_string!(i18n, help_img_alt_market_trends).to_string(),
+        "lists-alerts-retainers" => {
+            t_string!(i18n, help_img_alt_lists_alerts_retainers).to_string()
+        }
+        _ => topic.title.to_string(),
+    }
 }
 
 #[component]
@@ -354,6 +408,19 @@ pub fn HelpArticle() -> impl IntoView {
                             <p class="text-lg text-[color:var(--color-text)]">{topic.summary}</p>
                             <p class="mt-4 text-sm text-[color:var(--color-text-muted)]">{topic.purpose}</p>
                         </section>
+                        {topic.image.map(|image| view! {
+                            <section class="panel p-3 sm:p-4 rounded-2xl">
+                                <img
+                                    src=image.src
+                                    alt=help_image_alt(i18n, &topic)
+                                    width=image.width
+                                    height=image.height
+                                    loading="lazy"
+                                    decoding="async"
+                                    class="w-full h-auto rounded-lg"
+                                />
+                            </section>
+                        })}
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <TopicSection title=t_string!(i18n, help_section_inputs).to_string() items=topic.inputs />
                             <TopicSection title=t_string!(i18n, help_section_assumptions).to_string() items=topic.assumptions />
