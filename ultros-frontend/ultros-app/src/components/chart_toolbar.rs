@@ -253,7 +253,9 @@ fn OverlayRow(
                 ]
                     .join(" ")
             }
-            title=move || disabled.get().then(|| disabled_reason.get()).unwrap_or_default()
+            title=move || {
+                if disabled.get() { disabled_reason.get() } else { String::new() }
+            }
         >
             <span class="text-[color:var(--color-text)]">{label}</span>
             <input
