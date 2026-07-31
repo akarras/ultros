@@ -594,45 +594,45 @@ fn DecisionHeader(
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let listings = get_or_default(&filtered_listings);
-                            let current_world_id = {
+                            let scope = {
                                 let world_name = Url::unescape(&world());
-                                world_data
-                                    .lookup_world_by_name(&world_name)
-                                    .and_then(|result| result.as_world().map(|world| world.id))
+                                world_data.lookup_world_by_name(&world_name)
                             };
+                            let current_world_id = scope
+                                .as_ref()
+                                .and_then(|result| result.as_world().map(|world| world.id));
+                            // Number of worlds the page selector covers (1 on a
+                            // world page, ~8 on a DC, more on a region).
+                            let world_count = scope
+                                .as_ref()
+                                .map(|result| result.all_worlds().count())
+                                .unwrap_or(1);
                             let savings_verdict = current_world_id
                                 .and_then(|world_id| cheapest_savings_verdict(&listings, world_id));
                             let recent_sales = &data.sales;
 
-                            let sales_per_day = if recent_sales.len() > 1 {
-                                let newest = recent_sales.first().unwrap().sold_date;
-                                let oldest = recent_sales.last().unwrap().sold_date;
-                                let seconds = (newest - oldest).num_seconds().abs();
-                                let count = recent_sales.len() - 1;
-                                if seconds > 0 {
-                                    Some((count as f32) / (seconds as f32 / 86400.0))
-                                } else {
-                                    Some(100.0) // high velocity
-                                }
-                            } else if recent_sales.is_empty() {
-                                Some(0.0)
-                            } else {
-                                None
-                            };
-
-                            let latest_timestamp = listings
-                                .iter()
-                                .map(|(listing, _)| listing.timestamp)
-                                .max();
-
-                            let age = latest_timestamp.map(|t| chrono::Utc::now().naive_utc() - t);
+                            // Freshness is judged on when Ultros last ingested the
+                            // board (`last_updated`), not on the sellers' re-list
+                            // times carried by `ActiveListing::timestamp`.
+                            let freshness_inputs = crate::freshness::derive_freshness_inputs(
+                                &data.last_updated,
+                                recent_sales,
+                                world_count,
+                                chrono::Utc::now().naive_utc(),
+                            );
+                            let age = freshness_inputs.age;
 
                             let freshness_verdict = ultros_api_types::freshness::calculate_freshness_verdict(
                                 age,
-                                sales_per_day,
+                                freshness_inputs.per_world_sales_per_day,
                             );
+                            // The cadence badge describes the whole scope, so it
+                            // keeps the unnormalized velocity.
+                            let scope_sales_per_day = freshness_inputs
+                                .scope_sales_per_day
+                                .unwrap_or_default();
                             let cadence_verdict = crate::analysis::get_sales_cadence(
-                                sales_per_day.unwrap_or_default(),
+                                scope_sales_per_day,
                                 recent_sales.len(),
                             );
 
@@ -642,7 +642,7 @@ fn DecisionHeader(
                                         <FreshnessBadge verdict=freshness_verdict age=age />
                                         <SalesCadenceBadge
                                             cadence=cadence_verdict
-                                            sales_per_day=sales_per_day.unwrap_or_default()
+                                            sales_per_day=scope_sales_per_day
                                         />
                                     </div>
                                     {savings_verdict
