@@ -173,6 +173,8 @@
     "welcome_step_price_zone_help": "瀏覽物品時，我們會顯示此伺服器、資料中心或區域的價格。多數人會將此選項保留在資料中心以獲得最廣泛的市場視野。",
     "welcome_step_language_label": "步驟 3 — 語言（選填）",
     "welcome_step_language_help": "選擇你偏好的語言。你可以隨時從頂部導覽切換。",
+    "welcome_step_palette_label": "步驟 4 — 色彩配置（選填）",
+    "welcome_step_palette_help": "選擇 Ultros 使用的強調色。純粹是外觀設定，會儲存在你的瀏覽器中，並可隨時從設定頁面更改。",
     "welcome_home_world_set_with_name": "主要伺服器已設定為 {{world}}。一切就緒。",
     "welcome_continue_cta": "繼續前往 Ultros",
     "welcome_skip_for_now": "暫時跳過",

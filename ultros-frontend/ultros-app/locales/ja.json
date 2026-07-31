@@ -173,6 +173,8 @@
     "welcome_step_price_zone_help": "アイテムを閲覧する際に表示する価格の対象範囲（ワールド、データセンター、地域）です。広いマーケット情報を見るためにデータセンター単位がおすすめです。",
     "welcome_step_language_label": "ステップ3 — 言語（任意）",
     "welcome_step_language_help": "お好みの言語を選択してください。上部ナビゲーションからいつでも切り替えられます。",
+    "welcome_step_palette_label": "ステップ4 — カラーパレット（任意）",
+    "welcome_step_palette_help": "Ultros のアクセントカラーを選択してください。見た目だけの設定で、ブラウザに保存され、設定ページからいつでも変更できます。",
     "welcome_home_world_set_with_name": "ホームワールドを {{world}} に設定しました。準備完了です。",
     "welcome_continue_cta": "Ultrosへ進む",
     "welcome_skip_for_now": "今はスキップ",

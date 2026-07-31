@@ -173,6 +173,8 @@
     "welcome_step_price_zone_help": "When you browse items, this is the world, datacenter, or region we'll show prices for. Most people leave this on their datacenter for the widest market view.",
     "welcome_step_language_label": "Step 3 — Language (optional)",
     "welcome_step_language_help": "Pick your preferred language. You can switch anytime from the top nav.",
+    "welcome_step_palette_label": "Step 4 — Color palette (optional)",
+    "welcome_step_palette_help": "Pick the accent colors Ultros uses. Purely cosmetic, saved to your browser, and changeable anytime from settings.",
     "welcome_home_world_set_with_name": "Home world set to {{world}}. You're good to go.",
     "welcome_continue_cta": "Continue to Ultros",
     "welcome_skip_for_now": "Skip for now",

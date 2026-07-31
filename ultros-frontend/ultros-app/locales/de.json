@@ -173,6 +173,8 @@
     "welcome_step_price_zone_help": "Wenn du Items durchstöberst, ist das die Welt, das Datenzentrum oder die Region, für die wir Preise anzeigen. Die meisten lassen das auf ihr Datenzentrum für die breiteste Marktsicht.",
     "welcome_step_language_label": "Schritt 3 — Sprache (optional)",
     "welcome_step_language_help": "Wähle deine bevorzugte Sprache. Du kannst sie jederzeit über die obere Navigation wechseln.",
+    "welcome_step_palette_label": "Schritt 4 — Farbpalette (optional)",
+    "welcome_step_palette_help": "Wähle die Akzentfarben von Ultros. Rein kosmetisch, im Browser gespeichert und jederzeit in den Einstellungen änderbar.",
     "welcome_home_world_set_with_name": "Heimatwelt auf {{world}} gesetzt. Du kannst loslegen.",
     "welcome_continue_cta": "Weiter zu Ultros",
     "welcome_skip_for_now": "Vorerst überspringen",
