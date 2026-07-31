@@ -42,6 +42,7 @@
     "currency_exchange": "通貨交換",
     "currency_exchange_desc": "トームストーンを使ってギルを稼ぐ",
     "datacenter": "データセンター",
+    "region": "地域",
     "worlds": "ワールド",
     "vendor_available": "NPCで入手可",
     "exchange_available": "交換可",

@@ -42,6 +42,7 @@
     "currency_exchange": "Currency Exchange",
     "currency_exchange_desc": "Spend tomestones, get gil",
     "datacenter": "Datacenter",
+    "region": "Region",
     "worlds": "Worlds",
     "vendor_available": "Vendor Available",
     "exchange_available": "Exchange Available",
