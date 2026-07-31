@@ -1954,7 +1954,10 @@ fn test_auth_routes() -> Router<WebState> {
     Router::new()
 }
 
-pub(crate) async fn start_web(state: WebState) {
+pub(crate) async fn start_web(
+    state: WebState,
+    prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
+) {
     // build our application with a route
     let worlds = state.world_helper.clone();
     let token = state.token.clone();
@@ -2195,7 +2198,7 @@ pub(crate) async fn start_web(state: WebState) {
                 .await
                 .unwrap();
         },
-        start_metrics_server(),
+        start_metrics_server(prometheus_handle),
     )
     .await;
 }
