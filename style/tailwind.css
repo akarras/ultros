@@ -1911,6 +1911,68 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     margin: 0.3rem 0.15rem;
 }
 
+/* ----- Sidebar account row + drop-up ----- */
+.side-nav-account {
+    position: relative;
+    border-top: 1px solid var(--color-outline);
+}
+.side-nav-account-trigger {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    font-size: 0.85rem;
+    text-align: left;
+}
+.side-nav-account-trigger:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+.side-nav-account-caret {
+    margin-left: auto;
+    flex: none;
+    color: var(--color-text-muted);
+}
+
+/* Anchored to the bottom so the panel grows UPWARD and is never clipped
+   by the viewport edge — the whole point of a drop-up. */
+.side-nav-account-panel {
+    position: absolute;
+    bottom: calc(100% + 0.35rem);
+    left: 0.35rem;
+    right: 0.35rem;
+    z-index: 70;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    padding: 0.3rem;
+    border: 1px solid var(--color-outline);
+    border-radius: 0.6rem;
+    background-color: var(--color-background-elevated);
+    box-shadow: 0 -10px 30px color-mix(in srgb, black 45%, transparent);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* Collapsed sidebar is only 56px wide, so the panel cannot stay inset to
+   both edges — it breaks out to a fixed width and overhangs the content. */
+@media (min-width: 1024px) {
+    .app-shell-collapsed .side-nav-account-trigger {
+        justify-content: center;
+        padding-inline: 0;
+    }
+    .app-shell-collapsed .side-nav-account-caret {
+        display: none;
+    }
+    .app-shell-collapsed .side-nav-account-panel {
+        left: 0.35rem;
+        right: auto;
+        width: 15rem;
+    }
+}
+
 /* ----- Topbar component styles ----- */
 @utility top-bar {
     /* 3-column grid so the search box is centered in the bar: the two outer
