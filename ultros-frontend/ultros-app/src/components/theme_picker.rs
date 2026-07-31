@@ -71,6 +71,16 @@ pub fn PalettePicker(
                 role="radiogroup"
                 aria-label=move || t_string!(i18n, theme_palette_label).to_string()
             >
+                // The six plain-colour palettes come first because `Violet` is
+                // `ThemePalette::default()`. Without a button for it, anyone
+                // who has never changed palette — i.e. every visitor to the
+                // welcome flow — sees a radiogroup with nothing checked.
+                {palette_button("Violet", ThemePalette::Violet)}
+                {palette_button("Teal", ThemePalette::Teal)}
+                {palette_button("Emerald", ThemePalette::Emerald)}
+                {palette_button("Amber", ThemePalette::Amber)}
+                {palette_button("Rose", ThemePalette::Rose)}
+                {palette_button("Sky", ThemePalette::Sky)}
                 {palette_button("Ultros", ThemePalette::Ultros)}
                 {palette_button("Maelstrom", ThemePalette::Maelstrom)}
                 {palette_button("Twin Adder", ThemePalette::TwinAdder)}
