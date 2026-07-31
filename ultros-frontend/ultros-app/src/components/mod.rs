@@ -22,6 +22,7 @@ pub mod freshness_badge;
 pub mod gil;
 pub mod grouped_nav_popover;
 pub mod history_panel;
+pub mod hover_card;
 pub mod icon;
 pub mod item_icon;
 pub mod job_set_card;
