@@ -51,6 +51,11 @@ pub fn ChartToolbar(
     /// disabled with a reason (spec: disabled, never hidden).
     #[prop(into)]
     quantity_disabled: Signal<bool>,
+    /// Patch milestone bands (spec 4). Default on; bands vanish naturally
+    /// under 30 days via the LOD tier, so no disabled state is needed here.
+    #[prop(into)]
+    show_patches: Signal<bool>,
+    set_show_patches: WriteSignal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (group_open, set_group_open) = signal(false);
@@ -225,6 +230,15 @@ pub fn ChartToolbar(
                             disabled_reason=Signal::derive(move || {
                                 t_string!(i18n, chart_density_quantity_unavailable).to_string()
                             })
+                        />
+                        <OverlayRow
+                            label=Signal::derive(move || {
+                                t_string!(i18n, chart_toggle_patches).to_string()
+                            })
+                            checked=show_patches
+                            set_checked=set_show_patches
+                            disabled=Signal::derive(|| false)
+                            disabled_reason=Signal::derive(String::new)
                         />
                     </div>
                 </Show>

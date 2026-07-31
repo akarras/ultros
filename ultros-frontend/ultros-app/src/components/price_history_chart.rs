@@ -577,6 +577,9 @@ pub fn PriceHistoryChart(
     let (show_market_average, set_show_market_average) = signal(true);
     let (show_trend, set_show_trend) = signal(false);
     let (show_quantity, set_show_quantity) = signal(false);
+    // Patch milestone bands (spec 4): on by default — under 30 days the LOD
+    // tier empties the mark set anyway, so narrow zooms stay clean.
+    let (show_patches, set_show_patches) = signal(true);
     // Local truth for the slicer's own rendering (handle positions, drag
     // state). Every commit is mirrored out via `on_range_change` below so the
     // caller can debounce it into a refetch (Task 14) — this signal itself
@@ -674,6 +677,104 @@ pub fn PriceHistoryChart(
     });
 
     let helper_for_model = helper.clone();
+    // ── Patch milestones (spec 4) ───────────────────────────────────────
+    // The patch calendar the viewed scope follows. At Region grouping the
+    // chart can show regions on different patch schedules at once — then
+    // there is no correct single calendar, so `None` turns milestones off
+    // and the caption says why (picking a winner would silently mislabel
+    // half the chart).
+    let helper_for_track = helper.clone();
+    let milestone_track = Memo::new(move |_| {
+        use ultros_api_types::game_history::{PatchTrack, track_for_region};
+        use ultros_api_types::world_helper::AnySelector;
+        let series_value = resolved_series.get();
+        if series_value.group == SeriesGroup::Region {
+            let hidden = hidden_series.get();
+            let mut tracks: Vec<PatchTrack> = series_value
+                .series
+                .iter()
+                .filter_map(|entry| {
+                    let name = helper_for_track
+                        .lookup_selector(AnySelector::Region(entry.id))?
+                        .get_name()
+                        .to_string();
+                    (!hidden.contains(&name)).then(|| track_for_region(&name))
+                })
+                .collect();
+            tracks.sort_by_key(|t| t.as_str());
+            tracks.dedup();
+            return match tracks.len() {
+                0 => Some(PatchTrack::Global),
+                1 => Some(tracks[0]),
+                _ => None,
+            };
+        }
+        // World/DC/unknown scope: a single region — walk the scope up to it.
+        // An unresolvable scope falls back to Global, like an unknown region.
+        let region_name = helper_for_track
+            .lookup_world_by_name(&scope_name.get())
+            .and_then(|result| {
+                if let Some(region) = result.as_region() {
+                    Some(region.name.clone())
+                } else if let Some(dc) = result.as_datacenter() {
+                    helper_for_track
+                        .lookup_selector(AnySelector::Region(dc.region_id))
+                        .map(|r| r.get_name().to_string())
+                } else if let Some(world) = result.as_world() {
+                    helper_for_track
+                        .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                        .and_then(|d| d.as_datacenter().map(|d| d.region_id))
+                        .and_then(|region_id| {
+                            helper_for_track.lookup_selector(AnySelector::Region(region_id))
+                        })
+                        .map(|r| r.get_name().to_string())
+                } else {
+                    None
+                }
+            });
+        Some(track_for_region(region_name.as_deref().unwrap_or("")))
+    });
+
+    let milestones = Memo::new(move |_| {
+        use ultros_charts::charts::MilestoneSpec;
+        if !show_patches.get() {
+            return Vec::new();
+        }
+        let Some(track) = milestone_track.get() else {
+            return Vec::new();
+        };
+        let Some((from, to)) = selected_domain.get() else {
+            return Vec::new();
+        };
+        let span = (to - from).max(1);
+        // Every LOD-visible patch inside the window, plus the latest one
+        // released before it so the leading stretch is tinted — the band
+        // layout's documented contract.
+        let mut specs: Vec<MilestoneSpec> = Vec::new();
+        for patch in ultros_api_types::game_history::visible_patches(track, span) {
+            let ts = patch
+                .released
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight is always valid")
+                .and_utc()
+                .timestamp();
+            if ts >= to {
+                break;
+            }
+            if ts <= from {
+                specs.clear(); // only the latest pre-window patch survives
+            }
+            specs.push(MilestoneSpec {
+                start: chrono::DateTime::from_timestamp(ts, 0)
+                    .expect("seed dates are valid timestamps")
+                    .naive_utc(),
+                version: patch.version,
+                ex_version: patch.ex_version,
+            });
+        }
+        specs
+    });
+
     let model = Memo::new(move |_| {
         let series_value = resolved_series.get();
         let width = chart_width.get();
@@ -700,6 +801,7 @@ pub fn PriceHistoryChart(
                 utc_offset_minutes: utc_offset.get(),
                 hidden_series: hidden_series.get(),
                 mode: mode.get(),
+                milestones: milestones.get(),
                 theme: Theme::site(),
             },
         )
@@ -718,6 +820,7 @@ pub fn PriceHistoryChart(
                     width,
                     height,
                     utc_offset_minutes: utc_offset.get(),
+                    milestones: milestones.get(),
                     theme: Theme::site(),
                 },
             )
@@ -779,6 +882,8 @@ pub fn PriceHistoryChart(
                 show_quantity=show_quantity
                 set_show_quantity=set_show_quantity
                 quantity_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
+                show_patches=show_patches
+                set_show_patches=set_show_patches
             />
             // Mode-cap hint: modes that draw fewer series than are visible
             // say so instead of silently dropping data.
@@ -956,6 +1061,15 @@ pub fn PriceHistoryChart(
                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-[color:var(--color-text)]/70">
                         <span>{mode_label}</span>
                         {grouped.map(|g| view! { <span>"· " {g}</span> })}
+                        {(show_patches.get() && milestone_track.get().is_none())
+                            .then(|| {
+                                view! {
+                                    <span class="text-amber-200/85">
+                                        "· "
+                                        {t_string!(i18n, chart_milestones_mixed_tracks).to_string()}
+                                    </span>
+                                }
+                            })}
                         {s
                             .as_ref()
                             .map(|s| {

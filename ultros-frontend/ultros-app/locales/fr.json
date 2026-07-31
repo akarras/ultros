@@ -1022,6 +1022,8 @@
     "chart_hint_range_limit": "Le mode plage n'affiche que les deux premières séries.",
     "chart_caption_grouped_by": "groupé par {group}",
     "chart_density_quantity_unavailable": "La bande de quantité n'est pas disponible en mode densité.",
+    "chart_toggle_patches": "Bandes de patch",
+    "chart_milestones_mixed_tracks": "Les bandes de patch sont désactivées : les séries visibles couvrent des régions aux calendriers de patch différents.",
     "price_viewer_on": "sur",
     "sale_history_col_hq": "hq",
     "sale_history_col_price": "prix",

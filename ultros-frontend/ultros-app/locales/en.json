@@ -1025,6 +1025,8 @@
     "chart_hint_range_limit": "Range mode shows the first two series only.",
     "chart_caption_grouped_by": "grouped by {group}",
     "chart_density_quantity_unavailable": "The quantity lane isn't available in density mode.",
+    "chart_toggle_patches": "Patch bands",
+    "chart_milestones_mixed_tracks": "Patch bands are off: the visible series span regions on different patch schedules.",
     "price_viewer_on": "on",
     "sale_history_col_hq": "hq",
     "sale_history_col_price": "price",
