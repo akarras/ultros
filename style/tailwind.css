@@ -2031,20 +2031,11 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 /* ----- Flip Finder grid -----
    The table is a contained pane (VirtualScroller `fill` mode): the scroller
    is the single scrollport for both axes and the header is sticky inside
-   it. `.analyzer-hscroll` survives only until the CSS-var width task
-   removes it; rows scroll underneath the sticky header, which draws its own
-   opaque background. Column widths are `--colw-<id>` variables set inline on
-   `.analyzer-table` by the route (from the column registry), and
+   it. Rows scroll underneath the sticky header, so the header row draws its
+   own opaque background. Column widths are `--colw-<id>` variables set inline
+   on `.analyzer-table` by the route (from the column registry), and
    `--analyzer-row-min-width` is a `calc()` sum of the visible columns'
    variables set by the same inline style. */
-.analyzer-hscroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    /* Rows scroll underneath the sticky header, so it cannot be
-       semi-transparent. */
-    background-color: var(--color-background-panel);
-    scrollbar-width: thin;
-}
 /* One width for the header row, every data row, and the spacer that holds the
    rows, so the scrollport scrolls through the same range for all of them and
    the row striping covers it. */
@@ -2110,6 +2101,20 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 .analyzer-context-item:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+
+/* Spreadsheet gridlines: hairline column separators on every cell, hairline
+   row borders. Rows are 40px border-box (h-10), so the border eats into the
+   row's own height and the virtualizer's fixed row_height stays exact. */
+.analyzer-table [role="cell"],
+.analyzer-table [role="columnheader"] {
+    border-right: 1px solid color-mix(in srgb, var(--color-outline) 55%, transparent);
+}
+.analyzer-grid-row > :last-child {
+    border-right: none;
+}
+.analyzer-table .analyzer-grid-row {
+    border-bottom: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent);
 }
 
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the

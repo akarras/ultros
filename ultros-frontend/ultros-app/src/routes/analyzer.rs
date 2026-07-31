@@ -2091,6 +2091,7 @@ fn AnalyzerTable(
             // for both axes, with the column header sticky inside it.
             <div
                 node_ref=pane_ref
+                role="table"
                 class="analyzer-table border border-[color:var(--color-outline)] flex-1 min-h-0"
                 style=move || colw_style(&visible_cols(), &col_widths())
             >
@@ -2108,7 +2109,7 @@ fn AnalyzerTable(
                         visible_range=visible_range
                         row_min_width="var(--analyzer-row-min-width, 0px)"
                         header=view! {
-                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] bg-[color:var(--color-background-panel)]" role="row">
                                 <HeaderCell pane=pane_ref col_widths set_col_widths menu=header_menu col=COL_HQ class="!px-2 justify-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </HeaderCell>
@@ -2290,7 +2291,7 @@ fn AnalyzerTable(
                                 "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
                             view! {
-                                <div class=classes role="row-group">
+                                <div class=classes role="row">
                                     <div role="cell" class="px-2 py-2 shrink-0 flex items-center justify-center" style="width:var(--colw-hq)">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
