@@ -30,7 +30,7 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v4.2.2
               with:
-                  submodules: recursive
+                  lfs: true
             - name: Install system packages
               # normally i do an apt upgrade here, but we install snap and firefox??
               run: sudo apt update && sudo apt install -y libfreetype6 libfreetype6-dev cmake build-essential curl sudo pkg-config libssl-dev fontconfig libfontconfig1-dev

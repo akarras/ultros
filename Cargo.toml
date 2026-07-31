@@ -16,6 +16,7 @@ members = [
     "proc-macros/xiv-gen-macros",
     "dumb-csv",
     "field-iterator",
+    "game-data-pack",
 ]
 resolver = "2"
 
