@@ -267,6 +267,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn column_ids_are_unique() {
+        // A duplicated id would silently break `column_spec` lookups and
+        // emit duplicate `--colw-*` declarations.
+        let ids: HashSet<&str> = COLUMNS.iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), COLUMNS.len());
+    }
+
+    #[test]
     fn every_optional_col_has_a_spec_and_vice_versa() {
         for id in ALL_OPTIONAL_COLS {
             let spec = column_spec(id).expect("optional col must be in COLUMNS");
