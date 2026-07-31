@@ -1,3 +1,16 @@
+use cfg_if::cfg_if;
+use leptos::children::ViewFn;
+use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
+#[cfg(feature = "hydrate")]
+use leptos::portal::Portal;
+use leptos::{html::Div, prelude::*};
+#[cfg(feature = "hydrate")]
+use leptos_use::{
+    UseElementSizeReturn, UseEventListenerOptions, use_element_size,
+    use_event_listener_with_options, use_window,
+};
+use std::time::Duration;
+
 /// Anchor geometry in viewport coordinates (as returned by
 /// `getBoundingClientRect`). The overlay is `position: fixed`, so all math in
 /// this module stays in viewport space — no scroll offsets.
@@ -48,6 +61,208 @@ pub(crate) fn overlay_position(
     let left = left.clamp(EDGE_MARGIN, max_left);
 
     (top, left)
+}
+
+/// Shared chrome for hover overlays: palette-driven gradient body, accent
+/// hairline slot, glow shadow. Consumers append their own padding/sizing and
+/// render `<AccentHairline/>` as their first child. Every color rides the
+/// runtime brand CSS variables, so all palettes and light mode re-tint it.
+pub(crate) const HOVER_CARD_CHROME: &str = "relative overflow-hidden rounded-lg \
+    border border-brand-400/30 \
+    bg-gradient-to-br from-brand-950/95 via-brand-900/90 to-brand-950/95 \
+    backdrop-blur-md shadow-lg shadow-[color:var(--accent-glow)]";
+
+/// 1px accent gradient across the top edge of a hover card.
+#[component]
+pub(crate) fn AccentHairline() -> impl IntoView {
+    view! {
+        <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[color:var(--accent)] to-transparent"></div>
+    }
+}
+
+/// Hover/focus-triggered overlay primitive. Owns the portal, open/close state
+/// (with optional open delay), and fixed positioning via [`overlay_position`].
+/// No observers or listeners are created until the overlay actually opens.
+#[component]
+pub fn HoverCard<T>(
+    /// Overlay content, rendered into a body portal while open.
+    #[prop(into)]
+    content: ViewFn,
+    /// Milliseconds of sustained hover before opening. Focus opens instantly.
+    #[prop(default = 0)]
+    open_delay_ms: u32,
+    /// While true, hover/focus never opens the overlay.
+    #[prop(optional, into)]
+    disabled: Signal<bool>,
+    /// Classes for the anchor wrapper div.
+    #[prop(optional, into)]
+    class: Option<String>,
+    children: TypedChildrenFn<T>,
+) -> impl IntoView
+where
+    T: Sized + Render + RenderHtml + Send + 'static,
+{
+    let (hover_open, set_hover_open) = signal(false);
+    let (is_focused, set_is_focused) = signal(false);
+    // Pending open-delay timer. `new_local`: timers only exist client-side.
+    let pending = StoredValue::new_local(None::<TimeoutHandle>);
+
+    let clear_pending = move || {
+        if let Some(handle) = pending.get_value() {
+            handle.clear();
+            pending.set_value(None);
+        }
+    };
+    let request_open = move || {
+        if disabled.get_untracked() {
+            return;
+        }
+        if open_delay_ms == 0 {
+            set_hover_open.set(true);
+        } else if pending.get_value().is_none() {
+            let handle = set_timeout_with_handle(
+                move || {
+                    pending.set_value(None);
+                    set_hover_open.set(true);
+                },
+                Duration::from_millis(u64::from(open_delay_ms)),
+            )
+            .ok();
+            pending.set_value(handle);
+        }
+    };
+
+    let is_open = Signal::derive(move || !disabled.get() && (hover_open.get() || is_focused.get()));
+    // Suppress unused warnings on the server build, where the overlay closure
+    // below compiles to `None`.
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = is_open;
+    }
+
+    let target = NodeRef::<Div>::new();
+
+    let overlay = {
+        cfg_if! {
+            if #[cfg(feature = "hydrate")] {
+                let read_anchor_rect = move || {
+                    target
+                        .get_untracked()
+                        .map(|el| {
+                            let rect = el.get_bounding_client_rect();
+                            AnchorRect {
+                                top: rect.top(),
+                                left: rect.left(),
+                                width: rect.width(),
+                                height: rect.height(),
+                            }
+                        })
+                        .unwrap_or_default()
+                };
+                move || {
+                    is_open.get().then({
+                        let content = content.clone();
+                        move || {
+                            let anchor_rect = RwSignal::new(read_anchor_rect());
+                            // Track the anchor while open: any scroll (capture
+                            // catches nested containers) or resize moves its
+                            // viewport rect. Registered inside the overlay
+                            // view, so everything is dropped on close.
+                            let _ = use_event_listener_with_options(
+                                use_window(),
+                                leptos::ev::scroll,
+                                move |_| anchor_rect.set(read_anchor_rect()),
+                                UseEventListenerOptions::default().capture(true).passive(true),
+                            );
+                            let _ = use_event_listener_with_options(
+                                use_window(),
+                                leptos::ev::resize,
+                                move |_| anchor_rect.set(read_anchor_rect()),
+                                UseEventListenerOptions::default().capture(false).passive(true),
+                            );
+                            let node_ref = NodeRef::<Div>::new();
+                            let UseElementSizeReturn {
+                                width: overlay_width,
+                                height: overlay_height,
+                            } = use_element_size(node_ref);
+                            let style = move || {
+                                let overlay = OverlaySize {
+                                    width: overlay_width.get(),
+                                    height: overlay_height.get(),
+                                };
+                                let viewport = OverlaySize {
+                                    width: window()
+                                        .inner_width()
+                                        .ok()
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or_default(),
+                                    height: window()
+                                        .inner_height()
+                                        .ok()
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or_default(),
+                                };
+                                let (top, left) =
+                                    overlay_position(anchor_rect.get(), overlay, viewport);
+                                // Keep hidden until measured so the first
+                                // paint can't flash at the wrong position.
+                                let visibility =
+                                    if overlay.width == 0.0 && overlay.height == 0.0 {
+                                        "visibility: hidden;"
+                                    } else {
+                                        ""
+                                    };
+                                format!("top: {top}px; left: {left}px; {visibility}")
+                            };
+                            view! {
+                                <Portal mount=document().body().unwrap()>
+                                    <div
+                                        node_ref=node_ref
+                                        role="tooltip"
+                                        class="fixed z-50 transition-opacity duration-150 animate-fade-in"
+                                        style=style
+                                    >
+                                        {content.run()}
+                                    </div>
+                                </Portal>
+                            }
+                            .into_any()
+                        }
+                    })
+                }
+            } else {
+                {
+                    let _ = content;
+                    move || None::<AnyView>
+                }
+            }
+        }
+    };
+
+    let children = children.into_inner();
+    view! {
+        <div
+            class=class.unwrap_or_default()
+            on:mouseenter=move |_| request_open()
+            on:mouseleave=move |_| {
+                clear_pending();
+                set_hover_open.set(false);
+            }
+            on:focusin=move |_| set_is_focused.set(true)
+            on:focusout=move |_| set_is_focused.set(false)
+            on:keydown=move |ev| {
+                if ev.key() == "Escape" {
+                    clear_pending();
+                    set_hover_open.set(false);
+                    set_is_focused.set(false);
+                }
+            }
+            node_ref=target
+        >
+            {children()}
+            {overlay}
+        </div>
+    }
 }
 
 #[cfg(test)]
