@@ -20,7 +20,7 @@ pub fn About() -> impl IntoView {
                 </p>
                 <div class="flex flex-wrap justify-center gap-4 mt-4">
                     <a
-                        href="https://discord.gg/pgdq9nGUP2"
+                        href=crate::DISCORD_INVITE
                         class="btn btn-primary gap-2"
                         target="_blank"
                         rel="noopener noreferrer"

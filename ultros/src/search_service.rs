@@ -70,7 +70,11 @@ impl SearchService {
             index_writer.add_document(doc!(
                 title_field => cat.name.as_str(),
                 type_field => "category",
-                url_field => format!("/items/category/{}", cat.name),
+                // Keyed by id: this index is built from English game data, so
+                // a name-keyed URL would send every non-English visitor to a
+                // category their client cannot resolve. See
+                // `resolve_category_param` in `item_explorer.rs`.
+                url_field => format!("/items/category/{}", cat.key_id.0),
                 // Categories don't have a direct icon, maybe use a default or 0
                 icon_id_field => 0i64,
                 category_field => "",

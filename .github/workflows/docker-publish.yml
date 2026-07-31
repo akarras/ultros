@@ -50,7 +50,7 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v4.2.2
               with:
-                  submodules: recursive
+                  lfs: true
 
             # No QEMU: we build linux/amd64 only, on an amd64 runner. It bought
             # us nothing and parked a 32MB binfmt cache on every ref.

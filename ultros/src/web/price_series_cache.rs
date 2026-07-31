@@ -20,6 +20,10 @@ pub(crate) struct CacheKey {
     pub bucket: i64,
     pub group: &'static str,
     pub hq: &'static str,
+    /// Price-bin count — 0 for `price_series` entries, non-zero for
+    /// `price_density`, so the two endpoints can share one cache without
+    /// key collisions.
+    pub bins: u16,
 }
 
 #[derive(Clone)]
@@ -85,6 +89,7 @@ mod tests {
             bucket: 3600,
             group: "world",
             hq: "any",
+            bins: 0,
         }
     }
 

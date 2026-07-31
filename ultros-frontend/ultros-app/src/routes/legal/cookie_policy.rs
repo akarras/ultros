@@ -1,3 +1,4 @@
+use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::i18n::*;
 use leptos::prelude::*;
 
@@ -5,84 +6,62 @@ use leptos::prelude::*;
 pub fn CookiePolicy() -> impl IntoView {
     let i18n = use_i18n();
     view! {
-        <h1>{t!(i18n, cookie_policy_title)}</h1>
-        <p>
-            {t!(i18n, cookie_policy_intro)}
-            <a href="https://ultros.app/cookie-policy">"https://ultros.app/cookie-policy"</a>
-        </p>
-        <p>
-            <strong>{t!(i18n, cookie_policy_what_are_cookies)}</strong>
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_what_are_cookies_body)}
-        </p>
-        <p>
-            <strong>{t!(i18n, cookie_policy_how_we_use)}</strong>
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_how_we_use_body)}
-        </p>
-        <p>
-            <strong>{t!(i18n, cookie_policy_disabling)}</strong>
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_disabling_body)}
-            <a href="https://www.cookiepolicygenerator.com/cookie-policy-generator/">
-                {t!(i18n, cookie_policy_generator_link)}
-            </a>.
-        </p>
-        <p>
-            <strong>{t!(i18n, cookie_policy_cookies_we_set)}</strong>
-        </p>
-        <ul>
-            <li>
-                <p>{t!(i18n, cookie_policy_account_cookies_title)}</p>
-                <p>
-                    {t!(i18n, cookie_policy_account_cookies_body)}
-                </p>
-            </li>
-            <li>
-                <p>{t!(i18n, cookie_policy_login_cookies_title)}</p>
-                <p>
-                    {t!(i18n, cookie_policy_login_cookies_body)}
-                </p>
-            </li>
-        </ul>
-        <p>
-            <strong>{t!(i18n, cookie_policy_third_party)}</strong>
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_third_party_body)}
-        </p>
-        <ul>
-            <li>
-                <p>
-                    {t!(i18n, cookie_policy_adsense_body)}
-                </p>
-                <p>
-                    {t!(i18n, cookie_policy_adsense_faq)}
-                </p>
-            </li>
-        </ul>
+        <div class="container mx-auto max-w-3xl space-y-4 p-4">
+            <MetaTitle title=move || t_string!(i18n, cookie_policy_title).to_string() />
+            <MetaDescription text=move || {
+                t_string!(i18n, cookie_policy_meta_description).to_string()
+            } />
+            <h1 class="text-3xl font-bold">{t!(i18n, cookie_policy_title)}</h1>
+            <p>
+                {t!(i18n, cookie_policy_intro)}
+                <a href="https://ultros.app/cookie-policy">"https://ultros.app/cookie-policy"</a>
+            </p>
+            <h2 class="text-2xl font-semibold pt-4">
+                {t!(i18n, cookie_policy_what_are_cookies)}
+            </h2>
+            <p>{t!(i18n, cookie_policy_what_are_cookies_body)}</p>
+            <h2 class="text-2xl font-semibold pt-4">{t!(i18n, cookie_policy_how_we_use)}</h2>
+            <p>{t!(i18n, cookie_policy_how_we_use_body)}</p>
+            <h2 class="text-2xl font-semibold pt-4">{t!(i18n, cookie_policy_disabling)}</h2>
+            <p>{t!(i18n, cookie_policy_disabling_body)}</p>
+            <h2 class="text-2xl font-semibold pt-4">{t!(i18n, cookie_policy_cookies_we_set)}</h2>
+            <ul class="list-disc pl-6 space-y-2">
+                <li>
+                    <p class="font-semibold">{t!(i18n, cookie_policy_login_cookies_title)}</p>
+                    <p>{t!(i18n, cookie_policy_login_cookies_body)}</p>
+                </li>
+                <li>
+                    <p class="font-semibold">{t!(i18n, cookie_policy_preference_cookies_title)}</p>
+                    <p>{t!(i18n, cookie_policy_preference_cookies_body)}</p>
+                </li>
+            </ul>
+            <h2 class="text-2xl font-semibold pt-4">{t!(i18n, cookie_policy_third_party)}</h2>
+            <p>{t!(i18n, cookie_policy_third_party_body)}</p>
+            <ul class="list-disc pl-6 space-y-2">
+                <li>
+                    <p>{t!(i18n, cookie_policy_analytics_body)}</p>
+                </li>
+                <li>
+                    <p>{t!(i18n, cookie_policy_adsense_body)}</p>
+                    <p>
+                        <a href="https://policies.google.com/technologies/ads" rel="noopener">
+                            {t!(i18n, cookie_policy_adsense_faq)}
+                        </a>
+                    </p>
+                </li>
+            </ul>
 
-        <p>
-            <strong>{t!(i18n, cookie_policy_more_info)}</strong>
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_more_info_body)}
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_more_info_link_intro)}
-            <a href="https://www.cookiepolicygenerator.com/sample-cookies-policy/">
-                {t!(i18n, cookie_policy_article_link)}
-            </a> "."
-        </p>
-        <p>
-            {t!(i18n, cookie_policy_contact_intro)}
-        </p>
-        <ul>
-            <li>{t!(i18n, cookie_policy_contact_email)}</li>
-
-        </ul>
+            <h2 class="text-2xl font-semibold pt-4">{t!(i18n, cookie_policy_more_info)}</h2>
+            <p>{t!(i18n, cookie_policy_more_info_body)}</p>
+            <p>{t!(i18n, cookie_policy_contact_intro)}</p>
+            <ul class="list-disc pl-6">
+                <li>
+                    <a href="https://discord.gg/pgdq9nGUP2" rel="noopener">
+                        {t!(i18n, cookie_policy_contact_discord)}
+                    </a>
+                </li>
+                <li>{t!(i18n, cookie_policy_contact_email)}</li>
+            </ul>
+        </div>
     }
 }

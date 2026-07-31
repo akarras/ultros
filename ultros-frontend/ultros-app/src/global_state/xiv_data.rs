@@ -38,3 +38,42 @@ pub async fn reload_xiv_data(locale: &str) -> anyhow::Result<()> {
     xiv_gen_db::try_init(&bytes)?;
     Ok(())
 }
+
+/// Whether an item with this id exists in the currently loaded xiv_gen data.
+pub fn item_exists(id: i32) -> bool {
+    tracked_data().items.contains_key(&xiv_gen::ItemId(id))
+}
+
+/// Parses a route path param as an item id, returning `None` if it doesn't
+/// parse as an integer or doesn't name a real item — the two ways a garbage
+/// `/item/<id>` URL currently falls through to a fake "item 0" page.
+pub fn resolve_item_id(raw: Option<&str>) -> Option<i32> {
+    let id: i32 = raw?.parse().ok()?;
+    item_exists(id).then_some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_item_id_accepts_a_real_item() {
+        let real_id = tracked_data().items.keys().next().expect("data loaded").0;
+        assert_eq!(resolve_item_id(Some(&real_id.to_string())), Some(real_id));
+    }
+
+    #[test]
+    fn resolve_item_id_rejects_unparseable_ids() {
+        assert_eq!(resolve_item_id(Some("notanumber")), None);
+    }
+
+    #[test]
+    fn resolve_item_id_rejects_nonexistent_ids() {
+        assert_eq!(resolve_item_id(Some("999999999")), None);
+    }
+
+    #[test]
+    fn resolve_item_id_rejects_missing_param() {
+        assert_eq!(resolve_item_id(None), None);
+    }
+}

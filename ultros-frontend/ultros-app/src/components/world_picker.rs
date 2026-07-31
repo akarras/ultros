@@ -1,3 +1,4 @@
+use icondata as i;
 use leptos::{
     either::Either,
     prelude::*,
@@ -5,10 +6,41 @@ use leptos::{
 };
 
 use crate::{
-    components::select::Select,
+    components::{icon::Icon, select::Select},
     global_state::{LocalWorldData, home_world::locale_preferred_region},
 };
 use ultros_api_types::{world::World, world_helper::AnySelector};
+
+/// Marks whether an entry is a world, datacenter or region.
+///
+/// The icons zoom out as the scope widens - a pin on the map for a single
+/// world, the server rack that hosts a datacenter's worlds, the globe for a
+/// region - so the three tiers stay distinguishable at a glance without a text
+/// badge crowding the name. The kind is still exposed as text via `title` and
+/// an `sr-only` label, so nothing is icon-only.
+#[component]
+fn SelectorKind(selector: AnySelector) -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
+    let icon = match selector {
+        AnySelector::World(_) => i::BsGeoAltFill,
+        AnySelector::Datacenter(_) => i::FaServerSolid,
+        AnySelector::Region(_) => i::FaEarthAmericasSolid,
+    };
+    let label = move || match selector {
+        AnySelector::World(_) => crate::i18n::t_string!(i18n, world).to_string(),
+        AnySelector::Datacenter(_) => crate::i18n::t_string!(i18n, datacenter).to_string(),
+        AnySelector::Region(_) => crate::i18n::t_string!(i18n, region).to_string(),
+    };
+    view! {
+        <span
+            class="shrink-0 flex items-center text-[color:var(--color-text-muted)]"
+            title=label
+        >
+            <Icon icon=icon aria_hidden=true />
+            <span class="sr-only">{label}</span>
+        </span>
+    }
+}
 
 #[component]
 pub fn WorldOnlyPicker(
@@ -37,11 +69,7 @@ pub fn WorldOnlyPicker(
                         choice=current_world
                         set_choice=set_current_world
                         children=move |_w, label| {
-                            view! {
-                                <div class="flex items-center px-4 py-2 rounded-lg transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)]">
-                                    {label}
-                                </div>
-                            }
+                            view! { <div class="flex items-center min-w-0 truncate">{label}</div> }
                         }
                     />
                 </div>
@@ -98,19 +126,14 @@ pub fn WorldPicker(
                         choice=choice
                         set_choice=set_choice
                         as_label=move |(d, _)| d.clone()
+                        selected_prefix=move |(_, s)| {
+                            view! { <SelectorKind selector=s /> }.into_any()
+                        }
                         children=move |(_, s), view| {
                             view! {
-                                <div class="flex justify-between px-4 py-2
-                                hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] rounded-lg transition-colors
-                                items-end gap-2">
-                                    <div>{view}</div>
-                                    <div class="text-sm text-[color:var(--color-text-muted)]">
-                                        {match s {
-                                            AnySelector::World(_) => "world",
-                                            AnySelector::Region(_) => "region",
-                                            AnySelector::Datacenter(_) => "datacenter",
-                                        }}
-                                    </div>
+                                <div class="flex w-full min-w-0 items-center gap-2.5">
+                                    <SelectorKind selector=s />
+                                    <div class="truncate">{view}</div>
                                 </div>
                             }
                         }

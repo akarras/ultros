@@ -4,6 +4,7 @@ pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
 mod discord;
 pub(crate) mod event;
+mod ingest_health;
 mod item_update_service;
 pub mod leptos;
 #[cfg(feature = "profiling")]
@@ -281,6 +282,12 @@ async fn main() -> Result<()> {
         )
         .with(sentry_tracing::layer())
         .init();
+    // Install the Prometheus recorder before any service spawns. `metrics::`
+    // macros are no-ops against the default NoopRecorder, so anything emitted
+    // before installation vanishes — and the analyzer records its
+    // snapshot-age / snapshot-rejection samples during startup, well before
+    // `start_web` (which only *serves* the handle on /metrics) ever runs.
+    let prometheus_handle = web_metrics::setup_metrics_recorder();
     #[cfg(feature = "profiling")]
     tokio::spawn(async move { start_profiling_server().await });
     info!("Ultros starting!");
@@ -355,6 +362,10 @@ async fn main() -> Result<()> {
         full_sweep_cooldowns: Default::default(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
+    // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
+    // failure looks like a healthy process serving frozen numbers, so this gauge
+    // is the only thing that makes one visible from outside.
+    ingest_health::spawn_staleness_gauge(db.clone(), world_cache.clone(), token.clone());
     // begin listening to universalis events
     // load configuration from environment
     let config = envy::from_env::<Config>()?;
@@ -445,7 +456,7 @@ async fn main() -> Result<()> {
         universalis: universalis_client,
         price_series_cache: Default::default(),
     };
-    let web_task = tokio::spawn(web::start_web(web_state));
+    let web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("ctrl-c received");

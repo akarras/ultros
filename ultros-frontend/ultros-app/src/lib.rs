@@ -76,6 +76,9 @@ use log::info;
 /// `ultros-client`'s `hydrate()` for the full story (GlitchTip #6831).
 pub const SSR_END_SENTINEL_ID: &str = "ultros-ssr-end";
 
+/// Shared Discord server invite link used across side navigation, footer, and about page.
+pub const DISCORD_INVITE: &str = "https://discord.gg/pgdq9nGUP2";
+
 #[cfg(feature = "hydrate")]
 mod sentry_tags {
     use wasm_bindgen::{JsCast, JsValue};
@@ -362,7 +365,7 @@ pub fn Footer() -> impl IntoView {
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-4">
                     <a
-                        href="https://discord.gg/pgdq9nGUP2"
+                        href=DISCORD_INVITE
                         class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsDiscord width="1.2em" height="1.2em" /><span>{t!(i18n, discord)}</span>

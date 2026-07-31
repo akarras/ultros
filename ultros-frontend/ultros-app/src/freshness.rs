@@ -1,8 +1,57 @@
 use crate::analysis::format_duration_short;
 use crate::i18n::{I18nKeys, Locale, t_string};
-use chrono::Duration;
+use chrono::{Duration, NaiveDateTime};
 use leptos_i18n::I18nContext;
 use ultros_api_types::freshness::FreshnessVerdict;
+use ultros_api_types::{SaleHistory, WorldItemLastUpdated};
+
+/// Inputs for the freshness/cadence badges, derived from the listings payload.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FreshnessInputs {
+    /// Time since Ultros last ingested market data for this item anywhere in
+    /// the page's scope. `None` when nothing has ever been ingested.
+    pub age: Option<Duration>,
+    /// Sales velocity across the whole page scope (world, DC, or region).
+    /// This is what the cadence badge shows: "how fast does it sell *here*".
+    pub scope_sales_per_day: Option<f32>,
+    /// Scope velocity normalized to a single market board. Freshness is a
+    /// per-board judgement, so this is what the verdict thresholds consume.
+    pub per_world_sales_per_day: Option<f32>,
+}
+
+/// Derives the freshness-badge inputs from the item page's listings payload.
+///
+/// Age basis: the newest `last_updated` ingest marker in scope — when Ultros
+/// actually last heard about this item's boards — NOT `ActiveListing::timestamp`,
+/// which is Universalis' `last_review_time` (when the seller last touched the
+/// listing in-game). A board unrefreshed for days must not look "Fresh" just
+/// because a retainer re-listed right before the last ingest.
+///
+/// Velocity scoping: `sales` are merged across every world in the page scope
+/// (capped at the newest 200), so on a DC/region view the raw rate is roughly
+/// `world_count`× a single board's rate. The per-200-cap window makes per-world
+/// subsets sparse and biased, so instead of filtering by world we divide the
+/// scope rate by `world_count` to approximate the average board's velocity.
+/// On a single-world page (`world_count == 1`) this is a no-op.
+pub fn derive_freshness_inputs(
+    last_updated: &[WorldItemLastUpdated],
+    sales: &[SaleHistory],
+    world_count: usize,
+    now: NaiveDateTime,
+) -> FreshnessInputs {
+    let age = last_updated
+        .iter()
+        .map(|updated| updated.updated_at)
+        .max()
+        .map(|updated_at| now - updated_at);
+    let scope_sales_per_day = ultros_api_types::freshness::sales_per_day(sales);
+    FreshnessInputs {
+        age,
+        scope_sales_per_day,
+        per_world_sales_per_day: scope_sales_per_day
+            .map(|velocity| velocity / world_count.max(1) as f32),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -110,8 +159,149 @@ pub fn get_freshness_verdict_display(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
-    use ultros_api_types::freshness::FreshnessVerdict;
+    use chrono::{DateTime, Duration};
+    use ultros_api_types::freshness::{FreshnessVerdict, calculate_freshness_verdict};
+
+    fn sale_at(seconds: i64) -> SaleHistory {
+        SaleHistory {
+            id: seconds as i32,
+            quantity: 1,
+            price_per_item: 100,
+            buying_character_id: 1,
+            hq: false,
+            sold_item_id: 1,
+            sold_date: DateTime::from_timestamp(seconds, 0).unwrap().naive_utc(),
+            world_id: 1,
+            buyer_name: None,
+        }
+    }
+
+    fn ingest_at(world_id: i32, seconds: i64) -> WorldItemLastUpdated {
+        WorldItemLastUpdated {
+            world_id,
+            updated_at: DateTime::from_timestamp(seconds, 0).unwrap().naive_utc(),
+        }
+    }
+
+    fn ts(seconds: i64) -> NaiveDateTime {
+        DateTime::from_timestamp(seconds, 0).unwrap().naive_utc()
+    }
+
+    #[test]
+    fn test_age_comes_from_ingest_time_not_listings() {
+        // The seller last touched their listings days ago (which is what
+        // ActiveListing::timestamp would say), but Ultros ingested the board
+        // 30 seconds ago: the badge must judge the 30-second ingest age.
+        let now = ts(1_000_000);
+        let inputs = derive_freshness_inputs(
+            &[ingest_at(1, 1_000_000 - 30)],
+            &[sale_at(0), sale_at(86_400)],
+            1,
+            now,
+        );
+        assert_eq!(inputs.age, Some(Duration::seconds(30)));
+        assert_eq!(
+            calculate_freshness_verdict(inputs.age, inputs.per_world_sales_per_day),
+            FreshnessVerdict::Fresh
+        );
+
+        // Conversely, a stale ingest is stale even if a seller re-listed just
+        // before it: 4 days since the last ingest at 1 sale/day => VerifyInGame.
+        let inputs = derive_freshness_inputs(
+            &[ingest_at(1, 1_000_000 - 4 * 86_400)],
+            &[sale_at(0), sale_at(86_400)],
+            1,
+            now,
+        );
+        assert_eq!(inputs.age, Some(Duration::days(4)));
+        assert_eq!(
+            calculate_freshness_verdict(inputs.age, inputs.per_world_sales_per_day),
+            FreshnessVerdict::VerifyInGame
+        );
+    }
+
+    #[test]
+    fn test_no_ingest_marker_means_no_data() {
+        let inputs = derive_freshness_inputs(&[], &[sale_at(0), sale_at(86_400)], 1, ts(1_000));
+        assert_eq!(inputs.age, None);
+        assert_eq!(
+            calculate_freshness_verdict(inputs.age, inputs.per_world_sales_per_day),
+            FreshnessVerdict::NoData
+        );
+    }
+
+    #[test]
+    fn test_newest_ingest_in_scope_wins() {
+        let now = ts(10_000);
+        let inputs = derive_freshness_inputs(
+            &[
+                ingest_at(1, 1_000),
+                ingest_at(2, 9_000),
+                ingest_at(3, 5_000),
+            ],
+            &[],
+            3,
+            now,
+        );
+        assert_eq!(inputs.age, Some(Duration::seconds(1_000)));
+    }
+
+    #[test]
+    fn test_empty_and_single_sale_are_no_data() {
+        let now = ts(10_000);
+        // Empty sales: unknown velocity, not a confident zero.
+        let inputs = derive_freshness_inputs(&[ingest_at(1, 9_990)], &[], 1, now);
+        assert_eq!(inputs.scope_sales_per_day, None);
+        assert_eq!(inputs.per_world_sales_per_day, None);
+        assert_eq!(
+            calculate_freshness_verdict(inputs.age, inputs.per_world_sales_per_day),
+            FreshnessVerdict::NoData
+        );
+
+        // One sale: consistent with the empty case.
+        let inputs = derive_freshness_inputs(&[ingest_at(1, 9_990)], &[sale_at(0)], 1, now);
+        assert_eq!(inputs.per_world_sales_per_day, None);
+        assert_eq!(
+            calculate_freshness_verdict(inputs.age, inputs.per_world_sales_per_day),
+            FreshnessVerdict::NoData
+        );
+    }
+
+    #[test]
+    fn test_velocity_normalized_by_world_count() {
+        let now = ts(2 * 86_400);
+        // 9 sales over one day across an 8-world DC: scope rate 8/day,
+        // per-board rate 1/day.
+        let sales: Vec<_> = (0..9).map(|i| sale_at(i * 86_400 / 8)).collect();
+        let inputs = derive_freshness_inputs(&[ingest_at(1, 2 * 86_400 - 60)], &sales, 8, now);
+        assert_eq!(inputs.scope_sales_per_day, Some(8.0));
+        assert_eq!(inputs.per_world_sales_per_day, Some(1.0));
+
+        // A world count of 0 (unknown scope) must not divide by zero.
+        let inputs = derive_freshness_inputs(&[], &sales, 0, now);
+        assert_eq!(inputs.per_world_sales_per_day, Some(8.0));
+    }
+
+    #[test]
+    fn test_threshold_selection_at_normalized_boundaries() {
+        // 1 sale/day per board => 12h Fresh / 36h Caution boundaries.
+        let sales: Vec<_> = (0..9).map(|i| sale_at(i * 86_400 / 8)).collect();
+        let base = 10 * 86_400;
+        for (age_hours, expected) in [
+            (12, FreshnessVerdict::Fresh),
+            (13, FreshnessVerdict::Caution),
+            (36, FreshnessVerdict::Caution),
+            (37, FreshnessVerdict::VerifyInGame),
+        ] {
+            let now = ts(base + age_hours * 3_600);
+            let inputs = derive_freshness_inputs(&[ingest_at(1, base)], &sales, 8, now);
+            assert_eq!(
+                calculate_freshness_verdict(inputs.age, inputs.per_world_sales_per_day),
+                expected,
+                "expected {expected:?} at {age_hours}h"
+            );
+        }
+    }
 
     #[test]
     fn test_get_freshness_verdict_display() {

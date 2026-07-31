@@ -20,8 +20,9 @@ use crate::components::number_input::ParseableInputBox;
 use crate::components::query_button::QueryButton;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
-use crate::global_state::xiv_data::tracked_data;
+use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::*;
+use crate::routes::not_found::NotFound;
 use chrono::TimeDelta;
 use chrono::Utc;
 use field_iterator::FieldLabels;
@@ -248,8 +249,24 @@ fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
     }
 }
 
+/// Gates the exchange-item page on the `:id` route param naming a real item —
+/// same "fake item 0 page at 200" bug as `ItemView`, see
+/// `crate::routes::item_view::ItemView`.
 #[component]
 pub fn ExchangeItem() -> impl IntoView {
+    let params = use_params_map();
+    let item_id_valid =
+        Memo::new(move |_| params.with(|p| resolve_item_id(p.get_str("id"))).is_some());
+
+    view! {
+        <Show when=move || item_id_valid.get() fallback=|| view! { <NotFound /> }.into_any()>
+            <ExchangeItemContent />
+        </Show>
+    }
+}
+
+#[component]
+fn ExchangeItemContent() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
     let query = use_query_map();

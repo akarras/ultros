@@ -26,7 +26,9 @@ use leptos_router::location::Location;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use ultros_api_types::world_helper::AnySelector;
-use xiv_gen::{ClassJobCategory, ClassJobCategoryId, Item, ItemId};
+use xiv_gen::{
+    ClassJobCategory, ClassJobCategoryId, Item, ItemId, ItemSearchCategory, ItemSearchCategoryId,
+};
 
 /// Return true if the given acronym is in the given class job category
 pub(crate) fn job_category_lookup(
@@ -167,6 +169,40 @@ pub(crate) fn collect_job_items_sorted<'a>(
     items
 }
 
+/// Resolve the `/items/category/:category` route param to its
+/// [`ItemSearchCategory`].
+///
+/// The canonical param is the **numeric** `ItemSearchCategory` id, because ids
+/// are locale-independent. `ItemSearchCategory::name` is a *localized display
+/// string* ("Shields" / "盾" / "Schilde"), and the two renderers of a page do
+/// not share a locale: the server initializes `xiv_gen_db` to `Language::En`
+/// and never swaps it, while the client calls `try_init` with the visitor's
+/// locale *before* hydrating. A name-keyed param therefore resolves on exactly
+/// one of the two sides — SSR renders an empty list where the client builds a
+/// full one (a chip minted by a non-English client), or the reverse (the
+/// English links in the sitemap and the search index). Either way the client's
+/// view tree disagrees with the SSR DOM and tachys panics in
+/// `failed_to_cast_element`, the same class as #960.
+///
+/// The name match is kept as a fallback so links minted before the switch to
+/// ids keep resolving; it carries exactly the locale caveat it always had.
+/// Duplicate names (`Primary Tools` is both id 2 and id 3) are broken by
+/// lowest id rather than by `HashMap` iteration order, so the fallback is at
+/// least deterministic across the two processes.
+pub(crate) fn resolve_category_param<'a>(
+    data: &'a xiv_gen::Data,
+    raw_param: &str,
+) -> Option<&'a ItemSearchCategory> {
+    let decoded = percent_decode_str(raw_param).decode_utf8().ok()?;
+    if let Ok(id) = decoded.parse::<i32>() {
+        return data.item_search_categorys.get(&ItemSearchCategoryId(id));
+    }
+    data.item_search_categorys
+        .values()
+        .filter(|category| category.name == decoded)
+        .min_by_key(|category| category.key_id.0)
+}
+
 #[component]
 pub fn CategoryItems() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
@@ -175,17 +211,12 @@ pub fn CategoryItems() -> impl IntoView {
     let items = Memo::new(move |_| {
         let cat = params()
             .get_str("category")
-            .and_then(|cat| percent_encoding::percent_decode_str(cat).decode_utf8().ok())
-            .and_then(|cat| {
-                data.item_search_categorys
-                    .iter()
-                    .find(|(_id, category)| category.name == cat)
-            })
-            .map(|(id, _)| {
+            .and_then(|cat| resolve_category_param(data, cat))
+            .map(|category| {
                 let mut items: Vec<_> = data
                     .items
                     .iter()
-                    .filter(|(_, item)| item.item_search_category == id.0)
+                    .filter(|(_, item)| item.item_search_category == category.key_id.0)
                     .collect();
                 // See note in `JobItems::items` — pin a stable order across
                 // the SSR and CSR HashMap iterations to keep hydration in
@@ -196,14 +227,35 @@ pub fn CategoryItems() -> impl IntoView {
         cat.unwrap_or_default()
     });
     let category_view_name = Memo::new(move |_| {
+        // Resolve the id back to a display name. Falls through to the raw
+        // param for legacy name-keyed links that no longer resolve, so an
+        // unrecognised category still names itself in the heading.
         params()
-            .get("category")
-            .as_ref()
-            .and_then(|cat| percent_decode_str(cat).decode_utf8().ok())
-            .map(|c| c.to_string())
+            .get_str("category")
+            .and_then(|cat| resolve_category_param(data, cat))
+            .map(|category| category.name.clone())
+            .or_else(|| {
+                params()
+                    .get("category")
+                    .as_ref()
+                    .and_then(|cat| percent_decode_str(cat).decode_utf8().ok())
+                    .map(|c| c.to_string())
+            })
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, category_view_default).to_string())
     });
+    // Legacy name-keyed links still resolve (see `resolve_category_param`), so
+    // the same category is reachable under several URLs. Point them all at the
+    // id-keyed form so the duplicates consolidate instead of competing.
+    let canonical_href = move || {
+        let params = params();
+        let raw = params.get_str("category").unwrap_or("");
+        match resolve_category_param(data, raw) {
+            Some(category) => format!("https://ultros.app/items/category/{}", category.key_id.0),
+            None => format!("https://ultros.app/items/category/{raw}"),
+        }
+    };
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &category_view_name()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("%category%", &category_view_name()) />
         <h3 class="text-xl">{category_view_name}</h3>
@@ -304,7 +356,15 @@ pub fn JobItems() -> impl IntoView {
             .unwrap_or_default()
     });
 
+    // `?show-non-market=` genuinely changes the item set, but the default
+    // (marketable items only) is the representative view; canonicalising to it
+    // keeps the toggled variant from being crawled as thin duplicate content.
+    // The param is already percent-encoded in the URL, so it is passed through
+    // rather than re-encoded.
+    let canonical_href = move || format!("https://ultros.app/items/jobset/{}", jobset_param.get());
+
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("%job%", &job_set()) />
         <h3 class="text-xl">{job_set}</h3>
@@ -350,6 +410,7 @@ pub fn JobItems() -> impl IntoView {
 pub fn DefaultItems() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <MetaCanonical href="https://ultros.app/items" />
         <MetaTitle title=t_string!(i18n, item_explorer_default_title).to_string() />
         <MetaDescription text=t_string!(i18n, item_explorer_default_desc).to_string() />
         <div class="flex flex-col">
@@ -1006,8 +1067,127 @@ pub fn ItemExplorer() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_job_items_sorted;
+    use super::{collect_job_items_sorted, resolve_category_param};
     use paginate::Pages;
+    use xiv_gen::Language;
+
+    /// Lowest-id category that the toolbar actually links to (`category`
+    /// 1..=4), so the locale tests below key off a real navigable page
+    /// rather than a hardcoded id that a game-data bump could retire.
+    fn first_linkable_category(data: &xiv_gen::Data) -> &xiv_gen::ItemSearchCategory {
+        data.item_search_categorys
+            .values()
+            .filter(|cat| (1..=4).contains(&cat.category))
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("game data must have at least one linkable item search category")
+    }
+
+    /// The bug this route key was changed to avoid. The server renders SSR
+    /// with English game data while the client hydrates with the visitor's
+    /// locale, so a *name*-keyed param resolves on exactly one of the two
+    /// sides — SSR emits an empty list where the client builds a full one,
+    /// and tachys panics walking the mismatch.
+    #[test]
+    fn a_localized_category_name_only_resolves_in_its_own_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let ja = xiv_gen_db::data_for(Language::Ja);
+        let sample = first_linkable_category(en);
+        let ja_name = ja
+            .item_search_categorys
+            .get(&sample.key_id)
+            .expect("the same id exists in every locale")
+            .name
+            .clone();
+        assert_ne!(
+            ja_name, sample.name,
+            "sanity: this category's display name must actually differ between locales",
+        );
+
+        // A chip minted by a Japanese client carries the Japanese name...
+        assert!(
+            resolve_category_param(ja, &ja_name).is_some(),
+            "the minting locale resolves its own name",
+        );
+        // ...but SSR answers that URL with English data and finds nothing.
+        assert!(
+            resolve_category_param(en, &ja_name).is_none(),
+            "English SSR cannot resolve a Japanese category name — the mismatch",
+        );
+    }
+
+    /// The fix: an id resolves to the same category in every locale, so SSR
+    /// and the client agree on the item list regardless of who minted the
+    /// link.
+    #[test]
+    fn a_category_id_resolves_identically_in_every_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let expected = first_linkable_category(en).key_id;
+        let param = expected.0.to_string();
+        for lang in [
+            Language::En,
+            Language::Ja,
+            Language::De,
+            Language::Fr,
+            Language::Cn,
+            Language::Ko,
+            Language::Tc,
+        ] {
+            let data = xiv_gen_db::data_for(lang);
+            assert_eq!(
+                resolve_category_param(data, &param).map(|cat| cat.key_id),
+                Some(expected),
+                "id param must resolve to the same category under {lang:?}",
+            );
+        }
+    }
+
+    /// Links minted before the switch to ids are percent-encoded localized
+    /// names; they must keep working for the locale that minted them.
+    #[test]
+    fn legacy_percent_encoded_name_params_still_resolve() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let sample = en
+            .item_search_categorys
+            .values()
+            .filter(|cat| (1..=4).contains(&cat.category) && cat.name.contains(' '))
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("at least one linkable category name contains a space");
+        let encoded = sample.name.replace(' ', "%20").replace('\'', "%27");
+        assert_eq!(
+            resolve_category_param(en, &encoded).map(|cat| cat.key_id),
+            Some(sample.key_id),
+        );
+    }
+
+    /// `Primary Tools` is the name of both id 2 and id 3. The name fallback
+    /// must not pick between them by `HashMap` iteration order, or it
+    /// reintroduces the very SSR/CSR divergence the id key removes.
+    #[test]
+    fn duplicate_category_names_resolve_to_the_lowest_id() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let mut by_name: std::collections::HashMap<&str, Vec<i32>> =
+            std::collections::HashMap::new();
+        for cat in en.item_search_categorys.values() {
+            by_name
+                .entry(cat.name.as_str())
+                .or_default()
+                .push(cat.key_id.0);
+        }
+        let Some((name, ids)) = by_name
+            .iter()
+            .filter(|(name, ids)| ids.len() > 1 && !name.is_empty())
+            .min_by_key(|(name, _)| *name)
+        else {
+            // No duplicate names in this data revision — nothing to pin.
+            return;
+        };
+        let lowest = ids.iter().copied().min().expect("non-empty");
+        assert_eq!(
+            resolve_category_param(en, name).map(|cat| cat.key_id.0),
+            Some(lowest),
+            "duplicate name {name:?} must resolve deterministically to the lowest id",
+        );
+    }
 
     /// Regression for the `?page=35` family of GlitchTip hydration
     /// panics on `/items/jobset/<JOB>`. `paginate::Pages::with_offset`

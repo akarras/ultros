@@ -13,13 +13,34 @@ static XIV_DATA: RwLock<Option<&'static xiv_gen::Data>> = RwLock::new(None);
 #[cfg(feature = "embed")]
 pub fn embedded_bytes(lang: Language) -> &'static [u8] {
     match lang {
-        Language::En => include_bytes!(concat!(env!("OUT_DIR"), "/database_en.rkyv")),
-        Language::Ja => include_bytes!(concat!(env!("OUT_DIR"), "/database_ja.rkyv")),
-        Language::De => include_bytes!(concat!(env!("OUT_DIR"), "/database_de.rkyv")),
-        Language::Fr => include_bytes!(concat!(env!("OUT_DIR"), "/database_fr.rkyv")),
-        Language::Cn => include_bytes!(concat!(env!("OUT_DIR"), "/database_cn.rkyv")),
-        Language::Ko => include_bytes!(concat!(env!("OUT_DIR"), "/database_ko.rkyv")),
-        Language::Tc => include_bytes!(concat!(env!("OUT_DIR"), "/database_tc.rkyv")),
+        Language::En => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/en.rkyv"
+        )),
+        Language::Ja => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/ja.rkyv"
+        )),
+        Language::De => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/de.rkyv"
+        )),
+        Language::Fr => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/fr.rkyv"
+        )),
+        Language::Cn => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/cn.rkyv"
+        )),
+        Language::Ko => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/ko.rkyv"
+        )),
+        Language::Tc => include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/xiv-db/tc.rkyv"
+        )),
     }
 }
 
