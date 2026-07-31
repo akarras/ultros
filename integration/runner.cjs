@@ -73,6 +73,7 @@ const DEFAULT_CONSOLE_ALLOW = [
   "favicon",
   "ERR_BLOCKED_BY_CLIENT", // ad/tracker blockers
   "net::ERR_ABORTED",       // navigation aborts during fast clicks
+  "googlesyndication.com",  // AdSense vendor script throws in headless Chrome
 ];
 
 function getRoutes() {

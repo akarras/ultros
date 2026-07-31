@@ -182,6 +182,21 @@ where
                                 move |_| anchor_rect.set(read_anchor_rect()),
                                 UseEventListenerOptions::default().capture(false).passive(true),
                             );
+                            // Escape closes a hover-opened overlay too: keydown
+                            // fires on the focused element (usually `body`),
+                            // never on the merely-hovered anchor, so the
+                            // anchor-level handler can't catch this case.
+                            let _ = use_event_listener_with_options(
+                                use_window(),
+                                leptos::ev::keydown,
+                                move |ev| {
+                                    if ev.key() == "Escape" {
+                                        set_hover_open.set(false);
+                                        set_is_focused.set(false);
+                                    }
+                                },
+                                UseEventListenerOptions::default().capture(false).passive(true),
+                            );
                             let node_ref = NodeRef::<Div>::new();
                             let UseElementSizeReturn {
                                 width: overlay_width,

@@ -42,7 +42,7 @@ where
             .get(&ItemUiCategoryId(item.item_ui_category))
             .map(|category| category.name.as_str());
         view! {
-            <div class=format!("{HOVER_CARD_CHROME} w-max max-w-sm p-4 flex flex-col gap-3")>
+            <div class=format!("{HOVER_CARD_CHROME} w-max max-w-md p-4 flex flex-col gap-3")>
                 <AccentHairline />
                 <div class="flex items-center gap-3">
                     <div class="relative shrink-0">
