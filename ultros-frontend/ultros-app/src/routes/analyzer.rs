@@ -498,11 +498,11 @@ pub(crate) const SEED_SUPPRESSING_PARAMS: &[&str] = &[
 /// long-standing `next-sale=1d` velocity default — what a first-time
 /// visitor lands on, rendered as removable chips.
 pub(crate) const REALISTIC_DEFAULT_PARAMS: &[(&str, &str)] = &[
-    ("min-buy", "5000"),
-    ("last-sold", "1d"),
-    ("roi", "30"),
+    (FILTER_MIN_BUY, "5000"),
+    (FILTER_LAST_SOLD, "1d"),
+    (FILTER_ROI, "30"),
     ("sort", "profit-per-day"),
-    ("next-sale", DEFAULT_MAX_SALE_TIME),
+    (FILTER_NEXT_SALE, DEFAULT_MAX_SALE_TIME),
 ];
 
 /// Value a filter takes when it is added from the `+ Filter` menu.
@@ -2504,14 +2504,35 @@ mod tests {
     fn realistic_defaults_match_the_realistic_preset_plus_next_sale() {
         // The seeded set must stay in lockstep with the "Realistic flips"
         // built-in view (saved_views.rs) — same values, plus next-sale.
-        let params: std::collections::HashMap<&str, &str> =
-            REALISTIC_DEFAULT_PARAMS.iter().copied().collect();
-        assert_eq!(params.get("min-buy"), Some(&"5000"));
-        assert_eq!(params.get("last-sold"), Some(&"1d"));
-        assert_eq!(params.get("roi"), Some(&"30"));
-        assert_eq!(params.get("sort"), Some(&"profit-per-day"));
-        assert_eq!(params.get("next-sale"), Some(&"1d"));
-        assert_eq!(params.len(), 5);
+        // Derived from `built_in_views()` rather than duplicated literals, so
+        // editing the preset without editing the seeded defaults fails here.
+        let realistic = crate::components::saved_views::built_in_views()
+            .into_iter()
+            .find(|v| v.name == "analyzer_preset_realistic")
+            .expect("the Realistic flips built-in view must exist");
+        let mut expected: std::collections::HashMap<String, String> = realistic
+            .query
+            .trim_start_matches('?')
+            .split('&')
+            .map(|pair| {
+                let (k, v) = pair
+                    .split_once('=')
+                    .expect("every preset param must be key=value");
+                (k.to_string(), v.to_string())
+            })
+            .collect();
+        expected.insert("next-sale".to_string(), "1d".to_string());
+
+        let params: std::collections::HashMap<String, String> = REALISTIC_DEFAULT_PARAMS
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(
+            params.len(),
+            REALISTIC_DEFAULT_PARAMS.len(),
+            "seeded params must not repeat a key"
+        );
+        assert_eq!(params, expected);
         // The humantime values must actually parse, or the filter silently
         // becomes a no-op.
         assert!(humantime::parse_duration("1d").is_ok());

@@ -89,7 +89,9 @@ pub fn seed_query_defaults_when_unfiltered(
             return;
         }
         for (key, value) in defaults {
-            map.insert(key.to_string(), value.to_string());
+            // `insert` appends a second value for an existing key; `replace`
+            // has the "set the default" semantics we want.
+            map.replace(key.to_string(), value.to_string());
         }
         let path = location.pathname.get_untracked();
         navigate(
