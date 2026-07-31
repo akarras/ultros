@@ -1,6 +1,8 @@
 pub mod grid;
 pub mod price_density;
 pub mod price_history;
+#[cfg(test)]
+mod snapshot_tests;
 pub mod sparkline;
 
 /// Which rendering the price chart uses for its price lane (spec 2 of the

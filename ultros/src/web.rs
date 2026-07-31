@@ -57,7 +57,9 @@ use ultros_api_types::{
     FfxivCharacterVerification, Retainer, WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
-use ultros_charts::data::buckets::{bucket_seconds_for_span, snap_bucket_seconds, widen_bucket};
+use ultros_charts::data::buckets::{
+    bucket_seconds_for_span, narrow_bucket_for_actual_span, snap_bucket_seconds, widen_bucket,
+};
 use ultros_clickhouse::ClickHouseClient;
 use ultros_clickhouse::queries::PriceSeriesRow;
 use ultros_db::ActiveValue;
@@ -496,32 +498,59 @@ pub(crate) async fn build_price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let mut bucket_seconds = resolve_bucket_seconds(bucket, span_secs);
 
+    // The starting width is derived from the *requested* span, which for an
+    // open-ended "full history" request is years — while the data may only
+    // cover months. At that mismatch the ladder picks 30-day buckets and the
+    // whole history collapses into one or two points. So after the first
+    // pass, re-derive the width from the span the rows actually cover and
+    // re-query once if the ladder picks a narrower step (`may_narrow` keeps
+    // this to a single extra query; the inner loop still widens whenever a
+    // response would exceed MAX_BUCKETS).
+    let mut may_narrow = true;
     let rows = loop {
-        let rows = ultros_clickhouse::queries::price_series(
-            ch,
-            item_id,
-            &world_to_group,
-            group,
-            hq,
-            from,
-            to,
-            bucket_seconds,
-        )
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = ?e, item_id, "price_series CH query failed");
-            anyhow::anyhow!("ClickHouse price_series query failed: {e}")
-        })?;
+        let rows = loop {
+            let rows = ultros_clickhouse::queries::price_series(
+                ch,
+                item_id,
+                &world_to_group,
+                group,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_series CH query failed");
+                anyhow::anyhow!("ClickHouse price_series query failed: {e}")
+            })?;
 
-        if rows.len() <= MAX_BUCKETS {
-            break rows;
+            if rows.len() <= MAX_BUCKETS {
+                break rows;
+            }
+            match widen_bucket(bucket_seconds) {
+                Some(wider) => bucket_seconds = wider,
+                // Already at the top of the ladder: ship what we have rather
+                // than looping forever.
+                None => break rows,
+            }
+        };
+
+        if may_narrow {
+            may_narrow = false;
+            let first = rows.iter().map(|r| r.bucket).min();
+            let last = rows.iter().map(|r| r.bucket).max();
+            if let (Some(first), Some(last)) = (first, last) {
+                // Bucket timestamps are starts, so the last bucket extends
+                // one width past its own ts.
+                let actual_span = (last - first).num_seconds() + bucket_seconds;
+                if let Some(narrower) = narrow_bucket_for_actual_span(actual_span, bucket_seconds) {
+                    bucket_seconds = narrower;
+                    continue;
+                }
+            }
         }
-        match widen_bucket(bucket_seconds) {
-            Some(wider) => bucket_seconds = wider,
-            // Already at the top of the ladder: ship what we have rather
-            // than looping forever.
-            None => break rows,
-        }
+        break rows;
     };
 
     let total_sales: u64 = rows.iter().map(|r| r.sales).sum();
@@ -648,8 +677,8 @@ async fn price_series(
 
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
-    // internal loop potentially widens it in response to how much data comes
-    // back. This is deliberate: checking the cache has to happen before
+    // internal loop potentially widens (or narrows) it in response to how
+    // much data comes back. This is deliberate: checking the cache has to happen before
     // running the query at all (that's the entire point — skip the CH scan
     // on a hit), and the widened bucket is only known *after* the query
     // runs. Building the key post-query would mean always querying first,

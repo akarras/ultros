@@ -110,7 +110,11 @@ pub fn ChartToolbar(
     });
 
     view! {
-        <div class="flex items-center gap-2 overflow-x-auto text-xs">
+        // Wrapping, NOT `overflow-x-auto`: a scroll container computes
+        // `overflow-y: auto` too, which clips the absolutely-positioned
+        // popovers below into the toolbar's own one-line-high scroll area —
+        // every popover (group-by, world filter, overlays) opened invisibly.
+        <div class="flex flex-wrap items-center gap-2 text-xs">
             // ── Mode: icon-only segmented group ──
             <div
                 role="group"
