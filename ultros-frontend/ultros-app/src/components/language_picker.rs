@@ -226,3 +226,73 @@ pub fn LanguageNavMenu() -> impl IntoView {
     }
     .into_any()
 }
+
+/// Language switcher as an inline accordion, for use inside the account
+/// drop-up.
+///
+/// Deliberately not a flyout submenu: the sidebar doubles as the mobile
+/// drawer below 1024px, and a hover-opened flyout has no touch equivalent.
+#[component]
+pub fn LanguageAccordion() -> impl IntoView {
+    let i18n = use_i18n();
+    let (expanded, set_expanded) = signal(false);
+    let selected = Selector::new(move || i18n.get_locale());
+
+    let set_language = move |new_locale: Locale| {
+        i18n.set_locale(new_locale);
+        reload_locale_data(new_locale);
+        set_expanded(false);
+    };
+
+    view! {
+        <button
+            type="button"
+            class="menu-item"
+            aria-expanded=move || if expanded.get() { "true" } else { "false" }
+            on:click=move |_| set_expanded.update(|v| *v = !*v)
+        >
+            <Icon icon=i::IoLanguage width="1.1em" height="1.1em" />
+            <span class="ml-2">{t!(i18n, language)}</span>
+            <span class="menu-item-trailing">
+                {move || i18n.get_locale().as_str().to_uppercase()}
+            </span>
+        </button>
+
+        <Show when=move || expanded.get()>
+            <div class="menu-accordion" role="group" aria-label=t_string!(i18n, language).to_string()>
+                {LANGUAGE_OPTIONS
+                    .into_iter()
+                    .map(|option| {
+                        let selected_for_class = selected.clone();
+                        let selected_for_aria = selected.clone();
+                        let selected_for_show = selected.clone();
+                        view! {
+                            <button
+                                type="button"
+                                role="menuitemradio"
+                                class=move || {
+                                    if selected_for_class.selected(&option.locale) {
+                                        "menu-item menu-item-selected"
+                                    } else {
+                                        "menu-item"
+                                    }
+                                }
+                                aria-checked=move || selected_for_aria.selected(&option.locale).to_string()
+                                on:click=move |_| set_language(option.locale)
+                            >
+                                <span class="menu-item-code">{option.locale.as_str()}</span>
+                                <span class="ml-2 truncate">{option.native_name}</span>
+                                <Show when=move || selected_for_show.selected(&option.locale)>
+                                    <span class="menu-item-trailing">
+                                        <Icon icon=i::BsCheckCircleFill width="0.9em" height="0.9em" />
+                                    </span>
+                                </Show>
+                            </button>
+                        }
+                    })
+                    .collect::<Vec<_>>()}
+            </div>
+        </Show>
+    }
+    .into_any()
+}

@@ -1861,6 +1861,56 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 
+/* ----- Drop-up menu primitives (account menu + language accordion) ----- */
+.menu-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    border-radius: 0.375rem;
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    font-size: 0.85rem;
+    text-align: left;
+    text-decoration: none;
+}
+.menu-item:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+}
+.menu-item-selected {
+    background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
+}
+.menu-item-trailing {
+    margin-left: auto;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    display: inline-flex;
+    align-items: center;
+}
+.menu-item-code {
+    width: 1.75rem;
+    flex: none;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+.menu-accordion {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    padding-left: 0.85rem;
+    max-height: 15rem;
+    overflow-y: auto;
+}
+.menu-divider {
+    height: 1px;
+    background-color: var(--color-outline);
+    margin: 0.3rem 0.15rem;
+}
+
 /* ----- Topbar component styles ----- */
 @utility top-bar {
     /* 3-column grid so the search box is centered in the bar: the two outer
