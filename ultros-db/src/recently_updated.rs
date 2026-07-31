@@ -49,6 +49,24 @@ impl UltrosDb {
             .await?)
     }
 
+    /// Returns the ingest markers for one item across the given worlds — i.e.
+    /// when Ultros last stored market data for the item on each world. Worlds
+    /// that have never been ingested simply have no row.
+    pub async fn get_listing_last_updated_for_worlds(
+        &self,
+        item_id: ItemId,
+        world_ids: &[i32],
+    ) -> Result<Vec<listing_last_updated::Model>, anyhow::Error> {
+        if world_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        Ok(listing_last_updated::Entity::find()
+            .filter(listing_last_updated::Column::ItemId.eq(item_id.0))
+            .filter(listing_last_updated::Column::WorldId.is_in(world_ids.iter().copied()))
+            .all(&self.db)
+            .await?)
+    }
+
     pub async fn get_recently_updated_listings_for_world(
         &self,
         world_id: i32,
