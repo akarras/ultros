@@ -5,7 +5,10 @@ use leptos_meta::*;
 pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
     view! {
         <Title text=title.clone() />
-        <Meta name="og:title" content=title.clone() />
+        // OpenGraph keys are addressed by `property`, not `name`. Emitted as
+        // `name="og:title"` this tag was invisible to every OG consumer
+        // (Discord/Slack/Facebook unfurls), which fell back to <title>.
+        <Meta property="og:title" content=title.clone() />
         <Meta name="twitter:title" content=title />
     }
 }
