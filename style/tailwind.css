@@ -818,35 +818,39 @@
     cursor: pointer;
 }
 
-/* `.card-link` opts out: on a card-sized anchor the blanket hover:underline
+/* `.side-nav-item` opts out like `.nav-link` does: this selector's stack of
+   `:not()` classes outweighs the sidebar's own hover and active-page styles,
+   which need to win.
+
+   `.card-link` opts out: on a card-sized anchor the blanket hover:underline
    underlines every text node inside it at once (label, price, badge, …),
    which reads as broken rather than interactive. Those links style their own
    hover — a background tint plus an underline on the title only. */
-a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):not(.card-link) {
+a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link) {
     @apply hover:underline rounded-md;
     color: var(--brand-fg);
     background-color: transparent;
 }
-a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):not(.card-link):hover {
+a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):hover {
     color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
     background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
 }
 
 /* Light-mode link tuning for higher contrast */
 [data-theme="light"]
-    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):not(.card-link) {
+    a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link) {
     color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
 }
 [data-theme="light"]
-    a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
-        .btn-ghost
-    ):not(.card-link):hover {
+    a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
+        .btn-secondary
+    ):not(.btn-ghost):not(.card-link):hover {
     color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }
@@ -1814,8 +1818,16 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 .side-nav-item:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
 }
+/* Current page. The left accent bar carries the highlight when the sidebar is
+   collapsed to icons and the label is hidden. */
 .side-nav-item[aria-current="page"] {
     background-color: color-mix(in srgb, var(--brand-ring) 24%, transparent);
+    color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 0 var(--brand-ring);
+}
+.side-nav-item[aria-current="page"]:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 32%, transparent);
 }
 .side-nav-item > svg {
     width: 1.1em;
