@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use leptos_use::{UseElementSizeReturn, use_element_size};
+use leptos_use::use_element_size;
 use std::hash::Hash;
 use std::{cell::RefCell, rc::Rc};
 use web_sys::wasm_bindgen::JsCast;
@@ -170,6 +170,11 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     /// — the row area keeps `overflow: visible` so its width propagates and
     /// the sticky header scrolls horizontally in lockstep with the rows.
     /// Ignored under [`ScrollSource::Window`].
+    ///
+    /// The parent must have a definite height (fixed px, flex-basis, or a
+    /// height chain to the viewport); against an auto-height parent
+    /// `height: 100%` computes to auto, the container grows to the full
+    /// spacer height, and this renders every row.
     #[prop(optional)]
     fill: bool,
     /// Optional writeback of the rendered row range `(start, end)` (end
@@ -238,15 +243,15 @@ where
         None => NodeRef::<leptos::html::Div>::new(),
     };
 
-    // `fill` mode: the element's real height drives the row math. Signal is
-    // 0.0 until the ResizeObserver first fires (and always on the server),
+    // `fill` mode: the element's real height drives the row math. The signal
+    // is 0.0 until the ResizeObserver first fires (and always on the server),
     // in which case `effective_viewport` below falls back to
     // `viewport_height`.
-    let fill_height = RwSignal::new(0.0f64);
-    if fill && !is_window {
-        let UseElementSizeReturn { height, .. } = use_element_size(scroller);
-        Effect::new(move |_| fill_height.set(height.get()));
-    }
+    let fill_height: Signal<f64> = if fill && !is_window {
+        use_element_size(scroller).height
+    } else {
+        0.0.into()
+    };
 
     // Window-scroll mode: the container no longer scrolls, so its `on:scroll`
     // handler is inert. Drive `scroll_offset` and `window_height` from the
