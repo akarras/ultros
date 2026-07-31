@@ -21,7 +21,8 @@ pub fn SideNav() -> impl IntoView {
     let search_overlay = use_search_overlay_state();
     let (homeworld, _set_homeworld) = use_home_world();
 
-    // Build world-aware URLs the same way `AppsMenu` does.
+    // Build world-aware URLs from the current home world, falling back to
+    // the world-less route when none is set.
     let with_world = move |path_with_world: &str, path_no_world: &str| {
         let path_with_world = path_with_world.to_string();
         let path_no_world = path_no_world.to_string();

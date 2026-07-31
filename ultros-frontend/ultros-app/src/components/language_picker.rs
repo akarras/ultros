@@ -1,12 +1,8 @@
 use crate::components::icon::Icon;
 use crate::i18n::{Locale, t, t_string, use_i18n};
-use cfg_if::cfg_if;
 use icondata as i;
-use leptos::html;
 use leptos::prelude::*;
 use leptos_i18n::Locale as _;
-#[cfg(feature = "hydrate")]
-use leptos_use::use_element_hover;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LanguageOption {
@@ -122,109 +118,6 @@ pub fn LanguagePicker() -> impl IntoView {
                 .collect::<Vec<_>>()}
         </div>
     }
-}
-
-#[component]
-pub fn LanguageNavMenu() -> impl IntoView {
-    let i18n = use_i18n();
-    let (has_focus, set_has_focus) = signal(false);
-    let (force_close, set_force_close) = signal(false);
-    let panel_ref = NodeRef::<html::Div>::new();
-    cfg_if! {
-        if #[cfg(feature = "hydrate")] {
-            let hovered = use_element_hover(panel_ref);
-        } else {
-            let (hovered, _set_hovered) = signal(false);
-        }
-    }
-    let is_open = Signal::derive(move || (has_focus() || hovered()) && !force_close());
-    let selected = Selector::new(move || i18n.get_locale());
-
-    let set_language = move |new_locale: Locale| {
-        i18n.set_locale(new_locale);
-        reload_locale_data(new_locale);
-        set_has_focus(false);
-        set_force_close(true);
-    };
-
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Escape" {
-            set_has_focus(false);
-        }
-    };
-
-    view! {
-        <div
-            class="relative"
-            on:keydown=on_keydown
-            on:focusin=move |_| {
-                set_has_focus(true);
-                set_force_close(false);
-            }
-            on:focusout=move |_| set_has_focus(false)
-            on:mouseleave=move |_| set_force_close(false)
-        >
-            <button
-                class="nav-link"
-                aria-haspopup="menu"
-                aria-expanded=move || if is_open() { "true" } else { "false" }
-                aria-label=move || t_string!(i18n, switch_language).to_string()
-                title=move || t_string!(i18n, switch_language).to_string()
-            >
-                <Icon icon=i::IoLanguage width="1.2em" height="1.2em" />
-                <span class="uppercase text-xs font-bold">{move || i18n.get_locale().as_str()}</span>
-                <Icon height="1em" width="1em" icon=i::BiChevronDownSolid />
-            </button>
-
-            <Show when=move || is_open()>
-                <div
-                    node_ref=panel_ref
-                    class="absolute right-0 mt-2 min-w-[17rem]
-                           panel rounded-xl shadow-xl border border-[color:var(--color-outline)]
-                           bg-[color:var(--color-background-elevated)]
-                           content-visible contain-content z-50"
-                    role="menu"
-                    tabindex="-1"
-                >
-                    <div class="p-2 flex flex-col gap-1">
-                        {LANGUAGE_OPTIONS
-                            .into_iter()
-                            .map(|option| {
-                                let selected_for_class = selected.clone();
-                                let selected_for_aria = selected.clone();
-                                let selected_for_show = selected.clone();
-                                view! {
-                                    <button
-                                        type="button"
-                                        class=move || {
-                                            if selected_for_class.selected(&option.locale) {
-                                                "nav-link w-full justify-start bg-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)]"
-                                            } else {
-                                                "nav-link w-full justify-start"
-                                            }
-                                        }
-                                        role="menuitemradio"
-                                        aria-checked=move || selected_for_aria.selected(&option.locale).to_string()
-                                        on:click=move |_| set_language(option.locale)
-                                    >
-                                        <span class="w-10 shrink-0 text-xs font-bold uppercase text-[color:var(--color-text-muted)]">{option.locale.as_str()}</span>
-                                        <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-                                            <span class="truncate font-semibold">{option.native_name}</span>
-                                            <span class="truncate text-xs text-[color:var(--color-text-muted)]">{option.name}</span>
-                                        </span>
-                                        <Show when=move || selected_for_show.selected(&option.locale)>
-                                            <Icon icon=i::BsCheckCircleFill width="1em" height="1em" attr:class="text-[color:var(--brand-fg)]" />
-                                        </Show>
-                                    </button>
-                                }
-                            })
-                            .collect::<Vec<_>>()}
-                    </div>
-                </div>
-            </Show>
-        </div>
-    }
-    .into_any()
 }
 
 /// Language switcher as an inline accordion, for use inside the account

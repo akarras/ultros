@@ -1620,15 +1620,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 
-/* New application shell — grid that owns sidebar + topbar + content + ad rail. */
+/* New application shell — grid that owns sidebar + content + ad rail. */
 .app-shell {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
-    grid-template-rows: 56px minmax(0, 1fr);
-    grid-template-areas:
-        "side  top"
-        "side  main";
-    min-height: 100vh;
+    grid-template-areas: "side  main";
+    min-height: 100dvh;
     width: 100%;
 }
 
@@ -1640,9 +1637,6 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     left: 0;
     width: 240px;
     z-index: 30;
-}
-.app-shell > .top-bar {
-    grid-area: top;
 }
 .app-shell > .app-shell-content {
     grid-area: main;
@@ -1672,9 +1666,11 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @media (max-width: 1023px) {
     .app-shell {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-areas:
-            "top"
-            "main";
+        grid-template-areas: "main";
+    }
+    /* Clear the fixed bottom bar so it never covers the last table row. */
+    .app-shell > .app-shell-content {
+        padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
     }
     .app-shell > .side-nav {
         position: fixed;
@@ -1703,9 +1699,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @media (min-width: 1536px) {
     .app-shell {
         grid-template-columns: 240px minmax(0, 1fr) 240px;
-        grid-template-areas:
-            "side  top   top"
-            "side  main  ads";
+        grid-template-areas: "side  main  ads";
     }
     .app-shell.app-shell-collapsed {
         grid-template-columns: 56px minmax(0, 1fr) 240px;
@@ -1727,9 +1721,7 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 @media (min-width: 1660px) {
     .app-shell {
         grid-template-columns: 240px minmax(0, 1fr) 300px;
-        grid-template-areas:
-            "side  top   top"
-            "side  main  ads";
+        grid-template-areas: "side  main  ads";
     }
     .app-shell.app-shell-collapsed {
         grid-template-columns: 56px minmax(0, 1fr) 300px;
@@ -1973,59 +1965,46 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     }
 }
 
-/* ----- Topbar component styles ----- */
-@utility top-bar {
-    /* 3-column grid so the search box is centered in the bar: the two outer
-       tracks are equal `1fr`, so the middle track lands dead center no matter
-       how wide the hamburger/actions clusters are. A flex row with auto
-       margins can't do this — the left and right clusters have different
-       widths, so the free space splits unevenly.
-       Columns are assigned explicitly because the hamburger is
-       `display: none` on desktop (a hidden element isn't a grid item, so
-       auto-placement would slide the search box into column 1). */
-    display: grid;
-    grid-template-columns: 1fr minmax(0, 480px) 1fr;
-    align-items: center;
-    gap: 0.75rem;
-    height: 56px;
-    padding: 0 1rem;
-    border-bottom: 1px solid var(--color-outline);
-    background-color: color-mix(in srgb, var(--color-background) 70%, transparent);
-    backdrop-filter: blur(20px);
-    z-index: 40;
+/* ----- Mobile bottom bar (below 1024px only) ----- */
+.mobile-bar {
+    display: none;
 }
-.top-bar-hamburger {
-    grid-column: 1;
-    justify-self: start;
-    display: none; /* hidden on desktop; mobile media query below re-shows it */
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 0.5rem;
-    color: var(--color-text);
-    background: transparent;
-    border: 1px solid transparent;
-}
-.top-bar-hamburger:hover {
-    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
-}
+
 @media (max-width: 1023px) {
-    .top-bar-hamburger {
-        display: inline-flex;
+    .mobile-bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 45;
+        display: flex;
+        border-top: 1px solid var(--color-outline);
+        background-color: color-mix(in srgb, var(--color-background) 92%, transparent);
+        backdrop-filter: blur(20px);
+        /* env() keeps the bar clear of the iPhone home indicator. */
+        padding: 0.3rem 0.15rem calc(0.3rem + env(safe-area-inset-bottom));
     }
-}
-.top-bar-search {
-    grid-column: 2;
-    width: 100%;
-    min-width: 0;
-}
-.top-bar-actions {
-    grid-column: 3;
-    justify-self: end;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    .mobile-bar-slot {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.15rem;
+        padding: 0.35rem 0;
+        border-radius: 0.5rem;
+        color: var(--color-text-muted);
+        background: transparent;
+        border: none;
+        text-decoration: none;
+    }
+    .mobile-bar-slot[aria-current="page"] {
+        color: var(--color-text);
+        background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+    }
+    .mobile-bar-label {
+        font-size: 0.6rem;
+        line-height: 1;
+    }
 }
 
 /* ----- Search overlay ----- */
