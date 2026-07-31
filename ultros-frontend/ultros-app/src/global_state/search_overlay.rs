@@ -50,17 +50,19 @@ pub fn use_search_overlay_state() -> SearchOverlayState {
 
 #[cfg(test)]
 mod tests {
-    use super::SearchOverlayState;
+    use super::*;
 
     #[test]
     fn starts_closed() {
-        let state = SearchOverlayState::new();
+        let owner = Owner::new();
+        let state = owner.with(SearchOverlayState::new);
         assert!(!state.open.get_untracked());
     }
 
     #[test]
     fn toggle_flips_open() {
-        let state = SearchOverlayState::new();
+        let owner = Owner::new();
+        let state = owner.with(SearchOverlayState::new);
         state.toggle();
         assert!(state.open.get_untracked());
         state.toggle();
@@ -69,7 +71,8 @@ mod tests {
 
     #[test]
     fn close_is_idempotent() {
-        let state = SearchOverlayState::new();
+        let owner = Owner::new();
+        let state = owner.with(SearchOverlayState::new);
         state.close();
         assert!(!state.open.get_untracked());
         state.toggle();
