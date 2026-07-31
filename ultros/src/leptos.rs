@@ -192,7 +192,10 @@ pub(crate) async fn create_leptos_app(
     let cargo_leptos_service = SetResponseHeader::appending(
         cargo_leptos_service,
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=86400, immutable"),
+        // The pkg dir is namespaced by GIT_HASH above, so these URLs change on
+        // every deploy and their contents never do — a one-day max-age just
+        // forced needless revalidation. One year is the `immutable` ceiling.
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
     tracing::info!("Serving pkg dir: {bundle_filepath}");
     let worlds = Ok(worlds);

@@ -17,3 +17,7 @@ sample-chart.svg
 
 # Superpowers brainstorming mockups
 .superpowers/
+
+# Local Claude Code workspace: dev-server launch config, per-user settings,
+# and agent worktrees. Machine-specific, not shared config.
+.claude/

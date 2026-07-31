@@ -39,12 +39,22 @@ pub(crate) async fn track_metrics(req: Request, next: Next) -> impl IntoResponse
     response
 }
 
-fn metrics_app() -> Router {
-    let recorder_handle = setup_metrics_recorder();
+fn metrics_app(recorder_handle: PrometheusHandle) -> Router {
     Router::new().route("/metrics", get(move || ready(recorder_handle.render())))
 }
 
-fn setup_metrics_recorder() -> PrometheusHandle {
+/// Installs the global Prometheus recorder and returns the handle the
+/// `/metrics` route renders from.
+///
+/// This must run in `main` *before any service is spawned*: the `metrics::`
+/// macros silently no-op against the default `NoopRecorder` until a recorder
+/// is installed, and several services emit samples during their own startup —
+/// the analyzer's `ultros_analyzer_snapshot_rejected_total` /
+/// `ultros_analyzer_snapshot_age_seconds` fire while restoring the snapshot,
+/// long before `start_web` runs. Installing here and only *serving* from
+/// `start_metrics_server` keeps startup ordering flexible without losing
+/// those samples.
+pub(crate) fn setup_metrics_recorder() -> PrometheusHandle {
     const EXPONENTIAL_SECONDS: &[f64] = &[
         0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
     ];
@@ -59,8 +69,8 @@ fn setup_metrics_recorder() -> PrometheusHandle {
         .unwrap()
 }
 
-pub(crate) async fn start_metrics_server() {
-    let app = metrics_app();
+pub(crate) async fn start_metrics_server(recorder_handle: PrometheusHandle) {
+    let app = metrics_app(recorder_handle);
 
     // NOTE: expose metrics enpoint on a different port
     let addr = SocketAddr::from(([0, 0, 0, 0], 9091));

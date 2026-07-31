@@ -532,7 +532,7 @@ fn VendorResaleTable(
                     set_minimum_sales(None);
                     set_category_filter(None);
                 }>
-                    {t!(i18n, vendor_resale_clear_all)}
+                    {t!(i18n, clear_all)}
                 </button>
             </div>
 
@@ -827,7 +827,7 @@ fn VendorWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, vendor_resale_select_world)}</label>
+            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world)}</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()

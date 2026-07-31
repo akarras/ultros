@@ -12,6 +12,12 @@ This repository enforces strict CI checks. Before committing any code, you **mus
 
 Failure to follow these steps will result in CI failures.
 
+Note on feature-gated code: `xiv-gen`'s `csv_to_rkyv` module is behind the
+non-default `csv_to_rkyv` feature, so plain `cargo test -p xiv-gen` compiles
+its tests out (and CI's test step is disabled entirely). When touching that
+module, run `cargo test -p xiv-gen --features csv_to_rkyv` locally —
+`check_ci.sh` lints it, but nothing else executes its tests.
+
 ## Git hooks (optional but recommended)
 
 Tracked hooks live under `scripts/hooks/`. One-time install:

@@ -303,10 +303,10 @@ pub fn UserMenu() -> impl IntoView {
 
                                             <div class="divider my-1"></div>
 
-                                            <a rel="external" href="/invitebot" class="nav-link w-full justify-start" on:click=close_menu>
+                                            <A href="/bot" attr:class="nav-link w-full justify-start" on:click=close_menu>
                                                 <Icon height="1.1em" width="1.1em" icon=i::BsDiscord />
-                                                <span class="ml-2">{t!(i18n, invite_bot)}</span>
-                                            </a>
+                                                <span class="ml-2">{t!(i18n, discord_bot)}</span>
+                                            </A>
 
                                             <div class="lg:hidden">
                                                 <QuickThemeToggle />

@@ -17,12 +17,13 @@ use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
-use crate::global_state::xiv_data::tracked_data;
+use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
 use crate::routes::item_view_scope::item_href;
+use crate::routes::not_found::NotFound;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
-use leptos_meta::{Link, Meta};
+use leptos_meta::Meta;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
@@ -594,45 +595,45 @@ fn DecisionHeader(
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let listings = get_or_default(&filtered_listings);
-                            let current_world_id = {
+                            let scope = {
                                 let world_name = Url::unescape(&world());
-                                world_data
-                                    .lookup_world_by_name(&world_name)
-                                    .and_then(|result| result.as_world().map(|world| world.id))
+                                world_data.lookup_world_by_name(&world_name)
                             };
+                            let current_world_id = scope
+                                .as_ref()
+                                .and_then(|result| result.as_world().map(|world| world.id));
+                            // Number of worlds the page selector covers (1 on a
+                            // world page, ~8 on a DC, more on a region).
+                            let world_count = scope
+                                .as_ref()
+                                .map(|result| result.all_worlds().count())
+                                .unwrap_or(1);
                             let savings_verdict = current_world_id
                                 .and_then(|world_id| cheapest_savings_verdict(&listings, world_id));
                             let recent_sales = &data.sales;
 
-                            let sales_per_day = if recent_sales.len() > 1 {
-                                let newest = recent_sales.first().unwrap().sold_date;
-                                let oldest = recent_sales.last().unwrap().sold_date;
-                                let seconds = (newest - oldest).num_seconds().abs();
-                                let count = recent_sales.len() - 1;
-                                if seconds > 0 {
-                                    Some((count as f32) / (seconds as f32 / 86400.0))
-                                } else {
-                                    Some(100.0) // high velocity
-                                }
-                            } else if recent_sales.is_empty() {
-                                Some(0.0)
-                            } else {
-                                None
-                            };
-
-                            let latest_timestamp = listings
-                                .iter()
-                                .map(|(listing, _)| listing.timestamp)
-                                .max();
-
-                            let age = latest_timestamp.map(|t| chrono::Utc::now().naive_utc() - t);
+                            // Freshness is judged on when Ultros last ingested the
+                            // board (`last_updated`), not on the sellers' re-list
+                            // times carried by `ActiveListing::timestamp`.
+                            let freshness_inputs = crate::freshness::derive_freshness_inputs(
+                                &data.last_updated,
+                                recent_sales,
+                                world_count,
+                                chrono::Utc::now().naive_utc(),
+                            );
+                            let age = freshness_inputs.age;
 
                             let freshness_verdict = ultros_api_types::freshness::calculate_freshness_verdict(
                                 age,
-                                sales_per_day,
+                                freshness_inputs.per_world_sales_per_day,
                             );
+                            // The cadence badge describes the whole scope, so it
+                            // keeps the unnormalized velocity.
+                            let scope_sales_per_day = freshness_inputs
+                                .scope_sales_per_day
+                                .unwrap_or_default();
                             let cadence_verdict = crate::analysis::get_sales_cadence(
-                                sales_per_day.unwrap_or_default(),
+                                scope_sales_per_day,
                                 recent_sales.len(),
                             );
 
@@ -642,7 +643,7 @@ fn DecisionHeader(
                                         <FreshnessBadge verdict=freshness_verdict age=age />
                                         <SalesCadenceBadge
                                             cadence=cadence_verdict
-                                            sales_per_day=sales_per_day.unwrap_or_default()
+                                            sales_per_day=scope_sales_per_day
                                         />
                                     </div>
                                     {savings_verdict
@@ -1670,8 +1671,86 @@ fn DiscordCommandChip(
     }
 }
 
+/// Builds the item page's `BreadcrumbList` JSON-LD.
+///
+/// `category` is `(display_name, search_category_id)`. The id — not the
+/// category's localized name — is what the URL is keyed on: #1001 moved
+/// `/items/category/:category` to an id precisely because the name differs per
+/// locale, so a name-keyed URL here would hand Google a link that doesn't
+/// resolve. This must keep matching the visible category link in the view below.
+fn build_breadcrumb_json_ld(
+    item_name: &str,
+    world_val: &str,
+    item_id_val: i32,
+    category: Option<(&str, i32)>,
+) -> String {
+    let mut items = vec![
+        serde_json::json!({
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://ultros.app/"
+        }),
+        serde_json::json!({
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Item Explorer",
+            "item": "https://ultros.app/items"
+        }),
+    ];
+
+    if let Some((c_name, category_id)) = category {
+        items.push(serde_json::json!({
+            "@type": "ListItem",
+            "position": 3,
+            "name": c_name,
+            "item": format!("https://ultros.app/items/category/{category_id}")
+        }));
+        items.push(serde_json::json!({
+            "@type": "ListItem",
+            "position": 4,
+            "name": item_name,
+            "item": format!("https://ultros.app/item/{world_val}/{item_id_val}")
+        }));
+    } else {
+        items.push(serde_json::json!({
+            "@type": "ListItem",
+            "position": 3,
+            "name": item_name,
+            "item": format!("https://ultros.app/item/{world_val}/{item_id_val}")
+        }));
+    }
+
+    let json_value = serde_json::json!({
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": items
+    });
+
+    serde_json::to_string(&json_value).unwrap_or_default()
+}
+
+/// Gates the item page on the `:id` route param actually naming a real item.
+/// A param that fails to parse, or parses to an id with no matching item,
+/// previously fell through to `unwrap_or_default()` and silently rendered an
+/// empty "item 0" page with a 200 status — an indexable junk page for every
+/// garbage `/item/<id>` URL. Render `NotFound` (which sets the 404 status)
+/// instead.
 #[component]
 pub fn ItemView() -> impl IntoView {
+    let params = use_params_map();
+    let item_id_valid =
+        Memo::new(move |_| params.with(|p| resolve_item_id(p.get_str("id"))).is_some());
+
+    view! {
+        <Show when=move || item_id_valid.get() fallback=|| view! { <NotFound /> }.into_any()>
+            <ItemViewContent />
+        </Show>
+    }
+}
+
+#[component]
+fn ItemViewContent() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
     let query = use_query_map();
@@ -1751,6 +1830,23 @@ pub fn ItemView() -> impl IntoView {
         .to_string()
     });
 
+    // BreadcrumbList JSON-LD for Google Rich Results.
+    // We only emit BreadcrumbList markup (Home -> Item Explorer -> {category} -> {item})
+    // and purposely omit Product / AggregateOffer markup because:
+    // 1. Google's Product rich-result guidelines target real-world purchasable products with real currencies.
+    // 2. FFXIV gil is a fictional virtual currency and "GIL" is not a valid ISO 4217 code.
+    // 3. Placing fictional virtual currency values in Product / AggregateOffer markup can trigger structured data spam manual actions.
+    let json_ld = move || {
+        let name_val = item_name();
+        let world_val = world();
+        let item_id_val = item_id();
+        let category = item_category()
+            .and_then(|c| item_search_category().map(|s| (c, s)))
+            .map(|(c, s)| (c.name.as_str(), s.key_id.0));
+
+        build_breadcrumb_json_ld(&name_val, &world_val, item_id_val, category)
+    };
+
     view! {
         <MetaTitle title=move || {
             t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
@@ -1761,7 +1857,8 @@ pub fn ItemView() -> impl IntoView {
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
         />
-        <Link rel="canonical" prop:href=move || format!("https://ultros.app/item/{}", item_id()) />
+        <MetaCanonical href=move || format!("https://ultros.app/item/{}", item_id()) />
+        <script type="application/ld+json" inner_html=json_ld />
         <div class="min-h-screen">
             <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
@@ -1783,8 +1880,7 @@ pub fn ItemView() -> impl IntoView {
                                                 view! {
                                                     <a
                                                         class="text-brand-300 hover:text-brand-200 transition-colors"
-                                                        href=["/items/category/", &s.name.replace("/", "%2F")]
-                                                            .concat()
+                                                        href=format!("/items/category/{}", s.key_id.0)
                                                     >
                                                         {c.name.as_str()}
                                                     </a>
@@ -2042,5 +2138,64 @@ mod tests {
         // Once it is disposed they must fall back rather than panic.
         assert!(with_or(&filtered_listings, true, |listings| listings.is_empty()));
         assert!(get_or_default(&filtered_listings).is_empty());
+    }
+
+    #[test]
+    fn test_build_breadcrumb_json_ld_with_category() {
+        let json_str = build_breadcrumb_json_ld(
+            "Excalibur",
+            "Gilgamesh",
+            12345,
+            Some(("Two-Handed Sword", 2)),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed["@context"], "https://schema.org");
+        assert_eq!(parsed["@type"], "BreadcrumbList");
+
+        let elements = parsed["itemListElement"].as_array().unwrap();
+        assert_eq!(elements.len(), 4);
+
+        assert_eq!(elements[0]["name"], "Home");
+        assert_eq!(elements[0]["item"], "https://ultros.app/");
+
+        assert_eq!(elements[1]["name"], "Item Explorer");
+        assert_eq!(elements[1]["item"], "https://ultros.app/items");
+
+        // The category link is keyed on the search-category id, matching both the
+        // visible link in the view and the `/items/category/:category` route as of
+        // #1001. Keying it on the localized name would emit a dead URL.
+        assert_eq!(elements[2]["name"], "Two-Handed Sword");
+        assert_eq!(elements[2]["item"], "https://ultros.app/items/category/2");
+
+        assert_eq!(elements[3]["name"], "Excalibur");
+        assert_eq!(
+            elements[3]["item"],
+            "https://ultros.app/item/Gilgamesh/12345"
+        );
+    }
+
+    #[test]
+    fn test_build_breadcrumb_json_ld_without_category() {
+        let json_str = build_breadcrumb_json_ld("Excalibur", "Gilgamesh", 12345, None);
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed["@context"], "https://schema.org");
+        assert_eq!(parsed["@type"], "BreadcrumbList");
+
+        let elements = parsed["itemListElement"].as_array().unwrap();
+        assert_eq!(elements.len(), 3);
+
+        assert_eq!(elements[0]["name"], "Home");
+        assert_eq!(elements[0]["item"], "https://ultros.app/");
+
+        assert_eq!(elements[1]["name"], "Item Explorer");
+        assert_eq!(elements[1]["item"], "https://ultros.app/items");
+
+        assert_eq!(elements[2]["name"], "Excalibur");
+        assert_eq!(
+            elements[2]["item"],
+            "https://ultros.app/item/Gilgamesh/12345"
+        );
     }
 }

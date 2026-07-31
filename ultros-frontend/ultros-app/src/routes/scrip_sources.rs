@@ -1,11 +1,13 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::xiv_data::tracked_data;
+use crate::ws::realtime::use_realtime;
 use crate::{
     api::get_cheapest_listings,
     components::{
         gil::*,
+        icon::Icon,
         item_icon::*,
-        query_button::QueryButton,
+        realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField},
@@ -16,12 +18,15 @@ use crate::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
 };
+use icondata as i;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_navigate, use_query_map},
+    hooks::{query_signal, use_location, use_navigate, use_query_map},
+    location::Location,
 };
-use std::{cmp::Reverse, collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
+use thousands::Separable;
 use ultros_api_types::cheapest_listings::{CheapestListings, CheapestListingsMap};
 use xiv_gen::{CollectablesShopRewardScripId, ItemId, Recipe};
 
@@ -37,8 +42,27 @@ struct ScripSourceData {
     scrip_amount: u32,
     cost: i32,
     cost_per_scrip: f32,
+    /// Ingredients that had at least one market listing to price from.
+    priced_ingredients: u32,
+    /// Ingredients the recipe actually uses.
+    total_ingredients: u32,
     cheapest_world_id: i32,
     recipe: Option<&'static Recipe>,
+}
+
+impl ScripSourceData {
+    /// `0` when every ingredient had a market price, `1` when some were
+    /// missing. Used as the *primary* ranking key so rows with an understated
+    /// cost can never float above fully-priced rows — an unlisted ingredient
+    /// used to be counted as *free*, which pushed exactly the least
+    /// trustworthy rows to the top of the best-efficiency sort.
+    fn coverage_tier(&self) -> u8 {
+        if self.priced_ingredients >= self.total_ingredients {
+            0
+        } else {
+            1
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,15 +77,49 @@ enum ScripType {
 }
 
 impl ScripType {
-    fn from_id(id: u32) -> Self {
-        match id {
-            41784 => ScripType::OrangeCrafters,
-            41785 => ScripType::OrangeGatherers,
-            25199 => ScripType::WhiteCrafters,
-            33913 => ScripType::PurpleCrafters,
-            25200 => ScripType::WhiteGatherers,
-            33914 => ScripType::PurpleGatherers,
-            _ => ScripType::Other(id),
+    /// Map a `CollectablesShopRewardScrip.Currency` value to the scrip it pays.
+    ///
+    /// `Currency` is a small **enum index**, not an item id — every row in the
+    /// 7.55 data carries `0`, `2`, `4`, `6` or `7`. Matching it against scrip
+    /// item ids is what left this page blank, so the mapping below is derived
+    /// from the game data instead. Joining `CollectablesShopItem` to the
+    /// `RewardType = 1` (scrip-paying) shops, ignoring the material-exchange
+    /// shops that reuse this column, gives:
+    ///
+    /// | Currency | rows | turn-ins |
+    /// |---|---|---|
+    /// | 2 | 1089 | crafted, lv 50-99 |
+    /// | 4 |  163 | gathered/fished, lv 50-98 |
+    /// | 6 |   93 | crafted, lv 78-80 and lv 100 |
+    /// | 7 |   18 | gathered/fished, lv 100 |
+    ///
+    /// So `2`/`4` are the purple (levelling) crafter/gatherer pair and `6`/`7`
+    /// the orange (level 100) pair. Currency `6`'s level-100 rows are exactly
+    /// one item per crafting job — the eight "Rarefied" max-level crafts — which
+    /// is what pins it to Orange Crafters' rather than the retired white scrip;
+    /// its lv 78-80 rows are the Shadowbringers tier that collapsed into the
+    /// same high-tier crafter slot when white scrips were removed in 7.0.
+    fn from_currency(currency: u32) -> Self {
+        match currency {
+            2 => ScripType::PurpleCrafters,
+            4 => ScripType::PurpleGatherers,
+            6 => ScripType::OrangeCrafters,
+            7 => ScripType::OrangeGatherers,
+            other => ScripType::Other(other),
+        }
+    }
+
+    /// The `?scrip=` query value that selects this type, as emitted by the
+    /// toolbar `<select>`.
+    fn from_filter_key(key: &str) -> Option<Self> {
+        match key {
+            "OrangeCrafters" => Some(ScripType::OrangeCrafters),
+            "OrangeGatherers" => Some(ScripType::OrangeGatherers),
+            "WhiteCrafters" => Some(ScripType::WhiteCrafters),
+            "PurpleCrafters" => Some(ScripType::PurpleCrafters),
+            "WhiteGatherers" => Some(ScripType::WhiteGatherers),
+            "PurpleGatherers" => Some(ScripType::PurpleGatherers),
+            _ => None,
         }
     }
 
@@ -72,6 +130,31 @@ impl ScripType {
             ScripType::PurpleCrafters | ScripType::PurpleGatherers => "text-purple-400",
             ScripType::Other(_) => "text-gray-400",
         }
+    }
+
+    /// Gatherer scrips are paid for collectables that are *gathered*, not
+    /// crafted, so the craft-cost model below can never price them. The page
+    /// keeps the options selectable but explains the empty table instead of
+    /// silently rendering nothing.
+    fn is_gatherer(&self) -> bool {
+        matches!(
+            self,
+            ScripType::OrangeGatherers | ScripType::WhiteGatherers | ScripType::PurpleGatherers
+        )
+    }
+}
+
+/// Does a row awarding `scrip_type` survive the `?scrip=` filter?
+///
+/// A row whose currency we don't recognise stays *visible*. Dropping unknown
+/// values is what turned a stale `Currency` mapping into a blank page rather
+/// than a few oddly-labelled rows, and one new expansion adding `Currency = 8`
+/// would do it again. An unrecognised `?scrip=` value is likewise treated as
+/// "no filter" instead of emptying the table.
+fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
+    match filter.and_then(ScripType::from_filter_key) {
+        Some(wanted) => scrip_type == wanted,
+        None => true,
     }
 }
 
@@ -106,6 +189,46 @@ impl std::fmt::Display for SortMode {
     }
 }
 
+impl SortMode {
+    /// The direction each column sorts in when first clicked (and when no
+    /// `?dir=` is present). Costs read best-first ascending; the scrip payout
+    /// reads best-first descending.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::CostPerScrip | SortMode::Cost => SortDir::Asc,
+            SortMode::ScripAmount => SortDir::Desc,
+        }
+    }
+}
+
+/// `?dir=` — sort direction override. Absent means the active mode's
+/// [`SortMode::default_dir`].
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum SortDir {
+    Asc,
+    Desc,
+}
+
+impl std::str::FromStr for SortDir {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "asc" => Ok(SortDir::Asc),
+            "desc" => Ok(SortDir::Desc),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for SortDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SortDir::Asc => "asc",
+            SortDir::Desc => "desc",
+        })
+    }
+}
+
 /// Maximum rows rendered by the table.
 const ROW_LIMIT: usize = 100;
 
@@ -119,24 +242,40 @@ const ROW_LIMIT: usize = 100;
 /// places — and, at the `limit` boundary, drops a different *set* of rows
 /// entirely — on the two sides. That is the hydration-mismatch class fixed for
 /// the item page in #960. Tie-breaking on the stable item id pins one order.
+///
+/// The composite key, in order:
+///
+/// 1. [`ScripSourceData::coverage_tier`] — rows whose cost is understated
+///    because some ingredients had no market listing always rank *below*
+///    fully-priced rows, in either direction. Direction never applies here:
+///    flipping a column reorders values, it doesn't make incomplete data more
+///    trustworthy.
+/// 2. The active column's metric, reversed when `dir` is the non-default.
+/// 3. The stable item id, always ascending, so ties resolve identically on
+///    the server and the client regardless of direction.
 fn rank_scrip_sources(
     mut results: Vec<ScripSourceData>,
     sort_mode: SortMode,
+    dir: SortDir,
     limit: usize,
 ) -> Vec<ScripSourceData> {
-    match sort_mode {
+    results.sort_unstable_by(|a, b| {
         // `total_cmp` rather than `partial_cmp().unwrap()`: the unwrap was a
         // latent panic if a cost ever produced a NaN ratio.
-        SortMode::CostPerScrip => results.sort_unstable_by(|a, b| {
-            a.cost_per_scrip
-                .total_cmp(&b.cost_per_scrip)
-                .then_with(|| a.item_id.0.cmp(&b.item_id.0))
-        }),
-        SortMode::ScripAmount => {
-            results.sort_unstable_by_key(|d| (Reverse(d.scrip_amount), d.item_id.0))
-        }
-        SortMode::Cost => results.sort_unstable_by_key(|d| (d.cost, d.item_id.0)),
-    }
+        let metric = match sort_mode {
+            SortMode::CostPerScrip => a.cost_per_scrip.total_cmp(&b.cost_per_scrip),
+            SortMode::ScripAmount => a.scrip_amount.cmp(&b.scrip_amount),
+            SortMode::Cost => a.cost.cmp(&b.cost),
+        };
+        let metric = match dir {
+            SortDir::Asc => metric,
+            SortDir::Desc => metric.reverse(),
+        };
+        a.coverage_tier()
+            .cmp(&b.coverage_tier())
+            .then(metric)
+            .then_with(|| a.item_id.0.cmp(&b.item_id.0))
+    });
 
     // An item stocked by several collectables shops yields one row per shop.
     // After a metric sort those rows are not adjacent, so the previous
@@ -147,6 +286,71 @@ fn rank_scrip_sources(
 
     results.truncate(limit);
     results
+}
+
+/// One sortable column header, after the analyzer's pattern.
+///
+/// Clicking an inactive column sorts by it in that column's default
+/// direction; clicking the active column flips the direction. The arrow
+/// reflects the direction actually applied. `dir` is omitted from the href
+/// when it matches the mode's default so the common case stays a clean
+/// `?sort=…`.
+#[component]
+fn SortHeader(
+    mode: SortMode,
+    #[prop(into)] label: String,
+    sort_mode: Memo<Option<SortMode>>,
+    sort_dir: Memo<Option<SortDir>>,
+) -> impl IntoView {
+    let Location {
+        pathname, query, ..
+    } = use_location();
+    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::CostPerScrip) == mode);
+    let dir = Signal::derive(move || {
+        sort_dir().unwrap_or_else(|| sort_mode().unwrap_or(SortMode::CostPerScrip).default_dir())
+    });
+    view! {
+        <a
+            class=move || {
+                if is_active() {
+                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
+                } else {
+                    "!text-brand-300 hover:text-brand-200"
+                }
+            }
+            aria-current=move || if is_active() { "true" } else { "false" }
+            href=move || {
+                let mut q = query();
+                q.remove("sort");
+                q.remove("dir");
+                q.insert("sort".to_string(), mode.to_string());
+                let next = if is_active() {
+                    match dir() {
+                        SortDir::Desc => SortDir::Asc,
+                        SortDir::Asc => SortDir::Desc,
+                    }
+                } else {
+                    mode.default_dir()
+                };
+                if next != mode.default_dir() {
+                    q.insert("dir".to_string(), next.to_string());
+                }
+                format!("{}{}", pathname(), q.to_query_string())
+            }
+        >
+            <div class="flex items-center gap-2">
+                {label}
+                {move || {
+                    is_active()
+                        .then(|| match dir() {
+                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
+                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
+                        })
+                }}
+            </div>
+        </a>
+    }
+    .into_any()
 }
 
 #[component]
@@ -170,10 +374,24 @@ fn ScripSourceTable(
     });
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (scrip_filter, set_scrip_filter) = query_signal::<String>("scrip");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
 
-    let computed_data = Memo::new(move |_| {
+    // Global websocket health, same wiring as the other sales-driven tools —
+    // the prices here come from the realtime-fed cheapest-listings store.
+    let realtime = use_realtime();
+    let rt_status = realtime.clone();
+    let realtime_status = Signal::derive(move || {
+        rt_status
+            .as_ref()
+            .map(|r| r.status.get())
+            .unwrap_or_else(|| "offline".to_string())
+    });
+    let rt_update = realtime;
+    let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
+
+    let ranked_rows = Memo::new(move |_| {
         let mut results = Vec::new();
         let recipes_lookup = recipes_by_output();
 
@@ -196,34 +414,10 @@ fn ScripSourceTable(
                 };
 
                 // Reward has `currency` and `low/mid/high_reward`
-                let currency_id = reward.currency;
-                let scrip_type = ScripType::from_id(currency_id as u32);
+                let scrip_type = ScripType::from_currency(reward.currency as u32);
 
-                // Filter Scrip Type
-                if let Some(ref s_filter) = scrip_filter_val {
-                    if s_filter == "OrangeCrafters" && scrip_type != ScripType::OrangeCrafters {
-                        continue;
-                    }
-                    if s_filter == "OrangeGatherers" && scrip_type != ScripType::OrangeGatherers {
-                        continue;
-                    }
-                    if s_filter == "WhiteCrafters" && scrip_type != ScripType::WhiteCrafters {
-                        continue;
-                    }
-                    if s_filter == "PurpleCrafters" && scrip_type != ScripType::PurpleCrafters {
-                        continue;
-                    }
-                    if s_filter == "WhiteGatherers" && scrip_type != ScripType::WhiteGatherers {
-                        continue;
-                    }
-                    if s_filter == "PurpleGatherers" && scrip_type != ScripType::PurpleGatherers {
-                        continue;
-                    }
-                } else {
-                    // Default to showing Crafters scrips if no filter
-                    if matches!(scrip_type, ScripType::Other(_)) {
-                        continue;
-                    }
+                if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
+                    continue;
                 }
 
                 // Reward amount (High Reward for max collectability)
@@ -265,8 +459,16 @@ fn ScripSourceTable(
                     }
                 }
 
-                // Cost Calculation
+                // Cost Calculation. An ingredient with no market listing used
+                // to be priced at zero, which *understated* the cost and
+                // floated exactly the least trustworthy rows to the top of
+                // the best-efficiency sort. Instead, track how many
+                // ingredients could actually be priced: rows with partial
+                // coverage stay visible (badged, ranked below fully-priced
+                // rows), rows with *no* priced ingredient are dropped.
                 let mut cost = 0;
+                let mut priced_ingredients = 0u32;
+                let mut total_ingredients = 0u32;
 
                 if let Some(r) = recipe {
                     // Sum ingredients
@@ -276,18 +478,21 @@ fn ScripSourceTable(
                         if ing_id == 0 || amount == 0 {
                             continue;
                         }
+                        total_ingredients += 1;
                         let price_summary = prices.find_matching_listings(ing_id);
-                        let price = price_summary.lowest_gil().unwrap_or(0); // If no price, assume 0? Or skip?
-                        cost += price * amount;
+                        if let Some(price) = price_summary.lowest_gil() {
+                            priced_ingredients += 1;
+                            cost += price * amount;
+                        }
                     }
                 } else {
                     // Skip non-craftables for now
                     continue;
                 }
 
-                if cost == 0 {
+                if priced_ingredients == 0 || cost == 0 {
                     continue;
-                } // Avoid division by zero or free items
+                } // Nothing priceable, or free items: no cost to compare
 
                 let cost_per_scrip = cost as f32 / scrip_amount as f32;
 
@@ -300,21 +505,43 @@ fn ScripSourceTable(
                     scrip_amount,
                     cost,
                     cost_per_scrip,
+                    priced_ingredients,
+                    total_ingredients,
                     cheapest_world_id: 0, // Not tracked per ingredient
                     recipe,
                 });
             }
         }
 
-        rank_scrip_sources(
-            results,
-            sort_mode().unwrap_or(SortMode::CostPerScrip),
-            ROW_LIMIT,
-        )
-        .into_iter()
-        .map(Arc::new)
-        .enumerate()
-        .collect::<Vec<_>>()
+        let mode = sort_mode().unwrap_or(SortMode::CostPerScrip);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        // Rank the *full* set so the result count below is exact; the render
+        // memo applies `ROW_LIMIT`.
+        rank_scrip_sources(results, mode, dir, usize::MAX)
+    });
+
+    let total_count = Memo::new(move |_| ranked_rows.with(|r| r.len()));
+
+    let computed_data = Memo::new(move |_| {
+        ranked_rows.with(|rows| {
+            rows.iter()
+                .take(ROW_LIMIT)
+                .cloned()
+                .map(Arc::new)
+                .enumerate()
+                .collect::<Vec<_>>()
+        })
+    });
+
+    // The three gatherer scrip options can never produce a row today: the
+    // loop above prices *craft* costs and skips anything without a recipe,
+    // and gatherer collectables are gathered, not crafted. Explain that
+    // instead of showing a silently empty table.
+    let gatherer_filter_selected = Memo::new(move |_| {
+        scrip_filter()
+            .as_deref()
+            .and_then(ScripType::from_filter_key)
+            .is_some_and(|s| s.is_gatherer())
     });
 
     view! {
@@ -366,6 +593,43 @@ fn ScripSourceTable(
                 </ToolbarField>
             </Toolbar>
 
+            // Results summary: count, truncation note, pricing scope, and
+            // realtime health. The world picker resolves to a *region* and
+            // the fetch is region-cheapest, so say so — a "Gilgamesh"
+            // selection otherwise silently produces NA-wide prices.
+            <div class="panel px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                <div>
+                    <span class="text-brand-300 font-semibold">{move || total_count()}</span>
+                    " "
+                    {t!(i18n, scrip_sources_results)}
+                </div>
+                <Show when=move || { total_count() > ROW_LIMIT }>
+                    <div class="text-[color:var(--color-text-muted)]">
+                        {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
+                    </div>
+                </Show>
+                <div class="text-[color:var(--color-text-muted)]">
+                    {move || t!(i18n, scrip_sources_region_pricing, region = world())}
+                </div>
+                <RealtimeStatus status=realtime_status last_update=last_update />
+            </div>
+
+            // Empty states render as *siblings* of the scroller container,
+            // never by unmounting it in a <Show>: the VirtualScroller wires
+            // scroll-sync effects to node refs and remounting breaks them.
+            <Show when=move || gatherer_filter_selected() && total_count() == 0>
+                <ActionableEmptyState
+                    title=t_string!(i18n, scrip_sources_gatherers_unsupported_title).to_string()
+                    body=t_string!(i18n, scrip_sources_gatherers_unsupported_body).to_string()
+                />
+            </Show>
+            <Show when=move || !gatherer_filter_selected() && total_count() == 0>
+                <ActionableEmptyState
+                    title=t_string!(i18n, scrip_sources_no_results_title).to_string()
+                    body=t_string!(i18n, scrip_sources_no_results_body).to_string()
+                />
+            </Show>
+
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
                     viewport_height=720.0
@@ -377,34 +641,28 @@ fn ScripSourceTable(
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 p-4">{t!(i18n, scrip_sources_item)}</div>
                              <div role="columnheader" class="w-40 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="efficiency"
-                                >
-                                    {t!(i18n, scrip_sources_cost_per_scrip)}
-                                </QueryButton>
+                                <SortHeader
+                                    mode=SortMode::CostPerScrip
+                                    label=t_string!(i18n, scrip_sources_cost_per_scrip).to_string()
+                                    sort_mode
+                                    sort_dir
+                                />
                              </div>
                              <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="amount"
-                                >
-                                    {t!(i18n, scrip_sources_scrips)}
-                                </QueryButton>
+                                <SortHeader
+                                    mode=SortMode::ScripAmount
+                                    label=t_string!(i18n, scrip_sources_scrips).to_string()
+                                    sort_mode
+                                    sort_dir
+                                />
                              </div>
                              <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="cost"
-                                >
-                                    {t!(i18n, scrip_sources_cost)}
-                                </QueryButton>
+                                <SortHeader
+                                    mode=SortMode::Cost
+                                    label=t_string!(i18n, scrip_sources_cost).to_string()
+                                    sort_mode
+                                    sort_dir
+                                />
                              </div>
                              <div role="columnheader" class="w-40 p-4 hidden md:block">{t!(i18n, scrip_sources_scrip_type_header)}</div>
                         </div>
@@ -449,13 +707,40 @@ fn ScripSourceTable(
                                     </a>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right font-bold text-brand-300">
-                                    <Gil amount=data.cost_per_scrip as i32 />
+                                    // One decimal below 10 gil/scrip: whole-gil
+                                    // truncation collapsed the interesting end
+                                    // of the efficiency scale (2.4 and 2.9
+                                    // both showed as 2).
+                                    <div class="flex flex-row items-center">
+                                        <GilIcon />
+                                        <div>
+                                            {if data.cost_per_scrip < 10.0 {
+                                                format!("{:.1}", data.cost_per_scrip)
+                                            } else {
+                                                (data.cost_per_scrip as i32).separate_with_commas()
+                                            }}
+                                        </div>
+                                    </div>
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     {data.scrip_amount}
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-30 text-right">
                                     <Gil amount=data.cost />
+                                    {(data.coverage_tier() != 0)
+                                        .then(|| {
+                                            view! {
+                                                <span
+                                                    class="block text-[10px] leading-tight text-amber-400"
+                                                    title=t_string!(i18n, scrip_sources_coverage_hint).to_string()
+                                                >
+                                                    {t!(
+                                                        i18n, scrip_sources_coverage_badge, priced =
+                                                        data.priced_ingredients, total = data.total_ingredients
+                                                    )}
+                                                </span>
+                                            }
+                                        })}
                                 </div>
                                 <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
                                     <span class={format!("text-xs {}", data.scrip_type.color_class())}>
@@ -623,8 +908,25 @@ mod tests {
             scrip_amount,
             cost,
             cost_per_scrip: cost as f32 / scrip_amount as f32,
+            priced_ingredients: 3,
+            total_ingredients: 3,
             cheapest_world_id: 0,
             recipe: None,
+        }
+    }
+
+    /// A row where only `priced` of `total` ingredients had market listings.
+    fn partial_row(
+        item_id: i32,
+        scrip_amount: u32,
+        cost: i32,
+        priced: u32,
+        total: u32,
+    ) -> ScripSourceData {
+        ScripSourceData {
+            priced_ingredients: priced,
+            total_ingredients: total,
+            ..row(item_id, scrip_amount, cost)
         }
     }
 
@@ -646,17 +948,25 @@ mod tests {
             SortMode::Cost,
             SortMode::CostPerScrip,
         ] {
-            // Every row ties on every sort key, which is what game data
-            // actually looks like: `high_reward` is a small integer shared by
-            // hundreds of items.
-            let forward = vec![row(1, 20, 1000), row(2, 20, 1000), row(3, 20, 1000)];
-            let reversed: Vec<_> = forward.iter().rev().cloned().collect();
+            for dir in [SortDir::Asc, SortDir::Desc] {
+                // Every row ties on every sort key, which is what game data
+                // actually looks like: `high_reward` is a small integer
+                // shared by hundreds of items. Mixed coverage tiers so the
+                // tier key is exercised too.
+                let forward = vec![
+                    row(1, 20, 1000),
+                    partial_row(2, 20, 1000, 1, 3),
+                    row(3, 20, 1000),
+                    partial_row(4, 20, 1000, 2, 3),
+                ];
+                let reversed: Vec<_> = forward.iter().rev().cloned().collect();
 
-            assert_eq!(
-                ids(&rank_scrip_sources(forward, mode, ROW_LIMIT)),
-                ids(&rank_scrip_sources(reversed, mode, ROW_LIMIT)),
-                "{mode:?} ranking changed with input order"
-            );
+                assert_eq!(
+                    ids(&rank_scrip_sources(forward, mode, dir, ROW_LIMIT)),
+                    ids(&rank_scrip_sources(reversed, mode, dir, ROW_LIMIT)),
+                    "{mode:?}/{dir:?} ranking changed with input order"
+                );
+            }
         }
     }
 
@@ -669,8 +979,18 @@ mod tests {
         let reversed: Vec<_> = forward.iter().rev().cloned().collect();
 
         assert_eq!(
-            ids(&rank_scrip_sources(forward, SortMode::ScripAmount, 5)),
-            ids(&rank_scrip_sources(reversed, SortMode::ScripAmount, 5)),
+            ids(&rank_scrip_sources(
+                forward,
+                SortMode::ScripAmount,
+                SortDir::Desc,
+                5
+            )),
+            ids(&rank_scrip_sources(
+                reversed,
+                SortMode::ScripAmount,
+                SortDir::Desc,
+                5
+            )),
         );
     }
 
@@ -682,7 +1002,7 @@ mod tests {
         // Item 1 at two reward tiers, with item 2 ranking between them.
         let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
 
-        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, ROW_LIMIT);
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc, ROW_LIMIT);
 
         assert_eq!(ids(&ranked), vec![1, 2], "item 1 rendered twice");
     }
@@ -692,7 +1012,7 @@ mod tests {
     fn dedup_keeps_the_best_ranked_row_for_an_item() {
         let rows = vec![row(1, 40, 1000), row(2, 30, 1000), row(1, 20, 1000)];
 
-        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, ROW_LIMIT);
+        let ranked = rank_scrip_sources(rows, SortMode::ScripAmount, SortDir::Desc, ROW_LIMIT);
 
         assert_eq!(ranked[0].scrip_amount, 40);
     }
@@ -706,19 +1026,223 @@ mod tests {
             ids(&rank_scrip_sources(
                 rows.clone(),
                 SortMode::ScripAmount,
+                SortMode::ScripAmount.default_dir(),
                 ROW_LIMIT
             )),
             vec![2, 3, 1]
         );
         // Cheapest total cost first.
         assert_eq!(
-            ids(&rank_scrip_sources(rows.clone(), SortMode::Cost, ROW_LIMIT)),
+            ids(&rank_scrip_sources(
+                rows.clone(),
+                SortMode::Cost,
+                SortMode::Cost.default_dir(),
+                ROW_LIMIT
+            )),
             vec![2, 3, 1]
         );
         // Best gil-per-scrip first: 1000/30 < 2000/20 < 3000/10.
         assert_eq!(
-            ids(&rank_scrip_sources(rows, SortMode::CostPerScrip, ROW_LIMIT)),
+            ids(&rank_scrip_sources(
+                rows,
+                SortMode::CostPerScrip,
+                SortMode::CostPerScrip.default_dir(),
+                ROW_LIMIT
+            )),
             vec![2, 3, 1]
         );
+    }
+
+    /// Flipping `?dir=` reverses the metric order…
+    #[test]
+    fn direction_flip_reverses_the_metric() {
+        let rows = vec![row(1, 10, 3000), row(2, 30, 1000), row(3, 20, 2000)];
+
+        for (mode, asc, desc) in [
+            (SortMode::Cost, vec![2, 3, 1], vec![1, 3, 2]),
+            (SortMode::ScripAmount, vec![1, 3, 2], vec![2, 3, 1]),
+            (SortMode::CostPerScrip, vec![2, 3, 1], vec![1, 3, 2]),
+        ] {
+            assert_eq!(
+                ids(&rank_scrip_sources(
+                    rows.clone(),
+                    mode,
+                    SortDir::Asc,
+                    ROW_LIMIT
+                )),
+                asc,
+                "{mode:?} ascending"
+            );
+            assert_eq!(
+                ids(&rank_scrip_sources(
+                    rows.clone(),
+                    mode,
+                    SortDir::Desc,
+                    ROW_LIMIT
+                )),
+                desc,
+                "{mode:?} descending"
+            );
+        }
+    }
+
+    /// …but ties still resolve by ascending item id in *both* directions, so
+    /// the order stays a total order (the SSR/CSR hydration requirement) and
+    /// tied rows don't shuffle when the user flips a column.
+    #[test]
+    fn direction_flip_keeps_the_stable_tiebreak() {
+        let rows = vec![row(3, 20, 1000), row(1, 20, 1000), row(2, 20, 1000)];
+
+        for dir in [SortDir::Asc, SortDir::Desc] {
+            assert_eq!(
+                ids(&rank_scrip_sources(
+                    rows.clone(),
+                    SortMode::Cost,
+                    dir,
+                    ROW_LIMIT
+                )),
+                vec![1, 2, 3],
+                "{dir:?} tie order"
+            );
+        }
+    }
+
+    /// A row with unpriced ingredients has an *understated* cost, so however
+    /// good its metric looks it must rank below every fully-priced row — in
+    /// both directions. This is the fix for `unwrap_or(0)` floating exactly
+    /// the least trustworthy rows to the top of the best-efficiency sort.
+    #[test]
+    fn partially_priced_rows_rank_below_fully_priced_rows() {
+        for mode in [
+            SortMode::ScripAmount,
+            SortMode::Cost,
+            SortMode::CostPerScrip,
+        ] {
+            for dir in [SortDir::Asc, SortDir::Desc] {
+                // The partial row "wins" every metric: cheapest, most
+                // scrips, best ratio.
+                let rows = vec![
+                    row(1, 10, 3000),
+                    partial_row(2, 100, 1, 1, 4),
+                    row(3, 20, 2000),
+                ];
+
+                let ranked = rank_scrip_sources(rows, mode, dir, ROW_LIMIT);
+
+                assert_eq!(
+                    ranked.last().map(|r| r.item_id.0),
+                    Some(2),
+                    "{mode:?}/{dir:?}: partially-priced row escaped the bottom tier"
+                );
+            }
+        }
+    }
+
+    /// Within the partial tier, rows still follow the active sort.
+    #[test]
+    fn the_partial_tier_is_sorted_by_the_active_metric_too() {
+        let rows = vec![
+            partial_row(1, 10, 3000, 2, 3),
+            row(2, 30, 1000),
+            partial_row(3, 20, 500, 1, 3),
+        ];
+
+        assert_eq!(
+            ids(&rank_scrip_sources(
+                rows,
+                SortMode::Cost,
+                SortDir::Asc,
+                ROW_LIMIT
+            )),
+            vec![2, 3, 1]
+        );
+    }
+
+    /// The tier boundary is also a truncation boundary: with the cap inside
+    /// the fully-priced tier, no partial row may sneak into the rendered set.
+    #[test]
+    fn truncation_prefers_fully_priced_rows() {
+        let rows = vec![
+            partial_row(1, 100, 1, 1, 4),
+            row(2, 10, 3000),
+            row(3, 20, 2000),
+        ];
+
+        let ranked = rank_scrip_sources(rows, SortMode::CostPerScrip, SortDir::Asc, 2);
+
+        assert_eq!(ids(&ranked), vec![3, 2]);
+    }
+
+    /// Every `Currency` value that actually occurs in `CollectablesShopRewardScrip`
+    /// (7.55: `0`, `2`, `4`, `6`, `7` — `0` being the null row, which is already
+    /// dropped for having a zero reward). If any of these falls through to
+    /// `Other`, every row awarding it disappears from the page.
+    #[test]
+    fn every_live_currency_value_is_recognised() {
+        for currency in [2, 4, 6, 7] {
+            assert!(
+                !matches!(ScripType::from_currency(currency), ScripType::Other(_)),
+                "currency {currency} is unmapped, so its rows never render"
+            );
+        }
+    }
+
+    /// `CollectablesShopRewardScrip.Currency` is a small **enum index**, not an
+    /// item id: `2`/`4` are the purple crafter/gatherer pair paid by lv 50-99
+    /// turn-ins, `6`/`7` the orange pair paid at level 100.
+    #[test]
+    fn currency_indices_map_to_the_right_scrip() {
+        assert_eq!(ScripType::from_currency(2), ScripType::PurpleCrafters);
+        assert_eq!(ScripType::from_currency(4), ScripType::PurpleGatherers);
+        assert_eq!(ScripType::from_currency(6), ScripType::OrangeCrafters);
+        assert_eq!(ScripType::from_currency(7), ScripType::OrangeGatherers);
+    }
+
+    /// The bug this replaced: `from_currency` was fed `reward.currency` but
+    /// matched on scrip **item** ids, so no real currency value ever matched and
+    /// the whole page rendered zero rows. Item ids must not be accepted here.
+    #[test]
+    fn scrip_item_ids_are_not_currency_values() {
+        for item_id in [41784, 41785, 25199, 33913, 25200, 33914] {
+            assert_eq!(
+                ScripType::from_currency(item_id),
+                ScripType::Other(item_id),
+                "item id {item_id} was treated as a currency index"
+            );
+        }
+    }
+
+    /// A currency we have never seen must stay *visible*. Silently dropping
+    /// unrecognised values is what blanked this page, and one new expansion
+    /// adding `Currency = 8` would blank it again.
+    #[test]
+    fn an_unknown_currency_is_still_listed() {
+        let unknown = ScripType::from_currency(8);
+
+        assert_eq!(unknown, ScripType::Other(8));
+        assert!(
+            passes_scrip_filter(unknown, None),
+            "unrecognised currency dropped from the unfiltered list"
+        );
+    }
+
+    #[test]
+    fn scrip_filter_selects_only_the_requested_type() {
+        assert!(passes_scrip_filter(
+            ScripType::PurpleCrafters,
+            Some("PurpleCrafters")
+        ));
+        assert!(!passes_scrip_filter(
+            ScripType::OrangeCrafters,
+            Some("PurpleCrafters")
+        ));
+    }
+
+    /// A hand-edited `?scrip=` value shouldn't empty the table.
+    #[test]
+    fn an_unrecognised_filter_value_shows_everything() {
+        for filter in [None, Some(""), Some("nonsense")] {
+            assert!(passes_scrip_filter(ScripType::PurpleCrafters, filter));
+        }
     }
 }

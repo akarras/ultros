@@ -114,10 +114,21 @@ pub fn SideNav() -> impl IntoView {
                     <Icon icon=i::BsBell />
                     <span class="side-nav-label">{t!(i18n, alerts)}</span>
                 </A>
+
+                <div class="side-nav-section-header">{t!(i18n, help_label)}</div>
+
+                <A href="/bot" attr:class="side-nav-item">
+                    <Icon icon=i::BsDiscord />
+                    <span class="side-nav-label">{t!(i18n, discord_bot)}</span>
+                </A>
+                <A href="/help" attr:class="side-nav-item">
+                    <Icon icon=i::BsBook />
+                    <span class="side-nav-label">{t!(i18n, help_label)}</span>
+                </A>
             </nav>
 
             <div class="side-nav-footer">
-                <a href="https://discord.gg/pgdq9nGUP2" class="side-nav-icon-link" aria-label="Discord">
+                <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />
                 </a>
                 <a href="https://github.com/akarras/ultros" class="side-nav-icon-link" aria-label="GitHub">

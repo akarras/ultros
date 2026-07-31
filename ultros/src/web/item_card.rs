@@ -109,5 +109,15 @@ pub(crate) async fn item_card(
     let mime_type = mime_guess::from_path("icon.png").first_or_text_plain();
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, mime_type.as_ref())
+        // Item cards are rendered per request from live prices. Half an hour
+        // keeps social-unfurl crawlers (which refetch aggressively) off the
+        // ClickHouse path without letting a card go visibly stale.
+        .header(
+            header::CACHE_CONTROL,
+            #[cfg(not(debug_assertions))]
+            header::HeaderValue::from_static("public, max-age=1800"),
+            #[cfg(debug_assertions)]
+            header::HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        )
         .body(Body::new(http_body_util::Full::from(bytes)))?)
 }

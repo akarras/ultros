@@ -7,6 +7,7 @@ use crate::components::toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpa
 use crate::components::world_picker::WorldPicker;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
+use crate::routes::item_explorer::resolve_category_param;
 use crate::routes::item_explorer_roles::{RoleGroup, role_for_job_abbr, role_for_weapon_category};
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, href_with_world};
 use leptos::prelude::*;
@@ -22,15 +23,8 @@ pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&st
     if jobset.is_some() {
         return Some(5);
     }
-    let cat_raw = category?;
-    let cat_name = percent_encoding::percent_decode_str(cat_raw)
-        .decode_utf8()
-        .ok()?;
     let data = xiv_gen_db::data();
-    data.item_search_categorys
-        .values()
-        .find(|cat| cat.name == cat_name)
-        .map(|cat| cat.category)
+    resolve_category_param(data, category?).map(|cat| cat.category)
 }
 
 /// Return the search categories that belong to a non-job group
@@ -175,13 +169,19 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                     // belongs to the selected group, else a browse prompt.
                     let button_label = if active_group.get() == Some(group) {
                         let p = params.get();
-                        p.get("jobset")
-                            .or_else(|| p.get("category"))
-                            .as_ref()
-                            .and_then(|s| {
-                                percent_encoding::percent_decode_str(s).decode_utf8().ok()
-                            })
-                            .map(|s| s.to_string())
+                        match p.get("jobset") {
+                            Some(jobset) => percent_encoding::percent_decode_str(&jobset)
+                                .decode_utf8()
+                                .ok()
+                                .map(|s| s.to_string()),
+                            // The category param is an id, so resolve it back
+                            // to the localized name instead of labelling the
+                            // trigger with a bare number.
+                            None => p.get("category").and_then(|cat| {
+                                resolve_category_param(data, &cat)
+                                    .map(|category| category.name.clone())
+                            }),
+                        }
                     } else {
                         None
                     }
@@ -228,7 +228,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                             .collect();
                         for (name, id) in category_chips_for_group(1) {
                             let href = href_with_world(
-                                format!("/items/category/{}", name.replace('/', "%2F")),
+                                format!("/items/category/{}", id.0),
                                 world.as_deref(),
                             );
                             let role = data
@@ -263,7 +263,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                 .map(|(name, id)| PopoverLink {
                                     label: name.to_string(),
                                     href: href_with_world(
-                                        format!("/items/category/{}", name.replace('/', "%2F")),
+                                        format!("/items/category/{}", id.0),
                                         world.as_deref(),
                                     ),
                                     icon: PopoverIcon::Category(id),
@@ -277,7 +277,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                 .into_iter()
                                 .map(|(name, id)| {
                                     let href = href_with_world(
-                                        format!("/items/category/{}", name.replace('/', "%2F")),
+                                        format!("/items/category/{}", id.0),
                                         world.as_deref(),
                                     );
                                     view! {
@@ -320,6 +320,31 @@ mod tests {
             active_group_from_route(None, Some("Pugilist%27s%20Arms")),
             Some(1),
         );
+    }
+
+    /// Category ids are the canonical route key — resolving them is what
+    /// keeps the toolbar's selected group identical between the English SSR
+    /// render and a localized client.
+    #[test]
+    fn active_group_resolves_a_numeric_category_id() {
+        let data = xiv_gen_db::data();
+        let weapon = data
+            .item_search_categorys
+            .values()
+            .filter(|cat| cat.category == 1)
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("weapons group must have categories");
+        assert_eq!(
+            active_group_from_route(None, Some(&weapon.key_id.0.to_string())),
+            Some(1),
+            "a numeric category id must select the category's own group",
+        );
+    }
+
+    #[test]
+    fn active_group_for_unknown_category_id_is_none() {
+        // Well past the end of the sheet; must not select a group.
+        assert_eq!(active_group_from_route(None, Some("999999")), None);
     }
 
     #[test]

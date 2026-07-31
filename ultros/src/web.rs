@@ -20,7 +20,7 @@ use axum::{Json, Router, middleware};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::Cookie;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
-use futures::future::{try_join, try_join_all};
+use futures::future::{try_join_all, try_join3};
 use hyper::header;
 use itertools::Itertools;
 use leptos::prelude::provide_context;
@@ -54,7 +54,7 @@ use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
     ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification, Retainer,
+    FfxivCharacterVerification, Retainer, WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_charts::data::buckets::{bucket_seconds_for_span, snap_bucket_seconds, widen_bucket};
@@ -239,10 +239,12 @@ async fn world_item_listings(
         .get_all_worlds_in(&selected_value)
         .ok_or_else(|| Error::msg("Unable to get worlds"))?;
     let db_clone = db.clone();
+    let db_clone_2 = db.clone();
     let world_iter = worlds.iter().copied();
-    let (listings, sales) = try_join(
+    let (listings, sales, last_updated) = try_join3(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
         db.get_sale_history_from_multiple_worlds(world_iter, item_id, 200),
+        db_clone_2.get_listing_last_updated_for_worlds(ItemId(item_id), &worlds),
     )
     .await
     .inspect_err(|e| tracing::error!(error = ?e, "Error getting listings"))?;
@@ -252,6 +254,13 @@ async fn world_item_listings(
             .flat_map(|(l, r)| r.map(|r| (l.into(), r.into())))
             .collect(),
         sales: sales.into_iter().map(|s| s.into()).collect(),
+        last_updated: last_updated
+            .into_iter()
+            .map(|updated| WorldItemLastUpdated {
+                world_id: updated.world_id,
+                updated_at: updated.date_time,
+            })
+            .collect(),
     };
     Ok(axum::Json(currently_shown))
 }
@@ -1954,7 +1963,10 @@ fn test_auth_routes() -> Router<WebState> {
     Router::new()
 }
 
-pub(crate) async fn start_web(state: WebState) {
+pub(crate) async fn start_web(
+    state: WebState,
+    prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
+) {
     // build our application with a route
     let worlds = state.world_helper.clone();
     let token = state.token.clone();
@@ -2195,7 +2207,7 @@ pub(crate) async fn start_web(state: WebState) {
                 .await
                 .unwrap();
         },
-        start_metrics_server(),
+        start_metrics_server(prometheus_handle),
     )
     .await;
 }
