@@ -14,13 +14,19 @@ use itertools::Itertools;
 use ultros_api_types::price_series::{PriceBucket, PriceSeries, SeriesGroup};
 use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
+use crate::charts::ChartMode;
 use crate::data::grouping::GroupLevel;
 use crate::data::stats::median;
 use crate::data::trend::least_squares;
 use crate::scale::{LinearScale, TimeScale, short_number};
 use crate::scene::{Color, Node, Scene, Stroke, TextAnchor};
-use crate::svg::dots_path_d;
+use crate::svg::{band_path_d, dots_path_d, rects_path_d, vlines_path_d};
 use crate::theme::Theme;
+
+/// Buckets with fewer sale rows than this render as a wick-only tick in
+/// candle mode: "range known, direction unknown". Two sales do not make an
+/// open/close trend.
+pub const MIN_CANDLE_SALES: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct PriceChartOptions {
@@ -260,13 +266,32 @@ pub fn build_price_history_chart(
         })
         .collect();
     let series_color = |index: usize| theme.palette[index % theme.palette.len()];
-    let visible_count = resolved.iter().filter(|s| !is_hidden(&s.name)).count();
+
+    // User-hidden plus mode-suppressed: modes with a series cap draw only
+    // the first `cap` visible series (spec: "shows only the first and
+    // surfaces a hint"). Suppressed series stay in `series_info` so the
+    // legend and the frontend hint can still name them. Axes, stats, volume
+    // and hover all consult this vector so they reflect what is drawn.
+    let mut draw_hidden: Vec<bool> = series_info.iter().map(|s| s.hidden).collect();
+    if let Some(cap) = options.mode.series_cap() {
+        let mut seen = 0usize;
+        for slot in draw_hidden.iter_mut() {
+            if !*slot {
+                seen += 1;
+                if seen > cap {
+                    *slot = true;
+                }
+            }
+        }
+    }
+    let visible_count = draw_hidden.iter().filter(|h| !**h).count();
 
     let all_visible_buckets = || {
         resolved
             .iter()
-            .filter(|s| !is_hidden(&s.name))
-            .flat_map(|s| s.buckets.iter())
+            .enumerate()
+            .filter(|(i, _)| !draw_hidden[*i])
+            .flat_map(|(_, s)| s.buckets.iter())
     };
 
     let Some((first_ts, last_ts)) = all_visible_buckets().map(|b| b.ts).minmax().into_option()
@@ -415,12 +440,15 @@ pub fn build_price_history_chart(
         }
     }
 
-    // ── Raw sale dots (under the lines) ─────────────────────────────────
+    // ── Raw sale dots (under the lines, Price mode only) ────────────────
     // Only drawn when the payload carries individual sales — dense windows
-    // omit `raw` and show only the VWAP lines.
-    if let Some(raw) = &series.raw {
+    // omit `raw` and show only the VWAP lines. Candle/Range modes already
+    // express intra-bucket spread, so dots would be noise there.
+    if options.mode == ChartMode::Price
+        && let Some(raw) = &series.raw
+    {
         for (index, s) in resolved.iter().enumerate() {
-            if series_info[index].hidden {
+            if draw_hidden[index] {
                 continue;
             }
             let color = series_color(index);
@@ -446,14 +474,14 @@ pub fn build_price_history_chart(
         }
     }
 
-    // ── VWAP lines (the primary visual) ─────────────────────────────────
+    // ── Hover values (every mode) ───────────────────────────────────────
+    // Hover values are VWAP in every mode — the tooltip's one number stays
+    // consistent as the user flips modes.
     let mut hover_map: BTreeMap<NaiveDateTime, Vec<Option<(f32, f64)>>> = BTreeMap::new();
     for (index, s) in resolved.iter().enumerate() {
-        if series_info[index].hidden {
+        if draw_hidden[index] {
             continue;
         }
-        let color = series_color(index);
-        let mut line: Vec<(f32, f32)> = Vec::new();
         for bucket in &s.buckets {
             let Some(vwap) = bucket.vwap() else {
                 continue;
@@ -462,25 +490,145 @@ pub fn build_price_history_chart(
                 .entry(bucket.ts)
                 .or_insert_with(|| vec![None; resolved.len()])[index] =
                 Some((price.scale(vwap), vwap));
-            let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
-            line.push((time.scale(center), price.scale(vwap)));
         }
-        if line.len() > 1 {
-            if visible_count == 1 {
-                scene.nodes.push(Node::Area {
-                    points: line.clone(),
-                    baseline_y: price_bottom,
-                    fill: color.with_alpha(0.08),
-                });
+    }
+
+    // ── Price lane, per mode ────────────────────────────────────────────
+    let half_bucket = TimeDelta::seconds(bucket_secs / 2);
+    match options.mode {
+        ChartMode::Price | ChartMode::Density => {
+            // VWAP polyline per series, area fill when a single series is
+            // visible. (`Density` never reaches this layout in practice —
+            // it has its own — but falls back to Price rendering if it does.)
+            for (index, s) in resolved.iter().enumerate() {
+                if draw_hidden[index] {
+                    continue;
+                }
+                let color = series_color(index);
+                let line: Vec<(f32, f32)> = s
+                    .buckets
+                    .iter()
+                    .filter_map(|b| {
+                        b.vwap()
+                            .map(|v| (time.scale(b.ts + half_bucket), price.scale(v)))
+                    })
+                    .collect();
+                if line.len() > 1 {
+                    if visible_count == 1 {
+                        scene.nodes.push(Node::Area {
+                            points: line.clone(),
+                            baseline_y: price_bottom,
+                            fill: color.with_alpha(0.08),
+                        });
+                    }
+                    scene.nodes.push(Node::Polyline {
+                        points: line,
+                        stroke: Stroke {
+                            color,
+                            width: 2.0,
+                            dash: None,
+                        },
+                    });
+                }
             }
-            scene.nodes.push(Node::Polyline {
-                points: line,
-                stroke: Stroke {
-                    color,
-                    width: 2.0,
-                    dash: None,
-                },
-            });
+        }
+        ChartMode::Candles => {
+            if let Some((_, s)) = resolved.iter().enumerate().find(|(i, _)| !draw_hidden[*i]) {
+                let bucket_px =
+                    time.scale(first_ts + TimeDelta::seconds(bucket_secs)) - time.scale(first_ts);
+                let body_w = (bucket_px * 0.6).clamp(1.5, 18.0);
+                let mut up: Vec<(f32, f32, f32, f32)> = Vec::new();
+                let mut down: Vec<(f32, f32, f32, f32)> = Vec::new();
+                let mut wicks: Vec<(f32, f32, f32)> = Vec::new();
+                for b in &s.buckets {
+                    let x = time.scale(b.ts + half_bucket);
+                    wicks.push((x, price.scale(b.high as f64), price.scale(b.low as f64)));
+                    if b.sales < MIN_CANDLE_SALES {
+                        continue; // wick-only tick: range known, direction unknown
+                    }
+                    let y_open = price.scale(b.open as f64);
+                    let y_close = price.scale(b.close as f64);
+                    let rect = (
+                        x - body_w / 2.0,
+                        y_open.min(y_close),
+                        body_w,
+                        (y_open - y_close).abs().max(1.2),
+                    );
+                    if b.close >= b.open {
+                        up.push(rect);
+                    } else {
+                        down.push(rect);
+                    }
+                }
+                if let Some(d) = vlines_path_d(&wicks) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: None,
+                        stroke: Some(Stroke {
+                            color: theme.text_muted.with_alpha(0.8),
+                            width: 1.0,
+                            dash: None,
+                        }),
+                    });
+                }
+                if let Some(d) = rects_path_d(&up) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(theme.candle_up),
+                        stroke: None,
+                    });
+                }
+                if let Some(d) = rects_path_d(&down) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(theme.candle_down),
+                        stroke: None,
+                    });
+                }
+            }
+        }
+        ChartMode::Range => {
+            let visible: Vec<usize> = (0..resolved.len()).filter(|i| !draw_hidden[*i]).collect();
+            let curve = |s: &ResolvedSeries, f: fn(&PriceBucket) -> i32| -> Vec<(f32, f32)> {
+                s.buckets
+                    .iter()
+                    .map(|b| (time.scale(b.ts + half_bucket), price.scale(f(b) as f64)))
+                    .collect()
+            };
+            // Bands for every drawn series first, medians after, so the p50
+            // lines always read on top of both ribbons.
+            for &i in &visible {
+                let s = &resolved[i];
+                let color = series_color(i);
+                if let Some(d) = band_path_d(&curve(s, |b| b.high), &curve(s, |b| b.low)) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(color.with_alpha(0.08)),
+                        stroke: None,
+                    });
+                }
+                if let Some(d) = band_path_d(&curve(s, |b| b.p75), &curve(s, |b| b.p25)) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(color.with_alpha(0.20)),
+                        stroke: None,
+                    });
+                }
+            }
+            for &i in &visible {
+                let s = &resolved[i];
+                let p50 = curve(s, |b| b.p50);
+                if p50.len() > 1 {
+                    scene.nodes.push(Node::Polyline {
+                        points: p50,
+                        stroke: Stroke {
+                            color: series_color(i),
+                            width: 2.0,
+                            dash: None,
+                        },
+                    });
+                }
+            }
         }
     }
 
@@ -734,6 +882,175 @@ mod tests {
             "unknown world id 999 must be dropped"
         );
         assert!(model.series.iter().all(|s| s.name != "999"));
+    }
+
+    /// A one-world series with `n` daily buckets; `sales_per_bucket` drives
+    /// the sparse-candle rule.
+    fn one_world_series(n: usize, sales_per_bucket: u32) -> PriceSeries {
+        let buckets = (0..n)
+            .map(|i| {
+                let mut b = bucket(1_700_006_400 + i as i64 * 86_400, 100, 120, 90, 105, 2);
+                b.sales = sales_per_bucket;
+                b
+            })
+            .collect();
+        PriceSeries {
+            bucket_seconds: 86_400,
+            group: SeriesGroup::World,
+            from: crate::test_util::ts(1_700_006_400),
+            to: crate::test_util::ts(1_700_006_400 + n as i64 * 86_400),
+            series: vec![PriceSeriesEntry { id: 1, buckets }],
+            raw: None,
+        }
+    }
+
+    fn candle_options() -> PriceChartOptions {
+        PriceChartOptions {
+            mode: ChartMode::Candles,
+            show_market_average: false,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn candles_batch_into_single_digit_node_count() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &one_world_series(2_000, 5),
+            &candle_options(),
+        );
+        let paths = count(&scene, |n| matches!(n, Node::Path { .. }));
+        assert!(
+            paths <= 3,
+            "2,000 candles must batch into <= 3 Path nodes, got {paths}"
+        );
+        assert!(paths >= 2, "expected wick + body paths");
+        assert_eq!(
+            count(&scene, |n| matches!(n, Node::Polyline { .. })),
+            0,
+            "no VWAP line in candle mode"
+        );
+    }
+
+    #[test]
+    fn sparse_buckets_render_wick_only_ticks() {
+        // sales < 3 per bucket: range known, direction unknown -> no bodies.
+        let scene =
+            build_price_history_scene(&world_helper(), &one_world_series(10, 2), &candle_options());
+        let fills = count(&scene, |n| matches!(n, Node::Path { fill: Some(_), .. }));
+        assert_eq!(fills, 0, "sparse buckets must not grow candle bodies");
+        let strokes = count(&scene, |n| {
+            matches!(
+                n,
+                Node::Path {
+                    stroke: Some(_),
+                    fill: None,
+                    ..
+                }
+            )
+        });
+        assert_eq!(strokes, 1, "one batched wick path");
+    }
+
+    #[test]
+    fn flat_prices_keep_a_visible_body_floor() {
+        // open == close == high == low: bodies get the 1.2px floor rather
+        // than disappearing.
+        let mut series = one_world_series(5, 5);
+        for b in &mut series.series[0].buckets {
+            b.open = 100;
+            b.close = 100;
+            b.high = 100;
+            b.low = 100;
+        }
+        let scene = build_price_history_scene(&world_helper(), &series, &candle_options());
+        let body_d = scene
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                Node::Path {
+                    d, fill: Some(_), ..
+                } => Some(d.clone()),
+                _ => None,
+            })
+            .expect("flat candles must still emit a body path");
+        assert!(
+            body_d.contains("v1.2"),
+            "zero-height bodies floor at 1.2px: {body_d}"
+        );
+    }
+
+    #[test]
+    fn candles_draw_only_the_first_visible_series() {
+        let model =
+            build_price_history_chart(&world_helper(), &two_world_series(), &candle_options());
+        // Metadata keeps both series (legend + the frontend's hint need them)…
+        assert_eq!(model.series.len(), 2);
+        // …but only one series' candles draw: the fixture trends up
+        // (close > open, sales = 3), so exactly one up-body path exists.
+        let fills = count(&model.scene, |n| {
+            matches!(n, Node::Path { fill: Some(_), .. })
+        });
+        assert_eq!(fills, 1, "one body path for the single drawn series");
+    }
+
+    fn range_options() -> PriceChartOptions {
+        PriceChartOptions {
+            mode: ChartMode::Range,
+            show_market_average: false,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn range_mode_emits_two_bands_and_a_median_per_series_median_last() {
+        let model =
+            build_price_history_chart(&world_helper(), &two_world_series(), &range_options());
+        let bands = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Path { fill: Some(_), .. }))
+            .count();
+        assert_eq!(bands, 4, "low-high + p25-p75 band per series, two series");
+        let polylines: Vec<usize> = model
+            .scene
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| matches!(n, Node::Polyline { .. }).then_some(i))
+            .collect();
+        assert_eq!(polylines.len(), 2, "one p50 median line per series");
+        let last_band = model
+            .scene
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| matches!(n, Node::Path { fill: Some(_), .. }).then_some(i))
+            .max()
+            .unwrap();
+        assert!(
+            polylines.iter().all(|i| *i > last_band),
+            "medians draw after every band"
+        );
+    }
+
+    #[test]
+    fn range_mode_caps_at_two_visible_series() {
+        let mut series = two_world_series();
+        // A third resolvable series (world 3 = Behemoth in the fixture tree).
+        let mut third = series.series[0].clone();
+        third.id = 3;
+        series.series.push(third);
+        let model = build_price_history_chart(&world_helper(), &series, &range_options());
+        assert_eq!(model.series.len(), 3, "metadata keeps all three");
+        let medians = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Polyline { .. }))
+            .count();
+        assert_eq!(medians, 2, "third series is mode-suppressed");
     }
 
     #[test]
