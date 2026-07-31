@@ -849,14 +849,17 @@ fn AnalyzerTable(
     // terms are reactive (resize, and any reflow above the pane); the
     // document-space top (viewport top + scroll y) is constant under page
     // scroll, so the pane does not jiggle while the user scrolls to the
-    // footer. 0.0 before hydration → the SSR fallback height.
+    // footer.
     let pane_root = NodeRef::<leptos::html::Div>::new();
     let pane_bounds = use_element_bounding(pane_root);
     let (_, window_scroll_y) = use_window_scroll();
     let window_size = use_window_size();
     let pane_height = Memo::new(move |_| {
         let window_h = window_size.height.get();
-        if window_h <= 0.0 {
+        // `use_window_size` is INFINITY on the server (leptos-use's ssr
+        // feature never measures), not 0.0 — without the finiteness check
+        // SSR would ship `height:2147483647px` (i32 saturation).
+        if !window_h.is_finite() || window_h <= 0.0 {
             return 640.0; // SSR / pre-hydration fallback
         }
         let doc_top = pane_bounds.top.get() + window_scroll_y.get();
@@ -2297,9 +2300,9 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                         <AnalyzerWorldNavigator />
                     </div>
 
-                    // Main Content. No `min-h-screen` and no scroll container:
-                    // the table virtualizes against the window, so the page
-                    // itself is what scrolls.
+                    // Main Content. AnalyzerTable renders a fixed-height pane
+                    // (measured against the viewport) whose scroller owns all
+                    // scrolling; this wrapper adds no height or overflow.
                     <div>
                         <Suspense fallback=BoxSkeleton>
                             {move || {
