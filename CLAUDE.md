@@ -15,7 +15,11 @@ There are **no git submodules** in this repo anymore. FFXIV game data (item/reci
 - **Worktrees**: no setup needed — `git worktree add` checks out LFS content the same as a normal clone as long as `git lfs install` has been run once on the machine.
 - **Regenerating packs**: `cargo run --release -p game-data-pack -- --pinned` rebuilds the packs from the pins already recorded in `data/manifest.toml` (reproducible, no version bump). Pass `--latest` instead to bump the pins to the newest upstream data and regenerate against that.
 - **`data/manifest.toml`**: records exactly which upstream commit/release each pack was generated from — this is the source of truth for "what version of game data is this."
-- **Auto-updates**: `.github/workflows/update_game_data.yml` runs daily, regenerates packs with `--latest`, and opens a PR if anything changed. No manual submodule bumping required.
+- **Updating game data**: done by hand (in practice, by an agent), not on a schedule. A game-data
+  bump can break consumers — a renamed sheet or column shifts `xiv-gen`'s generated types — so the
+  regeneration and the fallout need fixing in the same change. Run
+  `cargo run --release -p game-data-pack -- --latest`, then `cargo check -p xiv-gen-db --features embed`
+  and `cargo test -p game-data-pack`, and resolve whatever the bump broke before opening the PR.
 
 If you genuinely can't get LFS content (e.g. fully offline), **at least run `cargo fmt --all -- --check`** — it doesn't need the packs and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
 
