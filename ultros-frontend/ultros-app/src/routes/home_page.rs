@@ -68,19 +68,25 @@ const HOME_JSON_LD: &str = r#"{
 }"#;
 
 #[component]
-fn ToolChip(href: &'static str, label: AnyView, children: ChildrenFn) -> impl IntoView {
+fn ToolChip(
+    href: &'static str,
+    label: AnyView,
+    description: AnyView,
+    children: ChildrenFn,
+) -> impl IntoView {
     // Icon rail entry: large icon on top, label beneath, no border or
     // background by default. Accent glow appears on hover so the rail
     // stays quiet at rest and signals intent on focus.
     view! {
         <A
             href=href
-            attr:class="group flex flex-col items-center justify-center gap-2 px-3 py-3 rounded-lg hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors min-w-[88px] text-center"
+            attr:class="group flex flex-col items-center justify-start gap-2 px-4 py-4 rounded-xl hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors min-w-[160px] max-w-[200px] text-center snap-start"
         >
-            <span class="text-[color:var(--accent)] group-hover:text-[color:var(--color-text)] group-hover:drop-shadow-[0_0_6px_var(--accent-glow)] transition-all" aria-hidden="true">
+            <span class="text-[color:var(--accent)] group-hover:text-[color:var(--color-text)] group-hover:drop-shadow-[0_0_6px_var(--accent-glow)] transition-all shrink-0" aria-hidden="true">
                 {children().into_view()}
             </span>
-            <span class="text-xs font-medium text-[color:var(--color-text-muted)] group-hover:text-[color:var(--color-text)] whitespace-nowrap transition-colors">{label}</span>
+            <span class="text-xs font-semibold text-[color:var(--color-text)] whitespace-nowrap transition-colors">{label}</span>
+            <span class="text-[10px] text-[color:var(--color-text-muted)]/80 leading-normal transition-colors line-clamp-2">{description}</span>
         </A>
     }
     .into_any()
@@ -145,17 +151,7 @@ pub fn HomePage() -> impl IntoView {
         <MetaCanonical href="https://ultros.app/" />
         <Script type_="application/ld+json">{HOME_JSON_LD}</Script>
         <div class="main-content p-2 sm:p-6">
-            <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row-reverse mx-auto items-start max-w-7xl">
-                // Right sidebar. Sticky only from `lg`, where it is an actual
-                // side column: below that the layout stacks, so pinning it
-                // parks a transparent panel over the column scrolling behind
-                // it and the two render on top of each other.
-                <div class="flex flex-col w-full lg:w-[424px] gap-6 lg:sticky lg:top-4">
-                    <LiveSaleTicker />
-                    <RecentlyViewed />
-                    <Ad class="w-full aspect-square rounded-2xl overflow-hidden" />
-                </div>
-
+            <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row mx-auto items-start max-w-7xl">
                 // Main content
                 <div class="flex w-full min-w-0 flex-col grow gap-8">
                     {move || needs_onboarding.get().then(|| view! {
@@ -226,25 +222,25 @@ pub fn HomePage() -> impl IntoView {
                                         <p class="text-lg text-[color:var(--color-text-muted)] max-w-prose leading-relaxed">
                                             {move || t_string!(i18n, ultros_description)}
                                         </p>
-                                        <div class="flex flex-wrap items-center gap-3 pt-4">
-                                            <A
-                                                href="/help/getting-started"
-                                                attr:class="btn-primary py-3 px-6 text-lg"
-                                            >
-                                                {move || t_string!(i18n, get_started)}
-                                            </A>
+                                        <div class="flex flex-wrap items-center gap-4 pt-4">
                                             <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
                                                 <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
                                                 <span>{move || t_string!(i18n, open_flip_finder)}</span>
                                             </A>
-                                            <a
-                                                rel="external"
-                                                href="/invitebot"
-                                                class="btn-secondary py-3 px-6 text-lg"
+                                            <A
+                                                href="/welcome"
+                                                attr:class="btn-secondary py-3 px-6 text-lg"
+                                            >
+                                                <Icon icon=i::FaMapLocationDotSolid width="1.25em" height="1.25em" />
+                                                <span>{move || t_string!(i18n, set_home_world)}</span>
+                                            </A>
+                                            <A
+                                                href="/bot"
+                                                attr:class="text-[color:var(--accent)] hover:underline flex items-center gap-1.5 font-semibold text-lg ml-2"
                                             >
                                                 <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
-                                                <span>{move || t_string!(i18n, invite_bot)}</span>
-                                            </a>
+                                                <span>{move || t_string!(i18n, discord_bot)}</span>
+                                            </A>
                                         </div>
                                     </div>
                                     <div class="hidden md:flex md:w-56 lg:w-64 aspect-square items-center justify-center animate-float opacity-60">
@@ -275,37 +271,47 @@ pub fn HomePage() -> impl IntoView {
                     <section class="dashboard-section">
                         <h2 class="dashboard-section-title mb-3">{t!(i18n, side_nav_tools)}</h2>
                         <div class="flex max-w-full gap-1 overflow-x-auto pb-2 -mx-2 px-2 scroll-snap-x snap-x">
-                            <ToolChip href="/items" label=t!(i18n, item_explorer).into_any()>
+                            <ToolChip href="/items" label=t!(i18n, item_explorer).into_any() description=t!(i18n, item_explorer_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaScrewdriverWrenchSolid />
                             </ToolChip>
-                            <ToolChip href="/flip-finder" label=t!(i18n, flip_finder).into_any()>
+                            <ToolChip href="/flip-finder" label=t!(i18n, flip_finder).into_any() description=t!(i18n, flip_finder_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaMoneyBillTrendUpSolid />
                             </ToolChip>
-                            <ToolChip href="/vendor-resale" label=t!(i18n, vendor_resale).into_any()>
+                            <ToolChip href="/vendor-resale" label=t!(i18n, vendor_resale).into_any() description=t!(i18n, vendor_resale_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaShopSolid />
                             </ToolChip>
-                            <ToolChip href="/recipe-analyzer" label=t!(i18n, recipe_analyzer).into_any()>
+                            <ToolChip href="/recipe-analyzer" label=t!(i18n, recipe_analyzer).into_any() description=t!(i18n, recipe_analyzer_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaHammerSolid />
                             </ToolChip>
-                            <ToolChip href="/leve-analyzer" label=t!(i18n, leve_analyzer).into_any()>
+                            <ToolChip href="/leve-analyzer" label=t!(i18n, leve_analyzer).into_any() description=t!(i18n, leve_analyzer_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaScrollSolid />
                             </ToolChip>
-                            <ToolChip href="/trends" label=t!(i18n, market_trends).into_any()>
+                            <ToolChip href="/trends" label=t!(i18n, market_trends).into_any() description=t!(i18n, market_trends_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::FaChartLineSolid />
                             </ToolChip>
-                            <ToolChip href="/retainers" label=t!(i18n, retainers).into_any()>
+                            <ToolChip href="/retainers" label=t!(i18n, retainers).into_any() description=t!(i18n, retainers_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::BiGroupSolid />
                             </ToolChip>
-                            <ToolChip href="/list" label=t!(i18n, lists).into_any()>
+                            <ToolChip href="/list" label=t!(i18n, lists).into_any() description=t!(i18n, lists_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::AiOrderedListOutlined />
                             </ToolChip>
-                            <ToolChip href="/currency-exchange" label=t!(i18n, currency_exchange).into_any()>
+                            <ToolChip href="/currency-exchange" label=t!(i18n, currency_exchange).into_any() description=t!(i18n, currency_exchange_desc).into_any()>
                                 <Icon width="2em" height="2em" icon=i::RiExchangeFinanceLine />
                             </ToolChip>
                         </div>
                     </section>
 
                     <Ad class="w-full max-w-96 aspect-[21/9] rounded-2xl overflow-hidden" />
+                </div>
+
+                // Right sidebar. Sticky only from `lg`, where it is an actual
+                // side column: below that the layout stacks, so pinning it
+                // parks a transparent panel over the column scrolling behind
+                // it and the two render on top of each other.
+                <div class="flex flex-col w-full lg:w-[424px] gap-6 lg:sticky lg:top-4">
+                    <LiveSaleTicker />
+                    <RecentlyViewed />
+                    <Ad class="w-full aspect-square rounded-2xl overflow-hidden" />
                 </div>
             </div>
         </div>

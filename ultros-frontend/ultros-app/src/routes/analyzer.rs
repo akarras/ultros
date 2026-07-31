@@ -3009,7 +3009,7 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     view! {
         <div class="flex flex-col md:flex-row items-center gap-2">
-            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, analyzer_select_world)}</label>
+            <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world)}</label>
             <div class="w-full md:w-auto">
                 <WorldOnlyPicker
                     current_world=current_world.into()
