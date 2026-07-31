@@ -427,7 +427,7 @@
     "analyzer_index_title": "倒卖搜索",
     "analyzer_index_desc_1": "倒卖搜索帮助你在 FINAL FANTASY XIV 的市场上找到其他服务器价格更低、本服务器价格更高的物品，通过市场套利赚取金币。",
     "analyzer_index_desc_2": "调整参数，找到畅销物品，最大化你的利润。",
-    "analyzer_index_choose_world": "选择你要出售商品的服务器：",
+    "analyzer_index_choose_world": "选择你要出售物品的服务器：",
     "analyzer_col_last_sold": "最近售出",
     "analyzer_placeholder_7d_12h": "如 7d 12h",
     "analyzer_last_sold_never": "—",

@@ -427,7 +427,7 @@
     "analyzer_index_title": "フリップファインダー",
     "analyzer_index_desc_1": "アナライザーは、他ワールドでは安く、自分のワールドでは高く売れるアイテムを FINAL FANTASY XIV のマーケットボードから見つけ、市場アービトラージでギルを稼ぐためのツールです。",
     "analyzer_index_desc_2": "パラメーターを調整して、よく売れて利益を最大化できるアイテムを見つけましょう。",
-    "analyzer_index_choose_world": "フリップ品を販売するワールドを選択してください：",
+    "analyzer_index_choose_world": "転売品を販売するワールドを選択してください：",
     "vendor_resale_minimum_profit_title": "最低利益",
     "vendor_resale_minimum_profit_desc": "表示したい最低利益額を設定",
     "vendor_resale_placeholder_10000": "例：10000",

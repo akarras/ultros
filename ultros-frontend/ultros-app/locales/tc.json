@@ -427,7 +427,7 @@
     "analyzer_index_title": "倒賣搜尋",
     "analyzer_index_desc_1": "倒賣搜尋協助你在 FINAL FANTASY XIV 的市場上找出在其他伺服器價格較低、本伺服器價格較高的物品，透過市場套利賺取金幣。",
     "analyzer_index_desc_2": "調整參數，找到暢銷物品，將利潤最大化。",
-    "analyzer_index_choose_world": "選擇你要出售商品的伺服器：",
+    "analyzer_index_choose_world": "選擇你要出售物品的伺服器：",
     "vendor_resale_minimum_profit_title": "最低利潤",
     "vendor_resale_minimum_profit_desc": "設定希望顯示的最低利潤額",
     "vendor_resale_placeholder_10000": "例如 10000",
