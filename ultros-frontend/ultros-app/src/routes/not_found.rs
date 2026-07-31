@@ -1,13 +1,21 @@
-use crate::components::meta::MetaTitle;
+use crate::components::meta::{MetaRobotsNoIndex, MetaTitle};
 use crate::i18n::*;
 use leptos::prelude::*;
 use leptos_router::components::A;
 
 #[component]
 pub fn NotFound() -> impl IntoView {
+    #[cfg(feature = "ssr")]
+    {
+        if let Some(response) = use_context::<leptos_axum::ResponseOptions>() {
+            response.set_status(axum::http::StatusCode::NOT_FOUND);
+        }
+    }
+
     let i18n = use_i18n();
     view! {
         <MetaTitle title=move || t_string!(i18n, not_found_meta_title).to_string() />
+        <MetaRobotsNoIndex />
         <div class="flex flex-col items-center justify-center min-h-[80vh] text-center space-y-12 p-4 overflow-hidden relative select-none">
 
             // Background effect

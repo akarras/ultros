@@ -17,9 +17,10 @@ use crate::error::AppError;
 use crate::global_state::LocalWorldData;
 use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
-use crate::global_state::xiv_data::tracked_data;
+use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
 use crate::routes::item_view_scope::item_href;
+use crate::routes::not_found::NotFound;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
@@ -1670,8 +1671,27 @@ fn DiscordCommandChip(
     }
 }
 
+/// Gates the item page on the `:id` route param actually naming a real item.
+/// A param that fails to parse, or parses to an id with no matching item,
+/// previously fell through to `unwrap_or_default()` and silently rendered an
+/// empty "item 0" page with a 200 status — an indexable junk page for every
+/// garbage `/item/<id>` URL. Render `NotFound` (which sets the 404 status)
+/// instead.
 #[component]
 pub fn ItemView() -> impl IntoView {
+    let params = use_params_map();
+    let item_id_valid =
+        Memo::new(move |_| params.with(|p| resolve_item_id(p.get_str("id"))).is_some());
+
+    view! {
+        <Show when=move || item_id_valid.get() fallback=|| view! { <NotFound /> }.into_any()>
+            <ItemViewContent />
+        </Show>
+    }
+}
+
+#[component]
+fn ItemViewContent() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let params = use_params_map();
     let query = use_query_map();
