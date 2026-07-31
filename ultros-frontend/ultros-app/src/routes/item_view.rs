@@ -1671,6 +1671,65 @@ fn DiscordCommandChip(
     }
 }
 
+/// Builds the item page's `BreadcrumbList` JSON-LD.
+///
+/// `category` is `(display_name, search_category_id)`. The id — not the
+/// category's localized name — is what the URL is keyed on: #1001 moved
+/// `/items/category/:category` to an id precisely because the name differs per
+/// locale, so a name-keyed URL here would hand Google a link that doesn't
+/// resolve. This must keep matching the visible category link in the view below.
+fn build_breadcrumb_json_ld(
+    item_name: &str,
+    world_val: &str,
+    item_id_val: i32,
+    category: Option<(&str, i32)>,
+) -> String {
+    let mut items = vec![
+        serde_json::json!({
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://ultros.app/"
+        }),
+        serde_json::json!({
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Item Explorer",
+            "item": "https://ultros.app/items"
+        }),
+    ];
+
+    if let Some((c_name, category_id)) = category {
+        items.push(serde_json::json!({
+            "@type": "ListItem",
+            "position": 3,
+            "name": c_name,
+            "item": format!("https://ultros.app/items/category/{category_id}")
+        }));
+        items.push(serde_json::json!({
+            "@type": "ListItem",
+            "position": 4,
+            "name": item_name,
+            "item": format!("https://ultros.app/item/{world_val}/{item_id_val}")
+        }));
+    } else {
+        items.push(serde_json::json!({
+            "@type": "ListItem",
+            "position": 3,
+            "name": item_name,
+            "item": format!("https://ultros.app/item/{world_val}/{item_id_val}")
+        }));
+    }
+
+    let json_value = serde_json::json!({
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": items
+    });
+
+    serde_json::to_string(&json_value).unwrap_or_default()
+}
+
 /// Gates the item page on the `:id` route param actually naming a real item.
 /// A param that fails to parse, or parses to an id with no matching item,
 /// previously fell through to `unwrap_or_default()` and silently rendered an
@@ -1771,6 +1830,23 @@ fn ItemViewContent() -> impl IntoView {
         .to_string()
     });
 
+    // BreadcrumbList JSON-LD for Google Rich Results.
+    // We only emit BreadcrumbList markup (Home -> Item Explorer -> {category} -> {item})
+    // and purposely omit Product / AggregateOffer markup because:
+    // 1. Google's Product rich-result guidelines target real-world purchasable products with real currencies.
+    // 2. FFXIV gil is a fictional virtual currency and "GIL" is not a valid ISO 4217 code.
+    // 3. Placing fictional virtual currency values in Product / AggregateOffer markup can trigger structured data spam manual actions.
+    let json_ld = move || {
+        let name_val = item_name();
+        let world_val = world();
+        let item_id_val = item_id();
+        let category = item_category()
+            .and_then(|c| item_search_category().map(|s| (c, s)))
+            .map(|(c, s)| (c.name.as_str(), s.key_id.0));
+
+        build_breadcrumb_json_ld(&name_val, &world_val, item_id_val, category)
+    };
+
     view! {
         <MetaTitle title=move || {
             t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
@@ -1782,6 +1858,7 @@ fn ItemViewContent() -> impl IntoView {
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
         />
         <MetaCanonical href=move || format!("https://ultros.app/item/{}", item_id()) />
+        <script type="application/ld+json" inner_html=json_ld />
         <div class="min-h-screen">
             <div class="w-full px-0 sm:px-4 pt-4 sm:pt-5 pb-3">
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
@@ -2061,5 +2138,64 @@ mod tests {
         // Once it is disposed they must fall back rather than panic.
         assert!(with_or(&filtered_listings, true, |listings| listings.is_empty()));
         assert!(get_or_default(&filtered_listings).is_empty());
+    }
+
+    #[test]
+    fn test_build_breadcrumb_json_ld_with_category() {
+        let json_str = build_breadcrumb_json_ld(
+            "Excalibur",
+            "Gilgamesh",
+            12345,
+            Some(("Two-Handed Sword", 2)),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed["@context"], "https://schema.org");
+        assert_eq!(parsed["@type"], "BreadcrumbList");
+
+        let elements = parsed["itemListElement"].as_array().unwrap();
+        assert_eq!(elements.len(), 4);
+
+        assert_eq!(elements[0]["name"], "Home");
+        assert_eq!(elements[0]["item"], "https://ultros.app/");
+
+        assert_eq!(elements[1]["name"], "Item Explorer");
+        assert_eq!(elements[1]["item"], "https://ultros.app/items");
+
+        // The category link is keyed on the search-category id, matching both the
+        // visible link in the view and the `/items/category/:category` route as of
+        // #1001. Keying it on the localized name would emit a dead URL.
+        assert_eq!(elements[2]["name"], "Two-Handed Sword");
+        assert_eq!(elements[2]["item"], "https://ultros.app/items/category/2");
+
+        assert_eq!(elements[3]["name"], "Excalibur");
+        assert_eq!(
+            elements[3]["item"],
+            "https://ultros.app/item/Gilgamesh/12345"
+        );
+    }
+
+    #[test]
+    fn test_build_breadcrumb_json_ld_without_category() {
+        let json_str = build_breadcrumb_json_ld("Excalibur", "Gilgamesh", 12345, None);
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed["@context"], "https://schema.org");
+        assert_eq!(parsed["@type"], "BreadcrumbList");
+
+        let elements = parsed["itemListElement"].as_array().unwrap();
+        assert_eq!(elements.len(), 3);
+
+        assert_eq!(elements[0]["name"], "Home");
+        assert_eq!(elements[0]["item"], "https://ultros.app/");
+
+        assert_eq!(elements[1]["name"], "Item Explorer");
+        assert_eq!(elements[1]["item"], "https://ultros.app/items");
+
+        assert_eq!(elements[2]["name"], "Excalibur");
+        assert_eq!(
+            elements[2]["item"],
+            "https://ultros.app/item/Gilgamesh/12345"
+        );
     }
 }
