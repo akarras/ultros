@@ -5,11 +5,21 @@
 //! never become *wrong*, only incomplete (~4 appended rows a year). Any
 //! future poller is an optimisation over this seed, never a dependency.
 //!
-//! CN and KR run separate game versions on their own schedules; their
-//! tracks ship EMPTY until sourced carefully — an incomplete track draws
-//! nothing, which is strictly better than drawing wrong bands. Edits to
-//! the seed should be treated as needing review: a wrong date silently
-//! misattributes price moves.
+//! CN and KR run separate game versions on their own schedules and are
+//! seeded at expansion granularity (their sub-patch calendars live on the
+//! operators' notice archives; see the source notes on each seed). A track
+//! may be incomplete at the granularity level, but must never have a
+//! *mid-timeline* gap at the granularity it claims — a missing middle
+//! expansion would silently mislabel whole eras. Edits to the seed should
+//! be treated as needing review: a wrong date misattributes price moves.
+//!
+//! Sources (verified 2026-07-31): Global — ffxiv.consolegameswiki.com
+//! /wiki/Patches. CN — zh.wikipedia FFXIV version table + official
+//! actff1.web.sdo.com version pages (2.0 uses the 2014-08-25 open-test
+//! date, when the CN economy went live; the 2015-04-01 公测 relaunch kept
+//! characters). KR — ff14.co.kr notice archive via press coverage; KR
+//! updates run simultaneously with Global from 7.5 (2026-04-28) onward,
+//! so future KR rows simply mirror Global's.
 
 use std::sync::LazyLock;
 
@@ -54,31 +64,55 @@ const GLOBAL_SEED: &[(u16, (i32, u32, u32))] = &[
     (210, (2013, 12, 17)),
     (220, (2014, 3, 27)),
     (230, (2014, 7, 8)),
+    (235, (2014, 8, 18)),
     (240, (2014, 10, 28)),
-    (250, (2015, 2, 24)),
+    (245, (2014, 12, 8)),
+    (250, (2015, 1, 20)),
+    (255, (2015, 3, 30)),
     (300, (2015, 6, 23)),
     (310, (2015, 11, 10)),
+    (315, (2015, 12, 15)),
     (320, (2016, 2, 23)),
+    (325, (2016, 3, 28)),
     (330, (2016, 6, 7)),
+    (335, (2016, 7, 18)),
     (340, (2016, 9, 27)),
+    (345, (2016, 10, 31)),
     (350, (2017, 1, 17)),
+    (355, (2017, 2, 27)),
     (400, (2017, 6, 20)),
     (410, (2017, 10, 10)),
+    (415, (2017, 11, 20)),
     (420, (2018, 1, 30)),
+    (425, (2018, 3, 12)),
     (430, (2018, 5, 22)),
+    (435, (2018, 7, 3)),
     (440, (2018, 9, 18)),
+    (445, (2018, 11, 5)),
     (450, (2019, 1, 8)),
+    (455, (2019, 2, 11)),
     (500, (2019, 7, 2)),
+    (505, (2019, 7, 29)),
     (510, (2019, 10, 29)),
+    (515, (2019, 12, 9)),
     (520, (2020, 2, 18)),
+    (525, (2020, 4, 6)),
     (530, (2020, 8, 11)),
+    (535, (2020, 10, 12)),
     (540, (2020, 12, 8)),
+    (545, (2021, 2, 1)),
     (550, (2021, 4, 13)),
+    (555, (2021, 5, 24)),
     (600, (2021, 12, 7)),
+    (605, (2022, 1, 3)),
     (610, (2022, 4, 12)),
+    (615, (2022, 6, 6)),
     (620, (2022, 8, 23)),
+    (625, (2022, 10, 17)),
     (630, (2023, 1, 10)),
+    (635, (2023, 3, 6)),
     (640, (2023, 5, 23)),
+    (645, (2023, 7, 17)),
     (650, (2023, 10, 3)),
     (655, (2024, 1, 16)),
     (700, (2024, 7, 2)),
@@ -88,21 +122,55 @@ const GLOBAL_SEED: &[(u16, (i32, u32, u32))] = &[
     (720, (2025, 3, 25)),
     (725, (2025, 5, 27)),
     (730, (2025, 8, 5)),
+    (735, (2025, 10, 7)),
+    (740, (2025, 12, 16)),
+    (745, (2026, 3, 3)),
+    (750, (2026, 4, 28)),
+    (755, (2026, 7, 28)),
 ];
 
-/// The whole calendar, all tracks. CN/KR are intentionally empty — see the
-/// module docs.
+/// Chinese server — expansion launches (complete at that granularity).
+/// Sub-patches follow their own cadence; append from the 盛趣 notice
+/// archive when sourcing them.
+const CHINA_SEED: &[(u16, (i32, u32, u32))] = &[
+    (200, (2014, 8, 25)),
+    (300, (2015, 11, 19)),
+    (400, (2017, 9, 26)),
+    (500, (2019, 10, 15)),
+    (600, (2022, 3, 16)),
+    (700, (2024, 9, 27)),
+];
+
+/// Korean server — expansion launches from 3.0 (the 2.0-era leading gap is
+/// safe: no bands draw before the first row). 7.5 marks the switch to
+/// simultaneous Global/KR updates; rows after it mirror Global's dates.
+const KOREA_SEED: &[(u16, (i32, u32, u32))] = &[
+    (300, (2016, 6, 14)),
+    (400, (2017, 12, 19)),
+    (500, (2019, 12, 3)),
+    (600, (2022, 5, 10)),
+    (700, (2024, 12, 3)),
+    (750, (2026, 4, 28)),
+];
+
+/// The whole calendar, all tracks — Global at patch granularity (majors +
+/// x.x5 point patches), CN/KR at expansion granularity. See module docs.
 pub static GAME_PATCHES: LazyLock<Vec<GamePatch>> = LazyLock::new(|| {
-    GLOBAL_SEED
-        .iter()
-        .map(|&(version, (y, m, d))| GamePatch {
-            track: PatchTrack::Global,
-            version,
-            released: NaiveDate::from_ymd_opt(y, m, d)
-                .expect("seed dates are hand-checked calendar dates"),
-            ex_version: (version / 100 - 2) as u8,
-        })
-        .collect()
+    let expand = |track: PatchTrack, seed: &[(u16, (i32, u32, u32))]| {
+        seed.iter()
+            .map(|&(version, (y, m, d))| GamePatch {
+                track,
+                version,
+                released: NaiveDate::from_ymd_opt(y, m, d)
+                    .expect("seed dates are hand-checked calendar dates"),
+                ex_version: (version / 100 - 2) as u8,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut all = expand(PatchTrack::Global, GLOBAL_SEED);
+    all.extend(expand(PatchTrack::China, CHINA_SEED));
+    all.extend(expand(PatchTrack::Korea, KOREA_SEED));
+    all
 });
 
 /// Region name → patch track. Data with a Global default, NOT a hardcoded
@@ -240,10 +308,40 @@ mod tests {
         assert!(all.windows(2).all(|w| w[0].released < w[1].released));
 
         assert!(visible_patches(PatchTrack::Global, 7 * DAY).is_empty());
-        assert!(
-            visible_patches(PatchTrack::China, 4 * 365 * DAY).is_empty(),
-            "CN track deliberately empty until sourced"
+        assert_eq!(
+            visible_patches(PatchTrack::China, 4 * 365 * DAY).len(),
+            6,
+            "CN seeded at expansion granularity, 2.0..=7.0"
         );
+        assert_eq!(
+            visible_patches(PatchTrack::Korea, 4 * 365 * DAY).len(),
+            5,
+            "KR seeded at expansion granularity from 3.0"
+        );
+    }
+
+    #[test]
+    fn no_track_has_a_mid_timeline_expansion_gap() {
+        // A missing MIDDLE expansion would silently mislabel whole eras
+        // (everything after the gap would wear the earlier expansion's
+        // band). Leading gaps are fine — nothing draws before the first
+        // row. So: within each track, expansion launches must be
+        // consecutive from the track's first one.
+        for track in [PatchTrack::Global, PatchTrack::China, PatchTrack::Korea] {
+            let launches: Vec<u8> = patches_for_track(track)
+                .filter(|p| p.version.is_multiple_of(100))
+                .map(|p| p.ex_version)
+                .collect();
+            for pair in launches.windows(2) {
+                assert_eq!(
+                    pair[1],
+                    pair[0] + 1,
+                    "{track:?} skips an expansion between {} and {}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        }
     }
 
     #[test]
