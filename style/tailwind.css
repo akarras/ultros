@@ -1945,6 +1945,10 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         padding: 0.75rem;
         height: 100dvh;
         background-color: var(--color-background);
+        /* The results list is a fixed-height virtual scroller; with the
+           on-screen keyboard open it can outgrow 100dvh, so the sheet
+           itself has to scroll or the tail becomes unreachable. */
+        overflow-y: auto;
     }
 }
 

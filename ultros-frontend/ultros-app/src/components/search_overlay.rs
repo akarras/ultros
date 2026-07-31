@@ -42,10 +42,14 @@ pub fn SearchOverlay() -> impl IntoView {
 
     view! {
         <Show when=move || open.get()>
+            // No `aria-modal="true"`: focus is not trapped and background
+            // content is not inert, so claiming it would tell assistive tech
+            // to ignore a page it can still tab into. Add the attribute when
+            // a real focus trap lands — the existing `Modal` component has
+            // the same gap and should get one at the same time.
             <div
                 class="search-overlay"
                 role="dialog"
-                aria-modal="true"
                 aria-label=t_string!(i18n, search).to_string()
                 on:keydown=on_keydown
             >
