@@ -59,6 +59,7 @@ pub mod sale_history_table;
 pub mod sales_cadence_badge;
 pub mod saved_views;
 pub mod search_box;
+pub mod search_overlay;
 pub mod section_nav;
 pub mod select;
 pub mod side_nav;

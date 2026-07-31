@@ -1,6 +1,8 @@
 use crate::components::ad::DesktopAdRail;
+use crate::components::search_overlay::SearchOverlay;
 use crate::components::side_nav::SideNav;
 use crate::components::top_bar::TopBar;
+use crate::global_state::search_overlay::provide_search_overlay_state;
 use crate::global_state::side_nav::provide_side_nav_settings;
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
@@ -11,6 +13,7 @@ use leptos_router::hooks::use_location;
 #[component]
 pub fn AppShell(children: Children) -> impl IntoView {
     let nav = provide_side_nav_settings();
+    provide_search_overlay_state();
     let location = use_location();
 
     // Dismiss the mobile drawer on any navigation.
@@ -59,6 +62,8 @@ pub fn AppShell(children: Children) -> impl IntoView {
             <div class="app-shell-ad-rail">
                 <DesktopAdRail />
             </div>
+
+            <SearchOverlay />
         </div>
     }
     .into_any()

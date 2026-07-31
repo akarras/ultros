@@ -6,7 +6,6 @@ use crate::i18n::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
-use leptos_hotkeys::use_hotkeys;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -132,7 +131,7 @@ fn get_static_pages() -> &'static [SearchResult] {
 }
 
 #[component]
-pub fn SearchBox() -> impl IntoView {
+pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
     let i18n = use_i18n();
     let text_input = NodeRef::<Input>::new();
     let (search, set_search) = signal(String::new());
@@ -230,14 +229,6 @@ pub fn SearchBox() -> impl IntoView {
         });
     });
 
-    // Hotkey to focus search (Cmd+K / Ctrl+K)
-    use_hotkeys!(("MetaLeft+KeyK,ControlLeft+KeyK", "*") => move |_| {
-        set_active(true);
-        if let Some(input) = text_input.get() {
-            let _ = input.focus();
-        }
-    });
-
     // Escape binding on the input (kept as-is)
     leptos_hotkeys::use_hotkeys_ref(
         text_input,
@@ -324,6 +315,18 @@ pub fn SearchBox() -> impl IntoView {
             }
         }
     };
+
+    // When mounted inside the overlay we want the caret in the field
+    // immediately — the user pressed a key to get here. Effect, not a
+    // render-time call: the input doesn't exist until after mount.
+    if autofocus {
+        Effect::new(move |_| {
+            if let Some(input) = text_input.get() {
+                let _ = input.focus();
+                set_active(true);
+            }
+        });
+    }
 
     view! {
         <div class="relative w-full">
