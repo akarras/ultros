@@ -6,6 +6,7 @@ pub mod crafter_levels;
 pub mod home_world;
 mod local_world_data;
 pub mod region_for_world;
+pub mod search_overlay;
 pub mod side_nav;
 pub mod theme;
 pub mod toasts;
