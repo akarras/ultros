@@ -123,7 +123,7 @@ struct ResolvedCell {
 fn window_change(buckets: &[PriceBucket]) -> Option<f64> {
     let mut vwaps = buckets.iter().filter_map(|b| b.vwap());
     let first = vwaps.next()?;
-    let last = vwaps.last().unwrap_or(first);
+    let last = vwaps.next_back().unwrap_or(first);
     (first > 0.0).then(|| last / first - 1.0)
 }
 
