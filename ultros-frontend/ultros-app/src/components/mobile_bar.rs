@@ -28,7 +28,11 @@ pub fn MobileBar() -> impl IntoView {
         <nav class="mobile-bar" aria-label=t_string!(i18n, side_nav_aria_primary)>
             <button
                 class="mobile-bar-slot"
-                aria-label=t_string!(i18n, side_nav_toggle_navigation).to_string()
+                // WCAG 2.5.3 Label in Name: the visible label below is
+                // "Menu" (the `menu` key), so the accessible name has to
+                // start with/equal that text rather than the more
+                // descriptive but mismatched "Toggle navigation".
+                aria-label=t_string!(i18n, menu).to_string()
                 aria-expanded=move || if nav.drawer_open.get() { "true" } else { "false" }
                 on:click=move |_| nav.drawer_open.update(|v| *v = !*v)
             >

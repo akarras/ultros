@@ -152,7 +152,7 @@ pub fn LanguageAccordion() -> impl IntoView {
         </button>
 
         <Show when=move || expanded.get()>
-            <div class="menu-accordion" role="group" aria-label=t_string!(i18n, language).to_string()>
+            <div class="menu-accordion" role="radiogroup" aria-label=t_string!(i18n, language).to_string()>
                 {LANGUAGE_OPTIONS
                     .into_iter()
                     .map(|option| {
@@ -162,7 +162,7 @@ pub fn LanguageAccordion() -> impl IntoView {
                         view! {
                             <button
                                 type="button"
-                                role="menuitemradio"
+                                role="radio"
                                 class=move || {
                                     if selected_for_class.selected(&option.locale) {
                                         "menu-item menu-item-selected"

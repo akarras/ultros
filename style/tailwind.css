@@ -1672,6 +1672,12 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     .app-shell > .app-shell-content {
         padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
     }
+    /* <Footer/> renders outside <AppShell> (see lib.rs), so it doesn't
+       inherit .app-shell-content's clearance above — give it the same
+       offset directly or its last lines sit under the fixed mobile bar. */
+    .site-footer {
+        padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
+    }
     .app-shell > .side-nav {
         position: fixed;
         grid-area: auto; /* sidebar is fixed-positioned, doesn't need a grid cell */
@@ -1854,13 +1860,23 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 /* ----- Drop-up menu primitives (account menu + language accordion) ----- */
+/* `!important` here (and on `.mobile-bar-slot` / `.side-nav-item-hero`
+   below) beats the global `a:not(.nav-link):not(.btn)...` link-styling
+   rule (specificity 0,5,1) that would otherwise force its purple link
+   color / underline onto the `<a>` variants of these classes (Profile,
+   Settings, Logout are anchors; Language and Theme are buttons and were
+   never affected) while leaving the `<button>` variants alone — two
+   different-looking rows in the same drop-up. This file's rules live
+   outside any `@layer`, so ordinary Tailwind utilities never need this,
+   but `a:not(...)` is itself a plain unlayered rule and outranks
+   anything without `!important` regardless of source order. */
 .menu-item {
     display: flex;
     align-items: center;
     width: 100%;
     padding: 0.4rem 0.55rem;
     border-radius: 0.375rem;
-    color: var(--color-text);
+    color: var(--color-text) !important;
     background: transparent;
     border: none;
     font-size: 0.85rem;
@@ -1868,7 +1884,8 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     text-decoration: none;
 }
 .menu-item:hover {
-    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent) !important;
+    text-decoration: none !important;
 }
 .menu-item-selected {
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
@@ -1959,8 +1976,25 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         display: none;
     }
     .app-shell-collapsed .side-nav-account-panel {
+        /* `.side-nav` is `overflow-y: auto`, which per the CSS overflow
+           spec makes it a scroll container on BOTH axes (a non-visible
+           value on one axis forces `auto` on the other) — so `position:
+           absolute` here would get clipped to a sliver instead of
+           overhanging the content area. `position: fixed` escapes that
+           scrollport (and `.side-nav`'s z-index:30 stacking context, which
+           made the panel's own z-index:70 inert) by positioning against
+           the viewport instead. `left` is unchanged in value: `.side-nav`
+           is itself pinned to the viewport's left edge, so 0.35rem means
+           the same thing whether measured from the sidebar or the
+           viewport. `bottom` is re-derived from the viewport instead,
+           approximating the collapsed footer row (~3.06rem: 2 x 0.75rem
+           padding + a 1.5rem icon row + border) plus the collapsed
+           trigger row (~3.1rem worst case, sized to the 32px avatar) plus
+           the same 0.35rem gap the expanded state uses above the trigger. */
+        position: fixed;
         left: 0.35rem;
         right: auto;
+        bottom: 6.5rem;
         width: 15rem;
     }
 }
@@ -1992,18 +2026,27 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
         gap: 0.15rem;
         padding: 0.35rem 0;
         border-radius: 0.5rem;
-        color: var(--color-text-muted);
-        background: transparent;
+        /* See the .menu-item comment above — Items is an `<a>` while
+           Menu/Search are `<button>`s, so without `!important` the global
+           `a:not(...)` rule recolors only Items and this active-state
+           highlight never wins either. */
+        color: var(--color-text-muted) !important;
+        background: transparent !important;
         border: none;
         text-decoration: none;
     }
     .mobile-bar-slot[aria-current="page"] {
-        color: var(--color-text);
-        background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent);
+        color: var(--color-text) !important;
+        background-color: color-mix(in srgb, var(--brand-ring) 16%, transparent) !important;
     }
     .mobile-bar-label {
         font-size: 0.6rem;
         line-height: 1;
+    }
+    /* Toasts render fixed to the viewport bottom-right; without this they
+       stack behind (and under-tap-target-block) the fixed mobile bar. */
+    .toast-container {
+        bottom: calc(4.25rem + env(safe-area-inset-bottom));
     }
 }
 
@@ -2026,6 +2069,34 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     margin: 12vh auto 0;
     padding: 0 1rem;
 }
+.search-overlay-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+.search-overlay-searchbox {
+    flex: 1;
+    min-width: 0;
+}
+/* Explicit exit for the overlay. Sized to a real tap target (44px) and
+   placed outside the input's own box so it never overlaps the input's
+   internal clear-icon or the results list. */
+.search-overlay-close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 0.5rem;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: 1px solid var(--color-outline);
+}
+.search-overlay-close:hover {
+    color: var(--color-text);
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
 
 /* Mobile: full-screen sheet, input pinned to the top so the virtual
    keyboard pushes content the way the browser expects. */
@@ -2040,6 +2111,15 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
            on-screen keyboard open it can outgrow 100dvh, so the sheet
            itself has to scroll or the tail becomes unreachable. */
         overflow-y: auto;
+    }
+    /* Keep the close button reachable even when the sheet above has
+       scrolled the input out of view. */
+    .search-overlay-header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background-color: var(--color-background);
+        padding-bottom: 0.5rem;
     }
 }
 
@@ -2300,7 +2380,11 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
 }
 
 .side-nav-item-hero {
-    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent);
+    /* Search (a <button>) and Item Explorer (an <a>) share this class and
+       are meant to render identically; without `!important` the global
+       `a:not(...)` rule's `background-color: transparent` wins on the
+       `<a>` only. See the .menu-item comment above for why. */
+    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent) !important;
     border: 1px solid var(--color-outline);
     width: 100%;
 }

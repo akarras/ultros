@@ -53,8 +53,45 @@ pub fn AccountMenu() -> impl IntoView {
 
     view! {
         <div class="side-nav-account" node_ref=root_ref on:keydown=on_keydown>
+            <button
+                class="side-nav-account-trigger"
+                aria-haspopup="true"
+                aria-expanded=move || if open.get() { "true" } else { "false" }
+                aria-label=t_string!(i18n, account).to_string()
+                on:click=move |_| set_open.update(|v| *v = !*v)
+            >
+                <Suspense fallback=move || {
+                    view! { <Icon icon=i::BsPersonCircle width="1.25em" height="1.25em" /> }
+                }>
+                    {move || {
+                        match user.get().flatten() {
+                            Some(auth) => {
+                                view! {
+                                    <img class="avatar" src=auth.avatar alt=auth.username.clone() />
+                                    <span class="side-nav-label ml-2">{auth.username}</span>
+                                }
+                                    .into_any()
+                            }
+                            None => {
+                                view! {
+                                    <Icon icon=i::BsPersonCircle width="1.25em" height="1.25em" />
+                                    <span class="side-nav-label ml-2">{t!(i18n, sign_in)}</span>
+                                }
+                                    .into_any()
+                            }
+                        }
+                    }}
+                </Suspense>
+                <Icon
+                    icon=i::BiChevronUpSolid
+                    width="1em"
+                    height="1em"
+                    attr:class="side-nav-account-caret"
+                />
+            </button>
+
             <Show when=move || open.get()>
-                <div class="side-nav-account-panel" role="menu" tabindex="-1">
+                <div class="side-nav-account-panel" tabindex="-1">
                     <Suspense fallback=move || {
                         view! { <div class="menu-item muted">{t!(i18n, loading)}</div> }
                     }>
@@ -103,43 +140,6 @@ pub fn AccountMenu() -> impl IntoView {
                     </Suspense>
                 </div>
             </Show>
-
-            <button
-                class="side-nav-account-trigger"
-                aria-haspopup="menu"
-                aria-expanded=move || if open.get() { "true" } else { "false" }
-                aria-label=t_string!(i18n, account).to_string()
-                on:click=move |_| set_open.update(|v| *v = !*v)
-            >
-                <Suspense fallback=move || {
-                    view! { <Icon icon=i::BsPersonCircle width="1.25em" height="1.25em" /> }
-                }>
-                    {move || {
-                        match user.get().flatten() {
-                            Some(auth) => {
-                                view! {
-                                    <img class="avatar" src=auth.avatar alt=auth.username.clone() />
-                                    <span class="side-nav-label ml-2">{auth.username}</span>
-                                }
-                                    .into_any()
-                            }
-                            None => {
-                                view! {
-                                    <Icon icon=i::BsPersonCircle width="1.25em" height="1.25em" />
-                                    <span class="side-nav-label ml-2">{t!(i18n, sign_in)}</span>
-                                }
-                                    .into_any()
-                            }
-                        }
-                    }}
-                </Suspense>
-                <Icon
-                    icon=i::BiChevronUpSolid
-                    width="1em"
-                    height="1em"
-                    attr:class="side-nav-account-caret"
-                />
-            </button>
         </div>
     }
     .into_any()

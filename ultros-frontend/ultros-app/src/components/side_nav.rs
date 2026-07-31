@@ -54,6 +54,7 @@ pub fn SideNav() -> impl IntoView {
             <nav class="side-nav-sections">
                 <button
                     class="side-nav-item side-nav-item-hero"
+                    aria-label=t_string!(i18n, search).to_string()
                     on:click=move |_| search_overlay.toggle()
                 >
                     <Icon icon=i::AiSearchOutlined />

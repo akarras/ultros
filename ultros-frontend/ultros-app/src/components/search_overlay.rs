@@ -9,9 +9,11 @@
 //! not the layout viewport when the keyboard opens, so a bottom-anchored
 //! input ends up behind the keyboard with no pure-CSS remedy.
 
+use crate::components::icon::Icon;
 use crate::components::search_box::SearchBox;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::i18n::{t_string, use_i18n};
+use icondata as i;
 use leptos::prelude::*;
 use leptos_hotkeys::use_hotkeys;
 use leptos_router::hooks::use_location;
@@ -58,7 +60,26 @@ pub fn SearchOverlay() -> impl IntoView {
                     on:click=move |_| state.close()
                 />
                 <div class="search-overlay-panel">
-                    <SearchBox autofocus=true />
+                    <div class="search-overlay-header">
+                        <div class="search-overlay-searchbox">
+                            <SearchBox autofocus=true />
+                        </div>
+                        // The backdrop click target and Escape key are both
+                        // unreachable on mobile once the panel goes opaque
+                        // full-viewport (see the CSS below), so this is the
+                        // only way out of the sheet on a phone. Always
+                        // rendered — not just below 1024px — so keyboard and
+                        // mouse users on desktop get an explicit close
+                        // affordance too.
+                        <button
+                            type="button"
+                            class="search-overlay-close"
+                            aria-label=t_string!(i18n, close).to_string()
+                            on:click=move |_| state.close()
+                        >
+                            <Icon icon=i::BsX width="1.5em" height="1.5em" aria_hidden=true />
+                        </button>
+                    </div>
                 </div>
             </div>
         </Show>
