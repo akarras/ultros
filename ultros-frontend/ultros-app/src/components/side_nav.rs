@@ -1,6 +1,7 @@
 use crate::components::account_menu::AccountMenu;
 use crate::components::icon::Icon;
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
@@ -17,6 +18,7 @@ use leptos_router::components::A;
 pub fn SideNav() -> impl IntoView {
     let i18n = use_i18n();
     let nav = use_side_nav_settings();
+    let search_overlay = use_search_overlay_state();
     let (homeworld, _set_homeworld) = use_home_world();
 
     // Build world-aware URLs the same way `AppsMenu` does.
@@ -49,6 +51,21 @@ pub fn SideNav() -> impl IntoView {
             </div>
 
             <nav class="side-nav-sections">
+                <button
+                    class="side-nav-item side-nav-item-hero"
+                    on:click=move |_| search_overlay.toggle()
+                >
+                    <Icon icon=i::AiSearchOutlined />
+                    <span class="side-nav-label">{t!(i18n, search)}</span>
+                    <span class="side-nav-kbd">"⌘K"</span>
+                </button>
+                <A href="/items" attr:class="side-nav-item side-nav-item-hero">
+                    <Icon icon=i::MdiJellyfish />
+                    <span class="side-nav-label">{t!(i18n, item_explorer)}</span>
+                </A>
+
+                <div class="side-nav-rule"></div>
+
                 <A href="/" exact=true attr:class="side-nav-item">
                     <Icon icon=i::AiHomeFilled />
                     <span class="side-nav-label">{t!(i18n, home)}</span>
@@ -87,10 +104,6 @@ pub fn SideNav() -> impl IntoView {
                 <A href=with_world("/venture-analyzer?world={world}", "/venture-analyzer") attr:class="side-nav-item">
                     <Icon icon=i::FaBriefcaseSolid />
                     <span class="side-nav-label">{t!(i18n, venture_analyzer)}</span>
-                </A>
-                <A href="/items" attr:class="side-nav-item">
-                    <Icon icon=i::MdiJellyfish />
-                    <span class="side-nav-label">{t!(i18n, item_explorer)}</span>
                 </A>
                 <A href="/currency-exchange" attr:class="side-nav-item">
                     <Icon icon=i::BsArrowLeftRight />

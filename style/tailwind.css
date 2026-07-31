@@ -2319,3 +2319,29 @@ a:not(.nav-link):not(.btn):not(.btn-primary):not(.btn-secondary):not(
     border-color: var(--brand-ring);
     background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
 }
+
+.side-nav-item-hero {
+    background-color: color-mix(in srgb, var(--brand-ring) 10%, transparent);
+    border: 1px solid var(--color-outline);
+    width: 100%;
+}
+.side-nav-kbd {
+    margin-left: auto;
+    font-size: 0.62rem;
+    font-family: ui-monospace, monospace;
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-outline);
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.25rem;
+}
+.side-nav-rule {
+    height: 1px;
+    background-color: var(--color-outline);
+    margin: 0.5rem 0.5rem 0.25rem;
+}
+
+@media (min-width: 1024px) {
+    .app-shell-collapsed .side-nav-kbd {
+        display: none;
+    }
+}
