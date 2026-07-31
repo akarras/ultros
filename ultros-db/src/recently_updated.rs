@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use sea_orm::{
     ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::OnConflict,
@@ -30,6 +30,23 @@ impl UltrosDb {
             .exec(&self.db)
             .await?;
         Ok(())
+    }
+
+    /// Newest `listing_last_updated` row per world, i.e. the last time anything
+    /// at all was ingested for that world.
+    ///
+    /// Worlds we have never ingested for are simply absent from the result.
+    pub async fn get_last_ingest_per_world(
+        &self,
+    ) -> Result<Vec<(i32, NaiveDateTime)>, anyhow::Error> {
+        Ok(listing_last_updated::Entity::find()
+            .select_only()
+            .column(listing_last_updated::Column::WorldId)
+            .column_as(listing_last_updated::Column::DateTime.max(), "last_ingest")
+            .group_by(listing_last_updated::Column::WorldId)
+            .into_tuple::<(i32, NaiveDateTime)>()
+            .all(&self.db)
+            .await?)
     }
 
     pub async fn get_recently_updated_listings_for_world(

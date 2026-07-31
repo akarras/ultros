@@ -53,15 +53,49 @@ enum ScripType {
 }
 
 impl ScripType {
-    fn from_id(id: u32) -> Self {
-        match id {
-            41784 => ScripType::OrangeCrafters,
-            41785 => ScripType::OrangeGatherers,
-            25199 => ScripType::WhiteCrafters,
-            33913 => ScripType::PurpleCrafters,
-            25200 => ScripType::WhiteGatherers,
-            33914 => ScripType::PurpleGatherers,
-            _ => ScripType::Other(id),
+    /// Map a `CollectablesShopRewardScrip.Currency` value to the scrip it pays.
+    ///
+    /// `Currency` is a small **enum index**, not an item id — every row in the
+    /// 7.55 data carries `0`, `2`, `4`, `6` or `7`. Matching it against scrip
+    /// item ids is what left this page blank, so the mapping below is derived
+    /// from the game data instead. Joining `CollectablesShopItem` to the
+    /// `RewardType = 1` (scrip-paying) shops, ignoring the material-exchange
+    /// shops that reuse this column, gives:
+    ///
+    /// | Currency | rows | turn-ins |
+    /// |---|---|---|
+    /// | 2 | 1089 | crafted, lv 50-99 |
+    /// | 4 |  163 | gathered/fished, lv 50-98 |
+    /// | 6 |   93 | crafted, lv 78-80 and lv 100 |
+    /// | 7 |   18 | gathered/fished, lv 100 |
+    ///
+    /// So `2`/`4` are the purple (levelling) crafter/gatherer pair and `6`/`7`
+    /// the orange (level 100) pair. Currency `6`'s level-100 rows are exactly
+    /// one item per crafting job — the eight "Rarefied" max-level crafts — which
+    /// is what pins it to Orange Crafters' rather than the retired white scrip;
+    /// its lv 78-80 rows are the Shadowbringers tier that collapsed into the
+    /// same high-tier crafter slot when white scrips were removed in 7.0.
+    fn from_currency(currency: u32) -> Self {
+        match currency {
+            2 => ScripType::PurpleCrafters,
+            4 => ScripType::PurpleGatherers,
+            6 => ScripType::OrangeCrafters,
+            7 => ScripType::OrangeGatherers,
+            other => ScripType::Other(other),
+        }
+    }
+
+    /// The `?scrip=` query value that selects this type, as emitted by the
+    /// toolbar `<select>`.
+    fn from_filter_key(key: &str) -> Option<Self> {
+        match key {
+            "OrangeCrafters" => Some(ScripType::OrangeCrafters),
+            "OrangeGatherers" => Some(ScripType::OrangeGatherers),
+            "WhiteCrafters" => Some(ScripType::WhiteCrafters),
+            "PurpleCrafters" => Some(ScripType::PurpleCrafters),
+            "WhiteGatherers" => Some(ScripType::WhiteGatherers),
+            "PurpleGatherers" => Some(ScripType::PurpleGatherers),
+            _ => None,
         }
     }
 
@@ -72,6 +106,20 @@ impl ScripType {
             ScripType::PurpleCrafters | ScripType::PurpleGatherers => "text-purple-400",
             ScripType::Other(_) => "text-gray-400",
         }
+    }
+}
+
+/// Does a row awarding `scrip_type` survive the `?scrip=` filter?
+///
+/// A row whose currency we don't recognise stays *visible*. Dropping unknown
+/// values is what turned a stale `Currency` mapping into a blank page rather
+/// than a few oddly-labelled rows, and one new expansion adding `Currency = 8`
+/// would do it again. An unrecognised `?scrip=` value is likewise treated as
+/// "no filter" instead of emptying the table.
+fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
+    match filter.and_then(ScripType::from_filter_key) {
+        Some(wanted) => scrip_type == wanted,
+        None => true,
     }
 }
 
@@ -196,34 +244,10 @@ fn ScripSourceTable(
                 };
 
                 // Reward has `currency` and `low/mid/high_reward`
-                let currency_id = reward.currency;
-                let scrip_type = ScripType::from_id(currency_id as u32);
+                let scrip_type = ScripType::from_currency(reward.currency as u32);
 
-                // Filter Scrip Type
-                if let Some(ref s_filter) = scrip_filter_val {
-                    if s_filter == "OrangeCrafters" && scrip_type != ScripType::OrangeCrafters {
-                        continue;
-                    }
-                    if s_filter == "OrangeGatherers" && scrip_type != ScripType::OrangeGatherers {
-                        continue;
-                    }
-                    if s_filter == "WhiteCrafters" && scrip_type != ScripType::WhiteCrafters {
-                        continue;
-                    }
-                    if s_filter == "PurpleCrafters" && scrip_type != ScripType::PurpleCrafters {
-                        continue;
-                    }
-                    if s_filter == "WhiteGatherers" && scrip_type != ScripType::WhiteGatherers {
-                        continue;
-                    }
-                    if s_filter == "PurpleGatherers" && scrip_type != ScripType::PurpleGatherers {
-                        continue;
-                    }
-                } else {
-                    // Default to showing Crafters scrips if no filter
-                    if matches!(scrip_type, ScripType::Other(_)) {
-                        continue;
-                    }
+                if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
+                    continue;
                 }
 
                 // Reward amount (High Reward for max collectability)
@@ -720,5 +744,78 @@ mod tests {
             ids(&rank_scrip_sources(rows, SortMode::CostPerScrip, ROW_LIMIT)),
             vec![2, 3, 1]
         );
+    }
+
+    /// Every `Currency` value that actually occurs in `CollectablesShopRewardScrip`
+    /// (7.55: `0`, `2`, `4`, `6`, `7` — `0` being the null row, which is already
+    /// dropped for having a zero reward). If any of these falls through to
+    /// `Other`, every row awarding it disappears from the page.
+    #[test]
+    fn every_live_currency_value_is_recognised() {
+        for currency in [2, 4, 6, 7] {
+            assert!(
+                !matches!(ScripType::from_currency(currency), ScripType::Other(_)),
+                "currency {currency} is unmapped, so its rows never render"
+            );
+        }
+    }
+
+    /// `CollectablesShopRewardScrip.Currency` is a small **enum index**, not an
+    /// item id: `2`/`4` are the purple crafter/gatherer pair paid by lv 50-99
+    /// turn-ins, `6`/`7` the orange pair paid at level 100.
+    #[test]
+    fn currency_indices_map_to_the_right_scrip() {
+        assert_eq!(ScripType::from_currency(2), ScripType::PurpleCrafters);
+        assert_eq!(ScripType::from_currency(4), ScripType::PurpleGatherers);
+        assert_eq!(ScripType::from_currency(6), ScripType::OrangeCrafters);
+        assert_eq!(ScripType::from_currency(7), ScripType::OrangeGatherers);
+    }
+
+    /// The bug this replaced: `from_currency` was fed `reward.currency` but
+    /// matched on scrip **item** ids, so no real currency value ever matched and
+    /// the whole page rendered zero rows. Item ids must not be accepted here.
+    #[test]
+    fn scrip_item_ids_are_not_currency_values() {
+        for item_id in [41784, 41785, 25199, 33913, 25200, 33914] {
+            assert_eq!(
+                ScripType::from_currency(item_id),
+                ScripType::Other(item_id),
+                "item id {item_id} was treated as a currency index"
+            );
+        }
+    }
+
+    /// A currency we have never seen must stay *visible*. Silently dropping
+    /// unrecognised values is what blanked this page, and one new expansion
+    /// adding `Currency = 8` would blank it again.
+    #[test]
+    fn an_unknown_currency_is_still_listed() {
+        let unknown = ScripType::from_currency(8);
+
+        assert_eq!(unknown, ScripType::Other(8));
+        assert!(
+            passes_scrip_filter(unknown, None),
+            "unrecognised currency dropped from the unfiltered list"
+        );
+    }
+
+    #[test]
+    fn scrip_filter_selects_only_the_requested_type() {
+        assert!(passes_scrip_filter(
+            ScripType::PurpleCrafters,
+            Some("PurpleCrafters")
+        ));
+        assert!(!passes_scrip_filter(
+            ScripType::OrangeCrafters,
+            Some("PurpleCrafters")
+        ));
+    }
+
+    /// A hand-edited `?scrip=` value shouldn't empty the table.
+    #[test]
+    fn an_unrecognised_filter_value_shows_everything() {
+        for filter in [None, Some(""), Some("nonsense")] {
+            assert!(passes_scrip_filter(ScripType::PurpleCrafters, filter));
+        }
     }
 }

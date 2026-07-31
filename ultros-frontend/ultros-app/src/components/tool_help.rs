@@ -2,6 +2,7 @@ use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_router::components::A;
 
 #[component]
@@ -89,25 +90,47 @@ pub fn AssumptionBadge(#[prop(into)] text: Oco<'static, str>) -> impl IntoView {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolConfidenceLevel {
+    High,
+    Medium,
+    LowData,
+}
+
+impl ToolConfidenceLevel {
+    pub fn css_class(&self) -> &'static str {
+        match self {
+            Self::High => "text-emerald-300",
+            Self::Medium => "text-amber-300",
+            Self::LowData => "text-red-300",
+        }
+    }
+
+    pub fn get_text(&self, i18n: I18nContext<Locale, I18nKeys>) -> String {
+        match self {
+            Self::High => t_string!(i18n, confidence_high).to_string(),
+            Self::Medium => t_string!(i18n, confidence_medium).to_string(),
+            Self::LowData => t_string!(i18n, confidence_low_data).to_string(),
+        }
+    }
+}
+
+pub fn get_tool_confidence_level(total_sales: usize, daily_sales: f32) -> ToolConfidenceLevel {
+    if total_sales >= 20 && daily_sales >= 1.0 {
+        ToolConfidenceLevel::High
+    } else if total_sales >= 5 {
+        ToolConfidenceLevel::Medium
+    } else {
+        ToolConfidenceLevel::LowData
+    }
+}
+
 #[component]
 pub fn ConfidenceBadge(total_sales: usize, daily_sales: f32) -> impl IntoView {
     let i18n = use_i18n();
-    let (label, class) = if total_sales >= 20 && daily_sales >= 1.0 {
-        (
-            t_string!(i18n, confidence_high).to_string(),
-            "text-emerald-300",
-        )
-    } else if total_sales >= 5 {
-        (
-            t_string!(i18n, confidence_medium).to_string(),
-            "text-amber-300",
-        )
-    } else {
-        (
-            t_string!(i18n, confidence_low_data).to_string(),
-            "text-red-300",
-        )
-    };
+    let level = get_tool_confidence_level(total_sales, daily_sales);
+    let label = level.get_text(i18n);
+    let class = level.css_class();
 
     view! {
         <span class=format!("inline-flex items-center justify-end rounded-full border border-[color:var(--color-outline)] px-2 py-1 text-xs font-semibold {class}")>
@@ -158,5 +181,56 @@ where
             </summary>
             <div class="mt-2">{children.into_inner()().into_view()}</div>
         </details>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_confidence_level_logic() {
+        // High confidence: total_sales >= 20 AND daily_sales >= 1.0
+        assert_eq!(
+            get_tool_confidence_level(20, 1.0),
+            ToolConfidenceLevel::High
+        );
+        assert_eq!(
+            get_tool_confidence_level(100, 5.0),
+            ToolConfidenceLevel::High
+        );
+
+        // Medium confidence (misses daily_sales but >= 20 sales)
+        assert_eq!(
+            get_tool_confidence_level(20, 0.9),
+            ToolConfidenceLevel::Medium
+        );
+
+        // Medium confidence (misses total_sales but >= 5 sales)
+        assert_eq!(
+            get_tool_confidence_level(19, 1.0),
+            ToolConfidenceLevel::Medium
+        );
+        assert_eq!(
+            get_tool_confidence_level(5, 0.0),
+            ToolConfidenceLevel::Medium
+        );
+
+        // Low data: total_sales < 5
+        assert_eq!(
+            get_tool_confidence_level(4, 100.0),
+            ToolConfidenceLevel::LowData
+        );
+        assert_eq!(
+            get_tool_confidence_level(0, 0.0),
+            ToolConfidenceLevel::LowData
+        );
+    }
+
+    #[test]
+    fn test_tool_confidence_level_css_class() {
+        assert_eq!(ToolConfidenceLevel::High.css_class(), "text-emerald-300");
+        assert_eq!(ToolConfidenceLevel::Medium.css_class(), "text-amber-300");
+        assert_eq!(ToolConfidenceLevel::LowData.css_class(), "text-red-300");
     }
 }

@@ -183,6 +183,17 @@ struct CalculatedProfitData {
     profit_per_day: i32,
 }
 
+/// Output of the filter + sort pass over the profit table.
+#[derive(Clone, Debug, PartialEq, Default)]
+struct FilteredRows {
+    rows: Vec<(usize, CalculatedProfitData)>,
+    /// Rows an active drift / confidence / volume floor could not evaluate
+    /// on real data — dropped for lack of it (drift) or passed / judged on
+    /// a substitute (volume, confidence). Zero whenever none of those
+    /// floors is active. Drives the sticky bar's transparency note.
+    rows_lacking_data: usize,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     Roi,
@@ -213,6 +224,63 @@ impl std::fmt::Display for SortDir {
         f.write_str(match self {
             SortDir::Asc => "asc",
             SortDir::Desc => "desc",
+        })
+    }
+}
+
+/// `?quality=` — show only HQ or only NQ rows. Param absent = both.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum QualityFilter {
+    Hq,
+    Nq,
+}
+
+impl FromStr for QualityFilter {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "hq" => Ok(QualityFilter::Hq),
+            "nq" => Ok(QualityFilter::Nq),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for QualityFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            QualityFilter::Hq => "hq",
+            QualityFilter::Nq => "nq",
+        })
+    }
+}
+
+/// `?confidence=` — minimum confidence band a row must reach.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ConfidenceFloor {
+    Low,
+    Medium,
+    High,
+}
+
+impl FromStr for ConfidenceFloor {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "low" => Ok(ConfidenceFloor::Low),
+            "medium" => Ok(ConfidenceFloor::Medium),
+            "high" => Ok(ConfidenceFloor::High),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for ConfidenceFloor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ConfidenceFloor::Low => "low",
+            ConfidenceFloor::Medium => "medium",
+            ConfidenceFloor::High => "high",
         })
     }
 }
@@ -498,6 +566,79 @@ fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -
     ch_rate.or(derived).map(|v| v >= min).unwrap_or(false)
 }
 
+fn passes_quality(filter: QualityFilter, hq: bool) -> bool {
+    match filter {
+        QualityFilter::Hq => hq,
+        QualityFilter::Nq => !hq,
+    }
+}
+
+/// Normalize a raw `?name=` query for matching: trim + lowercase, once per
+/// recompute rather than once per row. A blank query maps to `None` (no
+/// filter) — the chip seeds empty so the user can type into it, and that
+/// state must not blank the table.
+fn normalize_name_query(raw: &str) -> Option<String> {
+    let q = raw.trim().to_lowercase();
+    (!q.is_empty()).then_some(q)
+}
+
+/// Case-insensitive substring match against a query pre-normalized by
+/// [`normalize_name_query`]. Runs per row, so only the item name is
+/// lowercased here.
+fn matches_normalized_name(query_lower: &str, item_name: &str) -> bool {
+    item_name.to_lowercase().contains(query_lower)
+}
+
+/// Does a row clear the `?drift=` floor? Drift comes off the row's own
+/// price buffer, but `price_drift_pct` needs at least 4 of the (up to 6)
+/// buffered sales, so thinly-traded rows have no drift at all. A row with
+/// too few sales to compute a drift fails an explicit floor — the velocity
+/// floor's rule — and the sticky bar counts it toward the "rows lack data"
+/// note so the drop is visible rather than silent.
+fn passes_drift_floor(min: f32, drift: Option<f32>) -> bool {
+    drift.map(|d| d >= min).unwrap_or(false)
+}
+
+/// Bands on one scale: Unusable=0 < Low=1 < Medium=2 < High=3. The CH
+/// `Unknown` variant is "no deep scan yet", not a verdict, so it defers to
+/// the derived band — the same preference the Confidence column renders.
+fn confidence_rank(ch: Option<ConfidenceBand>, derived: DerivedConfidence) -> u8 {
+    match ch {
+        Some(ConfidenceBand::High) => 3,
+        Some(ConfidenceBand::Medium) => 2,
+        Some(ConfidenceBand::Low) => 1,
+        Some(ConfidenceBand::Unusable) => 0,
+        Some(ConfidenceBand::Unknown) | None => match derived {
+            DerivedConfidence::High => 3,
+            DerivedConfidence::Medium => 2,
+            DerivedConfidence::Low => 1,
+        },
+    }
+}
+
+fn passes_confidence_floor(
+    floor: ConfidenceFloor,
+    ch: Option<ConfidenceBand>,
+    derived: DerivedConfidence,
+) -> bool {
+    let floor_rank = match floor {
+        ConfidenceFloor::Low => 1,
+        ConfidenceFloor::Medium => 2,
+        ConfidenceFloor::High => 3,
+    };
+    confidence_rank(ch, derived) >= floor_rank
+}
+
+/// Does a row clear the `?min-volume=` floor? 30-day volume is ClickHouse-
+/// only (~7% item coverage) AND lazily enriched per visible window — if
+/// unknown failed, the un-enriched initial table would filter to zero rows
+/// and the visible-window fetch would never fire. So unknown rows pass,
+/// and only a *known* volume below the floor drops a row (the suspicious
+/// filter's rule).
+fn passes_volume_floor(min: u32, ch_volume: Option<u32>) -> bool {
+    ch_volume.map(|v| v >= min).unwrap_or(true)
+}
+
 // --- Filter registry -------------------------------------------------------
 // Each id is the `query_signal` key it drives, so the list doubles as the
 // URL contract. The sticky bar renders one chip per *set* filter and the
@@ -513,6 +654,15 @@ const FILTER_NEXT_SALE: &str = "next-sale";
 const FILTER_LAST_SOLD: &str = "last-sold";
 const FILTER_PRE_TAX: &str = "tax";
 const FILTER_SHOW_SUSPICIOUS: &str = "show-suspicious";
+const FILTER_QUALITY: &str = "quality";
+const FILTER_NAME: &str = "name";
+// The *values* of the next two deliberately equal the COL_DRIFT /
+// COL_CONFIDENCE tokens — they live in different namespaces (`?cols=`
+// tokens vs. query-param keys) and the param names are public wire format
+// (bookmarks, saved views), so only the Rust identifiers disambiguate.
+const FILTER_MIN_DRIFT: &str = "drift";
+const FILTER_MIN_CONFIDENCE: &str = "confidence";
+const FILTER_MIN_VOLUME: &str = "min-volume";
 // Chip-only filters: picked from a list or off a row rather than typed, so
 // they are never offered by the `+ Filter` menu.
 const FILTER_CATEGORY: &str = "category";
@@ -532,13 +682,18 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_LAST_SOLD,
     FILTER_PRE_TAX,
     FILTER_SHOW_SUSPICIOUS,
+    FILTER_QUALITY,
+    FILTER_NAME,
+    FILTER_MIN_DRIFT,
+    FILTER_MIN_CONFIDENCE,
+    FILTER_MIN_VOLUME,
 ];
 
 /// Value a filter takes when it is added from the `+ Filter` menu.
 ///
 /// A filter with no starting value would render a chip with nothing in it,
-/// so every entry in [`ADDABLE_FILTERS`] must have one. These mirror the
-/// example values the old toolbar carried as input placeholders.
+/// so every entry in [`ADDABLE_FILTERS`] must have one, except `FILTER_NAME`,
+/// whose chip deliberately mounts in edit state instead (see the arm below).
 fn default_filter_value(id: &str) -> &'static str {
     match id {
         FILTER_PROFIT => "100000",
@@ -554,6 +709,13 @@ fn default_filter_value(id: &str) -> &'static str {
         // default (post-tax, suspicious rows hidden).
         FILTER_PRE_TAX => "false",
         FILTER_SHOW_SUSPICIOUS => "true",
+        FILTER_QUALITY => "hq",
+        // Name search deliberately seeds empty: its chip mounts in edit
+        // state (`start_editing`) so there is never an empty resting chip.
+        FILTER_NAME => "",
+        FILTER_MIN_DRIFT => "-10",
+        FILTER_MIN_CONFIDENCE => "medium",
+        FILTER_MIN_VOLUME => "10",
         _ => "",
     }
 }
@@ -721,6 +883,18 @@ fn AnalyzerTable(
     set_cross_region_enabled: SignalSetter<Option<bool>>,
     set_filter_outliers: SignalSetter<Option<bool>>,
     on_market_update: Callback<()>,
+    /// Keeps the name chip mounted (in edit state) between "picked from the
+    /// + Filter menu" and "first committed value" — an empty ?name= URL
+    /// param is not relied on to round-trip. Owned by `AnalyzerWorldView`:
+    /// this component lives inside the Suspense closure and remounts on
+    /// every realtime market tick, so a signal declared here would be
+    /// destroyed mid-keystroke along with the chip being typed into.
+    name_chip_pending: RwSignal<bool>,
+    /// True once client hydration has finished (Effect-set by the caller).
+    /// Also owned by `AnalyzerWorldView` — declared here it would reset to
+    /// false on every market-tick remount, rendering one full unfiltered
+    /// pass per tick whenever `?name=` is active.
+    hydrated: RwSignal<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let realtime = use_realtime();
@@ -765,6 +939,17 @@ fn AnalyzerTable(
     let (min_buy_price, set_min_buy_price) = query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    // The five column filters use `filter_query_signal` (replace: true,
+    // scroll: false) — editing a filter must not push a history entry per
+    // keystroke or yank the window back to the top.
+    let (quality_filter, set_quality_filter) = filter_query_signal::<QualityFilter>("quality");
+    let (name_filter, set_name_filter) = filter_query_signal::<String>("name");
+    let (min_drift, set_min_drift) = filter_query_signal::<f32>("drift");
+    // Same NaN guard as ?vel= — "NaN".parse::<f32>() succeeds and would
+    // silently empty the table (every comparison with NaN is false).
+    let drift_floor = Memo::new(move |_| normalize_velocity_floor(min_drift()));
+    let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
+    let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
@@ -827,6 +1012,14 @@ fn AnalyzerTable(
         push_if(category_filter().is_some(), FILTER_CATEGORY);
         push_if(world_filter().is_some(), FILTER_WORLD);
         push_if(datacenter_filter().is_some(), FILTER_DATACENTER);
+        push_if(quality_filter().is_some(), FILTER_QUALITY);
+        push_if(
+            name_filter().is_some() || name_chip_pending.get(),
+            FILTER_NAME,
+        );
+        push_if(drift_floor().is_some(), FILTER_MIN_DRIFT);
+        push_if(min_confidence().is_some(), FILTER_MIN_CONFIDENCE);
+        push_if(min_volume().is_some(), FILTER_MIN_VOLUME);
         active
     });
 
@@ -848,6 +1041,13 @@ fn AnalyzerTable(
             FILTER_LAST_SOLD => t_string!(i18n, analyzer_last_sold_within).to_string(),
             FILTER_PRE_TAX => t_string!(i18n, analyzer_pre_tax).to_string(),
             FILTER_SHOW_SUSPICIOUS => t_string!(i18n, analyzer_show_suspicious).to_string(),
+            FILTER_QUALITY => t_string!(i18n, analyzer_filter_quality_label).to_string(),
+            FILTER_NAME => t_string!(i18n, analyzer_filter_name_label).to_string(),
+            FILTER_MIN_DRIFT => t_string!(i18n, analyzer_filter_drift_min_label).to_string(),
+            FILTER_MIN_CONFIDENCE => {
+                t_string!(i18n, analyzer_filter_confidence_min_label).to_string()
+            }
+            FILTER_MIN_VOLUME => t_string!(i18n, analyzer_filter_volume_min_label).to_string(),
             _ => String::new(),
         }
     };
@@ -868,6 +1068,11 @@ fn AnalyzerTable(
             FILTER_LAST_SOLD => set_last_sold_within(Some(value.to_string())),
             FILTER_PRE_TAX => set_tax_enabled(Some(false)),
             FILTER_SHOW_SUSPICIOUS => set_show_suspicious(Some(true)),
+            FILTER_QUALITY => set_quality_filter(value.parse().ok()),
+            FILTER_NAME => name_chip_pending.set(true),
+            FILTER_MIN_DRIFT => set_min_drift(value.parse().ok()),
+            FILTER_MIN_CONFIDENCE => set_min_confidence(value.parse().ok()),
+            FILTER_MIN_VOLUME => set_min_volume(value.parse().ok()),
             _ => {}
         }
     };
@@ -936,6 +1141,12 @@ fn AnalyzerTable(
         set_last_sold_within(None);
         set_show_suspicious(None);
         set_tax_enabled(None);
+        set_quality_filter(None);
+        set_name_filter(None);
+        name_chip_pending.set(false);
+        set_min_drift(None);
+        set_min_confidence(None);
+        set_min_volume(None);
     };
 
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
@@ -943,8 +1154,28 @@ fn AnalyzerTable(
     // world change). Cells + the suspicious filter read it reactively.
     let enrichment = RwSignal::new(EnrichmentMaps::default());
 
-    let sorted_data = Memo::new(move |_| {
+    let filtered_rows = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
+        // Normalized (trimmed + lowercased) once per recompute — the rows
+        // loop below runs 20k+ times, and lowercasing the query per row
+        // was an allocation per row. `None` when the filter is off, blank,
+        // or the hydration gate is still down.
+        let name_query: Option<String> = name_filter().and_then(|raw| {
+            // SSR renders SSR_FALLBACK_ROWS rows with *English* item names;
+            // the client hydrates localized ones. Localized-name matching
+            // therefore must not run until after hydration or an active
+            // ?name= produces different row sets and trips the tachys
+            // hydration panic. Same Effect-driven gate as item_explorer.rs /
+            // job_set_card.rs. Checked only when a name filter is active so
+            // an idle page never subscribes this memo to `hydrated`.
+            if !hydrated.get() {
+                return None;
+            }
+            normalize_name_query(&raw)
+        });
+        // See `FilteredRows::rows_lacking_data`. Counted by the combined
+        // drift/confidence/volume closure below.
+        let mut rows_lacking_data = 0usize;
         let mut sorted_data = profits
             .0
             .iter()
@@ -1019,6 +1250,75 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
+                quality_filter()
+                    .map(|q| passes_quality(q, data.inner.sale_summary.hq))
+                    .unwrap_or(true)
+            })
+            .filter(|data| {
+                let Some(query) = name_query.as_deref() else {
+                    return true;
+                };
+                items
+                    .get(&ItemId(data.inner.sale_summary.item_id))
+                    .map(|item| matches_normalized_name(query, &item.name))
+                    .unwrap_or(false)
+            })
+            .filter(|data| {
+                // Drift, confidence and volume floors in one pass: they share
+                // the "row may lack data" problem (drift needs >= 4 buffered
+                // sales; the other two need CH enrichment, ~7% coverage), so
+                // this is where `rows_lacking_data` is counted — and the two
+                // enrichment-backed floors share a single map lookup.
+                //
+                // CH band first, derived fallback — the same preference the
+                // Confidence column renders, so the label shown is the label
+                // filtered. Reading `enrichment` here follows the velocity
+                // filter's pattern; the non-reactive `requested` dedupe is
+                // what keeps recompute -> refetch from looping.
+                let drift_min = drift_floor();
+                let confidence_min = min_confidence();
+                let volume_min = min_volume();
+                if drift_min.is_none() && confidence_min.is_none() && volume_min.is_none() {
+                    return true;
+                }
+                let mut lacks_data = false;
+                let mut pass = true;
+                if let Some(min) = drift_min {
+                    let drift = price_drift_pct(&data.inner.prices);
+                    lacks_data |= drift.is_none();
+                    pass &= passes_drift_floor(min, drift);
+                }
+                if confidence_min.is_some() || volume_min.is_some() {
+                    let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
+                    // One lookup serves both floors.
+                    let ch = enrichment.with(|maps| {
+                        maps.quality_for(&key)
+                            .map(|q| (q.confidence_band, q.sample_size))
+                    });
+                    if let Some(floor) = confidence_min {
+                        let band = ch.map(|(band, _)| band);
+                        // CH `Unknown` is "no deep scan yet": the floor is
+                        // then judged on the derived band, so that row also
+                        // counts as lacking real data.
+                        lacks_data |= matches!(band, None | Some(ConfidenceBand::Unknown));
+                        pass &= passes_confidence_floor(
+                            floor,
+                            band,
+                            derived_confidence(&data.inner.sale_summary),
+                        );
+                    }
+                    if let Some(min) = volume_min {
+                        let volume = ch.map(|(_, sample_size)| sample_size);
+                        lacks_data |= volume.is_none();
+                        pass &= passes_volume_floor(min, volume);
+                    }
+                }
+                if lacks_data {
+                    rows_lacking_data += 1;
+                }
+                pass
+            })
+            .filter(move |data| {
                 max_purchase_price()
                     .map(|max| data.inner.cheapest_price <= max)
                     .unwrap_or(true)
@@ -1085,11 +1385,17 @@ fn AnalyzerTable(
             sort_mode().unwrap_or(SortMode::ProfitPerDay),
             sort_dir().unwrap_or_default(),
         );
-        sorted_data
-            .into_iter()
-            .enumerate()
-            .collect::<Vec<(usize, CalculatedProfitData)>>()
+        FilteredRows {
+            rows: sorted_data.into_iter().enumerate().collect(),
+            rows_lacking_data,
+        }
     });
+    // Split views over `filtered_rows`. The clone in `sorted_data` runs once
+    // per filter recompute (Memo caches it), not per access, and each element
+    // is an Arc bump — the VirtualScroller needs a `Signal<Vec<_>>` and this
+    // keeps its `each` wiring unchanged.
+    let sorted_data = Memo::new(move |_| filtered_rows.with(|f| f.rows.clone()));
+    let rows_lacking_data = Memo::new(move |_| filtered_rows.with(|f| f.rows_lacking_data));
 
     // --- Visible-window lazy enrichment -------------------------------------
     // Dedupe / loop-breaker: keys we've already scheduled a fetch for. Non-
@@ -1259,9 +1565,29 @@ fn AnalyzerTable(
                         {move || {
                             t_string!(i18n, analyzer_rows_count)
                                 .to_string()
-                                .replace("%count%", &sorted_data().len().to_string())
+                                .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
                         }}
                     </span>
+                    // Data-transparency note: the drift / confidence / volume
+                    // floors each meet rows with no underlying data (drift
+                    // needs >= 4 buffered sales; the other two need CH
+                    // enrichment) and resolve it differently — drop, judge on
+                    // a derived band, pass. Say how many rows that was rather
+                    // than letting the row count move for invisible reasons.
+                    // Zero (and absent) whenever none of those floors is set.
+                    {move || {
+                        let n = rows_lacking_data();
+                        (n > 0)
+                            .then(|| {
+                                view! {
+                                    <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap">
+                                        {t_string!(i18n, analyzer_rows_lacking_data)
+                                            .to_string()
+                                            .replace("%count%", &n.to_string())}
+                                    </span>
+                                }
+                            })
+                    }}
                     // Live-market indicator, carried over from the realtime work on
                     // main. It sat in the results-summary panel this bar replaced.
                     <RealtimeStatus status=realtime_status last_update=last_update />
@@ -1540,6 +1866,107 @@ fn AnalyzerTable(
                                             readonly=true
                                             value=Signal::derive(|| None::<String>)
                                             on_commit=Callback::new(move |_| set_show_suspicious(None))
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            quality_filter()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_quality_label).to_string()
+                                            value=Signal::derive(move || {
+                                                quality_filter().map(|q| q.to_string())
+                                            })
+                                            options=vec![
+                                                ("hq", t_string!(i18n, analyzer_col_hq).to_string()),
+                                                ("nq", t_string!(i18n, analyzer_quality_nq).to_string()),
+                                            ]
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_quality_filter(v.and_then(|s| s.parse().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            (name_filter().is_some() || name_chip_pending.get())
+                                .then(|| {
+                                    // Fresh from the menu (no committed value yet) the
+                                    // chip mounts editing so the user can type at once.
+                                    let start_editing = name_filter().is_none();
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_name_contains).to_string()
+                                            value=Signal::derive(name_filter)
+                                            start_editing=start_editing
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_name_filter(v);
+                                                name_chip_pending.set(false);
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            drift_floor()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_drift_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                drift_floor().map(format_velocity_floor)
+                                            })
+                                            numeric=true
+                                            step="1"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_drift(
+                                                    commit_numeric(drift_floor.get_untracked(), v),
+                                                );
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            min_confidence()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_confidence_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                min_confidence().map(|c| c.to_string())
+                                            })
+                                            options=vec![
+                                                ("low", t_string!(i18n, analyzer_confidence_low).to_string()),
+                                                ("medium", t_string!(i18n, analyzer_confidence_medium).to_string()),
+                                                ("high", t_string!(i18n, analyzer_confidence_high).to_string()),
+                                            ]
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_confidence(v.and_then(|s| s.parse().ok()));
+                                            })
+                                        />
+                                    }
+                                })
+                        }}
+                        {move || {
+                            min_volume()
+                                .map(|_| {
+                                    view! {
+                                        <FilterChip
+                                            label=t_string!(i18n, analyzer_volume_gte).to_string()
+                                            value=Signal::derive(move || {
+                                                min_volume().map(|v| v.to_string())
+                                            })
+                                            numeric=true
+                                            min="0"
+                                            step="10"
+                                            on_commit=Callback::new(move |v: Option<String>| {
+                                                set_min_volume(
+                                                    commit_numeric(min_volume.get_untracked(), v),
+                                                );
+                                            })
                                         />
                                     }
                                 })
@@ -2240,6 +2667,18 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     // closure and remounts on every market refetch, which would keep undoing a
     // filter the user had cleared.
     seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    // Owned here for the same reason as the seed above — AnalyzerTable
+    // remounts on every realtime market tick, and this state must survive
+    // those remounts. `name_chip_pending` keeps a not-yet-committed name
+    // chip alive while the user is still typing into it; `hydrated` is the
+    // one-shot hydration gate for localized-name matching (see the name
+    // filter inside AnalyzerTable), which must not flip back to false and
+    // re-render an unfiltered pass on every tick.
+    let name_chip_pending = RwSignal::new(false);
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
     let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
@@ -2392,6 +2831,8 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                     set_cross_region_enabled=set_cross_region_enabled
                                                     set_filter_outliers=set_filter_outliers
                                                     on_market_update=refetch_market_data
+                                                    name_chip_pending=name_chip_pending
+                                                    hydrated=hydrated
                                                 />
                                             },
                                         )
@@ -3042,6 +3483,12 @@ mod tests {
     #[test]
     fn every_addable_filter_has_a_starting_value() {
         for id in ADDABLE_FILTERS {
+            // FILTER_NAME is the deliberate exception: its chip mounts in
+            // edit state instead of seeding a resting value (see
+            // `default_filter_value`'s doc comment).
+            if *id == FILTER_NAME {
+                continue;
+            }
             assert!(
                 !default_filter_value(id).is_empty(),
                 "{id} has no default, so the + Filter menu would add an empty chip"
@@ -3124,5 +3571,157 @@ mod tests {
         assert_eq!(SortDir::Asc.to_string(), "asc");
         assert_eq!(SortDir::Desc.to_string(), "desc");
         assert!("sideways".parse::<SortDir>().is_err());
+    }
+
+    #[test]
+    fn quality_filter_round_trips_its_url_tokens() {
+        assert_eq!("hq".parse::<QualityFilter>(), Ok(QualityFilter::Hq));
+        assert_eq!("nq".parse::<QualityFilter>(), Ok(QualityFilter::Nq));
+        assert!("HQ".parse::<QualityFilter>().is_err());
+        assert_eq!(QualityFilter::Hq.to_string(), "hq");
+        assert_eq!(QualityFilter::Nq.to_string(), "nq");
+    }
+
+    #[test]
+    fn quality_filter_selects_matching_rows_only() {
+        assert!(passes_quality(QualityFilter::Hq, true));
+        assert!(!passes_quality(QualityFilter::Hq, false));
+        assert!(passes_quality(QualityFilter::Nq, false));
+        assert!(!passes_quality(QualityFilter::Nq, true));
+    }
+
+    /// The production pairing: normalize once (per recompute), match many
+    /// (per row). Composed here so the tests exercise the same path.
+    fn name_matches(raw_query: &str, item_name: &str) -> bool {
+        match normalize_name_query(raw_query) {
+            Some(q) => matches_normalized_name(&q, item_name),
+            None => true,
+        }
+    }
+
+    #[test]
+    fn name_match_is_case_insensitive_substring() {
+        assert!(name_matches("grade", "Grade 8 Tincture of Strength"));
+        assert!(name_matches("TINCTURE", "Grade 8 Tincture of Strength"));
+        assert!(!name_matches("potion", "Grade 8 Tincture of Strength"));
+    }
+
+    #[test]
+    fn blank_or_whitespace_name_query_matches_everything() {
+        // The chip seeds empty and the user may commit whitespace; neither
+        // should silently empty the table.
+        assert!(name_matches("", "Anything"));
+        assert!(name_matches("   ", "Anything"));
+    }
+
+    #[test]
+    fn name_query_normalizes_once_to_trimmed_lowercase() {
+        // The per-row side must be able to assume a pre-lowercased,
+        // pre-trimmed query — that is the whole point of hoisting the
+        // normalization out of the 20k-row loop.
+        assert_eq!(
+            normalize_name_query("  TiNcTuRe "),
+            Some("tincture".to_string())
+        );
+        assert_eq!(normalize_name_query("   "), None);
+        assert_eq!(normalize_name_query(""), None);
+    }
+
+    #[test]
+    fn filter_param_keys_are_pinned_wire_format() {
+        // `?drift=` / `?confidence=` deliberately share their *values* with
+        // the COL_DRIFT / COL_CONFIDENCE `?cols=` tokens — different
+        // namespaces. The values are public wire format (bookmarks, saved
+        // views); only the Rust const names may change.
+        assert_eq!(FILTER_MIN_DRIFT, COL_DRIFT);
+        assert_eq!(FILTER_MIN_DRIFT, "drift");
+        assert_eq!(FILTER_MIN_CONFIDENCE, COL_CONFIDENCE);
+        assert_eq!(FILTER_MIN_CONFIDENCE, "confidence");
+        assert_eq!(FILTER_MIN_VOLUME, "min-volume");
+        assert_eq!(FILTER_NAME, "name");
+        assert_eq!(FILTER_QUALITY, "quality");
+    }
+
+    #[test]
+    fn drift_floor_keeps_rows_at_or_above_the_floor() {
+        assert!(passes_drift_floor(-10.0, Some(-5.0)));
+        assert!(passes_drift_floor(-10.0, Some(-10.0)));
+        assert!(!passes_drift_floor(-10.0, Some(-25.0)));
+    }
+
+    #[test]
+    fn drift_floor_drops_rows_with_uncomputable_drift() {
+        // Universal-coverage metric: same unknown-fails rule as the
+        // velocity floor (spec: Unknown-data semantics).
+        assert!(!passes_drift_floor(-10.0, None));
+    }
+
+    #[test]
+    fn confidence_floor_prefers_the_clickhouse_band() {
+        // CH says Low; the derived band saying High must not override it.
+        assert!(!passes_confidence_floor(
+            ConfidenceFloor::Medium,
+            Some(ConfidenceBand::Low),
+            DerivedConfidence::High,
+        ));
+        assert!(passes_confidence_floor(
+            ConfidenceFloor::Medium,
+            Some(ConfidenceBand::High),
+            DerivedConfidence::Low,
+        ));
+    }
+
+    #[test]
+    fn confidence_unknown_band_falls_back_to_derived() {
+        // CH `Unknown` is "no deep-scan yet", not a verdict.
+        assert!(passes_confidence_floor(
+            ConfidenceFloor::Medium,
+            Some(ConfidenceBand::Unknown),
+            DerivedConfidence::Medium,
+        ));
+        assert!(passes_confidence_floor(
+            ConfidenceFloor::High,
+            None,
+            DerivedConfidence::High,
+        ));
+        assert!(!passes_confidence_floor(
+            ConfidenceFloor::High,
+            None,
+            DerivedConfidence::Medium,
+        ));
+    }
+
+    #[test]
+    fn confidence_unusable_fails_any_floor() {
+        assert!(!passes_confidence_floor(
+            ConfidenceFloor::Low,
+            Some(ConfidenceBand::Unusable),
+            DerivedConfidence::High,
+        ));
+    }
+
+    #[test]
+    fn confidence_floor_round_trips_its_url_tokens() {
+        assert_eq!(
+            "medium".parse::<ConfidenceFloor>(),
+            Ok(ConfidenceFloor::Medium)
+        );
+        assert!("Medium".parse::<ConfidenceFloor>().is_err());
+        assert_eq!(ConfidenceFloor::High.to_string(), "high");
+    }
+
+    #[test]
+    fn volume_floor_keeps_rows_without_clickhouse_coverage() {
+        // CH-only metric (~7% coverage, lazily enriched): unknown-fails
+        // would empty the un-enriched table and deadlock the lazy fetch
+        // (spec: Unknown-data semantics). Unknown rows pass.
+        assert!(passes_volume_floor(10, None));
+    }
+
+    #[test]
+    fn volume_floor_drops_rows_with_known_volume_below_it() {
+        assert!(!passes_volume_floor(10, Some(3)));
+        assert!(passes_volume_floor(10, Some(10)));
+        assert!(passes_volume_floor(10, Some(250)));
     }
 }

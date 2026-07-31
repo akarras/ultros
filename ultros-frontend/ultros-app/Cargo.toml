@@ -37,6 +37,9 @@ web-sys = { version = "0.3", optional = true, features = [
     # FilterChip tells "the user cleared this" from "the number input holds
     # something it cannot parse" — both report an empty value.
     "HtmlInputElement",
+    # FilterChip's select variant commits from blur/Enter, which needs the
+    # select's current value off the event target.
+    "HtmlSelectElement",
     "ValidityState",
     "PointerEvent",
     "ResizeObserver",

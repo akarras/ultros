@@ -190,7 +190,14 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
         .values()
         .filter(|cat| (1..=4).contains(&cat.category))
     {
-        let mut builder = Url::builder(["https://ultros.app/items/category/", &cat.name].concat());
+        // Keyed by id, not `cat.name`: the name is localized, and the SSR that
+        // answers these URLs always renders with English game data, so a
+        // name-keyed link only resolves for English visitors. See
+        // `resolve_category_param` in `item_explorer.rs`.
+        let mut builder = Url::builder(format!(
+            "https://ultros.app/items/category/{}",
+            cat.key_id.0
+        ));
         builder.priority(0.6);
         builder.change_frequency(ChangeFrequency::Weekly);
         if let Ok(url) = builder.build() {

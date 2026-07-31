@@ -20,17 +20,6 @@ use crate::{
     entity::{active_listing, retainer},
 };
 
-impl PartialEq<ListingView> for ListingData {
-    fn eq(&self, other: &ListingView) -> bool {
-        self.0.world_id == other.world_id.unwrap_or_default() as i32
-            && self.0.price_per_unit == other.price_per_unit.unwrap_or_default() as i32
-            && self.0.quantity == other.quantity.unwrap_or_default() as i32
-            && self.0.hq == other.hq
-            && self.1.name == other.retainer_name
-        // timestamp intentionally ignored
-    }
-}
-
 pub type ListingUpdate = (
     Vec<(ActiveListing, Retainer)>,
     Vec<(ActiveListing, Retainer)>,
@@ -40,33 +29,187 @@ pub type ListingsWithRetainers = Vec<(active_listing::Model, Option<retainer::Mo
 
 struct ListingData(active_listing::Model, retainer::Model);
 
+/// Sort/compare key for `active_listing::Model`/`retainer::Model` pairs used by
+/// `listings_to_remove`: world, retainer name, price, quantity, hq.
+fn remove_diff_key_model<'a>(
+    listing: &active_listing::Model,
+    retainer_name: &'a str,
+) -> (u16, &'a str, i32, i32, bool) {
+    (
+        listing.world_id as u16,
+        retainer_name,
+        listing.price_per_unit,
+        listing.quantity,
+        listing.hq,
+    )
+}
+
+/// Same key, computed from the incoming websocket view. `None` price/quantity
+/// must resolve exactly like the insert path (`create_listing` in lib.rs stores
+/// `price_per_unit.unwrap_or(total)` and `quantity.unwrap_or(1)`), otherwise a
+/// listing that arrived with a `None` field could never be matched for removal
+/// and would linger as a phantom row.
+fn remove_diff_key_view(listing: &ListingView) -> (u16, &str, i32, i32, bool) {
+    (
+        listing.world_id.unwrap_or_default(),
+        listing.retainer_name.as_str(),
+        listing.price_per_unit.unwrap_or(listing.total) as i32,
+        listing.quantity.unwrap_or(1) as i32,
+        listing.hq,
+    )
+}
+
+// `PartialDiffIterator` drives its merge through these impls; deriving them from
+// the same key functions the sorts use makes drift between sort order and merge
+// comparator impossible.
+impl PartialEq<ListingView> for ListingData {
+    fn eq(&self, other: &ListingView) -> bool {
+        remove_diff_key_model(&self.0, &self.1.name) == remove_diff_key_view(other)
+        // timestamp intentionally ignored
+    }
+}
+
 impl PartialOrd<ListingView> for ListingData {
     fn partial_cmp(&self, other: &ListingView) -> Option<std::cmp::Ordering> {
-        let ListingData(listing, retainer) = self;
-        match (listing.world_id as u16).partial_cmp(&other.world_id.unwrap_or_default()) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        match retainer.name.partial_cmp(&other.retainer_name) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        match listing
-            .price_per_unit
-            .partial_cmp(&(other.price_per_unit.unwrap_or_default() as i32))
-        {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        match listing
-            .quantity
-            .partial_cmp(&(other.quantity.unwrap_or_default() as i32))
-        {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        listing.hq.partial_cmp(&other.hq)
+        Some(remove_diff_key_model(&self.0, &self.1.name).cmp(&remove_diff_key_view(other)))
     }
+}
+
+/// Diffs the DB's current listings against the incoming "listings that no longer
+/// exist" view from the websocket, returning the DB rows to delete.
+///
+/// `PartialDiffIterator` assumes both inputs are already sorted by the same key;
+/// duplicate/identical listings are legal (a retainer can have several identical
+/// listings), so both sides are sorted here by the exact comparator key before
+/// diffing, which also makes the match multiset-correct (each DB row pairs with
+/// exactly one incoming row with a matching key, not just a positionally lucky one).
+fn listings_to_remove(
+    mut db_listings: Vec<(active_listing::Model, retainer::Model)>,
+    mut remove_listings: Vec<ListingView>,
+) -> Vec<active_listing::Model> {
+    db_listings.sort_by(|(a, ar), (b, br)| {
+        remove_diff_key_model(a, &ar.name).cmp(&remove_diff_key_model(b, &br.name))
+    });
+    remove_listings.sort_by(|a, b| remove_diff_key_view(a).cmp(&remove_diff_key_view(b)));
+
+    // Note: when several DB rows share an identical key (a retainer can post
+    // duplicate listings), WHICH of their ids get deleted is arbitrary — the
+    // websocket stream doesn't carry our row ids, so any n of the m identical
+    // rows are equally correct to remove.
+    PartialDiffIterator::new(
+        db_listings.into_iter().map(|(l, r)| ListingData(l, r)),
+        remove_listings.into_iter(),
+    )
+    .filter_map(|listing| match listing {
+        crate::common::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
+        _ => None,
+    })
+    .collect()
+}
+
+/// Canonical sort/merge key for `update_listings`: hq, quantity, price, retainer
+/// name. Used for the incoming-view sort, the existing-db-row sort, and the merge
+/// loop's comparator alike, so all three agree on what "equal" means.
+fn update_diff_key_view(listing: &ListingView) -> (bool, i32, i32, &str) {
+    (
+        listing.hq,
+        listing.quantity.unwrap_or(1) as i32,
+        listing.price_per_unit.unwrap_or(listing.total) as i32,
+        listing.retainer_name.as_str(),
+    )
+}
+
+/// Same key, computed from a DB row + its retainer's name.
+fn update_diff_key_model<'a>(
+    listing: &active_listing::Model,
+    retainer_name: &'a str,
+) -> (bool, i32, i32, &'a str) {
+    (
+        listing.hq,
+        listing.quantity,
+        listing.price_per_unit,
+        retainer_name,
+    )
+}
+
+struct ListingsDiff {
+    added: Vec<ListingView>,
+    removed: Vec<(active_listing::Model, Option<retainer::Model>)>,
+}
+
+/// Diffs the incoming full listing-board view against the DB's current rows for an
+/// item/world, sorting both sides by the same canonical key before merging so the
+/// merge loop's comparator matches the sort exactly (previously the merge loop
+/// compared fields in a different order than the sort used, causing unchanged
+/// listings to be misclassified as add+remove churn).
+fn diff_update_listings(
+    mut listings: Vec<ListingView>,
+    mut existing_items: Vec<(active_listing::Model, Option<retainer::Model>)>,
+) -> ListingsDiff {
+    listings.sort_by(|a, b| update_diff_key_view(a).cmp(&update_diff_key_view(b)));
+    existing_items.sort_by(|(listinga, retainera), (listingb, retainerb)| {
+        let retainer_name_a = retainera
+            .as_ref()
+            .map(|m| m.name.as_str())
+            .unwrap_or_default();
+        let retainer_name_b = retainerb
+            .as_ref()
+            .map(|m| m.name.as_str())
+            .unwrap_or_default();
+        update_diff_key_model(listinga, retainer_name_a)
+            .cmp(&update_diff_key_model(listingb, retainer_name_b))
+    });
+
+    let mut incoming_iter = listings.into_iter();
+    let mut db_iter = existing_items.into_iter();
+    // compare each item, then advance the list
+    let mut incoming_list = incoming_iter.next();
+    let mut db_value = db_iter.next();
+    let mut added = vec![];
+    let mut removed = vec![];
+    loop {
+        match (incoming_list, db_value) {
+            (Some(list), None) => {
+                added.push(list);
+                incoming_list = incoming_iter.next();
+                db_value = None;
+            }
+            (None, Some(model)) => {
+                removed.push(model);
+                incoming_list = None;
+                db_value = db_iter.next();
+            }
+            (Some(list), Some((model, retainer))) => {
+                let retainer_name = retainer
+                    .as_ref()
+                    .map(|r| r.name.as_str())
+                    .unwrap_or_default();
+                match update_diff_key_view(&list).cmp(&update_diff_key_model(&model, retainer_name))
+                {
+                    std::cmp::Ordering::Less => {
+                        added.push(list);
+                        incoming_list = incoming_iter.next();
+                        db_value = Some((model, retainer));
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // item in list, keep checking list
+                        db_value = db_iter.next();
+                        incoming_list = incoming_iter.next();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        removed.push((model, retainer));
+                        incoming_list = Some(list);
+                        db_value = db_iter.next();
+                    }
+                }
+            }
+            (None, None) => {
+                // lists exhausted, exit this loop
+                break;
+            }
+        }
+    }
+    ListingsDiff { added, removed }
 }
 
 impl UltrosDb {
@@ -79,24 +222,20 @@ impl UltrosDb {
         let listings = self
             .get_all_listings_in_worlds_with_retainers(&[world_id.0], item_id)
             .await?;
+        let db_listings: Vec<(active_listing::Model, retainer::Model)> = listings
+            .into_iter()
+            .flat_map(|(listing, retainer)| retainer.map(|r| (listing, r)))
+            .collect();
 
         let items = try_join_all(
-            PartialDiffIterator::new(
-                listings
-                    .into_iter()
-                    .flat_map(|(listing, retainer)| retainer.map(|r| ListingData(listing, r))),
-                remove_listings.into_iter(),
-            )
-            .flat_map(|listing| match listing {
-                crate::common::partial_diff_iterator::DiffItem::Same(listing, _) => Some(listing.0),
-                _ => None,
-            })
-            .map(|listing| async move {
-                active_listing::Entity::delete_by_id(listing.id)
-                    .exec(&self.db)
-                    .await
-                    .map(|_| listing)
-            }),
+            listings_to_remove(db_listings, remove_listings)
+                .into_iter()
+                .map(|listing| async move {
+                    active_listing::Entity::delete_by_id(listing.id)
+                        .exec(&self.db)
+                        .await
+                        .map(|_| listing)
+                }),
         )
         .await?;
         let retainers = items.iter().map(|i| i.retainer_id).unique();
@@ -107,6 +246,14 @@ impl UltrosDb {
             .into_iter()
             .map(|r| (r.id, r.into()))
             .collect();
+        // Only stamp the catch-up marker when we actually deleted rows. A no-op
+        // remove (common: the paired full-board update already deleted them) must
+        // not record "this item was ingested" — if a concurrent update_listings
+        // failed, an unconditional stamp would hide the gap from catch-up forever
+        // (the PR #986 bug class).
+        if !items.is_empty() {
+            self.set_last_updated(world_id, item_id).await?;
+        }
         Ok(items
             .into_iter()
             .flat_map(|i| retainers.get(&i.retainer_id).map(|r| (i.into(), r.clone())))
@@ -264,7 +411,7 @@ impl UltrosDb {
     #[instrument(skip(self, listings), level = "trace")]
     pub async fn update_listings(
         &self,
-        mut listings: Vec<ListingView>,
+        listings: Vec<ListingView>,
         item_id: ItemId,
         world_id: WorldId,
     ) -> Result<ListingUpdate> {
@@ -272,14 +419,7 @@ impl UltrosDb {
         let instant = Instant::now();
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has
-        // Then diff against the listings that we have
-        listings.sort_by(|a, b| {
-            a.hq.cmp(&b.hq)
-                .then_with(|| a.quantity.cmp(&b.quantity))
-                .then_with(|| a.price_per_unit.cmp(&b.price_per_unit))
-                .then_with(|| a.retainer_name.cmp(&b.retainer_name))
-        });
-
+        // Then diff against the listings that we have (diff_update_listings sorts both sides)
         let queried_retainers: HashSet<(String, String, i32)> = listings
             .iter()
             .map(|listing| {
@@ -309,7 +449,7 @@ impl UltrosDb {
                 e.insert(retainer);
             }
         }
-        let mut existing_items = Entity::find()
+        let existing_items = Entity::find()
             .filter(
                 Column::WorldId
                     .eq(world_id.0)
@@ -318,77 +458,7 @@ impl UltrosDb {
             .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
-        existing_items.sort_by(|(listinga, retainera), (listingb, retainerb)| {
-            let retainer_name_a = retainera
-                .as_ref()
-                .map(|m| m.name.as_str())
-                .unwrap_or_default();
-            let retainer_name_b = retainerb
-                .as_ref()
-                .map(|m| m.name.as_str())
-                .unwrap_or_default();
-            listinga
-                .hq
-                .cmp(&listingb.hq)
-                .then_with(|| listinga.quantity.cmp(&listingb.quantity))
-                .then_with(|| listinga.price_per_unit.cmp(&listingb.price_per_unit))
-                .then_with(|| retainer_name_a.cmp(retainer_name_b))
-        });
-        let mut incoming_iter = listings.into_iter();
-        let mut db_iter = existing_items.into_iter();
-        // compare each item, then advance the list
-        let mut incoming_list = incoming_iter.next();
-        let mut db_value = db_iter.next();
-        let mut added = vec![];
-        let mut removed = vec![];
-        loop {
-            match (incoming_list, db_value) {
-                (Some(list), None) => {
-                    added.push(list);
-                    incoming_list = incoming_iter.next();
-                    db_value = None;
-                }
-                (None, Some(model)) => {
-                    removed.push(model);
-                    incoming_list = None;
-                    db_value = db_iter.next();
-                }
-                (Some(list), Some((model, retainer))) => {
-                    let price_per_unit = list.price_per_unit.unwrap_or(list.total) as i32;
-                    let quantity = list.quantity.unwrap_or(1) as i32;
-                    let retainer_name = retainer
-                        .as_ref()
-                        .map(|r| r.name.as_str())
-                        .unwrap_or_default();
-                    match price_per_unit
-                        .cmp(&model.price_per_unit)
-                        .then_with(|| quantity.cmp(&model.quantity))
-                        .then_with(|| list.retainer_name.as_str().cmp(retainer_name))
-                        .then_with(|| list.hq.cmp(&model.hq))
-                    {
-                        std::cmp::Ordering::Less => {
-                            added.push(list);
-                            incoming_list = incoming_iter.next();
-                            db_value = Some((model, retainer));
-                        }
-                        std::cmp::Ordering::Equal => {
-                            // item in list, keep checking list
-                            db_value = db_iter.next();
-                            incoming_list = incoming_iter.next();
-                        }
-                        std::cmp::Ordering::Greater => {
-                            removed.push((model, retainer));
-                            incoming_list = Some(list);
-                            db_value = db_iter.next();
-                        }
-                    }
-                }
-                (None, None) => {
-                    // lists exhausted, exit this loop
-                    break;
-                }
-            }
-        }
+        let ListingsDiff { added, removed } = diff_update_listings(listings, existing_items);
         let remove_iter = removed.iter();
         let added = added.iter().map(|m| {
             let retainer_id = retainers
@@ -456,4 +526,460 @@ pub struct ListingSummary {
     pub hq: bool,
     pub price_per_unit: i32,
     pub world_id: i32,
+}
+
+#[cfg(test)]
+mod diff_tests {
+    //! Unit tests for the pure diff logic in `listings_to_remove` and
+    //! `diff_update_listings`, run against shuffled inputs to guard against the
+    //! "assumes sorted input" bug (positionally-lucky matches only) and against
+    //! merge-loop/sort-key mismatches (spurious add+remove churn).
+
+    use super::*;
+    use chrono::{DateTime, Local};
+
+    /// Minimal deterministic PRNG (xorshift32) so "shuffled" test inputs are
+    /// reproducible without pulling in a `rand` dependency.
+    struct Xorshift(u32);
+    impl Xorshift {
+        fn next_u32(&mut self) -> u32 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            self.0 = x;
+            x
+        }
+    }
+
+    fn shuffled<T>(mut items: Vec<T>, seed: u32) -> Vec<T> {
+        let mut rng = Xorshift(seed | 1);
+        let len = items.len();
+        for i in (1..len).rev() {
+            let j = (rng.next_u32() as usize) % (i + 1);
+            items.swap(i, j);
+        }
+        items
+    }
+
+    fn naive_ts() -> chrono::NaiveDateTime {
+        chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc()
+    }
+
+    fn local_ts() -> DateTime<Local> {
+        DateTime::<Local>::from(
+            chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00+00:00").unwrap(),
+        )
+    }
+
+    fn listing_view(
+        world_id: i32,
+        retainer_name: &str,
+        price: u32,
+        quantity: u32,
+        hq: bool,
+    ) -> ListingView {
+        ListingView {
+            last_review_time: local_ts(),
+            price_per_unit: Some(price),
+            quantity: Some(quantity),
+            stain_id: None,
+            world_name: None,
+            world_id: Some(world_id as u16),
+            creator_name: None,
+            creator_id: None,
+            hq,
+            is_crafted: false,
+            listing_id: None,
+            materia: vec![],
+            on_mannequin: false,
+            retainer_city: 1,
+            retainer_id: None,
+            retainer_name: retainer_name.to_string(),
+            seller_id: None,
+            total: price,
+            tax: 0,
+        }
+    }
+
+    fn db_listing(
+        id: i32,
+        world_id: i32,
+        retainer_id: i32,
+        price: i32,
+        quantity: i32,
+        hq: bool,
+    ) -> active_listing::Model {
+        active_listing::Model {
+            id,
+            world_id,
+            item_id: 1,
+            retainer_id,
+            price_per_unit: price,
+            quantity,
+            hq,
+            timestamp: naive_ts(),
+        }
+    }
+
+    fn retainer_model(id: i32, world_id: i32, name: &str) -> retainer::Model {
+        retainer::Model {
+            id,
+            world_id,
+            name: name.to_string(),
+            retainer_city_id: 1,
+        }
+    }
+
+    /// Like `listing_view`, but lets the caller leave `price_per_unit`/`quantity`
+    /// as `None` the way the real websocket feed sometimes does, to exercise the
+    /// `unwrap_or` fallback semantics.
+    fn listing_view_raw(
+        world_id: i32,
+        retainer_name: &str,
+        price_per_unit: Option<u32>,
+        quantity: Option<u32>,
+        hq: bool,
+        total: u32,
+    ) -> ListingView {
+        ListingView {
+            last_review_time: local_ts(),
+            price_per_unit,
+            quantity,
+            stain_id: None,
+            world_name: None,
+            world_id: Some(world_id as u16),
+            creator_name: None,
+            creator_id: None,
+            hq,
+            is_crafted: false,
+            listing_id: None,
+            materia: vec![],
+            on_mannequin: false,
+            retainer_city: 1,
+            retainer_id: None,
+            retainer_name: retainer_name.to_string(),
+            seller_id: None,
+            total,
+            tax: 0,
+        }
+    }
+
+    #[test]
+    fn remove_listings_deletes_exact_shuffled_subset() {
+        // Rows vary across retainer name, hq AND price (with prices repeating
+        // across retainer/hq combos), so a diff that only got price ordering
+        // right would still fail here.
+        let world_id = 100;
+        let retainers = [
+            retainer_model(1, world_id, "Aaronmus"),
+            retainer_model(2, world_id, "Zetamus"),
+        ];
+        let n = 24;
+        let mut db_rows = Vec::new();
+        let mut views = Vec::new();
+        for i in 0..n {
+            // 4 rows per price: (retainer, hq) in {A,Z} x {false,true}
+            let price = 100 + (i as u32) / 4;
+            let retainer = &retainers[(i as usize) % 2];
+            let hq = (i / 2) % 2 == 1;
+            db_rows.push((
+                db_listing(i + 1, world_id, retainer.id, price as i32, 1, hq),
+                retainer.clone(),
+            ));
+            views.push(listing_view(world_id, &retainer.name, price, 1, hq));
+        }
+
+        // pick a pseudo-random subset (every listing whose rng draw is divisible by 3) to remove
+        let mut rng = Xorshift(777);
+        let mut expected_removed_ids: Vec<i32> = Vec::new();
+        let mut remove_views = Vec::new();
+        for (i, view) in views.iter().enumerate() {
+            if rng.next_u32().is_multiple_of(3) {
+                expected_removed_ids.push(db_rows[i].0.id);
+                remove_views.push(view.clone());
+            }
+        }
+        expected_removed_ids.sort();
+        assert!(
+            !expected_removed_ids.is_empty(),
+            "sanity check: subset must be non-empty"
+        );
+
+        let db_rows = shuffled(db_rows, 42);
+        let remove_views = shuffled(remove_views, 99);
+
+        let removed = listings_to_remove(db_rows, remove_views);
+        let mut removed_ids: Vec<i32> = removed.iter().map(|l| l.id).collect();
+        removed_ids.sort();
+
+        assert_eq!(removed_ids, expected_removed_ids);
+    }
+
+    #[test]
+    fn remove_listings_handles_duplicate_identical_listings_by_multiplicity() {
+        let world_id = 200;
+        let retainer = retainer_model(2, world_id, "Duplicatemus");
+        // three identical listings (same price/qty/hq), distinct ids
+        let db_rows = shuffled(
+            vec![
+                (
+                    db_listing(10, world_id, retainer.id, 500, 3, true),
+                    retainer.clone(),
+                ),
+                (
+                    db_listing(11, world_id, retainer.id, 500, 3, true),
+                    retainer.clone(),
+                ),
+                (
+                    db_listing(12, world_id, retainer.id, 500, 3, true),
+                    retainer.clone(),
+                ),
+                // an unrelated listing that should never be removed
+                (
+                    db_listing(13, world_id, retainer.id, 999, 1, false),
+                    retainer.clone(),
+                ),
+            ],
+            5,
+        );
+
+        // websocket says exactly two of the three identical listings are gone
+        let remove_views = shuffled(
+            vec![
+                listing_view(world_id, &retainer.name, 500, 3, true),
+                listing_view(world_id, &retainer.name, 500, 3, true),
+            ],
+            8,
+        );
+
+        let removed = listings_to_remove(db_rows, remove_views);
+        assert_eq!(
+            removed.len(),
+            2,
+            "exactly 2 of the 3 identical listings should be removed"
+        );
+        assert!(removed.iter().all(|l| [10, 11, 12].contains(&l.id)));
+        assert!(!removed.iter().any(|l| l.id == 13));
+    }
+
+    #[test]
+    fn update_listings_reports_no_churn_for_unchanged_listings() {
+        let world_id = 300;
+        let retainer_a = retainer_model(3, world_id, "Alphamus");
+        let retainer_b = retainer_model(4, world_id, "Betamus");
+
+        let existing_items = shuffled(
+            vec![
+                (
+                    db_listing(20, world_id, retainer_a.id, 150, 2, false),
+                    Some(retainer_a.clone()),
+                ),
+                (
+                    db_listing(21, world_id, retainer_b.id, 300, 1, true),
+                    Some(retainer_b.clone()),
+                ),
+                // duplicate row: same retainer/price/qty/hq as id 20, different id
+                (
+                    db_listing(22, world_id, retainer_a.id, 150, 2, false),
+                    Some(retainer_a.clone()),
+                ),
+            ],
+            11,
+        );
+        let listings = shuffled(
+            vec![
+                listing_view(world_id, &retainer_a.name, 150, 2, false),
+                listing_view(world_id, &retainer_b.name, 300, 1, true),
+                listing_view(world_id, &retainer_a.name, 150, 2, false),
+            ],
+            22,
+        );
+
+        let diff = diff_update_listings(listings, existing_items);
+        assert!(
+            diff.added.is_empty(),
+            "no listings should be added, got {} added",
+            diff.added.len()
+        );
+        assert!(
+            diff.removed.is_empty(),
+            "no listings should be removed, got ids {:?}",
+            diff.removed.iter().map(|(m, _)| m.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn update_listings_unwraps_missing_quantity_consistently_between_sort_and_merge() {
+        // Two unchanged listings whose *raw* `Option<u32>` quantity ordering
+        // disagrees with their *resolved* (`unwrap_or(1)`) ordering: raw `None`
+        // sorts before `Some(0)`, but the resolved quantity treats `None` as `1`,
+        // which is greater than `0`. A sort key and merge comparator that don't
+        // agree on this unwrap semantic put the two sides out of step and
+        // misclassify both rows as a remove+add pair even though nothing changed.
+        let world_id = 300;
+        let retainer = retainer_model(3, world_id, "Alphamus");
+
+        let low_qty = db_listing(20, world_id, retainer.id, 500, 0, false);
+        let default_qty = db_listing(21, world_id, retainer.id, 500, 1, false);
+
+        let existing_items = shuffled(
+            vec![
+                (low_qty.clone(), Some(retainer.clone())),
+                (default_qty.clone(), Some(retainer.clone())),
+            ],
+            11,
+        );
+        let listings = shuffled(
+            vec![
+                listing_view_raw(world_id, &retainer.name, Some(500), Some(0), false, 500),
+                listing_view_raw(world_id, &retainer.name, Some(500), None, false, 500),
+            ],
+            22,
+        );
+
+        let diff = diff_update_listings(listings, existing_items);
+        assert!(
+            diff.added.is_empty(),
+            "no listings should be added, got {} added",
+            diff.added.len()
+        );
+        assert!(
+            diff.removed.is_empty(),
+            "no listings should be removed, got ids {:?}",
+            diff.removed.iter().map(|(m, _)| m.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn update_listings_adds_and_removes_only_the_changed_rows() {
+        let world_id = 400;
+        let retainer_a = retainer_model(5, world_id, "Gammamus");
+
+        // db has 3 unchanged rows plus one that will disappear from the board
+        let unchanged: Vec<_> = (0..3)
+            .map(|i| db_listing(30 + i, world_id, retainer_a.id, 200 + i, 5, false))
+            .collect();
+        let stale = db_listing(99, world_id, retainer_a.id, 999, 9, true);
+
+        let existing_items = shuffled(
+            unchanged
+                .iter()
+                .cloned()
+                .map(|m| (m, Some(retainer_a.clone())))
+                .chain(std::iter::once((stale.clone(), Some(retainer_a.clone()))))
+                .collect(),
+            3,
+        );
+
+        // incoming view: same unchanged rows, plus one brand-new listing, minus the stale one
+        let mut listings: Vec<_> = unchanged
+            .iter()
+            .map(|m| {
+                listing_view(
+                    world_id,
+                    &retainer_a.name,
+                    m.price_per_unit as u32,
+                    m.quantity as u32,
+                    m.hq,
+                )
+            })
+            .collect();
+        let new_listing = listing_view(world_id, &retainer_a.name, 12345, 1, true);
+        listings.push(new_listing.clone());
+        let listings = shuffled(listings, 4);
+
+        let diff = diff_update_listings(listings, existing_items);
+
+        assert_eq!(
+            diff.added.len(),
+            1,
+            "exactly one new listing should be added"
+        );
+        assert_eq!(diff.added[0].price_per_unit, new_listing.price_per_unit);
+
+        assert_eq!(
+            diff.removed.len(),
+            1,
+            "exactly the stale listing should be removed"
+        );
+        assert_eq!(diff.removed[0].0.id, stale.id);
+    }
+
+    #[test]
+    fn update_listings_keeps_hq_row_when_nq_row_disappears() {
+        // Regression for the sort/merge key mismatch (Bug 2): the old code sorted
+        // both sides by (hq, quantity, price, name) but merged by (price,
+        // quantity, name, hq). With an NQ row at a higher price and an HQ row at
+        // a lower price, the merge compared the HQ view (price 5) against the
+        // first-sorted NQ model (price 10), saw Less, and pushed the HQ view as
+        // "added"; the exhausted-incoming arm then swept BOTH db rows into
+        // "removed" — pointless delete+reinsert churn for the unchanged HQ row.
+        // The fixed code must remove only the NQ row and add nothing.
+        let world_id = 500;
+        let retainer = retainer_model(6, world_id, "Deltamus");
+        let nq = db_listing(40, world_id, retainer.id, 10, 1, false);
+        let hq = db_listing(41, world_id, retainer.id, 5, 1, true);
+        let existing_items = vec![
+            (nq.clone(), Some(retainer.clone())),
+            (hq.clone(), Some(retainer.clone())),
+        ];
+        // incoming board only has the HQ listing
+        let listings = vec![listing_view(world_id, &retainer.name, 5, 1, true)];
+
+        let diff = diff_update_listings(listings, existing_items);
+        assert!(
+            diff.added.is_empty(),
+            "HQ listing is unchanged; nothing should be added, got {} added",
+            diff.added.len()
+        );
+        assert_eq!(
+            diff.removed.len(),
+            1,
+            "only the NQ listing should be removed, got ids {:?}",
+            diff.removed.iter().map(|(m, _)| m.id).collect::<Vec<_>>()
+        );
+        assert_eq!(diff.removed[0].0.id, nq.id);
+    }
+
+    #[test]
+    fn remove_listings_matches_rows_stored_from_none_price_views() {
+        // A listing that arrived with `price_per_unit: None` was stored by
+        // `create_listing` with price = total and quantity = 1. When the
+        // websocket later removes it (again with None price/quantity), the
+        // remove key must resolve those Nones the same way, or the row can never
+        // match and lingers as a permanent phantom. The old key used
+        // `unwrap_or_default()` (= 0), which never matched the stored
+        // (price = total, quantity = 1) row.
+        let world_id = 600;
+        let retainer = retainer_model(7, world_id, "Phantomus");
+        // stored with the insert-path fallbacks: price = total (750), qty = 1
+        let stored = db_listing(50, world_id, retainer.id, 750, 1, false);
+        let keeper = db_listing(51, world_id, retainer.id, 200, 2, false);
+        let db_rows = vec![
+            (stored.clone(), retainer.clone()),
+            (keeper.clone(), retainer.clone()),
+        ];
+        let remove_views = vec![listing_view_raw(
+            world_id,
+            &retainer.name,
+            None,
+            None,
+            false,
+            750,
+        )];
+
+        let removed = listings_to_remove(db_rows, remove_views);
+        assert_eq!(
+            removed.len(),
+            1,
+            "the None-price listing must be matched for removal"
+        );
+        assert_eq!(removed[0].id, stored.id);
+        // MAJOR-1 note: `set_last_updated` gating lives in the async
+        // `remove_listings` DB method and can't be unit-tested here; the pure
+        // contract this test relies on is that an empty return from
+        // `listings_to_remove` means nothing was deleted (and thus no marker
+        // stamp).
+    }
 }
