@@ -21,6 +21,7 @@
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 use leptos_router::components::A;
+use thousands::Separable;
 use ultros_api_types::world_helper::AnySelector;
 
 use crate::{
@@ -242,19 +243,21 @@ fn FeaturedDeal(deal: ResaleStatsDto, home_world: String) -> impl IntoView {
     let aria = buy_sell_label(i18n, buy, sell);
 
     // Buffer-derived by default (100% coverage); ClickHouse upgrades it.
+    // Separated like every other gil figure on the card — a bare `3849999`
+    // beside a `3,849,999` reads as a different kind of number.
     let anchor = if deal.vwap_30d > 0 {
         t_string!(
             i18n,
             top_opportunities_vwap_30d,
-            price = deal.vwap_30d.to_string()
+            price = deal.vwap_30d.separate_with_commas()
         )
         .to_string()
     } else {
         t_string!(
             i18n,
             top_opportunities_recent_range,
-            low = deal.recent_price_low.to_string(),
-            high = deal.recent_price_high.to_string()
+            low = deal.recent_price_low.separate_with_commas(),
+            high = deal.recent_price_high.separate_with_commas()
         )
         .to_string()
     };
@@ -286,8 +289,12 @@ fn FeaturedDeal(deal: ResaleStatsDto, home_world: String) -> impl IntoView {
                     <div class="text-2xl font-semibold font-mono text-emerald-300 leading-none tabular-nums">
                         <Gil amount=deal.profit />
                     </div>
+                    // `Gil` renders a block-level `flex` div, so two of them
+                    // with a text node between stack into three lines no
+                    // matter how much room there is. The wrapper has to be a
+                    // flex row itself for the pair to read as one line.
                     <div
-                        class="text-[11px] text-[color:var(--color-text-muted)] font-mono mt-1"
+                        class="text-[11px] text-[color:var(--color-text-muted)] font-mono mt-1 flex items-center gap-1 whitespace-nowrap"
                         aria-label=aria
                     >
                         <Gil amount=buy />" → "<Gil amount=sell />
@@ -349,7 +356,7 @@ fn CompactDeal(deal: ResaleStatsDto, home_world: String) -> impl IntoView {
                     <Gil amount=deal.profit />
                 </span>
                 <span
-                    class="text-[10px] text-[color:var(--color-text-muted)] font-mono"
+                    class="text-[10px] text-[color:var(--color-text-muted)] font-mono flex items-center gap-1 whitespace-nowrap"
                     aria-label=aria
                 >
                     <Gil amount=buy />" → "<Gil amount=sell />
