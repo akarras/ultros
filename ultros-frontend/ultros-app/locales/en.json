@@ -1216,11 +1216,9 @@
     "market_heat_band_no_data": "Quiet",
     "top_opportunities_title": "Top opportunity",
     "top_opportunities_view_all": "View all in Flip Finder",
-    "top_opportunities_empty": "No qualifying flips on this world right now.",
     "top_opportunities_buy": "Buy",
     "top_opportunities_sell": "Sell",
     "top_opportunities_profit": "Profit",
-    "top_opportunities_roi": "ROI",
     "trends_window_label": "Window",
     "trends_window_7d": "7d",
     "trends_window_30d": "30d",
@@ -1625,5 +1623,13 @@
     "fc_crafting_desc": "Profit calculator for Free Company workshop projects",
     "scrip_sources_desc": "Find the most efficient collectables to craft for scrips",
     "venture_analyzer_desc": "Analyze retainer ventures for profitability",
-    "set_home_world": "Set your home world"
+    "set_home_world": "Set your home world",
+    "top_opportunities_route": "Buy on {{source}} → list on {{home}}",
+    "top_opportunities_profit_each": "Profit each",
+    "top_opportunities_recent_range": "recent {{low}}–{{high}}",
+    "top_opportunities_vwap_30d": "30d avg {{price}}",
+    "top_opportunities_empty_title": "Nothing worth flipping on {{world}} right now",
+    "top_opportunities_empty_body": "Only items that actually sell show up here, so a quiet market means an empty card.",
+    "top_opportunities_empty_cta": "Browse everything in Flip Finder",
+    "top_opportunities_error": "Couldn't load opportunities."
 }
