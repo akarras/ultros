@@ -818,19 +818,24 @@
     cursor: pointer;
 }
 
-/* `.side-nav-item` opts out like `.nav-link` does: these generic link rules are
-   specific enough (five `:not()` classes) to beat the sidebar's own hover and
-   active-page styles, which need to win. */
+/* `.side-nav-item` opts out like `.nav-link` does: this selector's stack of
+   `:not()` classes outweighs the sidebar's own hover and active-page styles,
+   which need to win.
+
+   `.card-link` opts out: on a card-sized anchor the blanket hover:underline
+   underlines every text node inside it at once (label, price, badge, …),
+   which reads as broken rather than interactive. Those links style their own
+   hover — a background tint plus an underline on the title only. */
 a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost) {
+    ):not(.btn-ghost):not(.card-link) {
     @apply hover:underline rounded-md;
     color: var(--brand-fg);
     background-color: transparent;
 }
 a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):hover {
+    ):not(.btn-ghost):not(.card-link):hover {
     color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
     background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
 }
@@ -839,13 +844,13 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
 [data-theme="light"]
     a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost) {
+    ):not(.btn-ghost):not(.card-link) {
     color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
 }
 [data-theme="light"]
     a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):hover {
+    ):not(.btn-ghost):not(.card-link):hover {
     color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }

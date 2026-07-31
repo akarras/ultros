@@ -22,6 +22,14 @@ pub(crate) struct BestDealsQuery {
     pub(crate) show_suspicious: Option<bool>,
     /// Cap on returned rows. Default 50, clamped to [1, 200].
     pub(crate) limit: Option<u32>,
+    /// Reject rows selling slower than this many per day. Derived from the
+    /// recent-sales buffer, so it has 100% coverage — unlike the ClickHouse
+    /// enrichment fields, which are absent on ~93% of items.
+    pub(crate) min_velocity: Option<f32>,
+    /// Reject rows with fewer than this many sales in the recent buffer.
+    pub(crate) min_buffer_sales: Option<u8>,
+    /// Reject rows above this ROI percentage.
+    pub(crate) max_roi: Option<f32>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -53,6 +61,13 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) vwap_30d: i32,
     pub(crate) sample_size_30d: u32,
     pub(crate) launder_suspicion: f32,
+    // Buffer-derived stats. Unlike the deep-scan fields above these are
+    // present on every row, which is why the card's credibility signals are
+    // built on them.
+    pub(crate) velocity_per_day: Option<f32>,
+    pub(crate) buffer_sale_count: u8,
+    pub(crate) recent_price_low: i32,
+    pub(crate) recent_price_high: i32,
 }
 
 impl From<ResaleStats> for ResaleStatsDto {
@@ -70,6 +85,10 @@ impl From<ResaleStats> for ResaleStatsDto {
             vwap_30d: stats.vwap_30d,
             sample_size_30d: stats.sample_size_30d,
             launder_suspicion: stats.launder_suspicion,
+            velocity_per_day: stats.velocity_per_day,
+            buffer_sale_count: stats.buffer_sale_count,
+            recent_price_low: stats.recent_price_low,
+            recent_price_high: stats.recent_price_high,
         }
     }
 }
@@ -99,6 +118,9 @@ pub(crate) async fn get_best_deals(
         filter_datacenter: None,
         filter_sale,
         include_suspicious: query.show_suspicious.unwrap_or(false),
+        min_velocity_per_day: query.min_velocity,
+        min_buffer_sales: query.min_buffer_sales,
+        max_roi: query.max_roi,
     };
     let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
 
@@ -152,6 +174,29 @@ mod tests {
                 .show_suspicious,
             Some(true)
         );
+    }
+
+    /// The card sends all three eligibility gates alongside the legacy
+    /// params; they must survive extraction together.
+    #[test]
+    fn eligibility_params_extract_alongside_existing_ones() {
+        let q = extract(
+            "min_profit=10000&filter_sale=Week&limit=20&show_suspicious=0\
+             &min_velocity=0.2&min_buffer_sales=2&max_roi=5000",
+        )
+        .expect("eligibility params must extract");
+        assert_eq!(q.min_profit, Some(10000));
+        assert_eq!(q.min_velocity, Some(0.2));
+        assert_eq!(q.min_buffer_sales, Some(2));
+        assert_eq!(q.max_roi, Some(5000.0));
+    }
+
+    #[test]
+    fn eligibility_params_are_optional() {
+        let q = extract("limit=10").expect("omitted params must extract");
+        assert_eq!(q.min_velocity, None);
+        assert_eq!(q.min_buffer_sales, None);
+        assert_eq!(q.max_roi, None);
     }
 
     #[test]
