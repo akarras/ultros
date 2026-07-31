@@ -18,7 +18,7 @@ use crate::charts::ChartMode;
 use crate::data::grouping::GroupLevel;
 use crate::data::stats::median;
 use crate::data::trend::least_squares;
-use crate::scale::{LinearScale, TimeScale, short_number};
+use crate::scale::{LinearScale, TimeScale, format_percent, short_number};
 use crate::scene::{Color, Node, Scene, Stroke, TextAnchor};
 use crate::svg::{band_path_d, dots_path_d, rects_path_d, vlines_path_d};
 use crate::theme::Theme;
@@ -64,6 +64,11 @@ pub struct PriceChartOptions {
     /// Price-lane rendering mode. `Density` falls back to `Price` here —
     /// density has its own layout and payload.
     pub mode: crate::charts::ChartMode,
+    /// Rebase every series to 0% at its first plotted bucket (spec 3's
+    /// "Index to % change"). Honoured in `Price` mode only; the y-axis
+    /// becomes percent and gil-valued overlays (market average, trendline,
+    /// raw dots) are suppressed as meaningless on that axis.
+    pub index_to_percent: bool,
     pub theme: Theme,
 }
 
@@ -84,6 +89,7 @@ impl Default for PriceChartOptions {
             utc_offset_minutes: 0,
             hidden_series: Vec::new(),
             mode: crate::charts::ChartMode::Price,
+            index_to_percent: false,
             theme: Theme::dark_card(),
         }
     }
@@ -294,6 +300,27 @@ pub fn build_price_history_chart(
             .flat_map(|(_, s)| s.buckets.iter())
     };
 
+    // ── Indexed % change ────────────────────────────────────────────────
+    // Each visible series rebases to its first plotted bucket; a series
+    // without a priceable bucket keeps raw values (it draws nothing anyway).
+    let percent = options.index_to_percent && options.mode == ChartMode::Price;
+    let percent_bases: Vec<Option<f64>> = resolved
+        .iter()
+        .enumerate()
+        .map(|(index, s)| {
+            (percent && !draw_hidden[index])
+                .then(|| s.buckets.iter().find_map(|b| b.vwap()))
+                .flatten()
+                .filter(|base| *base > 0.0)
+        })
+        .collect();
+    let series_value = |index: usize, vwap: f64| -> f64 {
+        match percent_bases.get(index).copied().flatten() {
+            Some(base) => (vwap / base - 1.0) * 100.0,
+            None => vwap,
+        }
+    };
+
     let Some((first_ts, last_ts)) = all_visible_buckets().map(|b| b.ts).minmax().into_option()
     else {
         scene.nodes.push(Node::Text {
@@ -360,15 +387,37 @@ pub fn build_price_history_chart(
 
     let time = TimeScale::new(first_ts, last_ts, (plot_left, plot_right));
     // Don't anchor the price axis at zero: gil prices cluster far above it
-    // and the signal is the variation. 5% headroom on both sides.
-    let price_pad = ((max_price - min_price) as f64 * 0.05).max(1.0);
-    let price = LinearScale::new(
+    // and the signal is the variation. 5% headroom on both sides. In % mode
+    // the domain comes from the rebased values instead, and may go negative.
+    let price_domain = if percent {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for (index, s) in resolved.iter().enumerate() {
+            if draw_hidden[index] {
+                continue;
+            }
+            for b in &s.buckets {
+                if let Some(v) = b.vwap() {
+                    let v = series_value(index, v);
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            }
+        }
+        if lo.is_finite() && hi.is_finite() {
+            let pad = ((hi - lo) * 0.05).max(0.1);
+            (lo - pad, hi + pad)
+        } else {
+            (0.0, 1.0)
+        }
+    } else {
+        let price_pad = ((max_price - min_price) as f64 * 0.05).max(1.0);
         (
             (min_price as f64 - price_pad).max(0.0),
             max_price as f64 + price_pad,
-        ),
-        (price_bottom, plot_top),
-    );
+        )
+    };
+    let price = LinearScale::new(price_domain, (price_bottom, plot_top));
 
     // ── Grid + axis labels ──────────────────────────────────────────────
     for tick in price.ticks(5) {
@@ -387,7 +436,11 @@ pub fn build_price_history_chart(
         scene.nodes.push(Node::Text {
             x: plot_left - 8.0,
             y: y + 4.0,
-            content: short_number(tick.round() as i32),
+            content: if percent {
+                format_percent(tick)
+            } else {
+                short_number(tick.round() as i32)
+            },
             size: 13.0,
             color: theme.text_muted,
             anchor: TextAnchor::End,
@@ -445,6 +498,7 @@ pub fn build_price_history_chart(
     // omit `raw` and show only the VWAP lines. Candle/Range modes already
     // express intra-bucket spread, so dots would be noise there.
     if options.mode == ChartMode::Price
+        && !percent
         && let Some(raw) = &series.raw
     {
         for (index, s) in resolved.iter().enumerate() {
@@ -486,10 +540,11 @@ pub fn build_price_history_chart(
             let Some(vwap) = bucket.vwap() else {
                 continue;
             };
+            let value = series_value(index, vwap);
             hover_map
                 .entry(bucket.ts)
                 .or_insert_with(|| vec![None; resolved.len()])[index] =
-                Some((price.scale(vwap), vwap));
+                Some((price.scale(value), value));
         }
     }
 
@@ -509,8 +564,12 @@ pub fn build_price_history_chart(
                     .buckets
                     .iter()
                     .filter_map(|b| {
-                        b.vwap()
-                            .map(|v| (time.scale(b.ts + half_bucket), price.scale(v)))
+                        b.vwap().map(|v| {
+                            (
+                                time.scale(b.ts + half_bucket),
+                                price.scale(series_value(index, v)),
+                            )
+                        })
                     })
                     .collect();
                 if line.len() > 1 {
@@ -634,6 +693,7 @@ pub fn build_price_history_chart(
 
     // ── Overlays ────────────────────────────────────────────────────────
     if options.show_market_average
+        && !percent
         && let Some(market_average) = stats.as_ref().and_then(|s| s.market_average)
     {
         let y = price.scale(market_average as f64);
@@ -649,7 +709,7 @@ pub fn build_price_history_chart(
             },
         });
     }
-    if options.show_trendline {
+    if options.show_trendline && !percent {
         let points: Vec<(f64, f64)> = all_visible_buckets()
             .filter_map(|b| {
                 b.vwap().map(|vwap| {
@@ -1051,6 +1111,76 @@ mod tests {
             .filter(|n| matches!(n, Node::Polyline { .. }))
             .count();
         assert_eq!(medians, 2, "third series is mode-suppressed");
+    }
+
+    #[test]
+    fn percent_mode_rebases_each_series_to_zero_at_its_first_bucket() {
+        let model = build_price_history_chart(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                index_to_percent: true,
+                show_market_average: true, // must be ignored in % mode
+                show_trendline: true,      // likewise
+                ..Default::default()
+            },
+        );
+        // Both series start at 0%: the first hover bucket carries ~0 each.
+        let first = model.hover.buckets.first().unwrap();
+        for v in first.series_values.iter().flatten() {
+            assert!(v.1.abs() < 1e-9, "first bucket rebases to 0%, got {}", v.1);
+        }
+        // Fixture trends +9%: later values are positive percents, not gil.
+        let last = model.hover.buckets.last().unwrap();
+        for v in last.series_values.iter().flatten() {
+            assert!(
+                (0.0..50.0).contains(&v.1),
+                "expected a small positive percent, got {}",
+                v.1
+            );
+        }
+        // Gil-valued overlays must not draw on a % axis.
+        let dashed_lines = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Line { stroke, .. } if stroke.dash.is_some()))
+            .count();
+        assert_eq!(dashed_lines, 0, "market average / trendline suppressed");
+        // Axis labels are percent-formatted.
+        assert!(
+            model
+                .scene
+                .nodes
+                .iter()
+                .any(|n| matches!(n, Node::Text { content, .. } if content.ends_with('%'))),
+            "y-axis renders percent labels"
+        );
+    }
+
+    #[test]
+    fn percent_flag_is_ignored_outside_price_mode() {
+        let with = build_price_history_chart(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                index_to_percent: true,
+                mode: ChartMode::Range,
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let without = build_price_history_chart(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                index_to_percent: false,
+                mode: ChartMode::Range,
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        assert_eq!(with.scene, without.scene);
     }
 
     #[test]
