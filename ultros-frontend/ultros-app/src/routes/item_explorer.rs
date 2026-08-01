@@ -1141,7 +1141,7 @@ pub fn ItemExplorer() -> impl IntoView {
     provide_context(CheapestPrices { read_listings });
     provide_context(scope);
     view! {
-        <div class="flex flex-col min-h-[calc(100vh-56px)]">
+        <div class="flex flex-col min-h-screen">
             <div class="p-4 lg:p-8 max-w-[1600px] mx-auto w-full">
                 <crate::routes::item_explorer_toolbar::ItemExplorerToolbar />
                 <Outlet />

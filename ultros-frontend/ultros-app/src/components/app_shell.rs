@@ -1,16 +1,19 @@
 use crate::components::ad::DesktopAdRail;
+use crate::components::mobile_bar::MobileBar;
+use crate::components::search_overlay::SearchOverlay;
 use crate::components::side_nav::SideNav;
-use crate::components::top_bar::TopBar;
+use crate::global_state::search_overlay::provide_search_overlay_state;
 use crate::global_state::side_nav::provide_side_nav_settings;
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
-/// Application shell: persistent sidebar + slim topbar + fluid content
-/// + optional ad rail. Mobile collapses the sidebar into a hamburger-
-/// toggled overlay drawer.
+/// Application shell: persistent sidebar + fluid content + optional ad
+/// rail. Mobile collapses the sidebar into a hamburger-toggled overlay
+/// drawer and adds a fixed bottom bar (Menu, Search, Items).
 #[component]
 pub fn AppShell(children: Children) -> impl IntoView {
     let nav = provide_side_nav_settings();
+    provide_search_overlay_state();
     let location = use_location();
 
     // Dismiss the mobile drawer on any navigation.
@@ -50,15 +53,17 @@ pub fn AppShell(children: Children) -> impl IntoView {
                 on:click=move |_| drawer_open.set(false)
             />
 
-            <TopBar />
-
             <main class="app-shell-content" role="main">
                 {children()}
             </main>
 
+            <MobileBar />
+
             <div class="app-shell-ad-rail">
                 <DesktopAdRail />
             </div>
+
+            <SearchOverlay />
         </div>
     }
     .into_any()

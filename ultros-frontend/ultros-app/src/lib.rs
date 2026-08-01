@@ -307,7 +307,10 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 <link id="leptos" rel="stylesheet" href=sheet_url />
                 <meta name="twitter:card" content="summary_large_image" />
                 <meta name="twitter:site" content="@ultros_app" />
-                <meta name="viewport" content="initial-scale=1.0,width=device-width" />
+                <meta
+                    name="viewport"
+                    content="initial-scale=1.0,width=device-width,viewport-fit=cover"
+                />
                 <meta name="theme-color" content="#0f0710" />
                 <meta name="application-name" content="Ultros" />
                 <meta property="og:type" content="website" />
@@ -361,7 +364,7 @@ pub fn Footer() -> impl IntoView {
     let git_hash = env!("GIT_HASH");
     let i18n = use_i18n();
     view! {
-        <footer class="bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
+        <footer class="site-footer bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-4">
                     <a

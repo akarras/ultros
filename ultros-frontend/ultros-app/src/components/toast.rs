@@ -70,7 +70,7 @@ pub fn ToastContainer() -> impl IntoView {
     let toasts = use_toast();
 
     view! {
-        <div class="fixed bottom-0 right-0 p-4 sm:p-6 z-[100] flex flex-col gap-2 pointer-events-none">
+        <div class="toast-container fixed bottom-0 right-0 p-4 sm:p-6 z-[100] flex flex-col gap-2 pointer-events-none">
             <div class="flex flex-col gap-2 items-end pointer-events-auto">
                 <Show when=move || toasts.is_some()>
                     <For
