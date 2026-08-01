@@ -143,6 +143,7 @@ fn snapshot_density_mode() {
             height: 540.0,
             utc_offset_minutes: 0,
             theme: Theme::site(),
+            ..Default::default()
         },
     );
     assert_snapshot("density", &scene_to_svg(&model.scene));

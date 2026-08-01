@@ -1024,6 +1024,8 @@
     "chart_hint_range_limit": "區間模式僅顯示前兩個系列。",
     "chart_caption_grouped_by": "按{group}分組",
     "chart_density_quantity_unavailable": "密度模式下無法使用數量欄。",
+    "chart_toggle_patches": "版本區間",
+    "chart_milestones_mixed_tracks": "版本區間已關閉：可見系列跨越了版本日程不同的區域。",
     "chart_view_overlay": "疊加檢視",
     "chart_view_grid": "網格檢視",
     "chart_view_group": "圖表檢視",

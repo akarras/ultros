@@ -1024,6 +1024,8 @@
     "chart_hint_range_limit": "レンジモードでは最初の2系列のみ表示されます。",
     "chart_caption_grouped_by": "{group}別",
     "chart_density_quantity_unavailable": "密度モードでは数量レーンを利用できません。",
+    "chart_toggle_patches": "パッチ帯",
+    "chart_milestones_mixed_tracks": "パッチ帯は無効です：表示中の系列は異なるパッチ日程のリージョンにまたがっています。",
     "chart_view_overlay": "重ね表示",
     "chart_view_grid": "グリッド",
     "chart_view_group": "チャート表示",

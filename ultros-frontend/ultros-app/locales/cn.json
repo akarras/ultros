@@ -1024,6 +1024,8 @@
     "chart_hint_range_limit": "区间模式仅显示前两个系列。",
     "chart_caption_grouped_by": "按{group}分组",
     "chart_density_quantity_unavailable": "密度模式下无法使用数量栏。",
+    "chart_toggle_patches": "版本区间",
+    "chart_milestones_mixed_tracks": "版本区间已关闭：可见系列跨越了版本日程不同的区域。",
     "chart_view_overlay": "叠加视图",
     "chart_view_grid": "网格视图",
     "chart_view_group": "图表视图",
