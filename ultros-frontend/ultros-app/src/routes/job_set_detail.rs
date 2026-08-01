@@ -24,7 +24,8 @@ use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::routes::item_explorer::job_category_lookup;
+use crate::routes::item_explorer::{job_category_lookup, resolve_jobset_param};
+use crate::routes::item_explorer_toolbar::jobset_display_label;
 
 /// Sum the cheapest-of-(NQ,HQ) price across every item in the set
 /// using the given listings map. Mirrors the helper in `JobSetCard`
@@ -370,25 +371,7 @@ pub fn JobSetDetail() -> impl IntoView {
     // Resolve the job acronym from the route, same as `JobItems` does.
     let canonical_abbr = Memo::new(move |_| {
         let raw = params().get("jobset").map(|s| s.to_string())?;
-        let decoded = percent_encoding::percent_decode_str(&raw)
-            .decode_utf8()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|_| raw.clone());
-        let lower = decoded.to_lowercase();
-        Some(
-            data.class_jobs
-                .iter()
-                .find_map(|(_id, job)| {
-                    let abbr = job.abbreviation.as_str();
-                    let name = job.name.as_str();
-                    if abbr.eq_ignore_ascii_case(&lower) || name.eq_ignore_ascii_case(&lower) {
-                        Some(abbr.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(decoded),
-        )
+        resolve_jobset_param(data, &raw)
     });
 
     let target_ilvl = Memo::new(move |_| {
@@ -441,9 +424,15 @@ pub fn JobSetDetail() -> impl IntoView {
     let default_zone_listings = cheapest_prices.map(|p| p.read_listings);
 
     let set_stem = Signal::derive(move || group.get().map(|g| g.stem).unwrap_or_default());
+    // Show the visitor's localized abbreviation, not the canonical English
+    // acronym the route is keyed on — a German player browsing Krieger gear
+    // should not see the heading read "WAR".
     let job_name = Memo::new(move |_| {
-        canonical_abbr
-            .get()
+        params()
+            .get("jobset")
+            .as_ref()
+            .and_then(|raw| jobset_display_label(data, raw))
+            .or_else(|| canonical_abbr.get())
             .unwrap_or_else(|| t_string!(i18n, job_set_default).to_string())
     });
     let back_href = Memo::new(move |_| {

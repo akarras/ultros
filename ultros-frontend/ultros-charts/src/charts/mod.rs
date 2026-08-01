@@ -1,6 +1,8 @@
 pub mod grid;
 pub mod price_density;
 pub mod price_history;
+#[cfg(test)]
+mod snapshot_tests;
 pub mod sparkline;
 
 /// One patch boundary prepared for rendering (spec 4). The app builds these
