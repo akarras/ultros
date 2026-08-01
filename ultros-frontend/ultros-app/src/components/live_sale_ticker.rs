@@ -116,11 +116,10 @@ pub fn LiveSaleTicker() -> impl IntoView {
             if let Some(world) = hw_2.map(|h| h.name) {
                 #[allow(clippy::collapsible_if)]
                 if let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await {
-                    use itertools::Itertools;
-                    let first_sales = recent_sales
+                    let mut first_sales = recent_sales
                         .sales
                         .into_iter()
-                        .flat_map(|sale| {
+                        .filter_map(|sale| {
                             sale.sales.first().map(|sale_data| SaleView {
                                 item_id: sale.item_id,
                                 price: sale_data.price_per_unit,
@@ -128,8 +127,15 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                 hq: sale.hq,
                             })
                         })
-                        .sorted_by_key(|s| std::cmp::Reverse(s.sold_date))
-                        .take(8);
+                        .collect::<Vec<_>>();
+
+                    // ⚡ Bolt: Optimization: Use linear time select_nth_unstable_by_key instead of O(N log N) full sort
+                    if first_sales.len() > 8 {
+                        first_sales
+                            .select_nth_unstable_by_key(8, |s| std::cmp::Reverse(s.sold_date));
+                        first_sales.truncate(8);
+                    }
+                    first_sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.sold_date));
 
                     sales.update(|s| {
                         for sale in first_sales {
