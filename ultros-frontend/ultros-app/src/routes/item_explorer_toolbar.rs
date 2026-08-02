@@ -81,6 +81,30 @@ pub(crate) fn job_chip_label(job: &ClassJob) -> &str {
     }
 }
 
+/// Bucket `(role, link)` pairs into ordered, labeled sections, dropping the
+/// roles that got no links. Both role-grouped tabs — Weapons (via the
+/// category's `class_job`) and Job Sets (via the job's abbreviation) — build
+/// their sections through this.
+fn role_buckets(
+    items: impl Iterator<Item = (RoleGroup, PopoverLink)>,
+    role_label: impl Fn(RoleGroup) -> String,
+) -> Vec<(Option<String>, Vec<PopoverLink>)> {
+    let mut buckets: Vec<(RoleGroup, Vec<PopoverLink>)> = RoleGroup::ORDERED
+        .iter()
+        .map(|role| (*role, Vec::new()))
+        .collect();
+    for (role, link) in items {
+        if let Some((_, links)) = buckets.iter_mut().find(|(r, _)| *r == role) {
+            links.push(link);
+        }
+    }
+    buckets
+        .into_iter()
+        .filter(|(_, links)| !links.is_empty())
+        .map(|(role, links)| (Some(role_label(role)), links))
+        .collect()
+}
+
 #[component]
 pub fn ItemExplorerToolbar() -> impl IntoView {
     let i18n = use_i18n();
@@ -191,66 +215,56 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
 
                     if group == 5 {
                         // Job sets: popover with jobs bucketed by role.
-                        let mut buckets: Vec<(RoleGroup, Vec<PopoverLink>)> = RoleGroup::ORDERED
-                            .iter()
-                            .map(|role| (*role, Vec::new()))
-                            .collect();
-                        for job in job_chips_sorted() {
-                            let label = job_chip_label(job).to_string();
-                            let href = href_with_world(
-                                format!("/items/jobset/{}", label.replace('/', "%2F")),
-                                world.as_deref(),
-                            );
-                            let role = role_for_job_abbr(&job.abbreviation);
-                            if let Some((_, links)) =
-                                buckets.iter_mut().find(|(r, _)| *r == role)
-                            {
-                                links.push(PopoverLink {
-                                    label,
-                                    href,
-                                    icon: PopoverIcon::Job(job.key_id),
-                                });
-                            }
-                        }
-                        let groups: Vec<(Option<String>, Vec<PopoverLink>)> = buckets
-                            .into_iter()
-                            .filter(|(_, links)| !links.is_empty())
-                            .map(|(role, links)| (Some(role_label(role)), links))
-                            .collect();
+                        let groups = role_buckets(
+                            job_chips_sorted()
+                                .into_iter()
+                                .map(|job| {
+                                    let label = job_chip_label(job).to_string();
+                                    (
+                                        role_for_job_abbr(&job.abbreviation),
+                                        PopoverLink {
+                                            href: href_with_world(
+                                                format!(
+                                                    "/items/jobset/{}",
+                                                    label.replace('/', "%2F"),
+                                                ),
+                                                world.as_deref(),
+                                            ),
+                                            label,
+                                            icon: PopoverIcon::Job(job.key_id),
+                                        },
+                                    )
+                                }),
+                            role_label,
+                        );
                         view! { <GroupedNavPopover button_label=button_label groups=groups /> }
                             .into_any()
                     } else if group == 1 {
                         // Weapons: popover with categories bucketed by the
                         // role of their associated job.
-                        let mut buckets: Vec<(RoleGroup, Vec<PopoverLink>)> = RoleGroup::ORDERED
-                            .iter()
-                            .map(|role| (*role, Vec::new()))
-                            .collect();
-                        for (name, id) in category_chips_for_group(1) {
-                            let href = href_with_world(
-                                format!("/items/category/{}", id.0),
-                                world.as_deref(),
-                            );
-                            let role = data
-                                .item_search_categorys
-                                .get(&id)
-                                .map(|cat| role_for_weapon_category(cat, data))
-                                .unwrap_or(RoleGroup::Other);
-                            if let Some((_, links)) =
-                                buckets.iter_mut().find(|(r, _)| *r == role)
-                            {
-                                links.push(PopoverLink {
-                                    label: name.to_string(),
-                                    href,
-                                    icon: PopoverIcon::Category(id),
-                                });
-                            }
-                        }
-                        let groups: Vec<(Option<String>, Vec<PopoverLink>)> = buckets
-                            .into_iter()
-                            .filter(|(_, links)| !links.is_empty())
-                            .map(|(role, links)| (Some(role_label(role)), links))
-                            .collect();
+                        let groups = role_buckets(
+                            category_chips_for_group(1)
+                                .into_iter()
+                                .map(|(name, id)| {
+                                    let role = data
+                                        .item_search_categorys
+                                        .get(&id)
+                                        .map(|cat| role_for_weapon_category(cat, data))
+                                        .unwrap_or(RoleGroup::Other);
+                                    (
+                                        role,
+                                        PopoverLink {
+                                            label: name.to_string(),
+                                            href: href_with_world(
+                                                format!("/items/category/{}", id.0),
+                                                world.as_deref(),
+                                            ),
+                                            icon: PopoverIcon::Category(id),
+                                        },
+                                    )
+                                }),
+                            role_label,
+                        );
                         view! { <GroupedNavPopover button_label=button_label groups=groups /> }
                             .into_any()
                     } else {
@@ -301,6 +315,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xiv_gen::ClassJobId;
 
     #[test]
     fn active_group_is_none_on_bare_items_route() {
@@ -426,5 +441,38 @@ mod tests {
             .map(|(_, j)| j)
             .expect("paladin job must exist");
         assert_eq!(job_chip_label(pld), pld.abbreviation.as_str());
+    }
+
+    #[test]
+    fn role_buckets_orders_sections_and_drops_empty_roles() {
+        let link = |label: &str| PopoverLink {
+            label: label.to_string(),
+            href: String::new(),
+            icon: PopoverIcon::Job(ClassJobId(0)),
+        };
+        let sections = role_buckets(
+            [
+                (RoleGroup::Caster, link("BLM")),
+                (RoleGroup::Tank, link("PLD")),
+                (RoleGroup::Tank, link("WAR")),
+            ]
+            .into_iter(),
+            |role| format!("{role:?}"),
+        );
+        // Sections follow RoleGroup::ORDERED (Tank before Caster) no matter
+        // what order the links arrive in, and the six roles that got no
+        // links produce no section header at all.
+        assert_eq!(sections.len(), 2, "empty roles must not render a section");
+        assert_eq!(sections[0].0.as_deref(), Some("Tank"));
+        assert_eq!(
+            sections[0]
+                .1
+                .iter()
+                .map(|l| l.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["PLD", "WAR"],
+            "links keep their input order within a bucket",
+        );
+        assert_eq!(sections[1].0.as_deref(), Some("Caster"));
     }
 }
