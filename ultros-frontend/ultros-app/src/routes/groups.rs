@@ -1,6 +1,6 @@
 use crate::api::{
-    add_group_member, create_group, delete_group, get_group_members, get_groups, get_login,
-    remove_group_member,
+    add_group_member, create_group, create_group_from_guild, delete_group, get_group_members,
+    get_groups, get_login, list_manageable_discord_guilds, remove_group_member,
 };
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
@@ -14,12 +14,23 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use ultros_api_types::user::group::{CreateGroup, UserGroup};
 
+/// Which creation panel is open, if any. The two are mutually exclusive so
+/// opening one closes the other.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CreatePanel {
+    Closed,
+    Manual,
+    Discord,
+}
+
 #[component]
 pub fn Groups() -> impl IntoView {
     let i18n = use_i18n();
     let toasts = use_toast();
     let create_group_action = Action::new(move |group: &CreateGroup| create_group(group.clone()));
     let delete_group_action = Action::new(move |id: &i32| delete_group(*id));
+    let create_from_guild_action =
+        Action::new(move |guild_id: &i64| create_group_from_guild(*guild_id));
 
     Effect::new(move |_| {
         if let (Some(res), Some(toasts)) = (create_group_action.value().get(), toasts) {
@@ -39,19 +50,55 @@ pub fn Groups() -> impl IntoView {
         }
     });
 
+    Effect::new(move |_| {
+        if let (Some(res), Some(toasts)) = (create_from_guild_action.value().get(), toasts) {
+            match res {
+                Ok(_) => toasts.success(t_string!(i18n, groups_group_created_from_guild)),
+                Err(e) => toasts.error(format!("Failed to create group from Discord server: {e}")),
+            }
+        }
+    });
+
     let groups_resource = Resource::new(
         move || {
             (
                 create_group_action.version().get(),
                 delete_group_action.version().get(),
+                create_from_guild_action.version().get(),
             )
         },
         move |_| get_groups(),
     );
 
-    let (creating, set_creating) = signal(false);
+    let (panel, set_panel) = signal(CreatePanel::Closed);
     let (new_group_name, set_new_group_name) = signal(String::new());
     let user_resource = Resource::new(|| {}, |_| async move { get_login().await.ok() });
+
+    // Gated on the picker being open: resolving this walks the bot's guilds and
+    // makes live Discord calls, which is far too expensive to do on every visit
+    // to the groups page. The `false` case also means SSR never calls Discord.
+    let guilds_resource = Resource::new(
+        move || {
+            (
+                panel.get() == CreatePanel::Discord,
+                create_from_guild_action.version().get(),
+            )
+        },
+        move |(open, _)| async move {
+            if !open {
+                return Ok(Vec::new());
+            }
+            list_manageable_discord_guilds().await
+        },
+    );
+
+    let toggle_panel = move |target: CreatePanel| {
+        set_panel(if panel() == target {
+            CreatePanel::Closed
+        } else {
+            target
+        });
+    };
 
     view! {
         <MetaTitle title=move || t_string!(i18n, groups_meta_title).to_string() />
@@ -84,13 +131,79 @@ pub fn Groups() -> impl IntoView {
 
                             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, groups_page_heading)}</h1>
-                                <button class="btn-primary" on:click=move |_| set_creating(!creating())>
-                                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                                    {move || if creating() { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_group)) }}
-                                </button>
+                                <div class="flex flex-wrap gap-2">
+                                    <button class="btn-secondary" on:click=move |_| toggle_panel(CreatePanel::Discord)>
+                                        <Icon icon=if panel() == CreatePanel::Discord { i::AiCloseOutlined } else { i::BsDiscord } />
+                                        {move || if panel() == CreatePanel::Discord { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_from_discord)) }}
+                                    </button>
+                                    <button class="btn-primary" on:click=move |_| toggle_panel(CreatePanel::Manual)>
+                                        <Icon icon=if panel() == CreatePanel::Manual { i::AiCloseOutlined } else { i::BiPlusRegular } />
+                                        {move || if panel() == CreatePanel::Manual { Either::Left(t!(i18n, cancel)) } else { Either::Right(t!(i18n, groups_create_group)) }}
+                                    </button>
+                                </div>
                             </div>
 
-                            <Show when=creating>
+                            <Show when=move || panel() == CreatePanel::Discord>
+                                <div class="panel p-6 rounded-xl animate-fade-in relative z-10 flex flex-col gap-4">
+                                    <div class="flex flex-col gap-1">
+                                        <h3 class="text-lg font-bold">{t!(i18n, groups_create_from_discord)}</h3>
+                                        <p class="text-sm text-gray-400">{t!(i18n, groups_discord_picker_desc)}</p>
+                                    </div>
+                                    <Suspense fallback=move || view! { <Loading /> }>
+                                        {move || {
+                                            guilds_resource.get().map(|res| {
+                                                match res {
+                                                    Ok(guilds) if guilds.is_empty() => {
+                                                        view! {
+                                                            <p class="text-sm text-gray-400">{t!(i18n, groups_discord_no_guilds)}</p>
+                                                        }.into_any()
+                                                    }
+                                                    Ok(guilds) => {
+                                                        view! {
+                                                            <div class="grid gap-2 sm:grid-cols-2">
+                                                                {guilds.into_iter().map(|guild| {
+                                                                    let guild_id = guild.id;
+                                                                    let taken = guild.existing_group_id.is_some();
+                                                                    let icon_url = guild.icon_url.clone();
+                                                                    let guild_name = guild.name.clone();
+                                                                    view! {
+                                                                        <button
+                                                                            type="button"
+                                                                            class="flex items-center gap-2 rounded border border-[color:var(--color-outline)] p-2 text-left hover:bg-[color:var(--color-background-panel)] disabled:opacity-50"
+                                                                            disabled=taken
+                                                                            on:click=move |_| {
+                                                                                create_from_guild_action.dispatch(guild_id);
+                                                                                set_panel(CreatePanel::Closed);
+                                                                            }
+                                                                        >
+                                                                            <GuildIcon icon_url=icon_url name=guild_name />
+                                                                            <span class="min-w-0 flex-1 truncate font-medium">{guild.name}</span>
+                                                                            {taken.then(|| view! {
+                                                                                <span class="shrink-0 text-[10px] uppercase tracking-wider text-gray-400">
+                                                                                    {t!(i18n, groups_discord_guild_taken)}
+                                                                                </span>
+                                                                            })}
+                                                                        </button>
+                                                                    }
+                                                                }).collect_view()}
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                    Err(e) => {
+                                                        view! {
+                                                            <div class="alert alert-error">
+                                                                {move || t!(i18n, groups_discord_error, error = e.to_string())}
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                }
+                                            })
+                                        }}
+                                    </Suspense>
+                                </div>
+                            </Show>
+
+                            <Show when=move || panel() == CreatePanel::Manual>
                                 <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
                                     <h3 class="text-lg font-bold mb-4">{t!(i18n, groups_create_group)}</h3>
                                     <div class="flex flex-col gap-4">
@@ -111,7 +224,7 @@ pub fn Groups() -> impl IntoView {
                                                 on:click=move |_| {
                                                     create_group_action.dispatch(CreateGroup { name: new_group_name() });
                                                     set_new_group_name(String::new());
-                                                    set_creating(false);
+                                                    set_panel(CreatePanel::Closed);
                                                 }
                                             >
                                                 <Icon icon=i::BiSaveSolid /> {t!(i18n, save)}
@@ -172,6 +285,33 @@ pub fn Groups() -> impl IntoView {
     }
 }
 
+/// Guild avatar with a first-letter fallback, matching the endpoint picker.
+/// The stored icon URL is a snapshot and can 404 if the guild changes its icon,
+/// so `on:error` falls back rather than leaving a broken image.
+#[component]
+fn GuildIcon(icon_url: Option<String>, name: String) -> impl IntoView {
+    let initial = name.chars().next().unwrap_or('?').to_string();
+    let (failed, set_failed) = signal(false);
+    move || {
+        let initial = initial.clone();
+        match icon_url.clone().filter(|_| !failed()) {
+            Some(url) => Either::Left(view! {
+                <img
+                    src=url
+                    class="h-8 w-8 shrink-0 rounded object-cover"
+                    alt=""
+                    on:error=move |_| set_failed(true)
+                />
+            }),
+            None => Either::Right(view! {
+                <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-[color:var(--color-background-panel)] text-xs font-bold">
+                    {initial}
+                </span>
+            }),
+        }
+    }
+}
+
 #[component]
 fn GroupCard(
     group: UserGroup,
@@ -218,14 +358,28 @@ fn GroupCard(
 
     let (new_member_id, set_new_member_id) = signal(String::new());
     let group_id = group.id;
+    let group_name = group.name.clone();
+    let guild_icon_url = group.guild_icon_url.clone();
+    let is_guild_linked = group.guild_id.is_some();
 
     view! {
         <div class="panel p-4 rounded-xl flex flex-col gap-4">
             <div class="flex justify-between items-start gap-2">
-                <div class="flex flex-col gap-1 overflow-hidden">
-                    <span class="text-xl font-bold truncate text-[color:var(--brand-fg)]">
-                        {group.name.clone()}
-                    </span>
+                <div class="flex items-center gap-2 overflow-hidden">
+                    {is_guild_linked.then(|| view! {
+                        <GuildIcon icon_url=guild_icon_url name=group_name.clone() />
+                    })}
+                    <div class="flex flex-col gap-1 overflow-hidden">
+                        <span class="text-xl font-bold truncate text-[color:var(--brand-fg)]">
+                            {group_name.clone()}
+                        </span>
+                        {is_guild_linked.then(|| view! {
+                            <span class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-gray-400">
+                                <Icon icon=i::BsDiscord />
+                                {t!(i18n, groups_discord_linked)}
+                            </span>
+                        })}
+                    </div>
                 </div>
                 <Show when=move || user_id().map(|uid| uid as i64 == group.owner_id).unwrap_or(false)>
                     <button

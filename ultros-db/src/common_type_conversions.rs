@@ -97,8 +97,22 @@ impl From<ListSharedGroupReturn> for ListSharedGroup {
 
 impl From<user_group::Model> for UserGroup {
     fn from(value: user_group::Model) -> Self {
-        let user_group::Model { id, name, owner_id } = value;
-        Self { id, name, owner_id }
+        let user_group::Model {
+            id,
+            name,
+            owner_id,
+            guild_id,
+            guild_icon_url,
+            source,
+        } = value;
+        Self {
+            id,
+            name,
+            owner_id,
+            guild_id,
+            guild_icon_url,
+            source: source.into(),
+        }
     }
 }
 
