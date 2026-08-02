@@ -21,6 +21,7 @@ use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
 use crate::routes::item_view_scope::item_href;
 use crate::routes::not_found::NotFound;
+use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
@@ -1715,22 +1716,6 @@ fn DiscordCommandChip(
     }
 }
 
-/// Escape a JSON string for safe embedding inside a `<script>` element.
-fn escape_for_script_tag(json: &str) -> String {
-    let mut out = String::with_capacity(json.len());
-    for c in json.chars() {
-        match c {
-            '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u003e"),
-            '&' => out.push_str("\\u0026"),
-            '\u{2028}' => out.push_str("\\u2028"),
-            '\u{2029}' => out.push_str("\\u2029"),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
 /// Builds the item page's `BreadcrumbList` JSON-LD.
 ///
 /// `category` is `(display_name, search_category_id)`. The id — not the
@@ -2247,5 +2232,48 @@ mod tests {
             elements[2]["item"],
             "https://ultros.app/item/Gilgamesh/12345"
         );
+    }
+
+    /// `world` is a raw `item/:world/:id` path segment — nothing validates it
+    /// before it reaches the JSON-LD, and the result is written with
+    /// `inner_html`, which does not escape. A `</script>` in the world name
+    /// would otherwise close the tag and run whatever followed.
+    #[test]
+    fn hostile_world_param_cannot_break_out_of_the_script_tag() {
+        let hostile = "</script><script>alert(1)</script>";
+        let json = build_breadcrumb_json_ld("Excalibur", hostile, 12345, None);
+
+        // Nothing that can terminate the enclosing <script> element survives.
+        assert!(
+            !json.contains('<'),
+            "raw `<` reached the script body: {json}"
+        );
+        assert!(!json.contains("</"), "output can still close a tag: {json}");
+
+        // ...and it is still valid JSON that decodes back to the real URL, so
+        // Google keeps reading the breadcrumbs.
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let elements = parsed["itemListElement"].as_array().unwrap();
+        assert_eq!(
+            elements[2]["item"],
+            format!("https://ultros.app/item/{hostile}/12345")
+        );
+    }
+
+    /// The category name is game data rather than URL input, but it lands in
+    /// the same payload, so it gets the same guarantee.
+    #[test]
+    fn hostile_category_name_is_also_escaped() {
+        let json = build_breadcrumb_json_ld(
+            "Excalibur",
+            "Gilgamesh",
+            12345,
+            Some(("</script><img src=x onerror=alert(1)>", 42)),
+        );
+        assert!(
+            !json.contains('<'),
+            "raw `<` reached the script body: {json}"
+        );
+        serde_json::from_str::<serde_json::Value>(&json).unwrap();
     }
 }
