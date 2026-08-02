@@ -5,7 +5,9 @@ use ultros_api_types::price_density::PriceDensity;
 use ultros_api_types::price_series::{PriceSeries, SeriesGroup};
 use ultros_charts::charts::ChartMode;
 use ultros_charts::charts::grid::{GridOptions, GridSort, build_price_grid, nearest_x};
-use ultros_charts::charts::price_density::{DensityChartOptions, build_price_density_chart};
+use ultros_charts::charts::price_density::{
+    DensityChartModel, DensityChartOptions, build_price_density_chart,
+};
 use ultros_charts::charts::price_history::{
     PriceChartModel, PriceChartOptions, build_price_history_chart,
 };
@@ -131,6 +133,21 @@ fn timestamp_from_pointer(
     let x = (event.client_x() - rect.left()).clamp(0.0, width);
     let pct = x / width;
     Some(domain.0 + ((domain.1 - domain.0) as f64 * pct).round() as i64)
+}
+
+/// Bucket under a pointer over one grid cell. Cells resolve their own
+/// position because every cell's svg shares the same x space, so the
+/// container can't map a position that lands in an arbitrary cell.
+fn bucket_at_cell_pointer(event: &PointerEvent, xs: &[f32], cell_width: f32) -> Option<usize> {
+    let target = event
+        .current_target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())?;
+    let rect = target.get_bounding_client_rect();
+    if rect.width() <= 0.0 {
+        return None;
+    }
+    let x_css = event.client_x() - rect.left();
+    nearest_x(xs, (x_css / rect.width()) as f32 * cell_width)
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -486,6 +503,51 @@ fn HoverLayer(model: Memo<PriceChartModel>, hover_index: RwSignal<Option<usize>>
     }
 }
 
+/// Horizontal placement for a tooltip anchored to a bucket: flips to the left
+/// of the crosshair past the midpoint so it never clips on the right edge.
+fn tooltip_offset_style(x: f32, scene_width: f32) -> String {
+    let left_pct = (x / scene_width * 100.0).clamp(0.0, 100.0);
+    if left_pct > 55.0 {
+        format!("left:calc({left_pct:.1}% - 12px);transform:translateX(-100%)")
+    } else {
+        format!("left:calc({left_pct:.1}% + 12px)")
+    }
+}
+
+/// Readout for density mode. Density draws sale *counts* per price bin, so it
+/// has no per-series price to report — the hovered bucket's date and how many
+/// sales landed in it is the whole story. Without this the mode drew a
+/// crosshair that explained nothing (#1068).
+#[component]
+fn DensityTooltip(
+    density_model: Memo<Option<DensityChartModel>>,
+    hover_index: RwSignal<Option<usize>>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    move || {
+        hover_index.get().and_then(|i| {
+            density_model.with(|m| {
+                let m = m.as_ref()?;
+                let bucket = m.hover.buckets.get(i)?;
+                let style = tooltip_offset_style(bucket.x, m.scene.width);
+                let label = bucket.label.clone();
+                let sales = t_string!(i18n, chart_stat_n_sales)
+                    .to_string()
+                    .replace("{n}", &bucket.volume.to_string());
+                Some(view! {
+                    <div
+                        class="pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg"
+                        style=style
+                    >
+                        <div class="mb-1 font-semibold text-[color:var(--color-text)]">{label}</div>
+                        <div class="tabular-nums text-[color:var(--color-text-muted)]">{sales}</div>
+                    </div>
+                })
+            })
+        })
+    }
+}
+
 /// HTML tooltip positioned over the chart container; flips to the left of
 /// the crosshair past the midpoint so it never clips on the right edge.
 #[component]
@@ -500,12 +562,7 @@ fn HoverTooltip(
             model.with(|m| {
                 let bucket = m.hover.buckets.get(i)?.clone();
                 let series = m.series.clone();
-                let left_pct = (bucket.x / m.scene.width * 100.0).clamp(0.0, 100.0);
-                let style = if left_pct > 55.0 {
-                    format!("left:calc({left_pct:.1}% - 12px);transform:translateX(-100%)")
-                } else {
-                    format!("left:calc({left_pct:.1}% + 12px)")
-                };
+                let style = tooltip_offset_style(bucket.x, m.scene.width);
                 Some(view! {
                     <div
                         class="pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg"
@@ -920,25 +977,18 @@ pub fn PriceHistoryChart(
         hover_index.set(None);
     });
 
-    let on_pointer_move = move |evt: web_sys::PointerEvent| {
-        use web_sys::wasm_bindgen::JsCast;
-        let Some(target) = evt
+    // Bucket under a pointer position over the chart container. `None` when
+    // the container is unmeasured or the position maps to no bucket.
+    let bucket_at_pointer = move |evt: &web_sys::PointerEvent| -> Option<usize> {
+        let target = evt
             .current_target()
-            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-        else {
-            return;
-        };
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())?;
         let rect = target.get_bounding_client_rect();
         if rect.width() <= 0.0 {
-            return;
-        }
-        // Grid cells resolve their own pointer position (per-cell svg rects
-        // share one x space); the container handler is overlay/density only.
-        if view.get_untracked() == ChartView::Grid && mode.get_untracked() != ChartMode::Density {
-            return;
+            return None;
         }
         let x_css = evt.client_x() - rect.left();
-        let index = if mode.get_untracked() == ChartMode::Density {
+        if mode.get_untracked() == ChartMode::Density {
             density_model.with_untracked(|m| {
                 m.as_ref().and_then(|m| {
                     m.hover
@@ -950,9 +1000,89 @@ pub fn PriceHistoryChart(
                 m.hover
                     .nearest_index((x_css / rect.width()) as f32 * m.scene.width)
             })
-        };
-        hover_index.set(index);
+        }
     };
+
+    // Grid cells resolve their own pointer position (per-cell svg rects share
+    // one x space); the container handlers are overlay/density only.
+    let container_owns_pointer = move || {
+        !(view.get_untracked() == ChartView::Grid && mode.get_untracked() != ChartMode::Density)
+    };
+
+    let on_pointer_move = move |evt: web_sys::PointerEvent| {
+        if !container_owns_pointer() {
+            return;
+        }
+        // On touch this only fires between pointerdown and pointerup, which
+        // is exactly the scrub gesture — `touch-action: pan-y` on the
+        // container is what stops the browser claiming a sideways drag for
+        // scrolling and cancelling the pointer mid-scrub.
+        hover_index.set(bucket_at_pointer(&evt));
+    };
+
+    let on_pointer_down = move |evt: web_sys::PointerEvent| {
+        if !container_owns_pointer() {
+            return;
+        }
+        let touch = evt.pointer_type() != "mouse";
+        // A mouse already hovers without pressing; only the primary button
+        // should move the cursor, and pressing must not toggle it off.
+        if !touch && evt.button() != 0 {
+            return;
+        }
+        let resolved = bucket_at_pointer(&evt);
+        if touch && resolved.is_some() && resolved == hover_index.get_untracked() {
+            // Second tap on the same bucket puts the readout away — touch has
+            // no "move the pointer elsewhere", so without this (and the
+            // tap-away below) the cursor was permanent once placed.
+            hover_index.set(None);
+            return;
+        }
+        hover_index.set(resolved);
+        if touch
+            && let Some(target) = evt
+                .current_target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        {
+            // Capture so a scrub that wanders off the chart keeps feeding
+            // this handler instead of silently ending. Mouse doesn't need it
+            // and capturing would swallow clicks elsewhere on the page.
+            let _ = target.set_pointer_capture(evt.pointer_id());
+        }
+    };
+
+    let release_pointer = move |evt: &web_sys::PointerEvent| {
+        if let Some(target) = evt
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = target.release_pointer_capture(evt.pointer_id());
+        }
+    };
+    // A normal lift leaves the cursor where the finger put it — that anchor
+    // *is* the touch equivalent of hovering. `pointercancel` is different:
+    // the browser took the gesture (a page scroll), so the anchor the user
+    // was placing never landed and would otherwise be left behind.
+    let on_pointer_up = move |evt: web_sys::PointerEvent| release_pointer(&evt);
+    let on_pointer_cancel = move |evt: web_sys::PointerEvent| {
+        release_pointer(&evt);
+        hover_index.set(None);
+    };
+    let on_pointer_leave = move |evt: web_sys::PointerEvent| {
+        // Mouse only: on touch, "leave" fires as the finger lifts, which
+        // would wipe the anchor the tap just placed.
+        if evt.pointer_type() == "mouse" {
+            hover_index.set(None);
+        }
+    };
+
+    // Tap-away dismissal, the other half of the touch cursor's exit.
+    // Hydrate-only: there is no document to listen to on the server, matching
+    // the guard `account_menu.rs` uses for the same helper.
+    #[cfg(feature = "hydrate")]
+    {
+        let _ = leptos_use::on_click_outside(container, move |_| hover_index.set(None));
+    }
 
     view! {
         <div class="flex flex-col gap-3">
@@ -1076,9 +1206,17 @@ pub fn PriceHistoryChart(
                         .replace("{to}", &to)
                 }
                 class="price-history-chart relative w-full overflow-visible"
+                // `pan-y` keeps vertical page scrolling but hands sideways
+                // gestures to us, so scrubbing the chart doesn't get stolen
+                // by the scroller and cancelled. `touch-action` restrictions
+                // accumulate down the tree, so this covers the grid cells too.
+                style="touch-action: pan-y;"
                 node_ref=container
+                on:pointerdown=on_pointer_down
                 on:pointermove=on_pointer_move
-                on:pointerleave=move |_| hover_index.set(None)
+                on:pointerup=on_pointer_up
+                on:pointercancel=on_pointer_cancel
+                on:pointerleave=on_pointer_leave
             >
                 {move || {
                     // ── Grid view: small multiples under one crosshair ──
@@ -1101,23 +1239,31 @@ pub fn PriceHistoryChart(
                                 .and_then(|i| grid_model.with(|g| g.xs.get(i).copied()))
                         });
                         let xs_for_move = gm.xs.clone();
+                        let xs_for_down = gm.xs.clone();
                         let cell_width = gm.cell_width;
                         let on_cell_pointer_move = move |evt: web_sys::PointerEvent| {
-                            let Some(target) = evt
-                                .current_target()
-                                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-                            else {
-                                return;
-                            };
-                            let rect = target.get_bounding_client_rect();
-                            if rect.width() <= 0.0 {
+                            hover_index.set(bucket_at_cell_pointer(
+                                &evt,
+                                &xs_for_move,
+                                cell_width,
+                            ));
+                        };
+                        // Same tap-to-anchor / tap-again-to-dismiss contract
+                        // as the overlay, so the crosshair is reachable by
+                        // touch in the grid too.
+                        let on_cell_pointer_down = move |evt: web_sys::PointerEvent| {
+                            let touch = evt.pointer_type() != "mouse";
+                            if !touch && evt.button() != 0 {
                                 return;
                             }
-                            let x_css = evt.client_x() - rect.left();
-                            hover_index.set(nearest_x(
-                                &xs_for_move,
-                                (x_css / rect.width()) as f32 * cell_width,
-                            ));
+                            let resolved =
+                                bucket_at_cell_pointer(&evt, &xs_for_down, cell_width);
+                            if touch && resolved.is_some() && resolved == hover_index.get_untracked()
+                            {
+                                hover_index.set(None);
+                                return;
+                            }
+                            hover_index.set(resolved);
                         };
                         return view! {
                             <div class="flex flex-col gap-2">
@@ -1158,7 +1304,7 @@ pub fn PriceHistoryChart(
                                 <div
                                     class="grid gap-2"
                                     style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"
-                                    on:pointerleave=move |_| hover_index.set(None)
+                                    on:pointerleave=on_pointer_leave
                                 >
                                     {gm
                                         .cells
@@ -1168,6 +1314,7 @@ pub fn PriceHistoryChart(
                                             let name = cell.name.clone();
                                             let color = cell.color;
                                             let handler = on_cell_pointer_move.clone();
+                                            let down_handler = on_cell_pointer_down.clone();
                                             view! {
                                                 <div class="rounded-md border border-[color:var(--color-outline)]/60 p-1.5">
                                                     <div class="mb-1 flex items-center gap-1.5 text-xs text-[color:var(--color-text)]">
@@ -1185,6 +1332,7 @@ pub fn PriceHistoryChart(
                                                             scene.height,
                                                         )
                                                         preserveAspectRatio="none"
+                                                        on:pointerdown=down_handler
                                                         on:pointermove=handler
                                                     >
                                                         {scene_view(&scene)}
@@ -1353,11 +1501,15 @@ pub fn PriceHistoryChart(
                         .into_any()
                 }}
                 // Overlay-only: grid renders its own container tooltip and
-                // density's crosshair index doesn't map onto `model.hover`.
+                // density's crosshair index doesn't map onto `model.hover` —
+                // it gets its own readout below.
                 <Show when=move || {
                     view.get() == ChartView::Overlay && mode.get() != ChartMode::Density
                 }>
                     <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                </Show>
+                <Show when=move || mode.get() == ChartMode::Density>
+                    <DensityTooltip density_model=density_model hover_index=hover_index />
                 </Show>
             </div>
             // Caption line: the resolved state spelled out once — what makes
