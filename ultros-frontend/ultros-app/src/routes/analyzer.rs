@@ -1755,41 +1755,68 @@ fn AnalyzerTable(
             // grew with its content would cover its own column headers.
             <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1">
                 // Row 1 — result count and view-level controls.
-                <div class="h-8 flex items-center gap-3 min-w-0">
-                    <span class="text-sm text-[color:var(--brand-fg)] font-semibold whitespace-nowrap">
+                //
+                // The row cannot wrap (the bar is height-locked) and cannot
+                // scroll (it holds the popovers, and `html` is `overflow-x:
+                // hidden`), so it has to *fit*, at every width and in every
+                // locale. It did not: every control is a `.sticky-bar-button`
+                // — `flex: 0 0 auto` — so the row could only grow, and at
+                // 375px it ran ~210px past the viewport with the last button
+                // stranded off-screen (#1055).
+                //
+                // Three things keep it inside now, in the order they give up
+                // space: the count group is `flex-1` and truncates first;
+                // labels are hidden below `md` and ellipsize above it
+                // (`.sticky-bar-button-shrink`); icons never shrink. A
+                // breakpoint alone would not do — the side nav takes 240px at
+                // `lg`, so the row is no wider at 1024px than at 768px.
+                //
+                // Anything added here needs to be able to yield too.
+                <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
+                    // The one item allowed to give up space. `overflow-hidden`
+                    // is safe on this wrapper specifically: it holds two spans
+                    // and nothing sticky or absolutely positioned, so it does
+                    // not become a scrollport for anything that matters.
+                    <div class="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+                        <span class="text-sm text-[color:var(--brand-fg)] font-semibold truncate min-w-0">
+                            {move || {
+                                t_string!(i18n, analyzer_rows_count)
+                                    .to_string()
+                                    .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
+                            }}
+                        </span>
+                        // Data-transparency note: the drift / confidence / volume
+                        // floors each meet rows with no underlying data (drift
+                        // needs >= 4 buffered sales; the other two need CH
+                        // enrichment) and resolve it differently — drop, judge on
+                        // a derived band, pass. Say how many rows that was rather
+                        // than letting the row count move for invisible reasons.
+                        // Zero (and absent) whenever none of those floors is set.
                         {move || {
-                            t_string!(i18n, analyzer_rows_count)
-                                .to_string()
-                                .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
+                            let n = rows_lacking_data();
+                            (n > 0)
+                                .then(|| {
+                                    view! {
+                                        <span class="text-xs text-[color:var(--color-text-muted)] truncate min-w-0">
+                                            {t_string!(i18n, analyzer_rows_lacking_data)
+                                                .to_string()
+                                                .replace("%count%", &n.to_string())}
+                                        </span>
+                                    }
+                                })
                         }}
-                    </span>
-                    // Data-transparency note: the drift / confidence / volume
-                    // floors each meet rows with no underlying data (drift
-                    // needs >= 4 buffered sales; the other two need CH
-                    // enrichment) and resolve it differently — drop, judge on
-                    // a derived band, pass. Say how many rows that was rather
-                    // than letting the row count move for invisible reasons.
-                    // Zero (and absent) whenever none of those floors is set.
-                    {move || {
-                        let n = rows_lacking_data();
-                        (n > 0)
-                            .then(|| {
-                                view! {
-                                    <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                        {t_string!(i18n, analyzer_rows_lacking_data)
-                                            .to_string()
-                                            .replace("%count%", &n.to_string())}
-                                    </span>
-                                }
-                            })
-                    }}
+                    </div>
                     // Live-market indicator, carried over from the realtime work on
                     // main. It sat in the results-summary panel this bar replaced.
-                    <RealtimeStatus status=realtime_status last_update=last_update />
-                    <div class="flex-1" />
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                        compact=true
+                    />
                     <SavedViewsMenu current_world=world />
                     <button
-                        class="sticky-bar-button"
+                        class="sticky-bar-button sticky-bar-button-shrink"
+                        aria-label=t_string!(i18n, analyzer_columns_button)
                         aria-expanded=move || show_columns_picker.get().to_string()
                         on:click=move |_| {
                             show_filter_menu.set(false);
@@ -1797,14 +1824,19 @@ fn AnalyzerTable(
                         }
                     >
                         <Icon icon=i::FaTableColumnsSolid />
-                        {t!(i18n, analyzer_columns_button)}
+                        <span class="hidden md:inline sticky-bar-button-label">
+                            {t!(i18n, analyzer_columns_button)}
+                        </span>
                     </button>
                     <button
-                        class="sticky-bar-button"
+                        class="sticky-bar-button sticky-bar-button-shrink"
                         aria-label=t_string!(i18n, aria_clear_all_filters)
                         on:click=move |_| clear_all_filters()
                     >
-                        {t!(i18n, analyzer_clear_all)}
+                        <Icon icon=icondata::MdiFilterRemove />
+                        <span class="hidden md:inline sticky-bar-button-label">
+                            {t!(i18n, analyzer_clear_all)}
+                        </span>
                     </button>
                 </div>
 
