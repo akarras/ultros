@@ -2187,3 +2187,59 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
     border-color: var(--brand-ring);
     background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
 }
+
+/* ----- Item Explorer subcategory accordion (ItemExplorerToolbar) ----- */
+@utility item-explorer-accordion {
+    border: 1px solid var(--color-outline);
+    border-radius: 0.5rem;
+    background-color: var(--color-background-panel);
+    overflow: hidden;
+}
+
+@utility item-explorer-accordion-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.6rem 0.9rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 150ms ease;
+}
+.item-explorer-accordion-header:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 8%, transparent);
+}
+.item-explorer-accordion-chevron {
+    margin-left: auto;
+    flex-shrink: 0;
+    transition: transform 200ms ease;
+}
+.item-explorer-accordion-header[aria-expanded="true"] .item-explorer-accordion-chevron {
+    transform: rotate(180deg);
+}
+
+/* Expansion animates the grid track rather than mounting/unmounting the
+   panel, so the children are always present and the SSR and hydration view
+   trees keep identical shape. The `min-height: 0` on the inner element is
+   what actually lets the `0fr` track collapse. */
+@utility item-explorer-accordion-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 200ms ease;
+}
+.item-explorer-accordion-panel[data-open="true"] {
+    grid-template-rows: 1fr;
+}
+.item-explorer-accordion-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 0.9rem 0.9rem;
+}

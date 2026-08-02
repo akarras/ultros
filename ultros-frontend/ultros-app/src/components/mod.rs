@@ -21,7 +21,7 @@ pub mod filter_chip;
 pub mod fonts;
 pub mod freshness_badge;
 pub mod gil;
-pub mod grouped_nav_popover;
+pub mod grouped_nav_accordion;
 pub mod history_panel;
 pub mod icon;
 pub mod item_icon;

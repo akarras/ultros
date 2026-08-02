@@ -1,8 +1,7 @@
 //! Toolbar for `/items/*`: group pill selector over a subcategory chip
 //! strip. Replaces the page-local sidebar that pre-dated the AppShell.
 
-use crate::components::fonts::ItemSearchCategoryIcon;
-use crate::components::grouped_nav_popover::{GroupedNavPopover, PopoverIcon, PopoverLink};
+use crate::components::grouped_nav_accordion::{GroupedNavAccordion, NavIcon, NavLink};
 use crate::components::toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer};
 use crate::components::world_picker::WorldPicker;
 use crate::global_state::xiv_data::tracked_data;
@@ -11,7 +10,6 @@ use crate::routes::item_explorer::resolve_category_param;
 use crate::routes::item_explorer_roles::{RoleGroup, role_for_job_abbr, role_for_weapon_category};
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, href_with_world};
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use xiv_gen::{ClassJob, ItemSearchCategoryId};
 
@@ -25,6 +23,20 @@ pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&st
     }
     let data = xiv_gen_db::data();
     resolve_category_param(data, category?).map(|cat| cat.category)
+}
+
+/// Whether the subcategory accordion starts expanded for a route.
+///
+/// Open only when the URL names no subcategory — the bare `/items` landing,
+/// where the picker is the entire content of the page. A deep link that
+/// already names a category or job set starts collapsed so the item list
+/// gets the viewport. An unresolvable category counts as "names nothing"
+/// and opens, so a dead link lands on a usable picker.
+///
+/// Both args come straight from `ParamsMap::get(...).as_deref()` at the call
+/// site, so this stays router-free and unit-testable like its neighbour.
+pub(crate) fn accordion_open_for_route(jobset: Option<&str>, category: Option<&str>) -> bool {
+    active_group_from_route(jobset, category).is_none()
 }
 
 /// Return the search categories that belong to a non-job group
@@ -63,13 +75,6 @@ pub(crate) fn job_chips_sorted() -> Vec<&'static ClassJob> {
     jobs
 }
 
-/// Whether the given group renders its subcategories in a popover
-/// (role-grouped for Weapons/Job Sets, plain when an inline chip strip
-/// would overflow) instead of the inline chip strip.
-pub(crate) fn group_uses_popover(group: u8) -> bool {
-    group == 1 || group == 5 || category_chips_for_group(group).len() > 8
-}
-
 /// Segment label shown on a job chip: prefer the abbreviation, fall
 /// back to the full name. Matches the path-segment logic that the
 /// original sidebar `JobsList` used for the `href`.
@@ -86,10 +91,10 @@ pub(crate) fn job_chip_label(job: &ClassJob) -> &str {
 /// category's `class_job`) and Job Sets (via the job's abbreviation) — build
 /// their sections through this.
 fn role_buckets(
-    items: impl Iterator<Item = (RoleGroup, PopoverLink)>,
+    items: impl Iterator<Item = (RoleGroup, NavLink)>,
     role_label: impl Fn(RoleGroup) -> String,
-) -> Vec<(Option<String>, Vec<PopoverLink>)> {
-    let mut buckets: Vec<(RoleGroup, Vec<PopoverLink>)> = RoleGroup::ORDERED
+) -> Vec<(Option<String>, Vec<NavLink>)> {
+    let mut buckets: Vec<(RoleGroup, Vec<NavLink>)> = RoleGroup::ORDERED
         .iter()
         .map(|role| (*role, Vec::new()))
         .collect();
@@ -126,11 +131,34 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
         selected_group.set(active_group.get().unwrap_or(1));
     });
 
+    // Expanded state, owned here rather than in the accordion: a group pill
+    // click has to force it open.
+    let open = RwSignal::new({
+        let p = params.get_untracked();
+        accordion_open_for_route(p.get("jobset").as_deref(), p.get("category").as_deref())
+    });
+
+    // Collapse onto a chosen subcategory; re-open on the bare /items route.
+    //
+    // `active_group` MUST stay a `Memo` — this effect leans on the memo's
+    // value diffing. Navigating between two categories in the same group
+    // (/items/category/24 -> /items/category/25) leaves it at the same
+    // `Some(group)`, the memo stays quiet, and the accordion stays collapsed.
+    // Tracking `active_group` also reads `params`, so no separate
+    // `pathname.track()` is needed. On its first run it writes the value
+    // `open` was already initialised to, so there is no hydration flicker.
+    Effect::new(move |_| {
+        open.set(active_group.get().is_none());
+    });
+
     let pill = move |group: u8, label_view: AnyView| {
         view! {
             <button
                 aria-pressed=move || (selected_group.get() == group).to_string()
-                on:click=move |_| selected_group.set(group)
+                on:click=move |_| {
+                    selected_group.set(group);
+                    open.set(true);
+                }
             >
                 {label_view}
             </button>
@@ -157,15 +185,6 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
             </Toolbar>
 
             <div
-                // The popover needs a normal wrapper — `item-explorer-chip-row`'s
-                // horizontal scroll + mask gradient would clip the dropdown panel.
-                class=move || {
-                    if group_uses_popover(selected_group.get()) {
-                        "flex"
-                    } else {
-                        "item-explorer-chip-row"
-                    }
-                }
                 role="navigation"
                 aria-label=t_string!(i18n, item_explorer_categories).to_string()
             >
@@ -189,8 +208,8 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                             RoleGroup::Other => t_string!(i18n, item_explorer_role_other).to_string(),
                         }
                     };
-                    // Popover trigger label: the active subcategory when it
-                    // belongs to the selected group, else a browse prompt.
+                    // Header label: the active subcategory when it belongs to
+                    // the selected group, else a browse prompt.
                     let button_label = if active_group.get() == Some(group) {
                         let p = params.get();
                         match p.get("jobset") {
@@ -200,7 +219,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                 .map(|s| s.to_string()),
                             // The category param is an id, so resolve it back
                             // to the localized name instead of labelling the
-                            // trigger with a bare number.
+                            // header with a bare number.
                             None => p.get("category").and_then(|cat| {
                                 resolve_category_param(data, &cat)
                                     .map(|category| category.name.clone())
@@ -213,16 +232,16 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                         t_string!(i18n, item_explorer_browse_subcategories).to_string()
                     });
 
-                    if group == 5 {
-                        // Job sets: popover with jobs bucketed by role.
-                        let groups = role_buckets(
+                    let groups: Vec<(Option<String>, Vec<NavLink>)> = if group == 5 {
+                        // Job sets: jobs bucketed by role.
+                        role_buckets(
                             job_chips_sorted()
                                 .into_iter()
                                 .map(|job| {
                                     let label = job_chip_label(job).to_string();
                                     (
                                         role_for_job_abbr(&job.abbreviation),
-                                        PopoverLink {
+                                        NavLink {
                                             href: href_with_world(
                                                 format!(
                                                     "/items/jobset/{}",
@@ -231,18 +250,16 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                                 world.as_deref(),
                                             ),
                                             label,
-                                            icon: PopoverIcon::Job(job.key_id),
+                                            icon: NavIcon::Job(job.key_id),
                                         },
                                     )
                                 }),
                             role_label,
-                        );
-                        view! { <GroupedNavPopover button_label=button_label groups=groups /> }
-                            .into_any()
+                        )
                     } else if group == 1 {
-                        // Weapons: popover with categories bucketed by the
-                        // role of their associated job.
-                        let groups = role_buckets(
+                        // Weapons: categories bucketed by the role of their
+                        // associated job.
+                        role_buckets(
                             category_chips_for_group(1)
                                 .into_iter()
                                 .map(|(name, id)| {
@@ -253,57 +270,40 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                         .unwrap_or(RoleGroup::Other);
                                     (
                                         role,
-                                        PopoverLink {
+                                        NavLink {
                                             label: name.to_string(),
                                             href: href_with_world(
                                                 format!("/items/category/{}", id.0),
                                                 world.as_deref(),
                                             ),
-                                            icon: PopoverIcon::Category(id),
+                                            icon: NavIcon::Category(id),
                                         },
                                     )
                                 }),
                             role_label,
-                        );
-                        view! { <GroupedNavPopover button_label=button_label groups=groups /> }
-                            .into_any()
+                        )
                     } else {
-                        let chips = category_chips_for_group(group);
-                        if chips.len() > 8 {
-                            // Too many for an inline strip: plain (ungrouped)
-                            // popover with a single headerless section.
-                            let links: Vec<PopoverLink> = chips
-                                .into_iter()
-                                .map(|(name, id)| PopoverLink {
-                                    label: name.to_string(),
-                                    href: href_with_world(
-                                        format!("/items/category/{}", id.0),
-                                        world.as_deref(),
-                                    ),
-                                    icon: PopoverIcon::Category(id),
-                                })
-                                .collect();
-                            let groups = vec![(None, links)];
-                            view! { <GroupedNavPopover button_label=button_label groups=groups /> }
-                                .into_any()
-                        } else {
-                            chips
-                                .into_iter()
-                                .map(|(name, id)| {
-                                    let href = href_with_world(
-                                        format!("/items/category/{}", id.0),
-                                        world.as_deref(),
-                                    );
-                                    view! {
-                                        <A href=href attr:class="item-explorer-chip">
-                                            <ItemSearchCategoryIcon id=id />
-                                            <span>{name}</span>
-                                        </A>
-                                    }.into_any()
-                                })
-                                .collect::<Vec<_>>()
-                                .into_any()
-                        }
+                        // Armor, Items, Housing: one headerless section.
+                        let links: Vec<NavLink> = category_chips_for_group(group)
+                            .into_iter()
+                            .map(|(name, id)| NavLink {
+                                label: name.to_string(),
+                                href: href_with_world(
+                                    format!("/items/category/{}", id.0),
+                                    world.as_deref(),
+                                ),
+                                icon: NavIcon::Category(id),
+                            })
+                            .collect();
+                        vec![(None, links)]
+                    };
+
+                    view! {
+                        <GroupedNavAccordion
+                            button_label=button_label
+                            groups=groups
+                            open=open
+                        />
                     }
                 }}
             </div>
@@ -444,11 +444,71 @@ mod tests {
     }
 
     #[test]
+    fn accordion_starts_open_on_bare_items_route() {
+        // Nothing is selected yet, so the picker is the whole point of the
+        // page — show it expanded.
+        assert!(accordion_open_for_route(None, None));
+    }
+
+    #[test]
+    fn accordion_starts_closed_for_a_jobset_deep_link() {
+        assert!(!accordion_open_for_route(Some("PLD"), None));
+    }
+
+    #[test]
+    fn accordion_starts_closed_for_a_category_id_deep_link() {
+        // The canonical route key is the numeric id.
+        let data = xiv_gen_db::data();
+        let weapon = data
+            .item_search_categorys
+            .values()
+            .filter(|cat| cat.category == 1)
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("weapons group must have categories");
+        assert!(!accordion_open_for_route(
+            None,
+            Some(&weapon.key_id.0.to_string()),
+        ));
+    }
+
+    #[test]
+    fn accordion_starts_closed_for_a_legacy_name_param() {
+        // Links minted before the switch to ids are percent-encoded names
+        // and still resolve; they name a category, so they collapse too.
+        assert!(!accordion_open_for_route(None, Some("Pugilist%27s%20Arms"),));
+    }
+
+    #[test]
+    fn accordion_starts_open_for_an_unresolvable_category() {
+        // A dead link selects nothing, so falling back to the expanded
+        // picker is the useful answer rather than a collapsed header
+        // labelled with a category that does not exist.
+        assert!(accordion_open_for_route(None, Some("999999")));
+    }
+
+    #[test]
+    fn every_group_produces_at_least_one_subcategory_link() {
+        // All five groups now render through one accordion instead of the
+        // old popover/chip-strip fork, so an empty group would silently
+        // produce an accordion that expands to nothing.
+        for group in 1..=4u8 {
+            assert!(
+                !category_chips_for_group(group).is_empty(),
+                "group {group} must have at least one category chip",
+            );
+        }
+        assert!(
+            !job_chips_sorted().is_empty(),
+            "the job sets group must have at least one chip",
+        );
+    }
+
+    #[test]
     fn role_buckets_orders_sections_and_drops_empty_roles() {
-        let link = |label: &str| PopoverLink {
+        let link = |label: &str| NavLink {
             label: label.to_string(),
             href: String::new(),
-            icon: PopoverIcon::Job(ClassJobId(0)),
+            icon: NavIcon::Job(ClassJobId(0)),
         };
         let sections = role_buckets(
             [
