@@ -50,7 +50,7 @@ function sanitizeFileComponent(s) {
  */
 const ROUTE_ASSERTS = {
   "/": { titleIncludes: "Ultros" },
-  "/items": { titleIncludes: "Ultros" },
+  "/items": { titleIncludes: "Items Explorer" },
   "/item/46010": {
     titleIncludes: "Ceremonial Shamshir",
     bodyIncludesAny: ["Fresh", "Caution", "Verify In-Game", "No Data"],
