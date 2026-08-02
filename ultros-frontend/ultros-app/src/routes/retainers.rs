@@ -2,12 +2,12 @@ use crate::api::{
     UndercutData, get_login, get_retainer_listings, get_retainer_undercuts,
     get_user_retainer_listings,
 };
+use crate::components::alert_drawer::{AlertDrawer, AlertKind};
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::tool_help::ActionableEmptyState;
-use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
 use crate::global_state::xiv_data::tracked_data;
@@ -326,11 +326,14 @@ pub fn RetainerUndercuts() -> impl IntoView {
                                 <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
                                 <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
                                     <Icon icon=i::BsBell />
-                                    <span class="ml-1">{t!(i18n, undercut_alert_open_button)}</span>
+                                    <span class="ml-1">{t!(i18n, add_alert_button)}</span>
                                 </button>
                             </div>
                             <Show when=move || drawer_visible.get()>
-                                <UndercutAlertDrawer set_visible=set_drawer_visible.into() />
+                                <AlertDrawer
+                                    initial_kind=AlertKind::Undercut
+                                    set_visible=set_drawer_visible.into()
+                                />
                             </Show>
                             <br />
                             <span>
