@@ -8,6 +8,7 @@ pub mod alert_config_drawer;
 pub mod alert_drawer;
 pub mod alert_rules_panel;
 pub mod app_shell;
+pub mod character_switcher;
 pub mod chart_toolbar;
 pub mod cheapest_price;
 pub mod clipboard;
