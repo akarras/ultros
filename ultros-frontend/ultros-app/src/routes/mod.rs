@@ -29,6 +29,7 @@ pub mod trends;
 pub mod vendor_resale;
 pub mod venture_analyzer;
 pub mod welcome;
+pub mod world_nav;
 
 pub mod legal {
     pub mod cookie_policy;

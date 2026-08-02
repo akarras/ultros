@@ -21,6 +21,7 @@ use crate::{
     global_state::LocalWorldData,
     i18n::*,
     query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    routes::world_nav::world_nav_url,
     ws::realtime::use_realtime,
 };
 use chrono::{Duration, Utc};
@@ -29,7 +30,7 @@ use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_navigate, use_params_map, use_query_map},
+    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
 };
 use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
 use ultros_api_types::{
@@ -809,19 +810,25 @@ fn VendorWorldNavigator() -> impl IntoView {
 
     let (current_world, set_current_world) = signal(initial_world);
     let query = use_query_map();
+    let location = use_location();
 
     Effect::new(move |_| {
         if let Some(world) = current_world() {
-            let world = world.name;
-            let query_map = query.get_untracked();
-            let query = query_map.to_query_string();
-            nav(
-                &format!("/vendor-resale/{world}?{query}"),
-                NavigateOptions {
-                    scroll: false,
-                    ..Default::default()
-                },
+            let url = world_nav_url(
+                "/vendor-resale",
+                &world.name,
+                &location.pathname.get_untracked(),
+                &query.get_untracked(),
             );
+            if let Some(url) = url {
+                nav(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     });
 

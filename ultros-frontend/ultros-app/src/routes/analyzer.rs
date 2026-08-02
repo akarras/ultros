@@ -34,6 +34,7 @@ use crate::{
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
     query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    routes::world_nav::world_nav_url,
 };
 use ultros_api_types::{
     resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
@@ -2987,23 +2988,25 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     let (current_world, set_current_world) = signal(initial_world);
     let query = use_query_map();
+    let location = use_location();
 
     Effect::new(move |_| {
         if let Some(world) = current_world() {
-            let world = world.name;
-            let query_map = query.get_untracked();
-            // `to_query_string()` already includes the leading `?` when the map
-            // is non-empty (and is "" when empty) — don't add another, or the
-            // URL becomes `/flip-finder/World??cols=…`, which parses the query
-            // key as `?cols` and silently drops the column selection on reload.
-            let query = query_map.to_query_string();
-            nav(
-                &format!("/flip-finder/{world}{query}"),
-                NavigateOptions {
-                    scroll: false,
-                    ..Default::default()
-                },
+            let url = world_nav_url(
+                "/flip-finder",
+                &world.name,
+                &location.pathname.get_untracked(),
+                &query.get_untracked(),
             );
+            if let Some(url) = url {
+                nav(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     });
 
