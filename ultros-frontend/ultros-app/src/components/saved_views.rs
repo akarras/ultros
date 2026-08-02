@@ -6,11 +6,13 @@
 //! are captured automatically because the payload is opaque.
 
 use codee::string::JsonSerdeCodec;
+use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use serde::{Deserialize, Serialize};
 
+use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::i18n::*;
 
@@ -197,6 +199,14 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
     // unambiguously post-hydration.
     let make_default = RwSignal::new(false);
 
+    // Route change, click outside, Escape. Both popovers hang off the same
+    // container, so one call closes both.
+    let container = NodeRef::<Div>::new();
+    use_dismissable(container, move || {
+        list_open.set(false);
+        save_open.set(false);
+    });
+
     // Built-in `name`s are i18n keys (see `built_in_views`); resolve them the
     // same way `col_label` resolves column ids in analyzer.rs. Any name that
     // isn't a recognized built-in key (i.e. a user-saved view's literal
@@ -248,7 +258,7 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
     };
 
     view! {
-        <div class="relative flex items-center gap-2">
+        <div class="relative flex items-center gap-2" node_ref=container>
             // Icon-only below `md`. The Flip Finder's control bar is
             // height-locked and its first row cannot wrap, so on a phone the
             // labels are what pushed it past the viewport (#1055). The
@@ -295,7 +305,18 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                             .map(|v| {
                                 let href = view_href(&v, &current_world.get());
                                 let label = built_in_label(&v.name);
-                                view! { <a class="btn-ghost justify-start" href=href>{label}</a> }
+                                // An unpinned view only changes the query
+                                // string, so the route-change dismissal
+                                // never fires — close it here.
+                                view! {
+                                    <a
+                                        class="btn-ghost justify-start"
+                                        href=href
+                                        on:click=move |_| list_open.set(false)
+                                    >
+                                        {label}
+                                    </a>
+                                }
                             })
                             .collect_view()
                     }}
@@ -317,7 +338,11 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                                 let name = v.name.clone();
                                 view! {
                                     <div class="flex items-center gap-1">
-                                        <a class="btn-ghost flex-1 justify-start" href=href>
+                                        <a
+                                            class="btn-ghost flex-1 justify-start"
+                                            href=href
+                                            on:click=move |_| list_open.set(false)
+                                        >
                                             {name}
                                         </a>
                                         <button

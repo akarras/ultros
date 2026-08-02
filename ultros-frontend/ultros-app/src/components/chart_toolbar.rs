@@ -8,10 +8,12 @@
 //! and world filter.
 
 use icondata as i;
+use leptos::html::Div;
 use leptos::prelude::*;
 use ultros_charts::charts::ChartMode;
 use ultros_charts::data::grouping::GroupLevel;
 
+use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::i18n::{t_string, use_i18n};
 
@@ -91,6 +93,16 @@ pub fn ChartToolbar(
     let (group_open, set_group_open) = signal(false);
     let (overlays_open, set_overlays_open) = signal(false);
     let (filter_query, set_filter_query) = signal(String::new());
+
+    // Route change, click outside, Escape. Each chip owns its own anchor,
+    // so a tap on one popover's chip doesn't count as "outside" for that
+    // popover but does dismiss the others.
+    let group_ref = NodeRef::<Div>::new();
+    let filter_ref = NodeRef::<Div>::new();
+    let overlays_ref = NodeRef::<Div>::new();
+    use_dismissable(group_ref, move || set_group_open.set(false));
+    use_dismissable(filter_ref, move || filter_open.set(false));
+    use_dismissable(overlays_ref, move || set_overlays_open.set(false));
 
     let mode_name = move |m: ChartMode| match m {
         ChartMode::Price => t_string!(i18n, chart_mode_price).to_string(),
@@ -213,7 +225,7 @@ pub fn ChartToolbar(
             </div>
             // ── Group by: dropdown chip ──
             <Show when=move || group_options.with(|o| o.len() > 1)>
-                <div class="relative shrink-0">
+                <div class="relative shrink-0" node_ref=group_ref>
                     <button
                         type="button"
                         class=CHIP
@@ -277,7 +289,7 @@ pub fn ChartToolbar(
             <Show when=move || {
                 filter_groups.with(|g| g.iter().map(|(_, w)| w.len()).sum::<usize>() > 1)
             }>
-                <div class="relative shrink-0">
+                <div class="relative shrink-0" node_ref=filter_ref>
                     <button
                         type="button"
                         class=CHIP
@@ -421,7 +433,7 @@ pub fn ChartToolbar(
                 </div>
             </Show>
             // ── Overlays: chip + count badge + popover ──
-            <div class="relative shrink-0">
+            <div class="relative shrink-0" node_ref=overlays_ref>
                 <button
                     type="button"
                     class=CHIP

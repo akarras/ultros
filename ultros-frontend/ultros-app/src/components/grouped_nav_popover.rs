@@ -5,9 +5,9 @@
 use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_router::components::A;
-use leptos_router::hooks::use_location;
 use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 
+use crate::components::dismissable::use_dismissable;
 use crate::components::fonts::{ClassJobIcon, ItemSearchCategoryIcon};
 use crate::components::icon::Icon;
 use icondata as i;
@@ -43,31 +43,11 @@ pub fn GroupedNavPopover(
     let open = RwSignal::new(false);
     let container = NodeRef::<Div>::new();
 
-    // Close after navigation — chip clicks change the route, not this
-    // component's state. Effects only run on the client, so this can't
-    // desync SSR.
-    let location = use_location();
-    let pathname = location.pathname;
-    Effect::new(move |_| {
-        pathname.track();
-        open.set(false);
-    });
-
-    // Close on click outside; client-only, same idiom as `Select`'s
-    // `use_element_hover` gate.
-    #[cfg(feature = "hydrate")]
-    let _ = leptos_use::on_click_outside(container, move |_| open.set(false));
+    // Route change, click outside, Escape — the shared idiom.
+    use_dismissable(container, move || open.set(false));
 
     view! {
-        <div
-            class="relative"
-            node_ref=container
-            on:keydown=move |ev| {
-                if ev.key() == "Escape" {
-                    open.set(false);
-                }
-            }
-        >
+        <div class="relative" node_ref=container>
             <button
                 class="btn-secondary flex items-center gap-2"
                 aria-haspopup="true"
