@@ -22,7 +22,7 @@ use crate::{
         realtime_status::RealtimeStatus,
         sales_cadence_badge::SalesCadenceBadge,
         saved_views::SavedViewsMenu,
-        skeleton::{BoxSkeleton, SingleLineSkeleton},
+        skeleton::{SingleLineSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
@@ -801,6 +801,141 @@ fn extra_column_widths_px(visible: &std::collections::HashSet<&'static str>) -> 
         base: sum(ALWAYS),
         md: sum(MD),
         xl: sum(XL),
+    }
+}
+
+/// The loading skeleton's version of the grid, in DOM order.
+///
+/// Each entry's class string is the matching cell's class from the row markup
+/// below — same width, same responsive visibility, same alignment — so the
+/// placeholder columns sit exactly where the real ones will. Keep the two in
+/// step: a column added to the row markup but not here makes the table appear
+/// to gain a column when it loads.
+///
+/// Three cells differ from their real counterparts on purpose. World,
+/// datacenter and last-sold are written `hidden lg:block flex` / `hidden
+/// md:block flex` in the row markup — `block` and `flex` on the same element,
+/// where which one wins is down to stylesheet order rather than intent — so
+/// the skeleton spells them `hidden lg:flex` / `hidden md:flex`, which is what
+/// the `items-center` beside them was reaching for. The widths, which are all
+/// the alignment depends on, are identical either way.
+fn analyzer_skeleton_columns(
+    visible: &std::collections::HashSet<&'static str>,
+) -> Vec<SkeletonColumn> {
+    /// `(gate, class, cell)` in DOM order. A `None` gate is a column that
+    /// always renders; the rest follow `?cols=`.
+    const COLUMNS: &[(Option<&str>, &str, SkeletonCell)] = &[
+        // HQ. Most rows are NQ, so this one stays empty.
+        (
+            None,
+            "px-2 py-2 w-[44px] shrink-0 flex items-center justify-center",
+            SkeletonCell::Blank,
+        ),
+        (
+            None,
+            "px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2",
+            SkeletonCell::IconText,
+        ),
+        // Profit.
+        (
+            None,
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_PROFIT_PER_DAY),
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_VELOCITY),
+            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_DRIFT),
+            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_CONFIDENCE),
+            "px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center",
+            SkeletonCell::Badge,
+        ),
+        (
+            Some(COL_ROI),
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Badge,
+        ),
+        // Buy price. Always on, and it sits after ROI in the row markup.
+        (
+            None,
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_WORLD),
+            "px-3 py-2 w-28 shrink-0 hidden lg:flex items-center",
+            SkeletonCell::Text,
+        ),
+        (
+            Some(COL_DATACENTER),
+            "px-3 py-2 w-28 shrink-0 hidden xl:flex items-center",
+            SkeletonCell::Text,
+        ),
+        (
+            Some(COL_TREND),
+            "px-3 py-2 w-[100px] shrink-0 hidden md:flex items-center justify-center",
+            SkeletonCell::Spark,
+        ),
+        (
+            Some(COL_SALES_PER_DAY),
+            "px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center",
+            SkeletonCell::Badge,
+        ),
+        (
+            Some(COL_VOLUME_30D),
+            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_LAST_SOLD),
+            "px-3 py-2 w-28 shrink-0 hidden md:flex items-center",
+            SkeletonCell::Text,
+        ),
+    ];
+    COLUMNS
+        .iter()
+        .filter(|(gate, _, _)| gate.is_none_or(|col| visible.contains(col)))
+        .map(|(_, class, cell)| SkeletonColumn::new(class, *cell))
+        .collect()
+}
+
+/// The Flip Finder's loading state: the results grid, drawn empty.
+///
+/// Reads `?cols=` the same way the table does, so the skeleton shows the
+/// columns this particular user has switched on rather than a generic set —
+/// and reproduces the container's `--analyzer-extra-cols-*` variables, which
+/// is what makes `.analyzer-grid-row` give the placeholder rows the same
+/// min-width as the real ones.
+#[component]
+fn AnalyzerTableSkeleton() -> impl IntoView {
+    let (cols_param, _) = query_signal::<String>("cols");
+    let visible = parse_visible_cols(cols_param.get_untracked().as_deref());
+    let widths = extra_column_widths_px(&visible);
+    view! {
+        <TableSkeleton
+            columns=analyzer_skeleton_columns(&visible)
+            rows=14
+            class="analyzer-table border border-[color:var(--color-outline)]"
+            row_class="analyzer-grid-row"
+            style=format!(
+                "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
+                widths.base,
+                widths.md,
+                widths.xl,
+            )
+        />
     }
 }
 
@@ -2888,7 +3023,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // `<Suspense>` below: `AnalyzerTable` (and the sticky bar
                     // it renders) only exists once every resource has
                     // resolved, so a control placed there vanishes behind
-                    // `BoxSkeleton` on every load — including a world change,
+                    // the skeleton on every load — including a world change,
                     // which is exactly when a user most needs to be able to
                     // change worlds again. Keeping it here means it is always
                     // on screen, load or no load.
@@ -2912,7 +3047,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // the table virtualizes against the window, so the page
                     // itself is what scrolls.
                     <div>
-                        <Suspense fallback=BoxSkeleton>
+                        <Suspense fallback=AnalyzerTableSkeleton>
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
                                 let sales = sales.get();

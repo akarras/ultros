@@ -32,7 +32,7 @@ use crate::{
         market_movers::MarketMovers,
         meta::{MetaDescription, MetaTitle},
         query_button::QueryButton,
-        skeleton::BoxSkeleton,
+        skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton},
         sparkline::Sparkline,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills},
@@ -71,6 +71,66 @@ fn format_volume(v: u64) -> String {
         format!("{:.1}K", v as f64 / 1_000.0)
     } else {
         v.to_string()
+    }
+}
+
+/// [`TrendsTable`]'s loading state, drawn from the same column geometry.
+///
+/// Every column here mirrors the corresponding cell class in the table below;
+/// keep them in step or the skeleton's columns will drift away from the real
+/// ones. Trends has no responsive column hiding — the whole grid sits behind
+/// one `min-w-[940px]` — so the skeleton needs no breakpoint classes either.
+#[component]
+fn TrendsTableSkeleton() -> impl IntoView {
+    let columns = vec![
+        // HQ, blank on most rows.
+        SkeletonColumn::new(
+            "px-2 py-2 w-[40px] flex items-center justify-center",
+            SkeletonCell::Blank,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2",
+            SkeletonCell::IconText,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[100px] flex items-center justify-center",
+            SkeletonCell::Spark,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[110px] text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[110px] text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[90px] text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[100px] text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[110px] text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        SkeletonColumn::new(
+            "px-3 py-2 w-[110px] flex items-center justify-center",
+            SkeletonCell::Badge,
+        ),
+    ];
+    view! {
+        <TableSkeleton
+            columns
+            rows=12
+            class="rounded-lg border border-[color:var(--color-outline)]"
+            row_class="min-w-[940px] border-b border-[color:var(--line)]"
+            row_height="h-12"
+            header_height="h-12"
+            striped=false
+        />
     }
 }
 
@@ -587,7 +647,7 @@ pub fn Trends() -> impl IntoView {
 
                 // Content
                 <div class="min-h-[500px]">
-                    <Suspense fallback=BoxSkeleton>
+                    <Suspense fallback=TrendsTableSkeleton>
                         {move || match trends_for_view.get() {
                             Some(Ok(Some(_))) => {
                                 let items = displayed();
@@ -611,7 +671,7 @@ pub fn Trends() -> impl IntoView {
                                     {format!("Error loading trends: {}", e)}
                                 </div>
                             }.into_any(),
-                            None => view! { <BoxSkeleton /> }.into_any(),
+                            None => view! { <TrendsTableSkeleton /> }.into_any(),
                         }}
                     </Suspense>
                 </div>

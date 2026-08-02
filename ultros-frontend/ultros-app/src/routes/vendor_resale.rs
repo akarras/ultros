@@ -743,7 +743,7 @@ pub fn VendorWorldView() -> impl IntoView {
 
                 // Main Content
                 <div class="min-h-screen">
-                    <Suspense fallback=BoxSkeleton>
+                    <Suspense fallback=move || view! { <BoxSkeleton /> }>
                         {move || {
                             let world_cheapest = world_cheapest_listings.get();
                             let sales = sales.get();
