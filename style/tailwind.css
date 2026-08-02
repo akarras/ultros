@@ -2415,6 +2415,20 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     border-radius: 0.25rem;
     padding: 0.05rem 0.25rem;
 }
+/* Unread "what's new" dot on a sidebar row. Sits at the trailing edge like
+   `.side-nav-kbd`, and deliberately survives the collapsed sidebar — the dot
+   is the only thing left saying "there's something here" once the label is
+   gone. Sized to read as a marker rather than compete with the sign-in
+   button. */
+.side-nav-badge {
+    margin-left: auto;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 9999px;
+    background-color: var(--brand-ring);
+    flex-shrink: 0;
+}
+
 .side-nav-rule {
     height: 1px;
     background-color: var(--color-outline);
