@@ -654,6 +654,61 @@ mod tests {
     }
 
     #[test]
+    fn velocity_empty_is_none() {
+        let mut summary = SaleSummary {
+            item_id: 1,
+            hq: false,
+            num_sold: 0,
+            avg_sale_duration: None,
+            days_since_last_sale: None,
+            max_price: 100,
+            avg_price: 100,
+            median_price: 100,
+            min_price: 100,
+        };
+        assert_eq!(velocity_per_day(&summary), None);
+        summary.num_sold = 1;
+        assert_eq!(velocity_per_day(&summary), None);
+    }
+
+    #[test]
+    fn velocity_with_duration_computes_correctly() {
+        let summary = SaleSummary {
+            item_id: 1,
+            hq: false,
+            num_sold: 10,
+            // 86,400 seconds = 1 day, so 10 sales spaced by 1 day each
+            avg_sale_duration: Some(Duration::seconds(86_400)),
+            days_since_last_sale: None,
+            max_price: 100,
+            avg_price: 100,
+            median_price: 100,
+            min_price: 100,
+        };
+        // 10 sales / 10 days = 1.0 sales per day
+        assert!((velocity_per_day(&summary).unwrap() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn velocity_clamps_short_durations_to_avoid_infinity() {
+        let summary = SaleSummary {
+            item_id: 1,
+            hq: false,
+            num_sold: 10,
+            // 0 seconds average duration = extremely fast
+            avg_sale_duration: Some(Duration::seconds(0)),
+            days_since_last_sale: None,
+            max_price: 100,
+            avg_price: 100,
+            median_price: 100,
+            min_price: 100,
+        };
+        let velocity = velocity_per_day(&summary).unwrap();
+        assert!(velocity.is_finite());
+        assert!((velocity - (10.0 / MIN_VELOCITY_SPAN_DAYS)).abs() < 1e-3);
+    }
+
+    #[test]
     fn drift_with_five_samples_skips_the_middle() {
         // len 5 => take 2 from each end, index 2 ignored.
         let prices = [200, 200, 999_999, 100, 100];
