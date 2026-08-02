@@ -1274,6 +1274,7 @@
     "analyzer_save_view": "Save view",
     "analyzer_delete_view": "Delete view",
     "analyzer_pin_view_to_world": "Pin to this world",
+    "analyzer_make_default_view": "Make this my default view",
     "analyzer_view_name_placeholder": "Slot savers",
     "analyzer_columns_picker_label": "Visible columns:",
     "analyzer_columns_picker_reset": "Reset to defaults",
