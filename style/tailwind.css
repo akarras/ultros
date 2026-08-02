@@ -2128,6 +2128,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
            on-screen keyboard open it can outgrow 100dvh, so the sheet
            itself has to scroll or the tail becomes unreachable. */
         overflow-y: auto;
+        /* Tapping the sheet's empty space closes it (#1067). iOS Safari only
+           bubbles taps on non-interactive elements up to the document — where
+           Leptos's delegated click listener lives — when they look clickable,
+           and `cursor: pointer` is what satisfies that heuristic. No visual
+           cost: this rule is phone-only and phones have no cursor. */
+        cursor: pointer;
     }
     /* Keep the close button reachable even when the sheet above has
        scrolled the input out of view. */
@@ -2137,6 +2143,28 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         z-index: 2;
         background-color: var(--color-background);
         padding-bottom: 0.5rem;
+        /* The header is a normal control row — don't inherit the sheet's
+           tap-to-close pointer cursor. */
+        cursor: auto;
+    }
+    /* On a phone the explicit close button crowded the input row and put a
+       second X right next to the input's own clear-X (#1067). Tapping the
+       sheet's empty space closes the overlay instead, so collapse the button
+       to a screen-reader-only control: still in the accessibility tree and
+       keyboard-focusable (tap-off is a bare div and Escape needs a hardware
+       keyboard), and it pops back into the row when keyboard-focused so
+       sighted keyboard users at narrow widths aren't tabbed onto an
+       invisible control. */
+    .search-overlay-close:not(:focus-visible) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        border: 0;
+        white-space: nowrap;
     }
 }
 
