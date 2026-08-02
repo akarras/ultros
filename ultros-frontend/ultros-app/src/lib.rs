@@ -9,7 +9,6 @@ pub(crate) mod math;
 pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
-pub mod script_escape;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
@@ -23,7 +22,6 @@ use crate::global_state::{
     side_nav::provide_side_nav_settings, theme::provide_theme_settings,
     toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
-pub use crate::script_escape::escape_for_script_tag;
 use crate::{
     components::{
         app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
@@ -683,3 +681,4 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
     }
 }
+pub mod script_escape;
