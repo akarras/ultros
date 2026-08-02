@@ -1286,6 +1286,7 @@
     "analyzer_save_view": "保存视图",
     "analyzer_delete_view": "删除视图",
     "analyzer_pin_view_to_world": "固定到此服务器",
+    "analyzer_make_default_view": "设为默认视图",
     "analyzer_view_name_placeholder": "快速周转",
     "analyzer_columns_picker_label": "显示的列：",
     "analyzer_columns_picker_reset": "恢复默认",

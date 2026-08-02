@@ -33,7 +33,10 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
-    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    query_defaults::{
+        DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_flip_finder_default_view,
+        seed_query_default,
+    },
 };
 use ultros_api_types::{
     resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
@@ -2769,7 +2772,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
     // closure and remounts on every market refetch, which would keep undoing a
     // filter the user had cleared.
-    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    //
+    // A bare URL is a first visit with nothing to honor, so it gets a whole
+    // view — the user's saved default, or "Realistic flips". Anything else is
+    // a filter the visitor chose (a link, a preset, a back-navigation), and
+    // only the single `next-sale` param is filled in. The two are exclusive:
+    // the view already filters on recency, and adding `next-sale` on top would
+    // narrow a view the user picked verbatim.
+    if !seed_flip_finder_default_view() {
+        seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    }
     // Owned here for the same reason as the seed above — AnalyzerTable
     // remounts on every realtime market tick, and this state must survive
     // those remounts. `name_chip_pending` keeps a not-yet-committed name

@@ -1286,6 +1286,7 @@
     "analyzer_save_view": "儲存檢視",
     "analyzer_delete_view": "刪除檢視",
     "analyzer_pin_view_to_world": "釘選到此伺服器",
+    "analyzer_make_default_view": "設為預設檢視",
     "analyzer_view_name_placeholder": "快速周轉",
     "analyzer_columns_picker_label": "顯示的欄位：",
     "analyzer_columns_picker_reset": "回復預設",

@@ -9,7 +9,10 @@ use std::str::FromStr;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::query_signal_with_options;
+use leptos_router::hooks::{query_signal_with_options, use_query_map};
+use leptos_router::location::Url;
+
+use crate::components::saved_views::default_view_query;
 
 /// Default ceiling on predicted time to next sale: items that sell at least
 /// once a day. Parsed with `humantime`, same as anything typed into the box.
@@ -65,9 +68,76 @@ where
     });
 }
 
+/// Split a stored query string (`?a=1&b=2`) into decoded key/value pairs.
+///
+/// Decoded with the router's own [`Url::unescape`], the exact inverse of the
+/// escaping `ParamsMap::to_query_string` applies on the way out. Writing a
+/// still-encoded value back through a `query_signal` setter would encode it
+/// a second time, turning a saved `?name=Grade%208` into `Grade%25208`.
+fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
+    query
+        .trim_start_matches('?')
+        .split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let key = Url::unescape(key);
+            // A lone `?`, a trailing `&`, or a doubled `&&` each split into an
+            // empty segment. Dropping those is what keeps them from seeding a
+            // param named "".
+            (!key.is_empty()).then(|| (key, Url::unescape(value)))
+        })
+        .collect()
+}
+
+/// Seed a whole default *view* onto a bare Flip Finder URL.
+///
+/// Returns whether the URL was bare, so the caller can skip the per-param
+/// seeds it would otherwise run — a view already carries its own recency
+/// filter, and layering [`seed_query_default`] on top would add a param the
+/// view never asked for.
+///
+/// Unlike [`seed_query_default`], which fires on a single *absent* param,
+/// this fires only when the query map is **entirely empty**, and the
+/// emptiness is decided synchronously at setup, before any seeding effect
+/// has had a chance to write. That is what keeps Clear All cleared: it
+/// empties the query long after this component mounted, and nothing here
+/// re-reads the query afterwards.
+///
+/// Params are written through `query_signal` setters rather than a single
+/// `use_navigate`, even though a whole-view seed knows the entire query it
+/// wants. `AnalyzerWorldNavigator` rebuilds the URL from an *untracked* query
+/// snapshot in its own mount-time effect, so a competing `navigate` is simply
+/// overwritten — the params never land. Setters push into the router's
+/// mutation queue and are replayed onto whatever URL the navigator produces,
+/// and they coalesce into one navigation anyway.
+///
+/// Same route-component rule as [`seed_query_default`] — call this from the
+/// route, never from inside a `Suspense`/resource closure.
+pub fn seed_flip_finder_default_view() -> bool {
+    let query = use_query_map();
+    let was_bare = query.with_untracked(|q| q.to_query_string().is_empty());
+    if was_bare {
+        Effect::new(move |_| {
+            // Reads localStorage, so it must happen post-hydration — which is
+            // exactly when an Effect runs, and never on the server.
+            //
+            // An empty default is a real choice ("land me on the whole
+            // list"), and parses to no pairs, so it seeds nothing.
+            for (key, value) in parse_query_pairs(&default_view_query()) {
+                let (_, set) = query_signal_with_options::<String>(key, filter_nav_options());
+                set.set(Some(value));
+            }
+        });
+    }
+    was_bare
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::components::saved_views::{
+        FALLBACK_DEFAULT_VIEW, built_in_views, fallback_default_query,
+    };
 
     /// The seeded value goes through the same `humantime` parse as anything
     /// typed into the box, and an unparseable duration doesn't error — it just
@@ -78,6 +148,94 @@ mod test {
         assert_eq!(
             humantime::parse_duration(DEFAULT_MAX_SALE_TIME).expect("default must parse"),
             std::time::Duration::from_secs(60 * 60 * 24),
+        );
+    }
+
+    /// The landing view is *derived* from the built-in menu entry rather
+    /// than written out again, so editing the "Realistic flips" preset moves
+    /// the default with it. Pin the derivation: a hardcoded copy would pass
+    /// the day it was written and silently rot on the first preset tweak.
+    #[test]
+    fn fallback_default_is_the_realistic_built_in() {
+        let realistic = built_in_views()
+            .into_iter()
+            .find(|v| v.name == FALLBACK_DEFAULT_VIEW)
+            .expect("the fallback default must name a view that exists in the menu");
+        assert_eq!(fallback_default_query(), realistic.query);
+    }
+
+    /// What makes the landing view "realistic" is that it filters at all: a
+    /// bare or trivially-filtered query is the unfiltered list this default
+    /// exists to replace.
+    #[test]
+    fn fallback_default_actually_filters() {
+        let q = fallback_default_query();
+        assert!(q.starts_with('?'), "expected a query string, got {q:?}");
+        for param in ["min-buy=", "last-sold=", "roi=", "sort="] {
+            assert!(q.contains(param), "landing view {q:?} must set {param}");
+        }
+    }
+
+    /// Seeding a view is an alternative to the per-param seeds, not an
+    /// addition to them — the view carries its own recency filter, and
+    /// layering `next-sale` on top would apply a filter the view never asked
+    /// for. `AnalyzerWorldView` relies on that being true of the built-in.
+    #[test]
+    fn fallback_default_carries_its_own_recency_filter() {
+        assert!(fallback_default_query().contains("last-sold=1d"));
+    }
+
+    /// The landing view is applied param-by-param, so every param the preset
+    /// declares has to survive the split. This is the seeded set the user
+    /// actually gets — derived from the preset, never written out here.
+    #[test]
+    fn the_realistic_preset_splits_into_its_filters() {
+        let pairs = parse_query_pairs(&fallback_default_query());
+        assert_eq!(
+            pairs,
+            vec![
+                ("min-buy".to_string(), "5000".to_string()),
+                ("last-sold".to_string(), "1d".to_string()),
+                ("roi".to_string(), "30".to_string()),
+                ("sort".to_string(), "profit-per-day".to_string()),
+            ],
+            "the seeded set drifted from the Realistic flips preset",
+        );
+    }
+
+    /// "No filters at all" is a legitimate saved default, and it must seed
+    /// nothing rather than a param named "".
+    #[test]
+    fn an_empty_default_seeds_nothing() {
+        assert!(parse_query_pairs("").is_empty());
+        assert!(parse_query_pairs("?").is_empty());
+        assert!(parse_query_pairs("?&&").is_empty());
+    }
+
+    /// Values are stored escaped and re-escaped on the way back out, so the
+    /// seed has to decode or a saved name filter gains a `%25` per visit.
+    #[test]
+    fn values_are_decoded_once() {
+        assert_eq!(
+            parse_query_pairs("?name=Grade%208&roi=30"),
+            vec![
+                ("name".to_string(), "Grade 8".to_string()),
+                ("roi".to_string(), "30".to_string()),
+            ]
+        );
+    }
+
+    /// An empty value is what a filter box produces when the user clears it,
+    /// and `?next-sale=` explicitly means "no limit" (see `seed_query_default`).
+    /// It must round-trip as a present-but-empty param, not vanish.
+    #[test]
+    fn an_empty_value_is_kept() {
+        assert_eq!(
+            parse_query_pairs("?next-sale=&roi=30"),
+            vec![
+                ("next-sale".to_string(), String::new()),
+                ("roi".to_string(), "30".to_string()),
+            ]
         );
     }
 }

@@ -1286,6 +1286,7 @@
     "analyzer_save_view": "Enregistrer",
     "analyzer_delete_view": "Supprimer la vue",
     "analyzer_pin_view_to_world": "Épingler à ce monde",
+    "analyzer_make_default_view": "Définir comme vue par défaut",
     "analyzer_view_name_placeholder": "Flips rapides",
     "analyzer_columns_picker_label": "Colonnes visibles :",
     "analyzer_columns_picker_reset": "Réinitialiser",
