@@ -4,10 +4,8 @@ use ultros_api_types::alert::{Alert, AlertTrigger, Endpoint, UpdateAlertRequest}
 use xiv_gen::ItemId;
 
 use crate::api::{delete_alert, get_alerts, list_endpoints, patch_alert};
-use crate::components::create_alert_drawer::CreateAlertDrawer;
+use crate::components::alert_drawer::AlertDrawer;
 use crate::components::icon::Icon;
-use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
-use crate::global_state::home_world::use_home_world;
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
@@ -20,15 +18,6 @@ pub fn AlertRulesPanel() -> impl IntoView {
     let endpoints = Resource::new(move || version.get(), move |_| list_endpoints());
     let toasts = use_toast();
     let (drawer_visible, set_drawer_visible) = signal(false);
-    let (undercut_drawer_visible, set_undercut_drawer_visible) = signal(false);
-    // Default the world picker in the create drawer to the user's home world
-    // (when set), mirroring how AlertConfigDrawer is opened from item pages.
-    let (home_world, _) = use_home_world();
-    let default_world = Signal::derive(move || {
-        home_world
-            .get()
-            .map(|w| ultros_api_types::world_helper::AnySelector::World(w.id))
-    });
 
     // Refresh the alerts list when the drawer closes (best-effort: we can't tell if
     // the user actually saved without threading a callback, so we just bump the
@@ -57,9 +46,9 @@ pub fn AlertRulesPanel() -> impl IntoView {
                 Ok(()) => {
                     if let Some(t) = toasts {
                         t.success(if new_enabled {
-                            "Alert enabled"
+                            t_string!(i18n, alerts_alert_enabled).to_string()
                         } else {
-                            "Alert disabled"
+                            t_string!(i18n, alerts_alert_disabled).to_string()
                         });
                     }
                     version.update(|v| *v += 1);
@@ -78,7 +67,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
             match delete_alert(id).await {
                 Ok(()) => {
                     if let Some(t) = toasts {
-                        t.success("Alert deleted");
+                        t.success(t_string!(i18n, alerts_alert_deleted).to_string());
                     }
                     version.update(|v| *v += 1);
                 }
@@ -94,23 +83,13 @@ pub fn AlertRulesPanel() -> impl IntoView {
     view! {
         <div class="space-y-3">
             <div class="flex justify-end gap-2">
-                <button class="btn" on:click=move |_| set_undercut_drawer_visible.set(true)>
-                    <Icon icon=i::BsBell />
-                    <span class="ml-1">{t!(i18n, undercut_alert_open_button)}</span>
-                </button>
                 <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
                     <Icon icon=i::BsBell />
-                    <span class="ml-1">{t!(i18n, create_alert_button)}</span>
+                    <span class="ml-1">{t!(i18n, add_alert_button)}</span>
                 </button>
             </div>
             <Show when=move || drawer_visible.get()>
-                <CreateAlertDrawer
-                    default_world=default_world
-                    set_visible=set_drawer_visible.into()
-                />
-            </Show>
-            <Show when=move || undercut_drawer_visible.get()>
-                <UndercutAlertDrawer set_visible=set_undercut_drawer_visible.into() />
+                <AlertDrawer set_visible=set_drawer_visible.into() />
             </Show>
             <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
             {move || {
@@ -131,7 +110,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
                         Ok(rows) if rows.is_empty() => {
                             view! {
                                 <p class="opacity-70">
-                                    "No alerts yet. Add one from any item on a list."
+                                    {t!(i18n, alerts_empty_state)}
                                 </p>
                             }
                                 .into_any()
@@ -229,7 +208,11 @@ pub fn AlertRulesPanel() -> impl IntoView {
                                                             <td class="p-1">{hq_str}</td>
                                                             <td class="p-1">{endpoints_str}</td>
                                                             <td class="p-1">
-                                                                {if enabled { "enabled" } else { "disabled" }}
+                                                                {if enabled {
+                                                                    t_string!(i18n, alerts_status_enabled).to_string()
+                                                                } else {
+                                                                    t_string!(i18n, alerts_status_disabled).to_string()
+                                                                }}
                                                             </td>
                                                             <td class="p-1 flex gap-1">
                                                                 <button
