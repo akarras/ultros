@@ -2140,31 +2140,6 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
-/* ----- Item Explorer chip strip (consumed by ItemExplorerToolbar) ----- */
-@utility item-explorer-chip-row {
-    display: flex;
-    flex-wrap: nowrap;
-    gap: 0.5rem;
-    overflow-x: auto;
-    /* Right padding keeps the last chip clear of the mask gradient's
-       fade zone — otherwise the chip is paint-clipped but still
-       hit-testing, which looks broken on touch. */
-    padding: 0.25rem 2.5rem 0.5rem 0.25rem;
-    scrollbar-width: thin;
-    -webkit-mask-image: linear-gradient(
-        to right,
-        black 0,
-        black calc(100% - 2rem),
-        transparent 100%
-    );
-    mask-image: linear-gradient(
-        to right,
-        black 0,
-        black calc(100% - 2rem),
-        transparent 100%
-    );
-}
-
 @utility item-explorer-chip {
     display: inline-flex;
     align-items: center;

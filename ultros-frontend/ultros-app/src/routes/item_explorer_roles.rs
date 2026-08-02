@@ -1,4 +1,4 @@
-//! Role grouping for the item explorer's subcategory popovers.
+//! Role grouping for the item explorer's subcategory accordion.
 //!
 //! FFXIV's game data has no per-job "role" field in the sheets we ship
 //! (`ClassJob` carries only indices/priorities), so the grouping is a
@@ -23,7 +23,7 @@ pub(crate) enum RoleGroup {
 }
 
 impl RoleGroup {
-    /// Display order of the popover sections.
+    /// Display order of the accordion's role sections.
     pub(crate) const ORDERED: [RoleGroup; 8] = [
         RoleGroup::Tank,
         RoleGroup::Healer,
@@ -69,7 +69,7 @@ pub(crate) fn role_for_weapon_category(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::item_explorer_toolbar::{category_chips_for_group, job_chips_sorted};
+    use crate::routes::item_explorer_toolbar::job_chips_sorted;
 
     #[test]
     fn every_visible_job_maps_to_a_role() {
@@ -101,22 +101,6 @@ mod tests {
                 cat.name,
                 id.0,
                 cat.class_job,
-            );
-        }
-    }
-
-    /// Documents the chips-vs-dropdown decision for the non-grouped tabs:
-    /// with >8 subcategories a tab renders the popover, with <=8 it keeps
-    /// the inline chip strip. If game data ever changes these counts the
-    /// toolbar adapts automatically — this test just makes the change
-    /// visible in review.
-    #[test]
-    fn non_weapon_groups_have_expected_sizes() {
-        for group in 2..=4u8 {
-            let count = category_chips_for_group(group).len();
-            assert!(
-                count > 8,
-                "group {group} has {count} subcategories; expected >8 (popover branch)",
             );
         }
     }
