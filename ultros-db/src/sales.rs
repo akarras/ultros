@@ -21,7 +21,7 @@ use migration::{
 use sea_orm::{
     ActiveModelTrait, ActiveValue, DbBackend, FromQueryResult, QueryOrder, QuerySelect, Statement,
 };
-use tracing::instrument;
+use tracing::{instrument, warn};
 use ultros_api_types::{SaleHistory, UnknownCharacter};
 use universalis::{ItemId, SaleView, WorldId};
 
@@ -81,8 +81,14 @@ impl UltrosDb {
         if sales.is_empty() {
             return Ok(vec![]);
         }
-        let mut recorded_sales = vec![];
-        let _ = Entity::insert_many(sales.into_iter().map(|sale| {
+        // Insert with RETURNING so the rows we hand back carry their real
+        // Postgres ids. The ClickHouse dual-write uses `sale_history.id` as the
+        // discriminator in the `sales` ORDER BY key, so returning `id: 0` here
+        // would (a) collapse distinct same-second sales of the same
+        // item/hq/world into one ClickHouse row and (b) make the backfill --
+        // which reads real ids straight out of Postgres -- write a *second*,
+        // never-merging copy of every sale the live path already wrote.
+        let inserted = Entity::insert_many(sales.into_iter().map(|sale| {
             let buyer = buyers
                 .get(&sale.buyer_name)
                 .expect("Should always have a buyer model");
@@ -92,21 +98,6 @@ impl UltrosDb {
                 quantity,
                 ..
             } = sale;
-            let record: SaleHistory = SaleHistoryReturn(
-                Model {
-                    id: 0,
-                    quantity,
-                    price_per_item: price_per_unit,
-                    buying_character_id: buyer.id,
-                    hq,
-                    sold_item_id: item_id.0,
-                    sold_date: sale.timestamp.naive_utc(),
-                    world_id: world_id.0,
-                },
-                Some(buyer.clone()),
-            )
-            .into();
-            recorded_sales.push((record, buyer.into()));
             ActiveModel {
                 id: Default::default(),
                 quantity: Set(quantity),
@@ -118,9 +109,10 @@ impl UltrosDb {
                 world_id: Set(world_id.0),
             }
         }))
-        .exec_without_returning(&self.db)
+        .exec_with_returning(&self.db)
         .await?;
-        Ok(recorded_sales)
+        let buyers_by_id: HashMap<i32, _> = buyers.into_values().map(|b| (b.id, b)).collect();
+        Ok(attach_buyers(inserted, &buyers_by_id))
     }
 
     pub async fn get_sale_history_from_multiple_worlds(
@@ -283,6 +275,38 @@ impl UltrosDb {
     }
 }
 
+/// Pair freshly inserted `sale_history` rows back up with their buyers to form
+/// the event payload.
+///
+/// The rows come straight out of `INSERT ... RETURNING`, so `model.id` is the
+/// real Postgres id — that id is what the ClickHouse dual-write puts in
+/// `SaleRow::pg_id`, and it is the discriminator in the `sales` ORDER BY key.
+/// Anything that loses it here silently corrupts ClickHouse dedup.
+///
+/// Postgres doesn't promise RETURNING row order matches the VALUES order, so
+/// buyers are re-attached by id rather than zipped positionally.
+fn attach_buyers(
+    inserted: Vec<sale_history::Model>,
+    buyers_by_id: &HashMap<i32, unknown_final_fantasy_character::Model>,
+) -> Vec<(SaleHistory, UnknownCharacter)> {
+    inserted
+        .into_iter()
+        .filter_map(|model| {
+            let Some(buyer) = buyers_by_id.get(&model.buying_character_id) else {
+                // Unreachable: every id here came from a buyer we just looked
+                // up or created. Skip rather than panic on the ingest path.
+                warn!(
+                    buying_character_id = model.buying_character_id,
+                    "recorded sale references an unknown buyer; dropping from event payload"
+                );
+                return None;
+            };
+            let record: SaleHistory = SaleHistoryReturn(model, Some(buyer.clone())).into();
+            Some((record, buyer.into()))
+        })
+        .collect()
+}
+
 #[derive(Debug, FromQueryResult)]
 pub struct AbbreviatedSaleData {
     pub sold_item_id: i32,
@@ -290,4 +314,86 @@ pub struct AbbreviatedSaleData {
     pub price_per_item: i32,
     pub sold_date: NaiveDateTime,
     pub world_id: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn buyer(id: i32, name: &str) -> unknown_final_fantasy_character::Model {
+        unknown_final_fantasy_character::Model {
+            id,
+            name: name.to_string(),
+        }
+    }
+
+    fn inserted_row(id: i32, buyer_id: i32, second: u32) -> sale_history::Model {
+        sale_history::Model {
+            id,
+            quantity: 1,
+            price_per_item: 1000,
+            buying_character_id: buyer_id,
+            hq: false,
+            sold_item_id: 5,
+            sold_date: NaiveDate::from_ymd_opt(2026, 5, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, second)
+                .unwrap(),
+            world_id: 40,
+        }
+    }
+
+    #[test]
+    fn attach_buyers_preserves_the_postgres_ids() {
+        // Regression guard: this used to hand back `id: 0` for every sale,
+        // which made the ClickHouse `sales` ORDER BY key non-unique.
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One"))]);
+        let rows = vec![inserted_row(101, 7, 0), inserted_row(102, 7, 1)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        let ids: Vec<i32> = attached.iter().map(|(sale, _)| sale.id).collect();
+        assert_eq!(ids, vec![101, 102]);
+        assert!(ids.iter().all(|id| *id != 0));
+    }
+
+    #[test]
+    fn attach_buyers_keeps_same_second_sales_distinct() {
+        // Two sales of the same item/hq/world in the same second: `id` is the
+        // only thing telling them apart, both in PG and in the CH sort key.
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One"))]);
+        let rows = vec![inserted_row(101, 7, 30), inserted_row(102, 7, 30)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        assert_eq!(attached.len(), 2);
+        assert_ne!(attached[0].0.id, attached[1].0.id);
+        assert_eq!(attached[0].0.sold_date, attached[1].0.sold_date);
+    }
+
+    #[test]
+    fn attach_buyers_matches_by_id_not_position() {
+        // RETURNING order isn't guaranteed to match the VALUES order.
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One")), (9, buyer(9, "Buyer Two"))]);
+        let rows = vec![inserted_row(101, 9, 0), inserted_row(102, 7, 1)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        assert_eq!(attached[0].0.buyer_name.as_deref(), Some("Buyer Two"));
+        assert_eq!(attached[1].0.buyer_name.as_deref(), Some("Buyer One"));
+        assert_eq!(attached[0].1.name, "Buyer Two");
+        assert_eq!(attached[1].1.name, "Buyer One");
+    }
+
+    #[test]
+    fn attach_buyers_drops_rows_with_no_known_buyer() {
+        let buyers = HashMap::from([(7, buyer(7, "Buyer One"))]);
+        let rows = vec![inserted_row(101, 7, 0), inserted_row(102, 999, 1)];
+
+        let attached = attach_buyers(rows, &buyers);
+
+        assert_eq!(attached.len(), 1);
+        assert_eq!(attached[0].0.id, 101);
+    }
 }

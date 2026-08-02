@@ -16,6 +16,7 @@ use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, use_explorer_price_scope};
+use crate::routes::item_explorer_toolbar::jobset_display_label;
 use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
@@ -27,7 +28,90 @@ use leptos_router::location::Location;
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use ultros_api_types::world_helper::AnySelector;
-use xiv_gen::{ClassJobCategory, ClassJobCategoryId, Item, ItemId};
+use xiv_gen::{
+    ClassJobCategory, ClassJobCategoryId, ClassJobId, Item, ItemId, ItemSearchCategory,
+    ItemSearchCategoryId,
+};
+
+/// Canonical, locale-independent acronym for a `ClassJob`, keyed on its id.
+///
+/// `ClassJob::abbreviation` is a *localized display string*: German calls
+/// Pugilist "FST" (Faustkämpfer) and French "PUG", while `ClassJobCategory`'s
+/// columns — the flags [`job_category_lookup`] matches on — are English
+/// acronyms baked into the sheet schema and therefore identical in every
+/// locale. Anything that uses an abbreviation as a *key* (a route param, a
+/// role bucket, an href) must go through this table instead of reading
+/// `abbreviation`, or it resolves on English data and nowhere else.
+///
+/// The ids are the `ClassJob` sheet's row ids and the order matches
+/// [`job_category_lookup`]'s destructure exactly, because the
+/// `ClassJobCategory` sheet's per-job columns are laid out in `ClassJob` id
+/// order. `canonical_acronym_matches_english_abbreviation` pins the table
+/// against the shipped English pack, so a game-data bump that renumbers or
+/// adds a job fails the test rather than silently emptying a route.
+pub(crate) fn canonical_job_acronym(id: ClassJobId) -> Option<&'static str> {
+    // Ids 0..=42 line up with `ClassJobCategory`'s columns. "BST" (43) has a
+    // `ClassJob` row but no category column in the shipped pack — it still
+    // belongs here so role grouping and display resolve, even though nothing
+    // can select its gear (see `only_beastmaster_lacks_a_category_column`).
+    const ACRONYMS: [&str; 44] = [
+        "ADV", "GLA", "PGL", "MRD", "LNC", "ARC", "CNJ", "THM", "CRP", "BSM", "ARM", "GSM", "LTW",
+        "WVR", "ALC", "CUL", "MIN", "BTN", "FSH", "PLD", "MNK", "WAR", "DRG", "BRD", "WHM", "BLM",
+        "ACN", "SMN", "SCH", "ROG", "NIN", "MCH", "DRK", "AST", "SAM", "RDM", "BLU", "GNB", "DNC",
+        "RPR", "SGE", "VPR", "PCT", "BST",
+    ];
+    usize::try_from(id.0)
+        .ok()
+        .and_then(|i| ACRONYMS.get(i))
+        .copied()
+}
+
+/// Resolve the `/items/jobset/:jobset` route param to a canonical,
+/// locale-independent job acronym suitable for [`job_category_lookup`].
+///
+/// The canonical param is the **English acronym**, for the same reason
+/// `/items/category/:category` is keyed on a numeric id (see
+/// [`resolve_category_param`]): the server initializes `xiv_gen_db` to
+/// `Language::En` and never swaps it, while the client `try_init`s the
+/// visitor's locale *before* hydrating. A param keyed on the localized
+/// `abbreviation` resolves on at most one of the two sides.
+///
+/// Matching the acronym table first means the canonical form resolves
+/// identically in both processes regardless of which locale each loaded. The
+/// localized `abbreviation`/`name` match is kept as a fallback so links minted
+/// before this change (and the English full names in the search index) keep
+/// resolving; it carries exactly the locale caveat it always had, the same
+/// tradeoff `resolve_category_param` makes for legacy name-keyed category
+/// links.
+pub(crate) fn resolve_jobset_param(data: &xiv_gen::Data, raw_param: &str) -> Option<String> {
+    let decoded = percent_decode_str(raw_param)
+        .decode_utf8()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| raw_param.to_string());
+
+    // Locale-independent path: the param already is a canonical acronym.
+    if let Some(canonical) = data
+        .class_jobs
+        .keys()
+        .filter_map(|id| canonical_job_acronym(*id))
+        .find(|acronym| acronym.eq_ignore_ascii_case(&decoded))
+    {
+        return Some(canonical.to_string());
+    }
+
+    // Legacy fallback: a localized abbreviation or a full job name. Resolves
+    // against whichever locale *this* process loaded, so it is inherently
+    // one-sided for non-English visitors — but it only ever fires for
+    // non-canonical URLs, which today resolve to nothing at all.
+    data.class_jobs
+        .iter()
+        .find(|(_id, job)| {
+            job.abbreviation.eq_ignore_ascii_case(&decoded)
+                || job.name.eq_ignore_ascii_case(&decoded)
+        })
+        .and_then(|(id, _job)| canonical_job_acronym(*id))
+        .map(|acronym| acronym.to_string())
+}
 
 /// Return true if the given acronym is in the given class job category
 pub(crate) fn job_category_lookup(
@@ -168,6 +252,40 @@ pub(crate) fn collect_job_items_sorted<'a>(
     items
 }
 
+/// Resolve the `/items/category/:category` route param to its
+/// [`ItemSearchCategory`].
+///
+/// The canonical param is the **numeric** `ItemSearchCategory` id, because ids
+/// are locale-independent. `ItemSearchCategory::name` is a *localized display
+/// string* ("Shields" / "盾" / "Schilde"), and the two renderers of a page do
+/// not share a locale: the server initializes `xiv_gen_db` to `Language::En`
+/// and never swaps it, while the client calls `try_init` with the visitor's
+/// locale *before* hydrating. A name-keyed param therefore resolves on exactly
+/// one of the two sides — SSR renders an empty list where the client builds a
+/// full one (a chip minted by a non-English client), or the reverse (the
+/// English links in the sitemap and the search index). Either way the client's
+/// view tree disagrees with the SSR DOM and tachys panics in
+/// `failed_to_cast_element`, the same class as #960.
+///
+/// The name match is kept as a fallback so links minted before the switch to
+/// ids keep resolving; it carries exactly the locale caveat it always had.
+/// Duplicate names (`Primary Tools` is both id 2 and id 3) are broken by
+/// lowest id rather than by `HashMap` iteration order, so the fallback is at
+/// least deterministic across the two processes.
+pub(crate) fn resolve_category_param<'a>(
+    data: &'a xiv_gen::Data,
+    raw_param: &str,
+) -> Option<&'a ItemSearchCategory> {
+    let decoded = percent_decode_str(raw_param).decode_utf8().ok()?;
+    if let Ok(id) = decoded.parse::<i32>() {
+        return data.item_search_categorys.get(&ItemSearchCategoryId(id));
+    }
+    data.item_search_categorys
+        .values()
+        .filter(|category| category.name == decoded)
+        .min_by_key(|category| category.key_id.0)
+}
+
 #[component]
 pub fn CategoryItems() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
@@ -176,17 +294,12 @@ pub fn CategoryItems() -> impl IntoView {
     let items = Memo::new(move |_| {
         let cat = params()
             .get_str("category")
-            .and_then(|cat| percent_encoding::percent_decode_str(cat).decode_utf8().ok())
-            .and_then(|cat| {
-                data.item_search_categorys
-                    .iter()
-                    .find(|(_id, category)| category.name == cat)
-            })
-            .map(|(id, _)| {
+            .and_then(|cat| resolve_category_param(data, cat))
+            .map(|category| {
                 let mut items: Vec<_> = data
                     .items
                     .iter()
-                    .filter(|(_, item)| item.item_search_category == id.0)
+                    .filter(|(_, item)| item.item_search_category == category.key_id.0)
                     .collect();
                 // See note in `JobItems::items` — pin a stable order across
                 // the SSR and CSR HashMap iterations to keep hydration in
@@ -197,14 +310,35 @@ pub fn CategoryItems() -> impl IntoView {
         cat.unwrap_or_default()
     });
     let category_view_name = Memo::new(move |_| {
+        // Resolve the id back to a display name. Falls through to the raw
+        // param for legacy name-keyed links that no longer resolve, so an
+        // unrecognised category still names itself in the heading.
         params()
-            .get("category")
-            .as_ref()
-            .and_then(|cat| percent_decode_str(cat).decode_utf8().ok())
-            .map(|c| c.to_string())
+            .get_str("category")
+            .and_then(|cat| resolve_category_param(data, cat))
+            .map(|category| category.name.clone())
+            .or_else(|| {
+                params()
+                    .get("category")
+                    .as_ref()
+                    .and_then(|cat| percent_decode_str(cat).decode_utf8().ok())
+                    .map(|c| c.to_string())
+            })
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, category_view_default).to_string())
     });
+    // Legacy name-keyed links still resolve (see `resolve_category_param`), so
+    // the same category is reachable under several URLs. Point them all at the
+    // id-keyed form so the duplicates consolidate instead of competing.
+    let canonical_href = move || {
+        let params = params();
+        let raw = params.get_str("category").unwrap_or("");
+        match resolve_category_param(data, raw) {
+            Some(category) => format!("https://ultros.app/items/category/{}", category.key_id.0),
+            None => format!("https://ultros.app/items/category/{raw}"),
+        }
+    };
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &category_view_name()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, category_list_desc).to_string().replace("%category%", &category_view_name()) />
         <h3 class="text-xl">{category_view_name}</h3>
@@ -223,40 +357,36 @@ pub fn JobItems() -> impl IntoView {
     let set_market_only =
         SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
     let items = Memo::new(move |_| {
-        // decode, normalize, and map to a known job abbreviation if possible
+        // Resolve to the canonical English acronym. Reading `abbreviation`
+        // straight off the matched job would hand `job_category_lookup` a
+        // localized string it cannot match — see `resolve_jobset_param`.
         let raw = match params().get("jobset") {
             Some(p) => p.clone(),
             None => return vec![],
         };
-        let decoded = percent_encoding::percent_decode_str(&raw)
-            .decode_utf8()
-            .map(|s| s.to_string())
-            .unwrap_or(raw.clone());
-        let lower = decoded.to_lowercase();
-
-        // try to resolve to a canonical abbreviation (fallback: decoded input)
-        let canonical_abbr = data
-            .class_jobs
-            .iter()
-            .find_map(|(_id, job)| {
-                let abbr = job.abbreviation.as_str();
-                let name = job.name.as_str();
-                if abbr.eq_ignore_ascii_case(&lower) || name.eq_ignore_ascii_case(&lower) {
-                    Some(abbr.to_string())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(decoded.clone());
+        let canonical_abbr = match resolve_jobset_param(data, &raw) {
+            Some(abbr) => abbr,
+            None => return vec![],
+        };
 
         collect_job_items_sorted(data, &canonical_abbr, market_only())
     });
+    // Heading/meta text: the param is a canonical English acronym, so resolve
+    // it back to the visitor's localized label the way `CategoryItems` does
+    // with its numeric category id. Falls through to the raw param so an
+    // unrecognised jobset still names itself.
     let job_set = Memo::new(move |_| {
         params()
             .get("jobset")
             .as_ref()
-            .and_then(|s| percent_encoding::percent_decode_str(s).decode_utf8().ok())
-            .map(|s| s.to_string())
+            .and_then(|raw| {
+                jobset_display_label(data, raw).or_else(|| {
+                    percent_decode_str(raw)
+                        .decode_utf8()
+                        .ok()
+                        .map(|s| s.to_string())
+                })
+            })
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, job_set_default).to_string())
     });
 
@@ -305,7 +435,23 @@ pub fn JobItems() -> impl IntoView {
             .unwrap_or_default()
     });
 
+    // `?show-non-market=` genuinely changes the item set, but the default
+    // (marketable items only) is the representative view; canonicalising to it
+    // keeps the toggled variant from being crawled as thin duplicate content.
+    // Legacy name-keyed and localized-abbreviation links still resolve (see
+    // `resolve_jobset_param`), so one job is reachable under several URLs —
+    // point them all at the canonical acronym so the duplicates consolidate
+    // instead of competing, exactly as `CategoryItems` does with its id.
+    let canonical_href = move || {
+        let raw = jobset_param.get();
+        match resolve_jobset_param(data, &raw) {
+            Some(acronym) => format!("https://ultros.app/items/jobset/{acronym}"),
+            None => format!("https://ultros.app/items/jobset/{raw}"),
+        }
+    };
+
     view! {
+        <MetaCanonical href=canonical_href />
         <MetaTitle title=move || crate::i18n::t_string!(i18n, item_explorer_title).to_string().replace("%name%", &job_set()) />
         <MetaDescription text=move || crate::i18n::t_string!(i18n, job_set_list_desc).to_string().replace("%job%", &job_set()) />
         <h3 class="text-xl">{job_set}</h3>
@@ -351,6 +497,7 @@ pub fn JobItems() -> impl IntoView {
 pub fn DefaultItems() -> impl IntoView {
     let i18n = use_i18n();
     view! {
+        <MetaCanonical href="https://ultros.app/items" />
         <MetaTitle title=t_string!(i18n, item_explorer_default_title).to_string() />
         <MetaDescription text=t_string!(i18n, item_explorer_default_desc).to_string() />
         <div class="flex flex-col">
@@ -997,7 +1144,7 @@ pub fn ItemExplorer() -> impl IntoView {
     provide_context(CheapestPrices { read_listings });
     provide_context(scope);
     view! {
-        <div class="flex flex-col min-h-[calc(100vh-56px)]">
+        <div class="flex flex-col min-h-screen">
             <div class="p-4 lg:p-8 max-w-[1600px] mx-auto w-full">
                 <crate::routes::item_explorer_toolbar::ItemExplorerToolbar />
                 <Outlet />
@@ -1009,8 +1156,270 @@ pub fn ItemExplorer() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_job_items_sorted;
+    use super::{
+        canonical_job_acronym, collect_job_items_sorted, resolve_category_param,
+        resolve_jobset_param,
+    };
+    use crate::routes::item_explorer_toolbar::{job_chip_slug, job_chips_sorted_in};
     use paginate::Pages;
+    use xiv_gen::Language;
+
+    const ALL_LOCALES: [Language; 7] = [
+        Language::En,
+        Language::Ja,
+        Language::De,
+        Language::Fr,
+        Language::Cn,
+        Language::Ko,
+        Language::Tc,
+    ];
+
+    /// Pins the hardcoded acronym table against the shipped English pack. A
+    /// game-data bump that renumbers, adds, or removes a job fails here
+    /// instead of silently emptying `/items/jobset/*`.
+    #[test]
+    fn canonical_acronym_matches_english_abbreviation() {
+        let en = xiv_gen_db::data_for(Language::En);
+        for job in job_chips_sorted_in(en) {
+            assert_eq!(
+                canonical_job_acronym(job.key_id),
+                Some(job.abbreviation.as_str()),
+                "job id {} ({}) is missing or wrong in the acronym table",
+                job.key_id.0,
+                job.name,
+            );
+        }
+    }
+
+    /// The bug. `ClassJobCategory`'s columns are English acronyms baked into
+    /// the sheet schema, but `ClassJob::abbreviation` is a localized display
+    /// string — so a German client's own "FST" chip is a key that
+    /// `job_category_lookup` matches nothing against, on *either* side of the
+    /// SSR/CSR split. The result was a nav link to a permanently empty page.
+    #[test]
+    fn a_localized_job_abbreviation_is_not_a_usable_category_key() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let de = xiv_gen_db::data_for(Language::De);
+
+        // Find a job German actually renames, so the assertion is not vacuous.
+        let (localized, canonical) = job_chips_sorted_in(de)
+            .into_iter()
+            .find_map(|job| {
+                let canonical = canonical_job_acronym(job.key_id)?;
+                (job.abbreviation != canonical)
+                    .then(|| (job.abbreviation.clone(), canonical.to_string()))
+            })
+            .expect("German renames at least one job abbreviation");
+
+        assert!(
+            collect_job_items_sorted(de, &localized, false).is_empty(),
+            "the localized abbreviation {localized:?} must not resolve — it is \
+             the dead-link bug, and if it ever does the acronym table is moot",
+        );
+        assert!(
+            !collect_job_items_sorted(de, &canonical, false).is_empty(),
+            "the canonical acronym {canonical:?} resolves against German data",
+        );
+        // Same key, same items, either side of the SSR/CSR locale split.
+        assert_eq!(
+            collect_job_items_sorted(de, &canonical, false)
+                .iter()
+                .map(|(id, _)| id.0)
+                .collect::<Vec<_>>(),
+            collect_job_items_sorted(en, &canonical, false)
+                .iter()
+                .map(|(id, _)| id.0)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// Jobs that no `ClassJobCategory` row can select, because the sheet has
+    /// no column for them. These render an empty `/items/jobset/*` page in
+    /// *every* locale, English included — a gap in the shipped game-data pack
+    /// (`ClassJobCategory` predates Beastmaster), not something the acronym
+    /// table can repair. Pinned so a data bump that widens or closes the gap
+    /// surfaces in review instead of quietly changing which pages are dead.
+    #[test]
+    fn only_beastmaster_lacks_a_category_column() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let unselectable: Vec<&str> = job_chips_sorted_in(en)
+            .into_iter()
+            .filter_map(|job| canonical_job_acronym(job.key_id))
+            .filter(|acronym| {
+                !en.class_job_categorys
+                    .values()
+                    .any(|c| super::job_category_lookup(c, acronym))
+            })
+            .collect();
+        assert_eq!(unselectable, vec!["BST"]);
+    }
+
+    /// The fix, end to end: the href the job nav actually mints resolves to a
+    /// non-empty item list in every locale. Pre-fix this minted the localized
+    /// abbreviation and failed for German and French.
+    #[test]
+    fn every_job_chip_link_resolves_to_items_in_every_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        for lang in ALL_LOCALES {
+            let data = xiv_gen_db::data_for(lang);
+            for job in job_chips_sorted_in(data) {
+                // Dead for everyone regardless of locale keying — covered by
+                // `only_beastmaster_lacks_a_category_column`. Keyed on the id
+                // so the exclusion is itself locale-independent.
+                if canonical_job_acronym(job.key_id) == Some("BST") {
+                    continue;
+                }
+                let slug = job_chip_slug(job);
+                let resolved = resolve_jobset_param(data, &slug).unwrap_or_else(|| {
+                    panic!("{lang:?}: chip link /items/jobset/{slug} resolves to no job")
+                });
+                // The URL is a key, so every locale must read it as the same
+                // job. Item *sets* are deliberately not compared across
+                // locales: the CN/KO/TC packs track an older game version and
+                // genuinely hold different items — a separate and far broader
+                // SSR-locale issue that a route key cannot address.
+                assert_eq!(
+                    Some(resolved.as_str()),
+                    canonical_job_acronym(job.key_id),
+                    "{lang:?}: /items/jobset/{slug} resolves to the wrong job",
+                );
+                assert!(
+                    !collect_job_items_sorted(data, &resolved, false).is_empty(),
+                    "{lang:?}: /items/jobset/{slug} ({}) renders zero items",
+                    job.name,
+                );
+            }
+        }
+        // English is the SSR locale, so it must resolve every slug a client of
+        // any locale can mint — that is the pairing that actually hydrates.
+        for lang in ALL_LOCALES {
+            for job in job_chips_sorted_in(xiv_gen_db::data_for(lang)) {
+                let slug = job_chip_slug(job);
+                assert!(
+                    resolve_jobset_param(en, &slug).is_some(),
+                    "English SSR cannot resolve {slug}, minted by a {lang:?} client",
+                );
+            }
+        }
+    }
+
+    /// Lowest-id category that the toolbar actually links to (`category`
+    /// 1..=4), so the locale tests below key off a real navigable page
+    /// rather than a hardcoded id that a game-data bump could retire.
+    fn first_linkable_category(data: &xiv_gen::Data) -> &xiv_gen::ItemSearchCategory {
+        data.item_search_categorys
+            .values()
+            .filter(|cat| (1..=4).contains(&cat.category))
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("game data must have at least one linkable item search category")
+    }
+
+    /// The bug this route key was changed to avoid. The server renders SSR
+    /// with English game data while the client hydrates with the visitor's
+    /// locale, so a *name*-keyed param resolves on exactly one of the two
+    /// sides — SSR emits an empty list where the client builds a full one,
+    /// and tachys panics walking the mismatch.
+    #[test]
+    fn a_localized_category_name_only_resolves_in_its_own_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let ja = xiv_gen_db::data_for(Language::Ja);
+        let sample = first_linkable_category(en);
+        let ja_name = ja
+            .item_search_categorys
+            .get(&sample.key_id)
+            .expect("the same id exists in every locale")
+            .name
+            .clone();
+        assert_ne!(
+            ja_name, sample.name,
+            "sanity: this category's display name must actually differ between locales",
+        );
+
+        // A chip minted by a Japanese client carries the Japanese name...
+        assert!(
+            resolve_category_param(ja, &ja_name).is_some(),
+            "the minting locale resolves its own name",
+        );
+        // ...but SSR answers that URL with English data and finds nothing.
+        assert!(
+            resolve_category_param(en, &ja_name).is_none(),
+            "English SSR cannot resolve a Japanese category name — the mismatch",
+        );
+    }
+
+    /// The fix: an id resolves to the same category in every locale, so SSR
+    /// and the client agree on the item list regardless of who minted the
+    /// link.
+    #[test]
+    fn a_category_id_resolves_identically_in_every_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let expected = first_linkable_category(en).key_id;
+        let param = expected.0.to_string();
+        for lang in [
+            Language::En,
+            Language::Ja,
+            Language::De,
+            Language::Fr,
+            Language::Cn,
+            Language::Ko,
+            Language::Tc,
+        ] {
+            let data = xiv_gen_db::data_for(lang);
+            assert_eq!(
+                resolve_category_param(data, &param).map(|cat| cat.key_id),
+                Some(expected),
+                "id param must resolve to the same category under {lang:?}",
+            );
+        }
+    }
+
+    /// Links minted before the switch to ids are percent-encoded localized
+    /// names; they must keep working for the locale that minted them.
+    #[test]
+    fn legacy_percent_encoded_name_params_still_resolve() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let sample = en
+            .item_search_categorys
+            .values()
+            .filter(|cat| (1..=4).contains(&cat.category) && cat.name.contains(' '))
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("at least one linkable category name contains a space");
+        let encoded = sample.name.replace(' ', "%20").replace('\'', "%27");
+        assert_eq!(
+            resolve_category_param(en, &encoded).map(|cat| cat.key_id),
+            Some(sample.key_id),
+        );
+    }
+
+    /// `Primary Tools` is the name of both id 2 and id 3. The name fallback
+    /// must not pick between them by `HashMap` iteration order, or it
+    /// reintroduces the very SSR/CSR divergence the id key removes.
+    #[test]
+    fn duplicate_category_names_resolve_to_the_lowest_id() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let mut by_name: std::collections::HashMap<&str, Vec<i32>> =
+            std::collections::HashMap::new();
+        for cat in en.item_search_categorys.values() {
+            by_name
+                .entry(cat.name.as_str())
+                .or_default()
+                .push(cat.key_id.0);
+        }
+        let Some((name, ids)) = by_name
+            .iter()
+            .filter(|(name, ids)| ids.len() > 1 && !name.is_empty())
+            .min_by_key(|(name, _)| *name)
+        else {
+            // No duplicate names in this data revision — nothing to pin.
+            return;
+        };
+        let lowest = ids.iter().copied().min().expect("non-empty");
+        assert_eq!(
+            resolve_category_param(en, name).map(|cat| cat.key_id.0),
+            Some(lowest),
+            "duplicate name {name:?} must resolve deterministically to the lowest id",
+        );
+    }
 
     /// Regression for the `?page=35` family of GlitchTip hydration
     /// panics on `/items/jobset/<JOB>`. `paginate::Pages::with_offset`

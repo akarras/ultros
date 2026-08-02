@@ -1,9 +1,13 @@
 use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_use::{UseElementSizeReturn, use_element_size};
+use ultros_api_types::price_density::PriceDensity;
 use ultros_api_types::price_series::{PriceSeries, SeriesGroup};
+use ultros_charts::charts::ChartMode;
+use ultros_charts::charts::grid::{GridOptions, GridSort, build_price_grid, nearest_x};
+use ultros_charts::charts::price_density::{DensityChartOptions, build_price_density_chart};
 use ultros_charts::charts::price_history::{
-    ChartStats, PriceChartModel, PriceChartOptions, build_price_history_chart,
+    PriceChartModel, PriceChartOptions, build_price_history_chart,
 };
 use ultros_charts::components::{color_attr, scene_view};
 use ultros_charts::data::grouping::{GroupLevel, available_group_levels};
@@ -12,6 +16,7 @@ use ultros_charts::theme::Theme;
 use web_sys::PointerEvent;
 use web_sys::wasm_bindgen::JsCast;
 
+use crate::components::chart_toolbar::{ChartToolbar, ChartView};
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
 
@@ -58,6 +63,30 @@ fn normalize_time_range(a: i64, b: i64, domain: (i64, i64)) -> (i64, i64) {
     }
 
     (start, end)
+}
+
+/// True when a freshly fetched `domain` can't be explained as the server's
+/// answer to a request for `range` — i.e. the item/world identity changed out
+/// from under an active selection and the selection should snap back to full
+/// range.
+///
+/// The server reports the domain as the min/max of *bucket start* timestamps
+/// (`ultros_api_types::price_series::PriceBucket::ts`), floored to absolute
+/// time boundaries. So a perfectly faithful answer to "give me
+/// `range.0..range.1`" still reports a `from` up to one bucket width *before*
+/// `range.0`, and the server re-derives that width from the requested span.
+/// Comparing bounds exactly therefore called every zoom stale and snapped the
+/// chart back to the full range on every window adjustment (issue #1068);
+/// one bucket width of slop is the largest a floored bucket start can be off
+/// by, so it separates rounding from a genuine identity change.
+///
+/// Only the `from` side actually needs the slack — the ClickHouse window
+/// predicate is `sold_date < to`, so a bucket start can never reach the
+/// requested `to`. The `to` side carries it anyway so the two bounds can't
+/// drift apart if that predicate ever becomes inclusive.
+fn range_is_stale(domain: (i64, i64), range: (i64, i64), bucket_seconds: i64) -> bool {
+    let slop = bucket_seconds.max(0);
+    domain.0 < range.0.saturating_sub(slop) || domain.1 > range.1.saturating_add(slop)
 }
 
 fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
@@ -130,53 +159,6 @@ fn timestamp_from_pointer(
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-#[component]
-fn StatsStrip(stats: Signal<Option<ChartStats>>) -> impl IntoView {
-    let i18n = use_i18n();
-    view! {
-        {move || {
-            stats
-                .get()
-                .map(|s| {
-                    let n_label = t_string!(i18n, chart_stat_n_sales)
-                        .to_string()
-                        .replace("{n}", &s.n.to_string());
-                    let market_average_label =
-                        t_string!(i18n, chart_stat_market_avg).to_string();
-                    let median_label = t_string!(i18n, chart_stat_median).to_string();
-                    let min_label = t_string!(i18n, chart_stat_min).to_string();
-                    let max_label = t_string!(i18n, chart_stat_max).to_string();
-                    view! {
-                        <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums text-[color:var(--color-text)]/70 mb-3">
-                            <span>{n_label}</span>
-                            {s
-                                .market_average
-                                .map(|v| {
-                                    view! {
-                                        <span>
-                                            {market_average_label.clone()} " " {short_number(v)}
-                                        </span>
-                                    }
-                                })}
-                            {s
-                                .median
-                                .map(|v| {
-                                    view! {
-                                        <span>
-                                            {median_label} " " {short_number(v)}
-                                        </span>
-                                    }
-                                })}
-                            <span>{min_label} " " {short_number(s.min)}</span>
-                            <span>{max_label} " " {short_number(s.max)}</span>
-                        </div>
-                    }
-                        .into_any()
-                })
-        }}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +202,74 @@ mod tests {
     #[test]
     fn normalize_time_range_orders_and_clamps() {
         assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
+    }
+
+    // One day of buckets — the width the server picks for a month-ish
+    // window, and the slack `range_is_stale` is allowed.
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn range_is_stale_tolerates_a_floored_first_bucket() {
+        // The regression from #1068: the user drags the slicer to an
+        // arbitrary instant, the server answers with the bucket *containing*
+        // that instant, and its start sits before the request. That is a
+        // faithful answer, not a stale one.
+        let requested = (1_700_000_000, 1_702_000_000);
+        let answered = (requested.0 - DAY + 1, requested.1);
+        assert!(!range_is_stale(answered, requested, DAY));
+    }
+
+    #[test]
+    fn range_is_stale_tolerates_exactly_one_bucket_of_floor() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 - DAY, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_beyond_the_slack() {
+        // A different item's history: more than a bucket earlier than
+        // anything we asked for, so the selection no longer means anything.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0 - DAY - 1, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_running_past_the_selection() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0, requested.1 + DAY + 1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_accepts_a_domain_nested_in_the_selection() {
+        // The documented "echo of our own zoom" case: the server reports a
+        // narrower actual-data span than we requested.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 + DAY, requested.1 - DAY),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_without_a_bucket_width_compares_exactly() {
+        // `bucket_seconds` is 0 on the empty-payload fallback; the guard must
+        // degrade to the old exact comparison rather than misbehave.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale((requested.0 - 1, requested.1), requested, 0));
+        assert!(!range_is_stale(requested, requested, 0));
     }
 
     #[test]
@@ -482,96 +532,6 @@ fn TimelineSlicer(
     }
 }
 
-#[component]
-fn ChartOverlayToggle(
-    label: String,
-    #[prop(into)] checked: Signal<bool>,
-    set_checked: WriteSignal<bool>,
-) -> impl IntoView {
-    view! {
-        <label
-            class=move || {
-                [
-                    "inline-flex cursor-pointer select-none items-center gap-1.5 rounded-md border px-2.5 py-1 transition-colors",
-                    if checked.get() {
-                        "border-brand-500/60 bg-brand-700/30 text-brand-100"
-                    } else {
-                        "border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)]"
-                    },
-                ]
-                    .join(" ")
-            }
-        >
-            <input
-                class="sr-only"
-                type="checkbox"
-                prop:checked=checked
-                on:change=move |event| set_checked.set(event_target_checked(&event))
-            />
-            <span
-                class=move || {
-                    [
-                        "h-2 w-2 rounded-full",
-                        if checked.get() { "bg-brand-300" } else { "bg-[color:var(--color-text-muted)]/45" },
-                    ]
-                        .join(" ")
-                }
-            ></span>
-            {label}
-        </label>
-    }
-}
-
-#[component]
-fn ColorByControl(
-    #[prop(into)] options: Signal<Vec<GroupLevel>>,
-    #[prop(into)] selected: Signal<GroupLevel>,
-    set_selected: WriteSignal<GroupLevel>,
-) -> impl IntoView {
-    let i18n = use_i18n();
-    view! {
-        <Show when=move || options.with(|options| options.len() > 1)>
-            <div class="flex flex-wrap items-center gap-2 text-xs">
-                <span class="font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                    {t!(i18n, chart_color_by)}
-                </span>
-                <div class="inline-flex overflow-hidden rounded-md border border-[color:var(--color-outline)]">
-                <For
-                    each=move || options.get()
-                    key=|option| option.label()
-                    children=move |option| {
-                        view! {
-                            <button
-                                type="button"
-                                class=move || {
-                                    let active = selected.get() == option;
-                                    [
-                                        "border-l border-[color:var(--color-outline)] px-2.5 py-1 transition-colors first:border-l-0",
-                                        if active {
-                                            "bg-brand-600/30 text-brand-100"
-                                        } else {
-                                            "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                                        },
-                                    ]
-                                        .join(" ")
-                                }
-                                on:click=move |_| set_selected.set(option)
-                            >
-                                {match option {
-                                    GroupLevel::Region => t_string!(i18n, chart_color_region).to_string(),
-                                    GroupLevel::Datacenter => t_string!(i18n, chart_color_datacenter).to_string(),
-                                    GroupLevel::World => t_string!(i18n, chart_color_world).to_string(),
-                                }}
-                            </button>
-                        }
-                    }
-                />
-                </div>
-            </div>
-        </Show>
-    }
-}
-
 /// Crosshair + per-series dots at the hovered bucket. Lives INSIDE the
 /// chart's `<svg>` so it shares the viewBox coordinate space.
 #[component]
@@ -696,7 +656,10 @@ fn HoverTooltip(
 #[component]
 pub fn PriceHistoryChart(
     #[prop(into)] series: Signal<Option<PriceSeries>>,
+    #[prop(into)] density: Signal<Option<PriceDensity>>,
     #[prop(into)] scope_name: Signal<String>,
+    #[prop(into)] mode: Signal<ChartMode>,
+    set_mode: WriteSignal<ChartMode>,
     #[prop(into)] group: Signal<GroupLevel>,
     set_group: WriteSignal<GroupLevel>,
     #[prop(into)] on_range_change: Callback<Option<(i64, i64)>>,
@@ -707,6 +670,18 @@ pub fn PriceHistoryChart(
     let (show_market_average, set_show_market_average) = signal(true);
     let (show_trend, set_show_trend) = signal(false);
     let (show_quantity, set_show_quantity) = signal(false);
+    // Patch milestone bands (spec 4): on by default — under 30 days the LOD
+    // tier empties the mark set anyway, so narrow zooms stay clean.
+    let (show_patches, set_show_patches) = signal(true);
+    // Overlay vs small-multiples grid. Owned here (not item_view): nothing
+    // about the view gates a fetch — grid cells re-divide the same payload.
+    let (view, set_view) = signal(ChartView::Overlay);
+    let (percent_change, set_percent_change) = signal(false);
+    let (grid_per_cell_scale, set_grid_per_cell_scale) = signal(false);
+    let (grid_sort, set_grid_sort) = signal(GridSort::Name);
+    // Lifted so the grid's "+N more" affordance can open the toolbar's
+    // world-filter popover.
+    let world_filter_open = RwSignal::new(false);
     // Local truth for the slicer's own rendering (handle positions, drag
     // state). Every commit is mirrored out via `on_range_change` below so the
     // caller can debounce it into a refetch (Task 14) — this signal itself
@@ -767,14 +742,16 @@ pub fn PriceHistoryChart(
     // zoom request (the server may report a slightly narrower "actual data"
     // domain than requested) — leave the selection alone. A domain that
     // *doesn't* fit means the item/world identity changed out from under an
-    // active selection, so snap back to full range.
+    // active selection, so snap back to full range. See `range_is_stale` for
+    // why "fits" is measured with a bucket's worth of slack.
     Effect::new(move |_| {
         let Some(domain) = available_domain.get() else {
             return;
         };
+        let bucket_seconds = resolved_series.with_untracked(|s| s.bucket_seconds);
         let stale = selected_range
             .get_untracked()
-            .is_some_and(|(start, end)| domain.0 < start || domain.1 > end);
+            .is_some_and(|range| range_is_stale(domain, range, bucket_seconds));
         if stale {
             set_selected_range.set(None);
         }
@@ -804,6 +781,104 @@ pub fn PriceHistoryChart(
     });
 
     let helper_for_model = helper.clone();
+    // ── Patch milestones (spec 4) ───────────────────────────────────────
+    // The patch calendar the viewed scope follows. At Region grouping the
+    // chart can show regions on different patch schedules at once — then
+    // there is no correct single calendar, so `None` turns milestones off
+    // and the caption says why (picking a winner would silently mislabel
+    // half the chart).
+    let helper_for_track = helper.clone();
+    let milestone_track = Memo::new(move |_| {
+        use ultros_api_types::game_history::{PatchTrack, track_for_region};
+        use ultros_api_types::world_helper::AnySelector;
+        let series_value = resolved_series.get();
+        if series_value.group == SeriesGroup::Region {
+            let hidden = hidden_series.get();
+            let mut tracks: Vec<PatchTrack> = series_value
+                .series
+                .iter()
+                .filter_map(|entry| {
+                    let name = helper_for_track
+                        .lookup_selector(AnySelector::Region(entry.id))?
+                        .get_name()
+                        .to_string();
+                    (!hidden.contains(&name)).then(|| track_for_region(&name))
+                })
+                .collect();
+            tracks.sort_by_key(|t| t.as_str());
+            tracks.dedup();
+            return match tracks.len() {
+                0 => Some(PatchTrack::Global),
+                1 => Some(tracks[0]),
+                _ => None,
+            };
+        }
+        // World/DC/unknown scope: a single region — walk the scope up to it.
+        // An unresolvable scope falls back to Global, like an unknown region.
+        let region_name = helper_for_track
+            .lookup_world_by_name(&scope_name.get())
+            .and_then(|result| {
+                if let Some(region) = result.as_region() {
+                    Some(region.name.clone())
+                } else if let Some(dc) = result.as_datacenter() {
+                    helper_for_track
+                        .lookup_selector(AnySelector::Region(dc.region_id))
+                        .map(|r| r.get_name().to_string())
+                } else if let Some(world) = result.as_world() {
+                    helper_for_track
+                        .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                        .and_then(|d| d.as_datacenter().map(|d| d.region_id))
+                        .and_then(|region_id| {
+                            helper_for_track.lookup_selector(AnySelector::Region(region_id))
+                        })
+                        .map(|r| r.get_name().to_string())
+                } else {
+                    None
+                }
+            });
+        Some(track_for_region(region_name.as_deref().unwrap_or("")))
+    });
+
+    let milestones = Memo::new(move |_| {
+        use ultros_charts::charts::MilestoneSpec;
+        if !show_patches.get() {
+            return Vec::new();
+        }
+        let Some(track) = milestone_track.get() else {
+            return Vec::new();
+        };
+        let Some((from, to)) = selected_domain.get() else {
+            return Vec::new();
+        };
+        let span = (to - from).max(1);
+        // Every LOD-visible patch inside the window, plus the latest one
+        // released before it so the leading stretch is tinted — the band
+        // layout's documented contract.
+        let mut specs: Vec<MilestoneSpec> = Vec::new();
+        for patch in ultros_api_types::game_history::visible_patches(track, span) {
+            let ts = patch
+                .released
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight is always valid")
+                .and_utc()
+                .timestamp();
+            if ts >= to {
+                break;
+            }
+            if ts <= from {
+                specs.clear(); // only the latest pre-window patch survives
+            }
+            specs.push(MilestoneSpec {
+                start: chrono::DateTime::from_timestamp(ts, 0)
+                    .expect("seed dates are valid timestamps")
+                    .naive_utc(),
+                version: patch.version,
+                ex_version: patch.ex_version,
+            });
+        }
+        specs
+    });
+
     let model = Memo::new(move |_| {
         let series_value = resolved_series.get();
         let width = chart_width.get();
@@ -814,12 +889,11 @@ pub fn PriceHistoryChart(
             &PriceChartOptions {
                 width,
                 height,
-                // Ignored by the layout: outlier filtering and grouping now
-                // happen server-side. `series.group` is authoritative.
-                remove_outliers: false,
                 show_market_average: show_market_average.get(),
                 show_trendline: show_trend.get(),
-                show_volume: show_quantity.get(),
+                // Density has no quantity lane (spec: disabled with a
+                // reason, and its own layout never draws one anyway).
+                show_volume: show_quantity.get() && mode.get() != ChartMode::Density,
                 show_legend: false,
                 title: None,
                 icon_data_uri: None,
@@ -827,18 +901,113 @@ pub fn PriceHistoryChart(
                 group_level: None,
                 utc_offset_minutes: utc_offset.get(),
                 hidden_series: hidden_series.get(),
+                mode: mode.get(),
+                milestones: milestones.get(),
+                index_to_percent: percent_change.get()
+                    && mode.get() == ChartMode::Price
+                    && view.get() == ChartView::Overlay,
                 theme: Theme::site(),
             },
         )
     });
 
+    // Series names of the current grouping level, grouped for the filter
+    // popover. The filter lists whatever the legend lists — hiding a name
+    // that isn't a current series name would silently do nothing.
+    let helper_for_filter = helper.clone();
+    let filter_groups = Memo::new(move |_| {
+        let scope = scope_name.get();
+        let level = group.get();
+        let Some(result) = helper_for_filter.lookup_world_by_name(&scope) else {
+            return Vec::<(String, Vec<String>)>::new();
+        };
+        if let Some(region) = result.as_region() {
+            match level {
+                GroupLevel::World => region
+                    .datacenters
+                    .iter()
+                    .map(|dc| {
+                        (
+                            dc.name.clone(),
+                            dc.worlds.iter().map(|w| w.name.clone()).collect(),
+                        )
+                    })
+                    .collect(),
+                GroupLevel::Datacenter => vec![(
+                    region.name.clone(),
+                    region
+                        .datacenters
+                        .iter()
+                        .map(|dc| dc.name.clone())
+                        .collect(),
+                )],
+                GroupLevel::Region => Vec::new(),
+            }
+        } else if let Some(dc) = result.as_datacenter() {
+            match level {
+                GroupLevel::World => vec![(
+                    dc.name.clone(),
+                    dc.worlds.iter().map(|w| w.name.clone()).collect(),
+                )],
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        }
+    });
+
+    let helper_for_grid = helper.clone();
+    let grid_model = Memo::new(move |_| {
+        let series_value = resolved_series.get();
+        // Density never reaches the grid (the view toggle disables it);
+        // guard anyway so a stale combination degrades to Price cells.
+        let grid_mode = match mode.get() {
+            ChartMode::Density => ChartMode::Price,
+            m => m,
+        };
+        build_price_grid(
+            &helper_for_grid,
+            &series_value,
+            &GridOptions {
+                mode: grid_mode,
+                shared_y: !grid_per_cell_scale.get(),
+                sort: grid_sort.get(),
+                hidden_series: hidden_series.get(),
+                theme: Theme::site(),
+                ..Default::default()
+            },
+        )
+    });
+
+    // Built only from the density payload — `None` while the fetch is in
+    // flight or the mode is inactive, so the render closure can fall back
+    // to the standard empty state.
+    let density_model = Memo::new(move |_| {
+        let width = chart_width.get();
+        let height = (width * 0.56).clamp(300.0, 540.0);
+        density.get().map(|d| {
+            build_price_density_chart(
+                &d,
+                &DensityChartOptions {
+                    width,
+                    height,
+                    utc_offset_minutes: utc_offset.get(),
+                    milestones: milestones.get(),
+                    theme: Theme::site(),
+                },
+            )
+        })
+    });
+
     let stats = Signal::derive(move || model.with(|m| m.stats.clone()));
     let hover_index = RwSignal::new(None::<usize>);
 
-    // Clear stale hover state whenever the model is rebuilt (e.g. after a
-    // window resize snaps to a new quantised width or the data changes).
+    // Clear stale hover state whenever either model is rebuilt (e.g. after
+    // a window resize snaps to a new quantised width or the data changes).
     Effect::new(move |_| {
         model.track();
+        density_model.track();
+        grid_model.track();
         hover_index.set(None);
     });
 
@@ -854,35 +1023,106 @@ pub fn PriceHistoryChart(
         if rect.width() <= 0.0 {
             return;
         }
+        // Grid cells resolve their own pointer position (per-cell svg rects
+        // share one x space); the container handler is overlay/density only.
+        if view.get_untracked() == ChartView::Grid && mode.get_untracked() != ChartMode::Density {
+            return;
+        }
         let x_css = evt.client_x() - rect.left();
-        let index = model.with_untracked(|m| {
-            m.hover
-                .nearest_index((x_css / rect.width()) as f32 * m.scene.width)
-        });
+        let index = if mode.get_untracked() == ChartMode::Density {
+            density_model.with_untracked(|m| {
+                m.as_ref().and_then(|m| {
+                    m.hover
+                        .nearest_index((x_css / rect.width()) as f32 * m.scene.width)
+                })
+            })
+        } else {
+            model.with_untracked(|m| {
+                m.hover
+                    .nearest_index((x_css / rect.width()) as f32 * m.scene.width)
+            })
+        };
         hover_index.set(index);
     };
 
     view! {
         <div class="flex flex-col gap-3">
-            <StatsStrip stats=stats />
-            <div class="flex flex-wrap items-center gap-2 text-xs">
-                <ChartOverlayToggle
-                    label=t_string!(i18n, chart_toggle_market_avg).to_string()
-                    checked=show_market_average
-                    set_checked=set_show_market_average
-                />
-                <ChartOverlayToggle
-                    label=t_string!(i18n, chart_legend_trend).to_string()
-                    checked=show_trend
-                    set_checked=set_show_trend
-                />
-                <ChartOverlayToggle
-                    label=t_string!(i18n, chart_legend_quantity).to_string()
-                    checked=show_quantity
-                    set_checked=set_show_quantity
-                />
-            </div>
-            <ColorByControl options=color_by_options selected=group set_selected=set_group />
+            <ChartToolbar
+                mode=mode
+                set_mode=set_mode
+                group_options=color_by_options
+                group=group
+                set_group=set_group
+                show_market_average=show_market_average
+                set_show_market_average=set_show_market_average
+                show_trend=show_trend
+                set_show_trend=set_show_trend
+                show_quantity=show_quantity
+                set_show_quantity=set_show_quantity
+                quantity_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
+                show_patches=show_patches
+                set_show_patches=set_show_patches
+                view=view
+                set_view=set_view
+                grid_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
+                filter_groups=filter_groups
+                hidden_series=hidden_series
+                filter_open=world_filter_open
+                percent_change=percent_change
+                set_percent_change=set_percent_change
+                percent_disabled=Signal::derive(move || {
+                    !(mode.get() == ChartMode::Price && view.get() == ChartView::Overlay)
+                })
+            />
+            // Mode-cap hint: modes that draw fewer series than are visible
+            // say so instead of silently dropping data.
+            {move || {
+                mode.get()
+                    .series_cap()
+                    .and_then(|cap| {
+                        model.with(|m| {
+                            let visible: Vec<String> = m
+                                .series
+                                .iter()
+                                .filter(|s| !s.hidden)
+                                .map(|s| s.name.clone())
+                                .collect();
+                            (visible.len() > cap)
+                                .then(|| {
+                                    let text = if cap == 1 {
+                                        let name = visible.first().cloned().unwrap_or_default();
+                                        t_string!(i18n, chart_hint_single_series)
+                                            .to_string()
+                                            .replace("{name}", &name)
+                                    } else {
+                                        t_string!(i18n, chart_hint_range_limit).to_string()
+                                    };
+                                    // Grid rescues single-series modes: offer
+                                    // it as the hint's action rather than only
+                                    // explaining the limitation (spec 3).
+                                    let offer_grid = view.get() == ChartView::Overlay
+                                        && mode.get() != ChartMode::Density;
+                                    view! {
+                                        <div class="flex flex-wrap items-center gap-2 text-xs text-amber-200/85">
+                                            <span>{text}</span>
+                                            {offer_grid
+                                                .then(|| {
+                                                    view! {
+                                                        <button
+                                                            type="button"
+                                                            class="rounded-md border border-amber-300/40 px-2 py-0.5 text-amber-100 transition-colors hover:bg-amber-500/15"
+                                                            on:click=move |_| set_view.set(ChartView::Grid)
+                                                        >
+                                                            {t_string!(i18n, chart_hint_use_grid).to_string()}
+                                                        </button>
+                                                    }
+                                                })}
+                                        </div>
+                                    }
+                                })
+                        })
+                    })
+            }}
             <TimelineSlicer
                 series=resolved_series
                 available_domain=available_domain
@@ -932,15 +1172,264 @@ pub fn PriceHistoryChart(
                 on:pointerleave=move |_| hover_index.set(None)
             >
                 {move || {
-                    let m = model.get();
-                    if m.hover.buckets.is_empty() {
-                        let msg = t_string!(i18n, chart_no_sales_in_window).to_string();
+                    // ── Grid view: small multiples under one crosshair ──
+                    if view.get() == ChartView::Grid && mode.get() != ChartMode::Density {
+                        let gm = grid_model.get();
+                        if gm.cells.is_empty() {
+                            let msg = t_string!(i18n, chart_no_sales_in_window).to_string();
+                            return view! {
+                                <div class="flex items-center justify-center w-full h-full text-[color:var(--color-text)]/60 text-sm">
+                                    {msg}
+                                </div>
+                            }
+                                .into_any();
+                        }
+                        let bucket_secs =
+                            resolved_series.with(|s| s.bucket_seconds.max(1));
+                        let hover_x = Signal::derive(move || {
+                            hover_index
+                                .get()
+                                .and_then(|i| grid_model.with(|g| g.xs.get(i).copied()))
+                        });
+                        let xs_for_move = gm.xs.clone();
+                        let cell_width = gm.cell_width;
+                        let on_cell_pointer_move = move |evt: web_sys::PointerEvent| {
+                            let Some(target) = evt
+                                .current_target()
+                                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                            else {
+                                return;
+                            };
+                            let rect = target.get_bounding_client_rect();
+                            if rect.width() <= 0.0 {
+                                return;
+                            }
+                            let x_css = evt.client_x() - rect.left();
+                            hover_index.set(nearest_x(
+                                &xs_for_move,
+                                (x_css / rect.width()) as f32 * cell_width,
+                            ));
+                        };
                         return view! {
+                            <div class="flex flex-col gap-2">
+                                // Grid header: sort + per-cell scaling
+                                <div class="flex flex-wrap items-center gap-3 text-xs text-[color:var(--color-text-muted)]">
+                                    <select
+                                        class="rounded-md border border-[color:var(--color-outline)] bg-transparent px-2 py-1"
+                                        on:change=move |event| {
+                                            set_grid_sort
+                                                .set(
+                                                    if event_target_value(&event) == "change" {
+                                                        GridSort::Change
+                                                    } else {
+                                                        GridSort::Name
+                                                    },
+                                                );
+                                        }
+                                    >
+                                        <option value="name" selected=move || grid_sort.get() == GridSort::Name>
+                                            {t_string!(i18n, chart_sort_name).to_string()}
+                                        </option>
+                                        <option value="change" selected=move || grid_sort.get() == GridSort::Change>
+                                            {t_string!(i18n, chart_sort_change).to_string()}
+                                        </option>
+                                    </select>
+                                    <label class="inline-flex cursor-pointer select-none items-center gap-1.5">
+                                        <input
+                                            type="checkbox"
+                                            class="accent-violet-500"
+                                            prop:checked=grid_per_cell_scale
+                                            on:change=move |event| {
+                                                set_grid_per_cell_scale.set(event_target_checked(&event))
+                                            }
+                                        />
+                                        {t_string!(i18n, chart_scale_per_cell).to_string()}
+                                    </label>
+                                </div>
+                                <div
+                                    class="grid gap-2"
+                                    style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"
+                                    on:pointerleave=move |_| hover_index.set(None)
+                                >
+                                    {gm
+                                        .cells
+                                        .iter()
+                                        .map(|cell| {
+                                            let scene = cell.scene.clone();
+                                            let name = cell.name.clone();
+                                            let color = cell.color;
+                                            let handler = on_cell_pointer_move.clone();
+                                            view! {
+                                                <div class="rounded-md border border-[color:var(--color-outline)]/60 p-1.5">
+                                                    <div class="mb-1 flex items-center gap-1.5 text-xs text-[color:var(--color-text)]">
+                                                        <span
+                                                            class="h-2 w-2 rounded-full"
+                                                            style:background-color=color_attr(&color)
+                                                        ></span>
+                                                        {name}
+                                                    </div>
+                                                    <svg
+                                                        class="block w-full h-auto"
+                                                        viewBox=format!(
+                                                            "0 0 {:.0} {:.0}",
+                                                            scene.width,
+                                                            scene.height,
+                                                        )
+                                                        preserveAspectRatio="none"
+                                                        on:pointermove=handler
+                                                    >
+                                                        {scene_view(&scene)}
+                                                        {move || {
+                                                            hover_x
+                                                                .get()
+                                                                .map(|x| {
+                                                                    grid_model
+                                                                        .with(|g| {
+                                                                            view! {
+                                                                                <line
+                                                                                    x1=px(x)
+                                                                                    y1=px(g.plot_top)
+                                                                                    x2=px(x)
+                                                                                    y2=px(g.plot_bottom)
+                                                                                    stroke="#9ca3af"
+                                                                                    stroke-opacity="0.45"
+                                                                                    stroke-width="1"
+                                                                                />
+                                                                            }
+                                                                        })
+                                                                })
+                                                        }}
+                                                    </svg>
+                                                </div>
+                                            }
+                                        })
+                                        .collect_view()}
+                                    {(gm.overflow > 0)
+                                        .then(|| {
+                                            let more = t_string!(i18n, chart_grid_more)
+                                                .to_string()
+                                                .replace("{n}", &gm.overflow.to_string());
+                                            view! {
+                                                <button
+                                                    type="button"
+                                                    class="flex min-h-24 items-center justify-center rounded-md border border-dashed border-[color:var(--color-outline)] text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)]"
+                                                    on:click=move |_| world_filter_open.set(true)
+                                                >
+                                                    {more}
+                                                </button>
+                                            }
+                                        })}
+                                </div>
+                                // Single tooltip for the whole grid: every
+                                // cell's value at the hovered bucket.
+                                {move || {
+                                    hover_index
+                                        .get()
+                                        .and_then(|i| {
+                                            grid_model
+                                                .with(|g| {
+                                                    let ts = g.union.timestamps.get(i)?;
+                                                    let label = format_timeline_ts(
+                                                        ts.and_utc().timestamp() + bucket_secs / 2,
+                                                        utc_offset.get(),
+                                                    );
+                                                    let rows = g
+                                                        .cells
+                                                        .iter()
+                                                        .filter_map(|cell| {
+                                                            let value = (*cell.values.get(i)?)?;
+                                                            Some(
+                                                                view! {
+                                                                    <div class="flex items-center justify-between gap-3">
+                                                                        <span class="inline-flex items-center gap-1.5">
+                                                                            <span
+                                                                                class="inline-block h-2 w-2 rounded-full"
+                                                                                style:background-color=color_attr(&cell.color)
+                                                                            ></span>
+                                                                            <span class="text-[color:var(--color-text-muted)]">
+                                                                                {cell.name.clone()}
+                                                                            </span>
+                                                                        </span>
+                                                                        <span class="tabular-nums text-[color:var(--color-text)]">
+                                                                            {short_number(value.round() as i32)}
+                                                                        </span>
+                                                                    </div>
+                                                                },
+                                                            )
+                                                        })
+                                                        .collect_view();
+                                                    Some(
+                                                        view! {
+                                                            <div class="pointer-events-none absolute right-2 top-2 z-10 min-w-40 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg">
+                                                                <div class="mb-1 font-semibold text-[color:var(--color-text)]">
+                                                                    {label}
+                                                                </div>
+                                                                {rows}
+                                                            </div>
+                                                        },
+                                                    )
+                                                })
+                                        })
+                                }}
+                            </div>
+                        }
+                            .into_any();
+                    }
+                    let empty_state = || {
+                        let msg = t_string!(i18n, chart_no_sales_in_window).to_string();
+                        view! {
                             <div class="flex items-center justify-center w-full h-full text-[color:var(--color-text)]/60 text-sm">
                                 {msg}
                             </div>
                         }
+                            .into_any()
+                    };
+                    if mode.get() == ChartMode::Density {
+                        // `None` while the density fetch is in flight (or the
+                        // endpoint errored) — the standard empty state keeps
+                        // the frame instead of unmounting.
+                        let Some(dm) = density_model.get() else {
+                            return empty_state();
+                        };
+                        if dm.hover.buckets.is_empty() {
+                            return empty_state();
+                        }
+                        return view! {
+                            <svg
+                                class="block w-full h-auto"
+                                viewBox=format!("0 0 {:.0} {:.0}", dm.scene.width, dm.scene.height)
+                                preserveAspectRatio="xMidYMid meet"
+                            >
+                                {scene_view(&dm.scene)}
+                                {move || {
+                                    hover_index
+                                        .get()
+                                        .and_then(|i| {
+                                            density_model
+                                                .with(|m| {
+                                                    let m = m.as_ref()?;
+                                                    let b = m.hover.buckets.get(i)?;
+                                                    Some(view! {
+                                                        <line
+                                                            x1=px(b.x)
+                                                            y1=px(m.hover.plot_top)
+                                                            x2=px(b.x)
+                                                            y2=px(m.hover.plot_bottom)
+                                                            stroke="#9ca3af"
+                                                            stroke-opacity="0.45"
+                                                            stroke-width="1"
+                                                        />
+                                                    })
+                                                })
+                                        })
+                                }}
+                            </svg>
+                        }
                             .into_any();
+                    }
+                    let m = model.get();
+                    if m.hover.buckets.is_empty() {
+                        return empty_state();
                     }
                     view! {
                         <svg
@@ -954,8 +1443,93 @@ pub fn PriceHistoryChart(
                     }
                         .into_any()
                 }}
-                <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                // Overlay-only: grid renders its own container tooltip and
+                // density's crosshair index doesn't map onto `model.hover`.
+                <Show when=move || {
+                    view.get() == ChartView::Overlay && mode.get() != ChartMode::Density
+                }>
+                    <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                </Show>
             </div>
+            // Caption line: the resolved state spelled out once — what makes
+            // an icon-only toolbar viable (works on touch, read by screen
+            // readers, no icon carries meaning alone). Replaces StatsStrip.
+            {move || {
+                let s = stats.get();
+                let mode_label = match mode.get() {
+                    ChartMode::Price => t_string!(i18n, chart_mode_price).to_string(),
+                    ChartMode::Candles => t_string!(i18n, chart_mode_candles).to_string(),
+                    ChartMode::Range => t_string!(i18n, chart_mode_range).to_string(),
+                    ChartMode::Density => t_string!(i18n, chart_mode_density).to_string(),
+                };
+                let grouped = color_by_options
+                    .with(|o| o.len() > 1)
+                    .then(|| {
+                        let group_label = match group.get() {
+                            GroupLevel::Region => t_string!(i18n, chart_color_region).to_string(),
+                            GroupLevel::Datacenter => {
+                                t_string!(i18n, chart_color_datacenter).to_string()
+                            }
+                            GroupLevel::World => t_string!(i18n, chart_color_world).to_string(),
+                        };
+                        t_string!(i18n, chart_caption_grouped_by)
+                            .to_string()
+                            .replace("{group}", &group_label)
+                    });
+                let view_label = (view.get() == ChartView::Grid)
+                    .then(|| t_string!(i18n, chart_view_grid).to_string());
+                let percent_label = (percent_change.get()
+                    && mode.get() == ChartMode::Price
+                    && view.get() == ChartView::Overlay)
+                    .then(|| t_string!(i18n, chart_percent_change).to_string());
+                view! {
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-[color:var(--color-text)]/70">
+                        <span>{mode_label}</span>
+                        {view_label.map(|v| view! { <span>"· " {v}</span> })}
+                        {percent_label.map(|p| view! { <span>"· " {p}</span> })}
+                        {grouped.map(|g| view! { <span>"· " {g}</span> })}
+                        {(show_patches.get() && milestone_track.get().is_none())
+                            .then(|| {
+                                view! {
+                                    <span class="text-amber-200/85">
+                                        "· "
+                                        {t_string!(i18n, chart_milestones_mixed_tracks).to_string()}
+                                    </span>
+                                }
+                            })}
+                        {s
+                            .as_ref()
+                            .map(|s| {
+                                let n_label = t_string!(i18n, chart_stat_n_sales)
+                                    .to_string()
+                                    .replace("{n}", &s.n.to_string());
+                                view! { <span>"· " {n_label}</span> }
+                            })}
+                        {s
+                            .as_ref()
+                            .and_then(|s| s.market_average)
+                            .map(|v| {
+                                view! {
+                                    <span>
+                                        "· " {t_string!(i18n, chart_stat_market_avg).to_string()}
+                                        " " {short_number(v)}
+                                    </span>
+                                }
+                            })}
+                        {s
+                            .as_ref()
+                            .and_then(|s| s.median)
+                            .map(|v| {
+                                view! {
+                                    <span>
+                                        "· " {t_string!(i18n, chart_stat_median).to_string()} " "
+                                        {short_number(v)}
+                                    </span>
+                                }
+                            })}
+                    </div>
+                }
+            }}
             {move || {
                 let m = model.get();
                 (!m.series.is_empty())

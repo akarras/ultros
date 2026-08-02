@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
-        CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
-        UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
+        CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
+        ResendResult, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     item_stats::ItemStatsResponse,
@@ -19,6 +19,7 @@ use ultros_api_types::{
     },
     market_heat::MarketHeatResponse,
     market_pulse::MarketPulseDto,
+    price_density::PriceDensity,
     price_series::{HqFilter, PriceSeries, SeriesGroup},
     recent_sales::RecentSales,
     resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
@@ -66,6 +67,28 @@ pub(crate) async fn get_price_series(
     let mut url = format!(
         "/api/v1/price_series/{world}/{item_id}?group={}&hq={}",
         group.as_str(),
+        hq.as_str()
+    );
+    if let Some((from, to)) = range {
+        url.push_str(&format!("&from={from}&to={to}"));
+    }
+    fetch_api(&url).await
+}
+
+/// Time × price sale-count grid for the chart's density mode. Fetched only
+/// while density mode is active — see the gated LocalResource in item_view.
+pub(crate) async fn get_price_density(
+    item_id: i32,
+    world: &str,
+    hq: HqFilter,
+    range: Option<(i64, i64)>,
+    price_bins: u16,
+) -> AppResult<PriceDensity> {
+    if item_id == 0 {
+        return Err(AppError::NoItem);
+    }
+    let mut url = format!(
+        "/api/v1/price_density/{world}/{item_id}?hq={}&price_bins={price_bins}",
         hq.as_str()
     );
     if let Some((from, to)) = range {
@@ -124,6 +147,13 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) hq: bool,
     pub(crate) sold_within: String,
     pub(crate) return_on_investment: f32,
+    /// Gil paid. `profit` is post-tax, so `buy_price + profit` is the take,
+    /// not the list price — use `est_sale_price` for the latter.
+    #[serde(default)]
+    pub(crate) buy_price: i32,
+    /// Pre-tax gil to list at.
+    #[serde(default)]
+    pub(crate) est_sale_price: i32,
     pub(crate) world_id: i32,
     // Phase 2 deep-scan enrichment from the server. Defaulted so older
     // backends (or CH-degraded responses) still deserialize cleanly.
@@ -135,6 +165,16 @@ pub(crate) struct ResaleStatsDto {
     pub(crate) sample_size_30d: u32,
     #[serde(default)]
     pub(crate) launder_suspicion: f32,
+    // Buffer-derived stats. Present on every row, unlike the deep-scan
+    // fields above — which is why the card's credibility signals use these.
+    #[serde(default)]
+    pub(crate) velocity_per_day: Option<f32>,
+    #[serde(default)]
+    pub(crate) buffer_sale_count: u8,
+    #[serde(default)]
+    pub(crate) recent_price_low: i32,
+    #[serde(default)]
+    pub(crate) recent_price_high: i32,
 }
 
 /// Query parameters for [`get_best_deals`]. All optional — server applies
@@ -147,13 +187,19 @@ pub(crate) struct BestDealsParams {
     pub filter_sale: Option<&'static str>,
     pub limit: Option<u32>,
     pub show_suspicious: Option<bool>,
+    /// Reject rows selling slower than this many per day.
+    pub min_velocity: Option<f32>,
+    /// Reject rows with fewer than this many sales in the recent buffer.
+    pub min_buffer_sales: Option<u8>,
+    /// Reject rows above this ROI percentage.
+    pub max_roi: Option<f32>,
 }
 
 pub(crate) async fn get_best_deals(
     world_name: &str,
     params: BestDealsParams,
 ) -> AppResult<Vec<ResaleStatsDto>> {
-    let mut qs: Vec<String> = Vec::with_capacity(4);
+    let mut qs: Vec<String> = Vec::with_capacity(7);
     if let Some(p) = params.min_profit {
         qs.push(format!("min_profit={p}"));
     }
@@ -165,6 +211,15 @@ pub(crate) async fn get_best_deals(
     }
     if let Some(b) = params.show_suspicious {
         qs.push(format!("show_suspicious={}", if b { 1 } else { 0 }));
+    }
+    if let Some(v) = params.min_velocity {
+        qs.push(format!("min_velocity={v}"));
+    }
+    if let Some(n) = params.min_buffer_sales {
+        qs.push(format!("min_buffer_sales={n}"));
+    }
+    if let Some(r) = params.max_roi {
+        qs.push(format!("max_roi={r}"));
     }
     let query = if qs.is_empty() {
         String::new()
@@ -380,17 +435,11 @@ pub(crate) async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
     fetch_api("/api/v1/characters").await
 }
 
-/// Gets pending character verifications for this user
-pub(crate) async fn get_character_verifications() -> AppResult<Vec<FfxivCharacterVerification>> {
-    fetch_api("/api/v1/characters/verifications").await
-}
-
-pub(crate) async fn check_character_verification(character_id: i32) -> AppResult<bool> {
-    fetch_api(&format!("/api/v1/characters/verify/{character_id}")).await
-}
-
-/// Starts to claim the given character
-pub(crate) async fn claim_character(id: i32) -> AppResult<(i32, String)> {
+/// Claims the given character for the logged-in user.
+///
+/// Claims aren't verified — they only group the user's retainers — so this
+/// takes effect immediately and returns the claimed character.
+pub(crate) async fn claim_character(id: i32) -> AppResult<FfxivCharacter> {
     fetch_api(&format!("/api/v1/characters/claim/{id}")).await
 }
 
@@ -601,7 +650,7 @@ pub(crate) async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppR
     patch_api(&format!("/api/v1/endpoints/{id}"), req).await
 }
 
-pub(crate) async fn delete_endpoint(id: i32) -> AppResult<()> {
+pub(crate) async fn delete_endpoint(id: i32) -> AppResult<DeleteEndpointResponse> {
     delete_api(&format!("/api/v1/endpoints/{id}")).await
 }
 

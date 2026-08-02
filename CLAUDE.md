@@ -7,46 +7,21 @@ Run `./check_ci.sh` from the repo root. It runs `cargo fmt --all -- --check` and
 - Formatting failures: `cargo fmt --all` to autofix.
 - Clippy failures: read the warning, fix the code. Do not `#[allow]` to silence unless it's a genuine false-positive worth a comment.
 
-## When the submodule isn't initialized
+## Game data comes from LFS packs
 
-`./check_ci.sh` runs clippy which compiles the whole workspace, and the `xiv-gen-db` build script reads from `xiv-gen/ffxiv-datamining/` — a git submodule. The csv data for `cn`, `ko`, `tc` lives in *nested* submodules of `ffxiv-datamining` (separate xivapi-adjacent repos), so a non-recursive init only gets you en/ja/de/fr and the build still panics on `cn/Item.csv`.
+There are **no git submodules** in this repo anymore. FFXIV game data (item/recipe tables, icons, etc.) lives in pre-generated packs committed under `data/` (`data/xiv-db`, `data/icons`, `data/manifest.toml`) and tracked via Git LFS. `xiv-gen-db` and `ultros-xiv-icons` read these packs directly at compile time — there's no build-time network fetch and no submodule to initialize.
 
-### Use `--reference`, not `--init --recursive`
+- **Fresh clone**: run `git lfs install && git lfs pull` once. Without it, the `data/` files are LFS pointer text, not real content, and the build fails with an actionable error message rather than a cryptic panic.
+- **Worktrees**: no setup needed — `git worktree add` checks out LFS content the same as a normal clone as long as `git lfs install` has been run once on the machine.
+- **Regenerating packs**: `cargo run --release -p game-data-pack -- --pinned` rebuilds the packs from the pins already recorded in `data/manifest.toml` (reproducible, no version bump). Pass `--latest` instead to bump the pins to the newest upstream data and regenerate against that.
+- **`data/manifest.toml`**: records exactly which upstream commit/release each pack was generated from — this is the source of truth for "what version of game data is this."
+- **Updating game data**: done by hand (in practice, by an agent), not on a schedule. A game-data
+  bump can break consumers — a renamed sheet or column shifts `xiv-gen`'s generated types — so the
+  regeneration and the fallout need fixing in the same change. Run
+  `cargo run --release -p game-data-pack -- --latest`, then `cargo check -p xiv-gen-db --features embed`
+  and `cargo test -p game-data-pack`, and resolve whatever the bump broke before opening the PR.
 
-A plain `git submodule update --init --recursive` does **not** work reliably here, and `--depth=1` makes it worse. Three failure modes, all observed:
-
-- **`universalis-assets` + `--depth=1`** — the shallow fetch doesn't contain the pinned commit, so git aborts with `fatal: Unable to find current revision in submodule path ...` and leaves the directory **empty**. `git submodule status` still shows it initialized, so it only surfaces later as `ultros-xiv-icons/build.rs` panicking with `No such file or directory` on `universalis-assets/icon2x`. A failed shallow attempt also leaves a broken per-worktree gitdir that makes retries fail until it's removed.
-- **`ffxiv-datamining`** — a full clone from GitHub often dies partway with `RPC failed; curl 56 Recv failure: Connection reset by peer` / `fatal: early EOF`. Git retries once, then aborts the whole command.
-- **Anything after the first failure** — because the abort is command-wide, later submodules in the same invocation get registered but never populated. `classjob-icons` checked out "successfully" at the right SHA with **zero files**, showing up in `git status` as wholesale deleted content.
-
-Instead, initialize each submodule against the main clone's already-populated module dir. This is fast and mostly offline:
-
-```bash
-MAIN=/path/to/your/main/ffxiv-playground   # NOT the worktree
-
-git submodule update --init --reference $MAIN/.git/modules/ultros-frontend/universalis-assets ultros-frontend/ultros-xiv-icons/universalis-assets
-git submodule update --init --reference $MAIN/.git/modules/xiv-gen/ffxiv-datamining xiv-gen/ffxiv-datamining
-git submodule update --init --force ultros/static/classjob-icons
-
-# cn/ko/tc are NESTED submodules of ffxiv-datamining, also cached in main:
-M=$MAIN/.git/modules/xiv-gen/ffxiv-datamining/modules/csv
-for s in cn ko tc; do
-  git -C xiv-gen/ffxiv-datamining submodule update --init --reference "$M/$s" "csv/$s"
-done
-```
-
-Then **verify** rather than trusting exit codes — several of these fail silently:
-
-```bash
-ls xiv-gen/ffxiv-datamining/csv/{en,cn,tc}/Item.csv xiv-gen/ffxiv-datamining/csv/ko/csv/Item.csv
-ls ultros-frontend/ultros-xiv-icons/universalis-assets/icon2x | head -1
-ls ultros/static/classjob-icons | wc -l   # must be non-zero
-git status --short                        # no submodule should show as modified
-```
-
-`csv/ko` genuinely nests one level deeper than its siblings (`csv/ko/csv/Item.csv`) — that's the ko repo's own layout, not a broken checkout.
-
-If submodule init is blocked entirely, **at least run `cargo fmt --all -- --check`** — it doesn't need the submodule and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
+If you genuinely can't get LFS content (e.g. fully offline), **at least run `cargo fmt --all -- --check`** — it doesn't need the packs and catches most CI failures from this repo's history. Note this in the PR so a reviewer knows clippy was not run.
 
 Either way, *do not commit and push without running fmt-check* — every formatting mistake will fail CI and waste a round trip.
 

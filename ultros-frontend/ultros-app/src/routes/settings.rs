@@ -1,6 +1,5 @@
 use crate::api::{
-    check_character_verification, claim_character, delete_user, get_character_verifications,
-    get_characters, search_characters, unclaim_character,
+    claim_character, delete_user, get_characters, search_characters, unclaim_character,
 };
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{
@@ -22,10 +21,11 @@ use leptos::task::spawn_local;
 
 use icondata as i;
 use log::info;
+use ultros_api_types::FfxivCharacter;
 use ultros_api_types::world_helper::AnySelector;
 
 #[component]
-fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> impl IntoView {
+fn AddCharacterMenu(claim_character: Action<i32, AppResult<FfxivCharacter>>) -> impl IntoView {
     let (is_open, set_is_open) = signal(false);
     let (character_search, set_character_search) = signal("".to_string());
     let search_action = Action::new(move |search: &String| search_characters(search.to_string()));
@@ -50,13 +50,16 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                     view! {
                         <div class="mt-4 p-4 rounded-xl bg-brand-900/20 border border-white/10 ">
                             {match result {
-                                Ok((_id, value)) => {
+                                Ok(character) => {
+                                    let name = format!(
+                                        "{} {}",
+                                        character.first_name,
+                                        character.last_name,
+                                    );
                                     Either::Left(
                                         view! {
                                             <div class="text-green-400">
-                                                {t!(i18n, claim_success_1)}
-                                                <span class="font-medium">{value}</span>
-                                                {t!(i18n, claim_success_2)}
+                                                {t!(i18n, character_claimed, name = name)}
                                             </div>
                                         },
                                     )
@@ -360,21 +363,11 @@ pub fn Settings() -> impl IntoView {
 pub fn Profile() -> impl IntoView {
     let claim_character = Action::new(move |id: &i32| claim_character(*id));
     let unclaim_character = Action::new(move |id: &i32| unclaim_character(*id));
-    let check_verification = Action::new(move |id: &i32| check_character_verification(*id));
     let i18n = use_i18n();
 
     let characters = Resource::new(
-        move || {
-            (
-                unclaim_character.version()(),
-                check_verification.version()(),
-            )
-        },
+        move || (unclaim_character.version()(), claim_character.version()()),
         move |_| get_characters(),
-    );
-    let pending_verifications = Resource::new(
-        move || (check_verification.version()(), claim_character.version()()),
-        move |_| get_character_verifications(),
     );
 
     view! {
@@ -396,56 +389,6 @@ pub fn Profile() -> impl IntoView {
                         <h2 class="text-2xl font-bold text-brand-300">{t!(i18n, characters)}</h2>
                         <AddCharacterMenu claim_character />
                     </div>
-
-                    // Pending Verifications
-                    <Suspense fallback=move || {
-                        view! {
-                            <div class="flex items-center justify-center p-8">
-                                <Loading />
-                            </div>
-                        }
-                            .into_any()
-                    }>
-                        {move || {
-                            pending_verifications
-                                .get()
-                                .map(|verifications| match verifications {
-                                    Ok(verifications) if !verifications.is_empty() => {
-                                        EitherOf3::A(
-                                            view! {
-                                                <div class="mb-6 space-y-4">
-                                                    <h3 class="text-xl font-semibold text-brand-200">
-                                                        {t!(i18n, pending_verifications)}
-                                                    </h3>
-                                                    <div class="space-y-3">
-                                                        {verifications
-                                                            .into_iter()
-                                                            .map(|_verification| {
-                                                                view! {
-                                                                    // ... rest of the verification view ...
-                                                                    <div class="p-4 rounded-lg bg-brand-950/30 border border-white/5 space-y-2"></div>
-                                                                }
-                                                            })
-                                                            .collect::<Vec<_>>()
-                                                            .into_any()}
-                                                    </div>
-                                                </div>
-                                            },
-                                        )
-                                    }
-                                    Ok(_) => EitherOf3::B(view! { <div></div> }),
-                                    Err(e) => {
-                                        EitherOf3::C(
-                                            view! {
-                                                <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
-                                                    {t!(i18n, unable_to_fetch_verifications)} {e.to_string()}
-                                                </div>
-                                            },
-                                        )
-                                    }
-                                })
-                        }}
-                    </Suspense>
 
                     // Character List
                     <Suspense fallback=move || {

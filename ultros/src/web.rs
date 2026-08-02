@@ -1,6 +1,5 @@
 mod alerts_websocket;
 pub(crate) mod api;
-pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
@@ -20,7 +19,7 @@ use axum::{Json, Router, middleware};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::Cookie;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
-use futures::future::{try_join, try_join_all};
+use futures::future::{try_join_all, try_join3};
 use hyper::header;
 use itertools::Itertools;
 use leptos::prelude::provide_context;
@@ -53,11 +52,13 @@ use ultros_api_types::user::{
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
-    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification, Retainer,
+    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter, Retainer,
+    WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
-use ultros_charts::data::buckets::{bucket_seconds_for_span, snap_bucket_seconds, widen_bucket};
+use ultros_charts::data::buckets::{
+    bucket_seconds_for_span, narrow_bucket_for_actual_span, snap_bucket_seconds, widen_bucket,
+};
 use ultros_clickhouse::ClickHouseClient;
 use ultros_clickhouse::queries::PriceSeriesRow;
 use ultros_db::ActiveValue;
@@ -65,7 +66,8 @@ use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
-use self::character_verifier_service::CharacterVerifierService;
+use crate::character_claim::CharacterClaimService;
+
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
@@ -85,7 +87,7 @@ use crate::web::api::{
     cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
     get_movers, get_trends, post_resale_quality, post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -239,10 +241,12 @@ async fn world_item_listings(
         .get_all_worlds_in(&selected_value)
         .ok_or_else(|| Error::msg("Unable to get worlds"))?;
     let db_clone = db.clone();
+    let db_clone_2 = db.clone();
     let world_iter = worlds.iter().copied();
-    let (listings, sales) = try_join(
+    let (listings, sales, last_updated) = try_join3(
         db_clone.get_all_listings_in_worlds_with_retainers(&worlds, ItemId(item_id)),
         db.get_sale_history_from_multiple_worlds(world_iter, item_id, 200),
+        db_clone_2.get_listing_last_updated_for_worlds(ItemId(item_id), &worlds),
     )
     .await
     .inspect_err(|e| tracing::error!(error = ?e, "Error getting listings"))?;
@@ -252,6 +256,13 @@ async fn world_item_listings(
             .flat_map(|(l, r)| r.map(|r| (l.into(), r.into())))
             .collect(),
         sales: sales.into_iter().map(|s| s.into()).collect(),
+        last_updated: last_updated
+            .into_iter()
+            .map(|updated| WorldItemLastUpdated {
+                world_id: updated.world_id,
+                updated_at: updated.date_time,
+            })
+            .collect(),
     };
     Ok(axum::Json(currently_shown))
 }
@@ -305,6 +316,15 @@ struct PriceSeriesQuery {
     bucket: Option<i64>,
     group: Option<String>,
     hq: Option<String>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct PriceDensityQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+    bucket: Option<i64>,
+    hq: Option<String>,
+    price_bins: Option<u16>,
 }
 
 /// Above this many sales in the window we stop shipping raw rows and the
@@ -417,6 +437,49 @@ fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
     }
 }
 
+/// How long a cached response stays servable, and — for an open-ended window
+/// — the grain [`open_window_cache_stamp`] quantizes its cache key onto.
+/// Deriving both from one place means exactly one entry per item/scope is live
+/// at a time: the key rolls over on the same schedule the entry expires on.
+///
+/// Capped at an hour so an open window is never served staler than that, and
+/// floored at a minute so a hypothetical sub-minute bucket couldn't turn the
+/// cache into a no-op. A closed window is immutable, so it just takes the cap.
+fn cache_ttl_secs(closed: bool, bucket_seconds: i64) -> u64 {
+    if closed {
+        3_600
+    } else {
+        (bucket_seconds as u64).clamp(60, 3_600)
+    }
+}
+
+/// Quantize an open-ended window's end onto a `grain`-second grid, for use in
+/// the **cache key only** — never for the window actually queried.
+///
+/// An open-ended request ends at "now", so feeding that raw timestamp into the
+/// cache key mints a fresh entry every second and the cache never hits.
+/// Rounding it onto the same grid as the entry's TTL keeps one live entry per
+/// item/scope, which is all the quantization was ever for.
+///
+/// This deliberately moves the *key* and not the queried window. Flooring the
+/// window itself — which both handlers used to do, at `bucket_seconds`
+/// granularity — drags the query's exclusive upper bound backwards, excluding
+/// every sale after the boundary. An open-ended "full history" request
+/// resolves to a 12-year span, the ladder duly picks its widest step (30
+/// days), and so the newest 0–30 days of sales silently vanished from every
+/// chart. Serving a slightly stale snapshot is the cache's job and is bounded
+/// by the TTL; narrowing the window is data loss and is not.
+fn open_window_cache_stamp(to_ts: i64, grain: i64) -> i64 {
+    let grain = grain.max(1);
+    to_ts - to_ts.rem_euclid(grain)
+}
+
+/// Uniform bin height covering `[lo, hi]` inclusive in `bins` steps, floored
+/// at 1 gil so degenerate windows (every sale at one price) still bin sanely.
+fn density_bin_width(lo: u32, hi: u32, bins: u16) -> f64 {
+    (((hi - lo) as f64 + 1.0) / bins as f64).max(1.0)
+}
+
 /// Request shape for [`build_price_series`], bundled into one struct so the
 /// function stays under clippy's argument-count lint — `ch`/`world_cache`
 /// stay separate since they're handles, not request data.
@@ -472,32 +535,59 @@ pub(crate) async fn build_price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let mut bucket_seconds = resolve_bucket_seconds(bucket, span_secs);
 
+    // The starting width is derived from the *requested* span, which for an
+    // open-ended "full history" request is years — while the data may only
+    // cover months. At that mismatch the ladder picks 30-day buckets and the
+    // whole history collapses into one or two points. So after the first
+    // pass, re-derive the width from the span the rows actually cover and
+    // re-query once if the ladder picks a narrower step (`may_narrow` keeps
+    // this to a single extra query; the inner loop still widens whenever a
+    // response would exceed MAX_BUCKETS).
+    let mut may_narrow = true;
     let rows = loop {
-        let rows = ultros_clickhouse::queries::price_series(
-            ch,
-            item_id,
-            &world_to_group,
-            group,
-            hq,
-            from,
-            to,
-            bucket_seconds,
-        )
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = ?e, item_id, "price_series CH query failed");
-            anyhow::anyhow!("ClickHouse price_series query failed: {e}")
-        })?;
+        let rows = loop {
+            let rows = ultros_clickhouse::queries::price_series(
+                ch,
+                item_id,
+                &world_to_group,
+                group,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_series CH query failed");
+                anyhow::anyhow!("ClickHouse price_series query failed: {e}")
+            })?;
 
-        if rows.len() <= MAX_BUCKETS {
-            break rows;
+            if rows.len() <= MAX_BUCKETS {
+                break rows;
+            }
+            match widen_bucket(bucket_seconds) {
+                Some(wider) => bucket_seconds = wider,
+                // Already at the top of the ladder: ship what we have rather
+                // than looping forever.
+                None => break rows,
+            }
+        };
+
+        if may_narrow {
+            may_narrow = false;
+            let first = rows.iter().map(|r| r.bucket).min();
+            let last = rows.iter().map(|r| r.bucket).max();
+            if let (Some(first), Some(last)) = (first, last) {
+                // Bucket timestamps are starts, so the last bucket extends
+                // one width past its own ts.
+                let actual_span = (last - first).num_seconds() + bucket_seconds;
+                if let Some(narrower) = narrow_bucket_for_actual_span(actual_span, bucket_seconds) {
+                    bucket_seconds = narrower;
+                    continue;
+                }
+            }
         }
-        match widen_bucket(bucket_seconds) {
-            Some(wider) => bucket_seconds = wider,
-            // Already at the top of the ladder: ship what we have rather
-            // than looping forever.
-            None => break rows,
-        }
+        break rows;
     };
 
     let total_sales: u64 = rows.iter().map(|r| r.sales).sum();
@@ -613,19 +703,24 @@ async fn price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
 
-    // Snap an open-ended `to` down to the current bucket boundary so live
-    // views share a cache entry instead of minting a unique key per second.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    // A closed window is immutable; an open one is a snapshot of "now" and
+    // stays servable until its TTL expires.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+
+    // `to` itself is left at `now`: only the cache key is quantized, so live
+    // views still share an entry without the query window losing its newest
+    // sales. See [`open_window_cache_stamp`] for why flooring `to` is a bug.
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
     } else {
-        to
+        to.timestamp()
     };
 
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
-    // internal loop potentially widens it in response to how much data comes
-    // back. This is deliberate: checking the cache has to happen before
+    // internal loop potentially widens (or narrows) it in response to how
+    // much data comes back. This is deliberate: checking the cache has to happen before
     // running the query at all (that's the entire point — skip the CH scan
     // on a hit), and the widened bucket is only known *after* the query
     // runs. Building the key post-query would mean always querying first,
@@ -645,17 +740,11 @@ async fn price_series(
         item_id,
         scope: world.clone(),
         from: from.timestamp(),
-        to: to.timestamp(),
+        to: cache_to,
         bucket: bucket_seconds,
         group: group.as_str(),
         hq: hq.as_str(),
-    };
-    // A closed window is immutable; an open one only changes when the current
-    // bucket rolls over.
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
+        bins: 0,
     };
     if let Some(hit) = cache.get(&cache_key) {
         return Ok(cached_json(hit, ttl));
@@ -700,9 +789,251 @@ fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Respon
         .into_response()
 }
 
+#[derive(serde::Deserialize, Debug)]
+struct GameHistoryQuery {
+    track: Option<String>,
+}
+
+/// `GET /api/v1/game-history` — the patch/expansion release calendar
+/// backing the chart's milestone bands. The WASM chart reads the seed table
+/// directly from `ultros_api_types::game_history` (no round trip); this
+/// endpoint exists for external consumers and as the future seam where a
+/// Postgres-backed table could override the seed. A few KB, changes ~4
+/// times a year, hence the day-long `Cache-Control`.
+async fn game_history(
+    axum::extract::Query(query): axum::extract::Query<GameHistoryQuery>,
+) -> Result<axum::response::Response, WebError> {
+    use ultros_api_types::game_history::{GAME_PATCHES, PatchTrack};
+    let track = match query.track.as_deref() {
+        Some("global") => Some(PatchTrack::Global),
+        Some("china") => Some(PatchTrack::China),
+        Some("korea") => Some(PatchTrack::Korea),
+        Some(_) => return Err(WebError::BadRequest),
+        None => None,
+    };
+    let patches: Vec<_> = GAME_PATCHES
+        .iter()
+        .filter(|p| track.is_none_or(|t| p.track == t))
+        .collect();
+    let body = serde_json::to_string(&patches).map_err(anyhow::Error::from)?;
+    Ok(cached_json(body, std::time::Duration::from_secs(86_400)))
+}
+
+/// `GET /api/v1/price_density/{world}/{itemid}` — sale counts on a
+/// time × price grid for the chart's density mode. Same window/HQ semantics,
+/// bucket ladder, cache, and `Cache-Control` plumbing as [`price_series`];
+/// the payload is bounded by `buckets × price_bins` regardless of volume.
+///
+/// Named `price_density` like the query function it wraps; calls into
+/// `ultros_clickhouse::queries` are fully qualified to disambiguate.
+async fn price_density(
+    State(world_cache): State<Arc<WorldCache>>,
+    State(ch): State<ClickHouseClient>,
+    State(cache): State<crate::web::price_series_cache::PriceSeriesCache>,
+    Path((world, item_id)): Path<(String, i32)>,
+    axum::extract::Query(query): axum::extract::Query<PriceDensityQuery>,
+) -> Result<axum::response::Response, WebError> {
+    let hq = match query.hq.as_deref() {
+        Some("hq") => HqFilter::Hq,
+        Some("nq") => HqFilter::Nq,
+        _ => HqFilter::Any,
+    };
+    let bins = query.price_bins.unwrap_or(32).clamp(8, 96);
+
+    let now = chrono::Utc::now();
+    let to = query
+        .to
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or(now);
+    let from = query
+        .from
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .unwrap_or_else(|| now - chrono::Duration::days(365 * 12));
+    if from >= to {
+        return Err(WebError::BadRequest);
+    }
+
+    let span_secs = (to - from).num_seconds().max(1);
+    let mut bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
+    // Unlike price_series there is no post-query widening loop: the grid's
+    // time-axis bucket count is exactly span / width, known up front, so
+    // widen arithmetically until it fits under MAX_BUCKETS.
+    while span_secs / bucket_seconds > MAX_BUCKETS as i64 {
+        match widen_bucket(bucket_seconds) {
+            Some(wider) => bucket_seconds = wider,
+            None => break,
+        }
+    }
+
+    // Quantize an open-ended `to` for the cache key only — same rationale, and
+    // same data-loss trap, as price_series.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
+    } else {
+        to.timestamp()
+    };
+
+    let cache_key = crate::web::price_series_cache::CacheKey {
+        item_id,
+        scope: world.clone(),
+        from: from.timestamp(),
+        to: cache_to,
+        bucket: bucket_seconds,
+        group: "density",
+        hq: hq.as_str(),
+        bins,
+    };
+    if let Some(hit) = cache.get(&cache_key) {
+        return Ok(cached_json(hit, ttl));
+    }
+
+    let selected_value = world_cache.lookup_value_by_name(&world)?;
+    let worlds = world_cache
+        .get_all_worlds_in(&selected_value)
+        .ok_or_else(|| Error::msg("Unable to get worlds"))?;
+
+    let extent = ultros_clickhouse::queries::price_min_max(&ch, item_id, &worlds, hq, from, to)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
+            anyhow::anyhow!("ClickHouse price_min_max query failed: {e}")
+        })?;
+
+    let payload = match extent {
+        None => ultros_api_types::price_density::PriceDensity {
+            bucket_seconds,
+            from: from.naive_utc(),
+            to: to.naive_utc(),
+            price_lo: 0,
+            bin_width: 1.0,
+            price_bins: bins,
+            cells: Vec::new(),
+        },
+        Some((lo, hi)) => {
+            let bin_width = density_bin_width(lo, hi, bins);
+            let rows = ultros_clickhouse::queries::price_density(
+                &ch,
+                item_id,
+                &worlds,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+                lo,
+                bin_width,
+                bins,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_density CH query failed");
+                anyhow::anyhow!("ClickHouse price_density query failed: {e}")
+            })?;
+            ultros_api_types::price_density::PriceDensity {
+                bucket_seconds,
+                from: from.naive_utc(),
+                to: to.naive_utc(),
+                price_lo: lo as i32,
+                bin_width,
+                price_bins: bins,
+                cells: rows
+                    .into_iter()
+                    .map(|r| ultros_api_types::price_density::DensityCell {
+                        ts: r.bucket.naive_utc(),
+                        bin: r.price_bin,
+                        n: u32::try_from(r.n).unwrap_or(u32::MAX),
+                    })
+                    .collect(),
+            }
+        }
+    };
+
+    let body = serde_json::to_string(&payload).map_err(anyhow::Error::from)?;
+    cache.insert(cache_key, body.clone(), ttl);
+    Ok(cached_json(body, ttl))
+}
+
 #[cfg(test)]
 mod price_series_tests {
     use super::*;
+
+    #[test]
+    fn density_bin_width_covers_the_inclusive_range() {
+        // [100, 400] over 4 bins -> width 75.25 (301 distinct prices).
+        assert_eq!(density_bin_width(100, 400, 4), 301.0 / 4.0);
+        // Degenerate flat price: floor at 1.0 so floor((p-lo)/w) stays 0.
+        assert_eq!(density_bin_width(100, 100, 32), 1.0);
+    }
+
+    /// 2026-08-01T12:00:00Z — an arbitrary but fixed "now" so these tests
+    /// don't depend on when they run.
+    const NOW: i64 = 1_785_585_600;
+
+    /// The whole point of quantizing: requests seconds apart must land on one
+    /// cache entry rather than minting a key each.
+    #[test]
+    fn cache_stamp_is_stable_across_the_grain() {
+        let grain = cache_ttl_secs(false, 30 * 86_400) as i64;
+        let base = open_window_cache_stamp(NOW, grain);
+        for offset in [0, 1, 59, 600, grain - 1] {
+            assert_eq!(
+                open_window_cache_stamp(NOW + offset, grain),
+                base,
+                "+{offset}s should still hit the same cache entry"
+            );
+        }
+        assert_ne!(
+            open_window_cache_stamp(NOW + grain, grain),
+            base,
+            "the key must roll over once the entry expires"
+        );
+    }
+
+    /// Regression, and the reason this function exists at all.
+    ///
+    /// An open-ended "full history" request (the item page's default — no
+    /// `from`, no `to`) resolves `from` to 12 years back, which puts the
+    /// bucket ladder at its widest step. Both handlers used to floor the
+    /// *queried* window's exclusive upper bound onto that step, so every sale
+    /// in the current bucket — up to a month of the newest data — was
+    /// excluded from the response. Pin that the quantization applied now is
+    /// bounded by the TTL instead of the bucket width, at every ladder step.
+    #[test]
+    fn cache_stamp_never_discards_more_than_the_ttl() {
+        let span_secs = 365 * 12 * 86_400;
+        assert_eq!(
+            resolve_bucket_seconds(None, span_secs),
+            30 * 86_400,
+            "full history sits on the widest rung — the old floor's grain"
+        );
+
+        // What the old code did to the window itself, at that rung.
+        let floored = NOW - NOW.rem_euclid(30 * 86_400);
+        assert!(
+            NOW - floored > 26 * 86_400,
+            "the old floor dropped {} days of the newest sales",
+            (NOW - floored) / 86_400
+        );
+
+        // What the fix does: bounded by the TTL, whatever the bucket width.
+        for step in ultros_charts::data::buckets::BUCKET_LADDER {
+            let grain = cache_ttl_secs(false, step) as i64;
+            let stamp = open_window_cache_stamp(NOW, grain);
+            assert!(
+                grain <= 3_600 && NOW - stamp < 3_600,
+                "at a {step}s bucket the stamp discarded {}s",
+                NOW - stamp
+            );
+        }
+    }
+
+    /// A grain of zero (or negative) must not panic on `rem_euclid`.
+    #[test]
+    fn cache_stamp_tolerates_a_degenerate_grain() {
+        assert_eq!(open_window_cache_stamp(NOW, 0), NOW);
+        assert_eq!(open_window_cache_stamp(NOW, -5), NOW);
+    }
 
     // `world_group_map` at `SeriesGroup::World` is intentionally not tested
     // here: it short-circuits before touching `world_cache` (see the
@@ -961,17 +1292,6 @@ pub(crate) async fn user_retainer_listings(
         retainers: listings,
     };
     Ok(Json(retainers))
-}
-
-pub(crate) async fn verify_character(
-    State(character): State<CharacterVerifierService>,
-    Path(verification_id): Path<i32>,
-    user: AuthDiscordUser,
-) -> Result<Json<bool>, ApiError> {
-    character
-        .check_verification(verification_id, user.id as i64)
-        .await?;
-    Ok(Json(true))
 }
 
 pub(crate) async fn retainer_search(
@@ -1480,27 +1800,6 @@ async fn user_characters(
     ))
 }
 
-async fn pending_verifications(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-) -> Result<Json<Vec<FfxivCharacterVerification>>, ApiError> {
-    let verifications = db
-        .get_all_pending_verification_challenges(user.id as i64)
-        .await?;
-    Ok(Json(
-        verifications
-            .into_iter()
-            .flat_map(|(verification, character)| {
-                character.map(|character| FfxivCharacterVerification {
-                    id: verification.id,
-                    character: character.into(),
-                    verification_string: verification.challenge,
-                })
-            })
-            .collect::<Vec<_>>(),
-    ))
-}
-
 async fn character_search(
     _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
     Path(name): Path<String>,
@@ -1536,16 +1835,18 @@ async fn character_search(
     Ok(Json(characters))
 }
 
+/// Claims a character for the logged-in user.
+///
+/// There's no verification step: the Discord login already says who the user
+/// is, and a claim only groups their retainers. Several users may hold the same
+/// character.
 async fn claim_character(
     user: AuthDiscordUser,
     Path(character_id): Path<u32>,
-    State(verifier): State<CharacterVerifierService>,
-) -> Result<Json<(i32, String)>, ApiError> {
-    let result = verifier
-        .start_verification(character_id, user.id as i64)
-        .await?;
-    // db.create_character_challenge(character_id, user.id as i64, challenge)
-    Ok(Json(result))
+    State(claim): State<CharacterClaimService>,
+) -> Result<Json<FfxivCharacter>, ApiError> {
+    let character = claim.claim_character(character_id, user.id as i64).await?;
+    Ok(Json(character.into()))
 }
 
 #[derive(Deserialize)]
@@ -1954,7 +2255,10 @@ fn test_auth_routes() -> Router<WebState> {
     Router::new()
 }
 
-pub(crate) async fn start_web(state: WebState) {
+pub(crate) async fn start_web(
+    state: WebState,
+    prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
+) {
     // build our application with a route
     let worlds = state.world_helper.clone();
     let token = state.token.clone();
@@ -2012,6 +2316,8 @@ pub(crate) async fn start_web(state: WebState) {
             get(extended_sale_history),
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
+        .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
+        .route("/api/v1/game-history", get(game_history))
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),
@@ -2079,12 +2385,7 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/api/v1/characters/search/{name}", get(character_search))
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
-        .route("/api/v1/characters/verify/{id}", get(verify_character))
         .route("/api/v1/characters", get(user_characters))
-        .route(
-            "/api/v1/characters/verifications",
-            get(pending_verifications),
-        )
         .route("/api/v1/detectregion", get(detect_region))
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))
@@ -2101,7 +2402,6 @@ pub(crate) async fn start_web(state: WebState) {
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
-        .route("/sitemap/world/{s}", get(world_sitemap))
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
@@ -2195,7 +2495,7 @@ pub(crate) async fn start_web(state: WebState) {
                 .await
                 .unwrap();
         },
-        start_metrics_server(),
+        start_metrics_server(prometheus_handle),
     )
     .await;
 }

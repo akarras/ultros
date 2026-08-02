@@ -3,19 +3,25 @@
 /// Recommended to just let xiv-gen-db handle this unless you need a different backing store.
 use crate::*;
 use std::collections::HashMap;
+use std::path::Path;
 
+/// Reads `lang` from the `ffxiv-datamining` checkout vendored next to this crate.
 pub fn read_data(lang: Language) -> Data {
+    read_data_from(
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/ffxiv-datamining")),
+        lang,
+    )
+}
+
+/// Reads `lang` from an ffxiv-datamining tree rooted at `root`, i.e. a directory
+/// containing `csv/<lang>/*.csv`.
+pub fn read_data_from(root: &Path, lang: Language) -> Data {
     let base_path = match lang {
-        Language::Ko => format!(
-            "{}/ffxiv-datamining/csv/ko/csv/",
-            env!("CARGO_MANIFEST_DIR")
-        ),
-        _ => format!(
-            "{}/ffxiv-datamining/csv/{}/",
-            env!("CARGO_MANIFEST_DIR"),
-            lang.to_path_part()
-        ),
+        // The ko fork keeps its CSVs one level deeper than its siblings do.
+        Language::Ko => root.join("csv").join("ko").join("csv"),
+        _ => root.join("csv").join(lang.to_path_part()),
     };
+    let base_path = format!("{}/", base_path.display());
     Data {
         items: read_csv_to_map(&format!("{}Item.csv", base_path)),
         recipes: read_csv_to_map(&format!("{}Recipe.csv", base_path)),
@@ -56,6 +62,7 @@ pub fn read_data(lang: Language) -> Data {
         retainer_tasks: read_csv_to_map(&format!("{}RetainerTask.csv", base_path)),
         retainer_task_normals: read_csv_to_map(&format!("{}RetainerTaskNormal.csv", base_path)),
         recipe_level_tables: read_csv_to_map(&format!("{}RecipeLevelTable.csv", base_path)),
+        collectables_shops: read_csv_to_map(&format!("{}CollectablesShop.csv", base_path)),
         collectables_shop_items: read_csv_vec::<CollectablesShopItem>(&format!(
             "{}CollectablesShopItem.csv",
             base_path

@@ -24,7 +24,11 @@ fn parse_url(str: &str) -> (i32, IconSize) {
 }
 
 pub fn get_item_image(item_id: i32, image_size: IconSize) -> Option<&'static [u8]> {
-    let tar = include_bytes!(concat!(env!("OUT_DIR"), "/images.tar.zst")).as_ref();
+    let tar = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../data/icons/images.tar.zst"
+    ))
+    .as_ref();
     static IMAGES: OnceCell<HashMap<(i32, IconSize), Vec<u8>>> = OnceCell::new();
     // Dump all of our images into a static hashmap
     let data = IMAGES.get_or_init(|| {

@@ -14,6 +14,8 @@ use crate::api::{
 };
 use crate::components::list::share_list_modal::ShareListModal;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+use crate::components::modal::Modal;
+use crate::components::tool_help::ActionableEmptyState;
 use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{
@@ -76,7 +78,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 view! {
                                     <div class="space-y-4">
                                         <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4 text-sm text-[color:var(--color-text-muted)]">
-                                            "This invite is tied to your Ultros account, so you need to log in before accepting it."
+                                            {t!(i18n, lists_invite_login_required)}
                                         </div>
                                         <a class="btn-primary" rel="external" href=href>
                                             <Icon icon=i::BsPersonCircle />
@@ -86,7 +88,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 }.into_any()
                             } else {
                                 view! {
-                                    <div class="alert alert-error">{format!("Could not load invite: {e}")}</div>
+                                    <div class="alert alert-error">{t!(i18n, lists_invite_load_error, error = e.to_string())}</div>
                                 }.into_any()
                             }
                         }
@@ -97,13 +99,17 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 }.into_any(),
                                 Some(Err(e)) => view! {
                                     <div class="space-y-3">
-                                        <div class="alert alert-error">{format!("Could not accept invite: {e}")}</div>
+                                        <div class="alert alert-error">{t!(i18n, lists_invite_accept_error, error = e.to_string())}</div>
                                         <A href="/list" attr:class="btn-secondary">{t!(i18n, lists_back_to_lists_link)}</A>
                                     </div>
                                 }.into_any(),
                                 None => view! {
                                     <div class="text-sm text-[color:var(--color-text-muted)]">
-                                        {move || if redeem_invite.pending().get() { "Accepting invite..." } else { "Preparing invite..." }}
+                                        {move || if redeem_invite.pending().get() {
+                                            t_string!(i18n, lists_invite_accepting).to_string()
+                                        } else {
+                                            t_string!(i18n, lists_invite_preparing).to_string()
+                                        }}
                                     </div>
                                 }.into_any(),
                             }
@@ -148,6 +154,9 @@ fn ListCard(
     let list = list.list;
     let (is_edit, set_is_edit) = signal(false);
     let (share_open, set_share_open) = signal(false);
+    let (confirm_delete, set_confirm_delete) = signal(false);
+    let delete_list_id = list.id;
+    let delete_list_name = StoredValue::new(list.name.clone());
     // Local state for editing
     let (name, set_name) = signal(list.name.clone());
     let (current_world, set_current_world) = signal(Some(list.wdr_filter));
@@ -170,7 +179,6 @@ fn ListCard(
                     let list_id = list.id;
                     if caps.can_admin {
                         let list_for_save = list.clone();
-                        let list_for_delete = list.clone();
                         view! {
                             <div class="flex flex-col gap-3 w-full">
                                 <div>
@@ -213,9 +221,7 @@ fn ListCard(
                                     <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, delete).to_string())>
                                         <button
                                             class="btn-danger btn-sm"
-                                            on:click=move |_| {
-                                                let _ = delete_list.dispatch(list_for_delete.id);
-                                            }
+                                            on:click=move |_| set_confirm_delete(true)
                                         >
                                             <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
                                         </button>
@@ -273,8 +279,12 @@ fn ListCard(
                                 </div>
                                 <div class="flex items-center gap-1">
                                     <Show when=move || { caps.can_admin }>
-                                        <Tooltip tooltip_text=Signal::derive(move || "Share list".to_string())>
-                                            <button class="btn-ghost btn-sm text-gray-400 hover:text-white" on:click=move |_| set_share_open(true) aria_label="Share list">
+                                        <Tooltip tooltip_text=Signal::derive(move || t_string!(i18n, lists_share_list).to_string())>
+                                            <button
+                                                class="btn-ghost btn-sm text-gray-400 hover:text-white"
+                                                on:click=move |_| set_share_open(true)
+                                                aria-label=move || t_string!(i18n, lists_share_list).to_string()
+                                            >
                                                 <Icon icon=i::BiShareAltRegular />
                                             </button>
                                         </Tooltip>
@@ -302,6 +312,36 @@ fn ListCard(
                     }.into_any()
                 }
             }}
+            <Show when=confirm_delete>
+                <Modal set_visible=set_confirm_delete>
+                    <div class="flex flex-col gap-4">
+                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                            {t!(i18n, list_delete_confirm_title)}
+                        </h2>
+                        <p class="text-sm text-[color:var(--color-text-muted)]">
+                            {move || t!(
+                                i18n,
+                                list_delete_confirm_body,
+                                name = delete_list_name.with_value(|n| n.clone()),
+                            )}
+                        </p>
+                        <div class="flex justify-end gap-2">
+                            <button class="btn-secondary" on:click=move |_| set_confirm_delete(false)>
+                                <Icon icon=i::AiCloseOutlined /> {t!(i18n, cancel)}
+                            </button>
+                            <button
+                                class="btn-danger"
+                                on:click=move |_| {
+                                    let _ = delete_list.dispatch(delete_list_id);
+                                    set_confirm_delete(false);
+                                }
+                            >
+                                <Icon icon=i::BiTrashSolid /> {t!(i18n, delete)}
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            </Show>
             <Show when=share_open>
                 <ShareListModal list=list_for_share.clone() set_visible=set_share_open />
             </Show>
@@ -335,6 +375,7 @@ pub fn EditLists() -> impl IntoView {
     let (creating, set_creating) = signal(false);
     let (filter, set_filter) = signal(String::new());
     let (invite_id, set_invite_id) = signal(String::new());
+    let (redeem_open, set_redeem_open) = signal(false);
 
     let filtered_lists = Signal::derive(move || {
         let filter_text = filter.get().to_lowercase();
@@ -357,210 +398,238 @@ pub fn EditLists() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
-            <div class="flex items-center gap-2 md:gap-3">
-                <A exact=true attr:class="nav-link" href="/list">
-                    <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
-                    <span>{t!(i18n, lists)}</span>
-                </A>
-            </div>
-
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, lists_page_title)}</h1>
-                 <button class="btn-primary" on:click=move |_| set_creating(!creating())>
-                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                    {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
-                </button>
-            </div>
-
-            {move || {
-                creating()
-                    .then(|| {
-                        let (new_list, set_new_list) = signal("".to_string());
-                        let (global, _) = get_price_zone();
-                        let selector = global().map(|global| global.into());
-                        let (wdr_filter, set_wdr_filter) = signal(selector);
+            <Suspense fallback=move || view! { <Loading /> }>
+                {move || match user_resource.get() {
+                    None => view! { <Loading /> }.into_any(),
+                    Some(None) => {
                         view! {
-                            <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
-                                <h3 class="text-lg font-bold mb-4">{t!(i18n, create_new_list)}</h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div class="flex flex-col gap-1">
-                                        <label for="new-list-name" class="label font-semibold">{t!(i18n, list_name)}</label>
-                                        <input
-                                            class="input w-full"
-                                            id="new-list-name"
-                                            placeholder=t_string!(i18n, lists_new_list_placeholder)
-                                            prop:value=new_list
-                                            on:input=move |input| set_new_list(event_target_value(&input))
-                                        />
-                                    </div>
-                                    <div class="flex flex-col gap-1">
-                                        <label class="label font-semibold">{t!(i18n, world_region)}</label>
-                                        <WorldPicker
-                                            current_world=wdr_filter.into()
-                                            set_current_world=set_wdr_filter.into()
-                                        />
-                                    </div>
-                                </div>
-                                <div class="flex justify-end mt-4">
-                                    <button
-                                        prop:disabled=move || wdr_filter().is_none() || new_list().is_empty()
-                                        class="btn-primary"
-                                        on:click=move |_| {
-                                            if let Some(wdr_filter) = wdr_filter() {
-                                                let list = CreateList {
-                                                    name: new_list(),
-                                                    wdr_filter,
-                                                };
-                                                create_list.dispatch(list);
-                                                set_new_list("".to_string());
-                                                set_creating(false);
-                                            }
-                                        }
-                                    >
-                                        <Icon icon=i::BiSaveSolid /> {t!(i18n, create_list)}
+                            <ActionableEmptyState
+                                title=t_string!(i18n, lists_empty_title).to_string()
+                                body=t_string!(i18n, lists_empty_body).to_string()
+                                action_href="/login?next=/list"
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
+                                action_external=true
+                            />
+                        }.into_any()
+                    }
+                    Some(Some(_)) => {
+                        view! {
+                            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, lists_page_title)}</h1>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button class="btn-secondary" on:click=move |_| set_redeem_open(true)>
+                                        <Icon icon=i::BiLinkRegular />
+                                        {t!(i18n, lists_redeem_invite_label)}
+                                    </button>
+                                    <button class="btn-primary" on:click=move |_| set_creating(!creating())>
+                                        <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
+                                        {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
                                     </button>
                                 </div>
                             </div>
-                        }
-                    })
-            }}
 
-            <div class="relative">
-                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                     <Icon icon=i::AiSearchOutlined attr:class="text-gray-400"/>
-                </div>
-                <input
-                    class="input w-full pl-10"
-                    aria-label=move || t_string!(i18n, search_your_lists).to_string()
-                    placeholder=move || t_string!(i18n, search_your_lists).to_string()
-                    prop:value=filter
-                    on:input=move |ev| set_filter(event_target_value(&ev))
-                />
-            </div>
-
-            <div class="panel p-4 rounded-xl flex flex-col md:flex-row gap-3 md:items-end">
-                <div class="flex-1">
-                    <label for="invite-code-input" class="label text-sm font-semibold">{t!(i18n, lists_redeem_invite_label)}</label>
-                    <input
-                        id="invite-code-input"
-                        class="input w-full"
-                        placeholder=t_string!(i18n, lists_invite_code_placeholder)
-                        prop:value=invite_id
-                        on:input=move |ev| set_invite_id(event_target_value(&ev))
-                    />
-                </div>
-                <button
-                    class="btn-secondary"
-                    prop:disabled=move || invite_id().trim().is_empty()
-                    on:click=move |_| {
-                        let id = invite_id().trim().to_string();
-                        if !id.is_empty() {
-                            redeem_invite.dispatch(id);
-                            set_invite_id(String::new());
-                        }
-                    }
-                >
-                    <Icon icon=i::BiLinkRegular /> "Redeem"
-                </button>
-            </div>
-
-            <Suspense fallback=move || view! { <Loading /> }>
-                {move || {
-                    filtered_lists
-                        .get()
-                        .map(|lists| {
-                            match lists {
-                                Ok(lists) => {
-                                    let (owned, shared): (Vec<_>, Vec<_>) = lists
-                                        .into_iter()
-                                        .partition(|lwp| ListCapabilities::from(lwp.permission).can_admin);
-                                    let shared_count = shared.len();
-
-                                    if owned.is_empty() && shared.is_empty() {
+                            {move || {
+                                creating()
+                                    .then(|| {
+                                        let (new_list, set_new_list) = signal("".to_string());
+                                        let (global, _) = get_price_zone();
+                                        let selector = global().map(|global| global.into());
+                                        let (wdr_filter, set_wdr_filter) = signal(selector);
                                         view! {
-                                            <div class="flex flex-col items-center justify-center py-12 text-gray-400">
-                                                <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" attr:class="mb-4 opacity-50"/>
-                                                <h3 class="text-xl font-semibold">{t!(i18n, no_lists_found)}</h3>
-                                                <p>{t!(i18n, create_new_list_to_get_started)}</p>
+                                            <div class="panel p-6 rounded-xl animate-fade-in relative z-10">
+                                                <h3 class="text-lg font-bold mb-4">{t!(i18n, create_new_list)}</h3>
+                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div class="flex flex-col gap-1">
+                                                        <label for="new-list-name" class="label font-semibold">{t!(i18n, list_name)}</label>
+                                                        <input
+                                                            class="input w-full"
+                                                            id="new-list-name"
+                                                            placeholder=t_string!(i18n, lists_new_list_placeholder)
+                                                            prop:value=new_list
+                                                            on:input=move |input| set_new_list(event_target_value(&input))
+                                                        />
+                                                    </div>
+                                                    <div class="flex flex-col gap-1">
+                                                        <label class="label font-semibold">{t!(i18n, world_region)}</label>
+                                                        <WorldPicker
+                                                            current_world=wdr_filter.into()
+                                                            set_current_world=set_wdr_filter.into()
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div class="flex justify-end mt-4">
+                                                    <button
+                                                        prop:disabled=move || wdr_filter().is_none() || new_list().is_empty()
+                                                        class="btn-primary"
+                                                        on:click=move |_| {
+                                                            if let Some(wdr_filter) = wdr_filter() {
+                                                                let list = CreateList {
+                                                                    name: new_list(),
+                                                                    wdr_filter,
+                                                                };
+                                                                create_list.dispatch(list);
+                                                                set_new_list("".to_string());
+                                                                set_creating(false);
+                                                            }
+                                                        }
+                                                    >
+                                                        <Icon icon=i::BiSaveSolid /> {t!(i18n, create_list)}
+                                                    </button>
+                                                </div>
                                             </div>
-                                        }.into_any()
-                                    } else {
-                                        view! {
-                                            <div class="flex flex-col gap-6">
-                                                {if owned.is_empty() && shared_count > 0 {
-                                                    Some(view! {
-                                                        <p class="italic text-gray-400 text-sm">
-                                                            {t!(i18n, no_owned_lists_but_shared, count = shared_count)}
-                                                        </p>
-                                                    })
-                                                } else {
-                                                    None
-                                                }}
-                                                {if !owned.is_empty() {
-                                                    Some(view! {
-                                                        <section class="flex flex-col gap-3">
-                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, my_lists)}</h2>
-                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                                                <For
-                                                                    each=move || owned.clone()
-                                                                    key=move |list| list.list.id
-                                                                    children=move |list| {
-                                                                        view! {
-                                                                            <ListCard
-                                                                                list=list
-                                                                                edit_list=edit_list
-                                                                                delete_list=delete_list
-                                                                                leave_list_action=leave_list_action
-                                                                                user_id=user_id
-                                                                            />
-                                                                        }
-                                                                    }
-                                                                />
-                                                            </div>
-                                                        </section>
-                                                    })
-                                                } else {
-                                                    None
-                                                }}
-                                                {if !shared.is_empty() {
-                                                    Some(view! {
-                                                        <section class="flex flex-col gap-3">
-                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, shared_with_me)}</h2>
-                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                                                <For
-                                                                    each=move || shared.clone()
-                                                                    key=move |list| list.list.id
-                                                                    children=move |list| {
-                                                                        view! {
-                                                                            <ListCard
-                                                                                list=list
-                                                                                edit_list=edit_list
-                                                                                delete_list=delete_list
-                                                                                leave_list_action=leave_list_action
-                                                                                user_id=user_id
-                                                                            />
-                                                                        }
-                                                                    }
-                                                                />
-                                                            </div>
-                                                        </section>
-                                                    })
-                                                } else {
-                                                    None
-                                                }}
-                                            </div>
-                                        }.into_any()
-                                    }
-                                }
-                                Err(e) => {
-                                    view! {
-                                        <div class="alert alert-error">
-                                            {move || t!(i18n, error_loading_lists, error = e.to_string())}
+                                        }
+                                    })
+                            }}
+
+                            <div class="relative">
+                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                     <Icon icon=i::AiSearchOutlined attr:class="text-gray-400"/>
+                                </div>
+                                <input
+                                    class="input w-full pl-10"
+                                    aria-label=move || t_string!(i18n, search_your_lists).to_string()
+                                    placeholder=move || t_string!(i18n, search_your_lists).to_string()
+                                    prop:value=filter
+                                    on:input=move |ev| set_filter(event_target_value(&ev))
+                                />
+                            </div>
+
+                            <Show when=redeem_open>
+                                <Modal set_visible=set_redeem_open>
+                                    <div class="flex flex-col gap-4">
+                                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                                            {t!(i18n, lists_redeem_invite_label)}
+                                        </h2>
+                                        <div>
+                                            <label for="invite-code-input" class="label text-sm font-semibold">{t!(i18n, lists_invite_code_placeholder)}</label>
+                                            <input
+                                                id="invite-code-input"
+                                                class="input w-full"
+                                                placeholder=t_string!(i18n, lists_invite_code_placeholder)
+                                                prop:value=invite_id
+                                                on:input=move |ev| set_invite_id(event_target_value(&ev))
+                                            />
                                         </div>
-                                    }.into_any()
-                                }
-                            }
-                        })
+                                        <div class="flex justify-end">
+                                            <button
+                                                class="btn-primary"
+                                                prop:disabled=move || invite_id().trim().is_empty()
+                                                on:click=move |_| {
+                                                    let id = invite_id().trim().to_string();
+                                                    if !id.is_empty() {
+                                                        redeem_invite.dispatch(id);
+                                                        set_invite_id(String::new());
+                                                        set_redeem_open(false);
+                                                    }
+                                                }
+                                            >
+                                                <Icon icon=i::BiLinkRegular /> {t!(i18n, lists_redeem_button)}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </Modal>
+                            </Show>
+
+                            <Suspense fallback=move || view! { <Loading /> }>
+                                {move || {
+                                    filtered_lists
+                                        .get()
+                                        .map(|lists| {
+                                            match lists {
+                                                Ok(lists) => {
+                                                    let (owned, shared): (Vec<_>, Vec<_>) = lists
+                                                        .into_iter()
+                                                        .partition(|lwp| ListCapabilities::from(lwp.permission).can_admin);
+                                                    let shared_count = shared.len();
+
+                                                    if owned.is_empty() && shared.is_empty() {
+                                                        view! {
+                                                            <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                                                                <Icon icon=i::AiOrderedListOutlined width="4em" height="4em" attr:class="mb-4 opacity-50"/>
+                                                                <h3 class="text-xl font-semibold">{t!(i18n, no_lists_found)}</h3>
+                                                                <p>{t!(i18n, create_new_list_to_get_started)}</p>
+                                                            </div>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! {
+                                                            <div class="flex flex-col gap-6">
+                                                                {if owned.is_empty() && shared_count > 0 {
+                                                                    Some(view! {
+                                                                        <p class="italic text-gray-400 text-sm">
+                                                                            {t!(i18n, no_owned_lists_but_shared, count = shared_count)}
+                                                                        </p>
+                                                                    })
+                                                                } else {
+                                                                    None
+                                                                }}
+                                                                {if !owned.is_empty() {
+                                                                    Some(view! {
+                                                                        <section class="flex flex-col gap-3">
+                                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                                                <For
+                                                                                    each=move || owned.clone()
+                                                                                    key=move |list| list.list.id
+                                                                                    children=move |list| {
+                                                                                        view! {
+                                                                                            <ListCard
+                                                                                                list=list
+                                                                                                edit_list=edit_list
+                                                                                                delete_list=delete_list
+                                                                                                leave_list_action=leave_list_action
+                                                                                                user_id=user_id
+                                                                                            />
+                                                                                        }
+                                                                                    }
+                                                                                />
+                                                                            </div>
+                                                                        </section>
+                                                                    })
+                                                                } else {
+                                                                    None
+                                                                }}
+                                                                {if !shared.is_empty() {
+                                                                    Some(view! {
+                                                                        <section class="flex flex-col gap-3">
+                                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, shared_with_me)}</h2>
+                                                                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                                                <For
+                                                                                    each=move || shared.clone()
+                                                                                    key=move |list| list.list.id
+                                                                                    children=move |list| {
+                                                                                        view! {
+                                                                                            <ListCard
+                                                                                                list=list
+                                                                                                edit_list=edit_list
+                                                                                                delete_list=delete_list
+                                                                                                leave_list_action=leave_list_action
+                                                                                                user_id=user_id
+                                                                                            />
+                                                                                        }
+                                                                                    }
+                                                                                />
+                                                                            </div>
+                                                                        </section>
+                                                                    })
+                                                                } else {
+                                                                    None
+                                                                }}
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    view! {
+                                                        <div class="alert alert-error">
+                                                            {move || t!(i18n, error_loading_lists, error = e.to_string())}
+                                                        </div>
+                                                    }.into_any()
+                                                }
+                                            }
+                                        })
+                                }}
+                            </Suspense>
+                        }.into_any()
+                    }
                 }}
             </Suspense>
         </div>

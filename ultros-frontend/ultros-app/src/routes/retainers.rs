@@ -1,11 +1,13 @@
 use crate::api::{
-    UndercutData, get_retainer_listings, get_retainer_undercuts, get_user_retainer_listings,
+    UndercutData, get_login, get_retainer_listings, get_retainer_undercuts,
+    get_user_retainer_listings,
 };
+use crate::components::alert_drawer::{AlertDrawer, AlertKind};
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
-use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
+use crate::components::tool_help::ActionableEmptyState;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::LocalWorldData;
 use crate::global_state::xiv_data::tracked_data;
@@ -242,13 +244,15 @@ pub(crate) fn CharacterRetainerList(
         .map(|(retainer, listings)| view! { <RetainerTable retainer listings /> })
         .collect();
     view! {
-        <div>
-            {if let Some(character) = character {
-                Either::Left(view! { <span>{character.first_name} {character.last_name}</span> })
-            } else {
-                Either::Right(listings)
-            }}
-
+        <div class="flex flex-col gap-2">
+            {character
+                .map(|character| {
+                    view! {
+                        <span class="content-title font-semibold mt-2">
+                            {character.first_name} " " {character.last_name}
+                        </span>
+                    }
+                })} {listings}
         </div>
     }
     .into_any()
@@ -264,15 +268,15 @@ pub(crate) fn CharacterRetainerUndercutList(
         .map(|(retainer, listings)| view! { <RetainerUndercutTable retainer listings /> })
         .collect();
     view! {
-        <div>
-            {if let Some(character) = character {
-                Either::Left(
-                    view! { <span>{character.first_name} {character.last_name}</span> }.into_view(),
-                )
-            } else {
-                Either::Right(listings)
-            }}
-
+        <div class="flex flex-col gap-2">
+            {character
+                .map(|character| {
+                    view! {
+                        <span class="content-title font-semibold mt-2">
+                            {character.first_name} " " {character.last_name}
+                        </span>
+                    }
+                })} {listings}
         </div>
     }
     .into_any()
@@ -281,60 +285,96 @@ pub(crate) fn CharacterRetainerUndercutList(
 #[component]
 pub fn RetainerUndercuts() -> impl IntoView {
     let i18n = use_i18n();
-    let retainers = Resource::new(|| "undercuts", move |_| get_retainer_undercuts());
+    let login = Resource::new(|| (), |_| async move { get_login().await });
+    let retainers = Resource::new(
+        move || login.get().map(|res| res.is_ok()).unwrap_or(false),
+        move |logged_in| async move {
+            if logged_in {
+                get_retainer_undercuts().await
+            } else {
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
+            }
+        },
+    );
     let (drawer_visible, set_drawer_visible) = signal(false);
     view! {
         <MetaTitle title=t_string!(i18n, retainers_undercuts_title).to_string() />
-        <div class="flex flex-wrap items-center justify-between gap-3">
-            <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
-            <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
-                <Icon icon=i::BsBell />
-                <span class="ml-1">{t!(i18n, undercut_alert_open_button)}</span>
-            </button>
-        </div>
-        <Show when=move || drawer_visible.get()>
-            <UndercutAlertDrawer set_visible=set_drawer_visible.into() />
-        </Show>
-        <br />
-        <span>
-            {t!(i18n, retainers_data_notice)}
-        </span>
-        <br />
-        <span>
-            {t!(i18n, retainers_undercuts_description)}
-        </span>
         <Suspense fallback=move || {
             view! { <Loading /> }
         }>
             {move || {
-                retainers
-                    .get()
-                    .map(|retainer| {
-                        match retainer {
-                            Ok(retainers) => {
-                                let retainers: Vec<_> = retainers
-                                    .into_iter()
-                                    .map(|(character, retainers)| {
-                                        view! {
-                                            <CharacterRetainerUndercutList character retainers />
+                match login.get() {
+                    None => view! { <Loading /> }.into_any(),
+                    Some(Err(_)) => {
+                        view! {
+                            <ActionableEmptyState
+                                title=t_string!(i18n, retainers_empty_title).to_string()
+                                body=t_string!(i18n, retainers_empty_body).to_string()
+                                action_href="/login?next=/retainers/undercuts"
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
+                                action_external=true
+                                secondary_action_href="/bot"
+                                secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
+                            />
+                        }.into_any()
+                    }
+                    Some(Ok(_)) => {
+                        view! {
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <span class="content-title">{t!(i18n, retainers_undercuts_title)}</span>
+                                <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
+                                    <Icon icon=i::BsBell />
+                                    <span class="ml-1">{t!(i18n, add_alert_button)}</span>
+                                </button>
+                            </div>
+                            <Show when=move || drawer_visible.get()>
+                                <AlertDrawer
+                                    initial_kind=AlertKind::Undercut
+                                    set_visible=set_drawer_visible.into()
+                                />
+                            </Show>
+                            <br />
+                            <span>
+                                {t!(i18n, retainers_data_notice)}
+                            </span>
+                            <br />
+                            <span>
+                                {t!(i18n, retainers_undercuts_description)}
+                            </span>
+                            {move || {
+                                retainers
+                                    .get()
+                                    .map(|retainer| {
+                                        match retainer {
+                                            Ok(retainers) => {
+                                                let retainers: Vec<_> = retainers
+                                                    .into_iter()
+                                                    .map(|(character, retainers)| {
+                                                        view! {
+                                                            <CharacterRetainerUndercutList character retainers />
+                                                        }
+                                                    })
+                                                    .collect();
+                                                Either::Left(view! { <div>{retainers}</div> })
+                                            }
+                                            Err(e) => {
+                                                Either::Right(
+                                                    view! {
+                                                        <div>
+                                                            {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
+                                                        </div>
+                                                    },
+                                                )
+                                            }
                                         }
                                     })
-                                    .collect();
-                                Either::Left(view! { <div>{retainers}</div> })
-                            }
-                                    Err(e) => {
-                                        Either::Right(
-                                            view! {
-                                                <div>
-                                                    {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
-                                                </div>
-                                            },
-                                        )
-                                    }
-                        }
-                    })
+                            }}
+                        }.into_any()
+                    }
+                }
             }}
-
         </Suspense>
     }
 }
@@ -342,11 +382,34 @@ pub fn RetainerUndercuts() -> impl IntoView {
 #[component]
 pub fn RetainersBasePath() -> impl IntoView {
     let i18n = use_i18n();
+    let login = Resource::new(|| (), |_| async move { get_login().await });
     view! {
-        <div>
-            <h3>{t!(i18n, retainers_title)}</h3>
-            {t!(i18n, retainers_base_path_description)}
-        </div>
+        <Suspense fallback=move || view! { <Loading /> }>
+            {move || match login.get() {
+                None => view! { <Loading /> }.into_any(),
+                Some(Err(_)) => {
+                    view! {
+                        <ActionableEmptyState
+                            title=t_string!(i18n, retainers_empty_title).to_string()
+                            body=t_string!(i18n, retainers_empty_body).to_string()
+                            action_href="/login?next=/retainers"
+                            action_label=t_string!(i18n, sign_in_discord).to_string()
+                            action_external=true
+                            secondary_action_href="/bot"
+                            secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
+                        />
+                    }.into_any()
+                }
+                Some(Ok(_)) => {
+                    view! {
+                        <div>
+                            <h3>{t!(i18n, retainers_title)}</h3>
+                            {t!(i18n, retainers_base_path_description)}
+                        </div>
+                    }.into_any()
+                }
+            }}
+        </Suspense>
     }
 }
 
@@ -419,56 +482,89 @@ pub fn SingleRetainerListings() -> impl IntoView {
 #[component]
 pub fn RetainerListings() -> impl IntoView {
     let i18n = use_i18n();
-    let retainers = Resource::new(|| "undercuts", move |_| get_user_retainer_listings());
+    let login = Resource::new(|| (), |_| async move { get_login().await });
+    let retainers = Resource::new(
+        move || login.get().map(|res| res.is_ok()).unwrap_or(false),
+        move |logged_in| async move {
+            if logged_in {
+                get_user_retainer_listings().await
+            } else {
+                Err(crate::error::AppError::ApiError(
+                    ultros_api_types::result::ApiError::NotAuthenticated,
+                ))
+            }
+        },
+    );
     view! {
         <span class="content-title">{t!(i18n, retainers_all_listings_title)}</span>
         <MetaTitle title=t_string!(i18n, retainers_all_listings_title).to_string() />
         <MetaDescription text=t_string!(i18n, retainers_all_listings_desc).to_string() />
         <br />
-        <span>
-            {t!(i18n, retainers_data_notice)}
-        </span>
         <Suspense fallback=move || {
             view! { <Loading /> }
         }>
             {move || {
-                retainers
-                    .get()
-                    .map(|retainer| {
-                        match retainer {
-                            Ok(retainers) => {
-                                let retainers: Vec<_> = retainers
-                                    .retainers
-                                    .into_iter()
-                                    .map(|(character, retainers)| {
-                                        view! { <CharacterRetainerList character retainers /> }
+                match login.get() {
+                    None => view! { <Loading /> }.into_any(),
+                    Some(Err(_)) => {
+                        view! {
+                            <ActionableEmptyState
+                                title=t_string!(i18n, retainers_empty_title).to_string()
+                                body=t_string!(i18n, retainers_empty_body).to_string()
+                                action_href="/login?next=/retainers/listings"
+                                action_label=t_string!(i18n, sign_in_discord).to_string()
+                                action_external=true
+                                secondary_action_href="/bot"
+                                secondary_action_label=t_string!(i18n, retainers_empty_secondary_label).to_string()
+                            />
+                        }.into_any()
+                    }
+                    Some(Ok(_)) => {
+                        view! {
+                            <span>
+                                {t!(i18n, retainers_data_notice)}
+                            </span>
+                            {move || {
+                                retainers
+                                    .get()
+                                    .map(|retainer| {
+                                        match retainer {
+                                            Ok(retainers) => {
+                                                let retainers: Vec<_> = retainers
+                                                    .retainers
+                                                    .into_iter()
+                                                    .map(|(character, retainers)| {
+                                                        view! { <CharacterRetainerList character retainers /> }
+                                                    })
+                                                    .collect();
+                                                Either::Left(
+                                                    view! {
+                                                        {retainers
+                                                            .is_empty()
+                                                            .then(|| {
+                                                                view! { <span>{t!(i18n, retainers_add_to_start)}</span> }
+                                                            })}
+
+                                                        <div>{retainers}</div>
+                                                    },
+                                                )
+                                            }
+                                            Err(e) => {
+                                                Either::Right(
+                                                    view! {
+                                                        <div>
+                                                            {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
+                                                        </div>
+                                                    },
+                                                )
+                                            }
+                                        }
                                     })
-                                    .collect();
-                                Either::Left(
-                                    view! {
-                                        {retainers
-                                            .is_empty()
-                                            .then(|| {
-                                                view! { <span>{t!(i18n, retainers_add_to_start)}</span> }
-                                            })}
-
-                                        <div>{retainers}</div>
-                                    },
-                                )
-                            }
-                                    Err(e) => {
-                                        Either::Right(
-                                            view! {
-                                                <div>
-                                                    {t!(i18n, retainers_unable_to_get)} <br /> {e.to_string()}
-                                                </div>
-                                            },
-                                        )
-                                    }
-                        }
-                    })
+                            }}
+                        }.into_any()
+                    }
+                }
             }}
-
         </Suspense>
     }.into_any()
 }

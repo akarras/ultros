@@ -7,7 +7,10 @@ use crate::components::toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpa
 use crate::components::world_picker::WorldPicker;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
-use crate::routes::item_explorer_roles::{RoleGroup, role_for_job_abbr, role_for_weapon_category};
+use crate::routes::item_explorer::{
+    canonical_job_acronym, resolve_category_param, resolve_jobset_param,
+};
+use crate::routes::item_explorer_roles::{RoleGroup, role_for_job, role_for_weapon_category};
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, href_with_world};
 use leptos::prelude::*;
 use leptos_router::components::A;
@@ -22,15 +25,8 @@ pub(crate) fn active_group_from_route(jobset: Option<&str>, category: Option<&st
     if jobset.is_some() {
         return Some(5);
     }
-    let cat_raw = category?;
-    let cat_name = percent_encoding::percent_decode_str(cat_raw)
-        .decode_utf8()
-        .ok()?;
     let data = xiv_gen_db::data();
-    data.item_search_categorys
-        .values()
-        .find(|cat| cat.name == cat_name)
-        .map(|cat| cat.category)
+    resolve_category_param(data, category?).map(|cat| cat.category)
 }
 
 /// Return the search categories that belong to a non-job group
@@ -57,7 +53,13 @@ pub(crate) fn category_chips_for_group(group: u8) -> Vec<(&'static str, ItemSear
 /// `test_job_filtering` test: only jobs with `job_index > 0` or
 /// `doh_dol_job_index >= 0`, and with a non-empty abbreviation or name.
 pub(crate) fn job_chips_sorted() -> Vec<&'static ClassJob> {
-    let data = xiv_gen_db::data();
+    job_chips_sorted_in(xiv_gen_db::data())
+}
+
+/// `job_chips_sorted` against an explicit dataset, so the locale-independence
+/// tests can run the real filter over each shipped locale pack rather than a
+/// reimplementation of it.
+pub(crate) fn job_chips_sorted_in(data: &'static xiv_gen::Data) -> Vec<&'static ClassJob> {
     let mut jobs: Vec<&'static ClassJob> = data
         .class_jobs
         .iter()
@@ -85,6 +87,34 @@ pub(crate) fn job_chip_label(job: &ClassJob) -> &str {
     } else {
         job.abbreviation.as_str()
     }
+}
+
+/// Path segment for a job's `/items/jobset/:jobset` link.
+///
+/// The canonical English acronym, *not* `job_chip_label`: the label is
+/// localized, and a localized slug is a link that resolves under no locale at
+/// all — `job_category_lookup` only knows the English acronyms, so a German
+/// client's own "FST" chip navigates to an empty page. Falls back to the
+/// (escaped) label only for a job id outside the acronym table.
+pub(crate) fn job_chip_slug(job: &ClassJob) -> String {
+    canonical_job_acronym(job.key_id)
+        .map(|acronym| acronym.to_string())
+        .unwrap_or_else(|| job_chip_label(job).replace('/', "%2F"))
+}
+
+/// Localized display label for a `/items/jobset/:jobset` param.
+///
+/// The param is the canonical English acronym, so showing it verbatim would
+/// label a German player's active chip "PGL" where every other chip reads
+/// "FST". Resolve it back through the job the same way `CategoryItems` turns
+/// its numeric category id back into a localized name; falls through to the
+/// raw param when it names no known job.
+pub(crate) fn jobset_display_label(data: &xiv_gen::Data, raw_param: &str) -> Option<String> {
+    let canonical = resolve_jobset_param(data, raw_param)?;
+    data.class_jobs
+        .iter()
+        .find(|(id, _)| canonical_job_acronym(**id) == Some(canonical.as_str()))
+        .map(|(_, job)| job_chip_label(job).to_string())
 }
 
 #[component]
@@ -175,13 +205,24 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                     // belongs to the selected group, else a browse prompt.
                     let button_label = if active_group.get() == Some(group) {
                         let p = params.get();
-                        p.get("jobset")
-                            .or_else(|| p.get("category"))
-                            .as_ref()
-                            .and_then(|s| {
-                                percent_encoding::percent_decode_str(s).decode_utf8().ok()
-                            })
-                            .map(|s| s.to_string())
+                        match p.get("jobset") {
+                            // The jobset param is a canonical English acronym,
+                            // so resolve it back to the localized label rather
+                            // than labelling a German player's trigger "PGL".
+                            Some(jobset) => jobset_display_label(data, &jobset).or_else(|| {
+                                percent_encoding::percent_decode_str(&jobset)
+                                    .decode_utf8()
+                                    .ok()
+                                    .map(|s| s.to_string())
+                            }),
+                            // The category param is an id, so resolve it back
+                            // to the localized name instead of labelling the
+                            // trigger with a bare number.
+                            None => p.get("category").and_then(|cat| {
+                                resolve_category_param(data, &cat)
+                                    .map(|category| category.name.clone())
+                            }),
+                        }
                     } else {
                         None
                     }
@@ -196,12 +237,16 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                             .map(|role| (*role, Vec::new()))
                             .collect();
                         for job in job_chips_sorted() {
+                            // Label stays localized (a German player expects
+                            // "FST"); the href uses the canonical English
+                            // acronym so the route resolves on both the
+                            // English SSR pass and the client's locale.
                             let label = job_chip_label(job).to_string();
                             let href = href_with_world(
-                                format!("/items/jobset/{}", label.replace('/', "%2F")),
+                                format!("/items/jobset/{}", job_chip_slug(job)),
                                 world.as_deref(),
                             );
-                            let role = role_for_job_abbr(&job.abbreviation);
+                            let role = role_for_job(job);
                             if let Some((_, links)) =
                                 buckets.iter_mut().find(|(r, _)| *r == role)
                             {
@@ -228,7 +273,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                             .collect();
                         for (name, id) in category_chips_for_group(1) {
                             let href = href_with_world(
-                                format!("/items/category/{}", name.replace('/', "%2F")),
+                                format!("/items/category/{}", id.0),
                                 world.as_deref(),
                             );
                             let role = data
@@ -263,7 +308,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                 .map(|(name, id)| PopoverLink {
                                     label: name.to_string(),
                                     href: href_with_world(
-                                        format!("/items/category/{}", name.replace('/', "%2F")),
+                                        format!("/items/category/{}", id.0),
                                         world.as_deref(),
                                     ),
                                     icon: PopoverIcon::Category(id),
@@ -277,7 +322,7 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
                                 .into_iter()
                                 .map(|(name, id)| {
                                     let href = href_with_world(
-                                        format!("/items/category/{}", name.replace('/', "%2F")),
+                                        format!("/items/category/{}", id.0),
                                         world.as_deref(),
                                     );
                                     view! {
@@ -320,6 +365,31 @@ mod tests {
             active_group_from_route(None, Some("Pugilist%27s%20Arms")),
             Some(1),
         );
+    }
+
+    /// Category ids are the canonical route key — resolving them is what
+    /// keeps the toolbar's selected group identical between the English SSR
+    /// render and a localized client.
+    #[test]
+    fn active_group_resolves_a_numeric_category_id() {
+        let data = xiv_gen_db::data();
+        let weapon = data
+            .item_search_categorys
+            .values()
+            .filter(|cat| cat.category == 1)
+            .min_by_key(|cat| cat.key_id.0)
+            .expect("weapons group must have categories");
+        assert_eq!(
+            active_group_from_route(None, Some(&weapon.key_id.0.to_string())),
+            Some(1),
+            "a numeric category id must select the category's own group",
+        );
+    }
+
+    #[test]
+    fn active_group_for_unknown_category_id_is_none() {
+        // Well past the end of the sheet; must not select a group.
+        assert_eq!(active_group_from_route(None, Some("999999")), None);
     }
 
     #[test]

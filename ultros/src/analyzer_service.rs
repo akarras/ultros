@@ -18,7 +18,7 @@ use itertools::Itertools;
 use poise::serenity_prelude::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tracing::log::{error, info};
+use tracing::{error, info, warn};
 use ultros_api_types::{ActiveListing, Retainer, websocket::ListingEventData};
 use ultros_db::{
     UltrosDb,
@@ -26,7 +26,7 @@ use ultros_db::{
 };
 use universalis::{ItemId, WorldId};
 
-use crate::event::EventReceivers;
+use crate::event::{BusRecv, EventReceivers, handle_bus_recv};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -291,12 +291,19 @@ impl CheapestListings {
                 // only remove a listing if we see a lower price
                 if listing.price_per_unit <= entry.get().price {
                     entry.remove();
-                    let worlds = world_cache
+                    let Some(worlds) = world_cache
                         .lookup_selector(&id)
                         .map(|r| world_cache.get_all_worlds_in(&r))
                         .ok()
                         .flatten()
-                        .expect("Should have worlds");
+                    else {
+                        // Same outcome as the DB query below failing: the entry
+                        // stays removed and the next listing event for this item
+                        // refills it.
+                        warn!(selector = ?id, "no worlds for selector, skipping cheapest-listing refill");
+                        skipped_event("remove_listing", "unknown_selector");
+                        return;
+                    };
                     if let Ok(listings) = ultros_db
                         .get_multiple_listings_for_worlds_hq_sensitive(
                             worlds.iter().map(|w| WorldId(*w)),
@@ -326,11 +333,107 @@ struct AnalyzerState {
     cheapest_items: BTreeMap<AnySelector, CheapestListings>,
 }
 
-fn calculate_valuation(median_price: i32, current_listing_price: Option<i32>) -> i32 {
+/// Estimate what an item will actually **sell** for on the target world.
+///
+/// This is intentionally the same formula the Flip Finder uses client-side
+/// (`ultros-app/src/routes/analyzer.rs`): the recent-sale median, capped by
+/// the world's current floor when there is one — you don't reliably sell
+/// above the cheapest competing listing, nor above what the item has been
+/// going for lately. On an empty board the median stands on its own.
+///
+/// It is *not* "what should I list at" — no undercut is applied, and an
+/// empty board gets no scarcity bump. Both of those used to live here, and
+/// they made `/api/v1/best_deals` (the home page's Top Opportunities card)
+/// quote different gil than the analyzer table it links to. If a
+/// lister-facing valuation is ever needed, add a separate function next to
+/// this one rather than skewing it back.
+fn estimate_sale_price(median_price: i32, current_listing_price: Option<i32>) -> i32 {
     match current_listing_price {
-        Some(price) => std::cmp::min(std::cmp::max(1, price - 1), median_price),
-        None => (median_price as f32 * 1.2) as i32,
+        Some(price) => median_price.min(price),
+        None => median_price,
     }
+}
+
+/// Marketboard tax: the seller nets 95% of the sale price. The Flip Finder
+/// applies this by default (its `include_tax` toggle starts on), so applying
+/// it here too keeps the two surfaces quoting the same profit.
+///
+/// Retainer-city tax variation is deliberately not modeled, here or in the
+/// frontend.
+const POST_TAX_MULTIPLIER: f32 = 0.95;
+
+/// Mirrors `ROI_DISPLAY_CEILING` in `ultros-app/src/analysis.rs`. A 1-gil buy
+/// against a seven-figure sale yields an ROI in the millions of percent,
+/// which is noise wearing a percentage sign.
+const ROI_CEILING: f32 = 100_000.0;
+
+/// Post-tax profit and ROI for buying at `cost` and reselling at
+/// `est_sale_price`, matching the Flip Finder's default (taxed) math.
+///
+/// Returns `None` when `cost` is nonpositive: a 0-gil listing is bad data or
+/// a trade-channel handoff, and dividing by it puts `inf`/`NaN` into an `f32`
+/// that goes on the wire (serde_json encodes non-finite floats as `null`,
+/// which then fails to deserialize into the client's `f32`).
+fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
+    if cost <= 0 {
+        return None;
+    }
+    let net_sale_price = (est_sale_price as f32 * POST_TAX_MULTIPLIER) as i32;
+    let profit = net_sale_price - cost;
+    let roi = (profit as f32 / cost as f32 * 100.0).clamp(-ROI_CEILING, ROI_CEILING);
+    Some((profit, roi))
+}
+
+/// Oldest snapshot we're willing to boot from instead of reloading Postgres.
+///
+/// Restoring a snapshot skips the database load entirely (see `run_worker`), so
+/// whatever prices it holds become "live" the moment `initiated` flips — with no
+/// visible symptom, because the analyzer answers normally, just with old
+/// numbers. Snapshots are written every 15 minutes and on shutdown, so any gap
+/// past a couple of hours means the process was down and the market has moved on.
+///
+/// Three hours keeps a fast restart cheap (the common case: a deploy, a crash
+/// loop, an OOM restart — all far under an hour) while capping how wrong the
+/// served data can be. The fallback costs a full `cheapest_listings` +
+/// `last_n_sales` stream, which is slow but correct.
+const MAX_SNAPSHOT_AGE: Duration = Duration::hours(3);
+
+/// Age of a snapshot from its filename, which `serialize_state` writes as
+/// `snapshot-<unix seconds>.bin.gz`.
+///
+/// `None` means the name didn't match — callers treat that as "unknown age",
+/// which is not the same as "fresh".
+fn snapshot_age(file_name: &str, now: chrono::DateTime<Utc>) -> Option<Duration> {
+    let timestamp: i64 = file_name
+        .strip_prefix("snapshot-")?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()?;
+    Some(now - chrono::DateTime::from_timestamp(timestamp, 0)?)
+}
+
+/// Counts an event the analyzer had to drop, so a lookup miss shows up on
+/// `/metrics` instead of only in the logs.
+///
+/// Every `cheapest_items` / `recent_sale_history` key is materialised once at
+/// startup from `WorldCache`, which is itself built exactly once in `main` — and
+/// on a cold database that build races the task that populates the world table
+/// (see the comment above `WorldCache::new` in `main.rs`). A world the cache
+/// missed is therefore absent from these maps *for the lifetime of the process*.
+///
+/// These lookups used to `.expect()`. In the history loop that is fatal in the
+/// worst possible way: the panic unwinds the spawned task, so live sale ingestion
+/// and the ClickHouse dual-write both stop for good while axum keeps serving
+/// requests from a frozen cache — the process looks perfectly healthy. Dropping
+/// one event costs one sale; panicking costs every sale from then on.
+fn skipped_event(op: &'static str, reason: &'static str) {
+    metrics::counter!(
+        "ultros_analyzer_skipped_events_total",
+        "op" => op,
+        "reason" => reason,
+    )
+    .increment(1);
 }
 
 /// Build a short list of all the items in the game that we think would sell well.
@@ -488,6 +591,11 @@ impl AnalyzerService {
     }
 
     async fn try_restore_from_snapshot(&self) -> bool {
+        self.try_restore_from_snapshot_at(Utc::now()).await
+    }
+
+    /// `now` is injected so the age check can be tested without sleeping.
+    async fn try_restore_from_snapshot_at(&self, now: chrono::DateTime<Utc>) -> bool {
         let mut dir = match fs::read_dir("analyzer-data").await {
             Ok(dir) => dir,
             Err(_) => return false,
@@ -499,6 +607,53 @@ impl AnalyzerService {
         entries.sort_by_key(|x| x.file_name());
         for entry in entries.iter().rev() {
             let path = entry.path();
+
+            // Filenames are `snapshot-<unix seconds>.bin.gz`, so age comes
+            // straight off the name — no stat, and no chance of a file copy
+            // resetting mtime and making a stale snapshot look fresh.
+            let file_name = entry.file_name();
+            let age = match snapshot_age(&file_name.to_string_lossy(), now) {
+                Some(age) => age,
+                None => {
+                    warn!(
+                        ?path,
+                        "snapshot filename has no parseable timestamp, ignoring"
+                    );
+                    metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "unparseable_name").increment(1);
+                    continue;
+                }
+            };
+            if age < Duration::zero() {
+                // A future-dated filename means clock skew or a file copied
+                // from another machine. A negative age would sail straight
+                // through the `> MAX_SNAPSHOT_AGE` check below no matter how
+                // wrong the clock is, and would poison the age gauge with a
+                // negative value — treat "from the future" like "unknown age":
+                // skip this file and keep looking at older ones.
+                warn!(
+                    ?path,
+                    age_seconds = age.num_seconds(),
+                    "snapshot filename is dated in the future (clock skew?), ignoring"
+                );
+                metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "future_dated")
+                    .increment(1);
+                continue;
+            }
+            if age > MAX_SNAPSHOT_AGE {
+                // Entries are sorted by name, i.e. by timestamp, and we walk them
+                // newest-first — so everything left is older still.
+                warn!(
+                    ?path,
+                    age_hours = age.num_hours(),
+                    max_age_hours = MAX_SNAPSHOT_AGE.num_hours(),
+                    "newest analyzer snapshot is too old to serve as live data, \
+                     falling back to a full database load"
+                );
+                metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "too_old")
+                    .increment(1);
+                return false;
+            }
+
             let file = match fs::read(&path).await {
                 Ok(f) => f,
                 Err(e) => {
@@ -538,6 +693,12 @@ impl AnalyzerService {
                     *write = value;
                 }
             }
+            info!(
+                ?path,
+                age_seconds = age.num_seconds(),
+                "restored analyzer snapshot"
+            );
+            metrics::gauge!("ultros_analyzer_snapshot_age_seconds").set(age.num_seconds() as f64);
             return true;
         }
         false
@@ -563,24 +724,34 @@ impl AnalyzerService {
                 Ok(mut listings) => {
                     let writer = &self.cheapest_items;
                     while let Some(Ok(value)) = listings.next().await {
-                        let world = world_cache
-                            .lookup_selector(&AnySelector::World(value.world_id))
-                            .unwrap();
-                        let region = world_cache.get_region(&world).unwrap();
-                        let datacenters = world_cache.get_datacenters(&world).unwrap();
-                        let region_listings = writer
-                            .get(&AnySelector::Region(region.id))
-                            .expect("Region not found");
+                        // The database can hold listings for worlds this process'
+                        // `WorldCache` never saw. Panicking here aborts the whole
+                        // worker before `initiated` is ever set, so the analyzer
+                        // both serves nothing and ingests nothing — forever.
+                        let Ok(world) =
+                            world_cache.lookup_selector(&AnySelector::World(value.world_id))
+                        else {
+                            skipped_event("db_reload_listing", "unknown_world");
+                            continue;
+                        };
+                        let Some(region) = world_cache.get_region(&world) else {
+                            skipped_event("db_reload_listing", "unknown_region");
+                            continue;
+                        };
+                        let datacenters = world_cache.get_datacenters(&world).unwrap_or_default();
+                        let (Some(region_listings), Some(world_listings)) = (
+                            writer.get(&AnySelector::Region(region.id)),
+                            writer.get(&AnySelector::World(value.world_id)),
+                        ) else {
+                            skipped_event("db_reload_listing", "unknown_selector");
+                            continue;
+                        };
                         region_listings.write().await.add_listing(&value);
                         for dc in datacenters {
-                            let dc_listings = writer
-                                .get(&AnySelector::Datacenter(dc.id))
-                                .expect("Datacenter not found");
-                            dc_listings.write().await.add_listing(&value);
+                            if let Some(dc_listings) = writer.get(&AnySelector::Datacenter(dc.id)) {
+                                dc_listings.write().await.add_listing(&value);
+                            }
                         }
-                        let world_listings = writer
-                            .get(&AnySelector::World(value.world_id))
-                            .expect("Unable to get world");
                         world_listings.write().await.add_listing(&value);
                     }
                 }
@@ -592,10 +763,10 @@ impl AnalyzerService {
             match sale_data {
                 Ok(mut history_stream) => {
                     while let Some(Ok(value)) = history_stream.next().await {
-                        let history = self
-                            .recent_sale_history
-                            .get(&value.world_id)
-                            .expect("Unable to get world");
+                        let Some(history) = self.recent_sale_history.get(&value.world_id) else {
+                            skipped_event("db_reload_sale", "unknown_world");
+                            continue;
+                        };
                         history.write().await.add_sale(&value);
                     }
                 }
@@ -615,8 +786,8 @@ impl AnalyzerService {
                         break;
                     }
                     history = event_receivers.history.recv() => {
-                        if let Ok(history) = history {
-                            match history {
+                        match handle_bus_recv("history", history) {
+                            BusRecv::Msg(history) => match history {
                                 crate::event::EventType::Remove(_) => {}
                                 crate::event::EventType::Add(sales) => {
                                     for (sale, _) in sales.sales.iter() {
@@ -631,7 +802,14 @@ impl AnalyzerService {
                                     }
                                 }
                                 crate::event::EventType::Update(_) => {}
-                            }
+                            },
+                            // Still live, positioned at the oldest survivor.
+                            BusRecv::Lagged => {}
+                            // recv() on a closed bus returns instantly forever;
+                            // looping here would hot-spin and emit one warn per
+                            // iteration. Only happens at shutdown, when the
+                            // cancellation arm above races us to the exit.
+                            BusRecv::Closed => break,
                         }
                     }
                 }
@@ -643,8 +821,8 @@ impl AnalyzerService {
                     break;
                 }
                 listings = event_receivers.listings.recv() => {
-                    if let Ok(listings) = listings {
-                        match listings {
+                    match handle_bus_recv("listings", listings) {
+                        BusRecv::Msg(listings) => match listings {
                             crate::event::EventType::Remove(remove) => {
                                 let region = if let Some(region) = remove
                                     .listings
@@ -668,7 +846,14 @@ impl AnalyzerService {
                                 self.add_listings(&add.listings, &world_cache).await;
                             }
                             crate::event::EventType::Update(_) => todo!(),
-                        }
+                        },
+                        // Still live, positioned at the oldest survivor.
+                        BusRecv::Lagged => {}
+                        // recv() on a closed bus returns instantly forever;
+                        // looping here would hot-spin and emit one warn per
+                        // iteration. Only happens at shutdown, when the
+                        // cancellation arm above races us to the exit.
+                        BusRecv::Closed => break,
                     }
                 }
             }
@@ -1073,6 +1258,7 @@ impl AnalyzerService {
         });
         // figure out what items are selling best on our world first, then figure out what items are available in the region that complement that.
         let sale = self.recent_sale_history.get(&world_id)?;
+        let now = Utc::now().naive_utc();
         let sale_history: BTreeMap<_, _> = sale
             .read()
             .await
@@ -1088,10 +1274,7 @@ impl AnalyzerService {
                             .as_ref()
                             .map(|sale_within| {
                                 let sale_within = Duration::from(sale_within);
-                                Utc::now()
-                                    .naive_utc()
-                                    .signed_duration_since(sale.sale_date)
-                                    .lt(&sale_within)
+                                now.signed_duration_since(sale.sale_date).lt(&sale_within)
                             })
                             .unwrap_or(true)
                     })
@@ -1100,16 +1283,37 @@ impl AnalyzerService {
                 if prices.is_empty() {
                     return None;
                 }
-                let len = prices.len();
-                // Get median. If even, pick the lower one to be conservative?
-                // Actually, let's pick the one at len / 2.
-                // 1 item: idx 0. 2 items: idx 1. 3 items: idx 1. 4 items: idx 2.
-                // This essentially picks the slightly higher one in even cases, or middle in odd.
-                // Let's pick len / 2.
+                let price_low = *prices.iter().min()?;
+                let price_high = *prices.iter().max()?;
+                // Lower-middle median: the upper-middle pick resolves a
+                // two-sale laundering pair to the higher of the two.
                 // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
                 // This reduces time complexity from O(N log N) to O(N).
-                let (_, &mut price, _) = prices.select_nth_unstable(len / 2);
-                Some((*item, (price, sold_within)))
+                let median = crate::resale_eligibility::conservative_median(&mut prices);
+
+                // Velocity uses the whole buffer, not the filtered window: it
+                // is a rate estimate, and `sold_within` already carries the
+                // windowed view.
+                let span_days = values
+                    .iter()
+                    .map(|s| s.sale_date)
+                    .min()
+                    .map(|oldest| now.signed_duration_since(oldest).num_seconds() as f32 / 86_400.0)
+                    .unwrap_or(0.0);
+                let velocity_per_day =
+                    crate::resale_eligibility::velocity_per_day(values.len(), span_days);
+
+                Some((
+                    *item,
+                    SaleHistoryStats {
+                        median,
+                        sold_within,
+                        price_low,
+                        price_high,
+                        buffer_sale_count: values.len().min(u8::MAX as usize) as u8,
+                        velocity_per_day,
+                    },
+                ))
             })
             .collect();
 
@@ -1123,25 +1327,62 @@ impl AnalyzerService {
             .get(&AnySelector::World(world_id))?
             .read()
             .await;
+        // Eligibility runs here, inside the flat_map, so it is applied
+        // *before* the DEEP_SCAN_TOP_N truncation below. Filtering after the
+        // truncation would leave the deep-scan budget being spent on
+        // laundering rows — the original bug in a subtler form.
+        let policy = crate::resale_eligibility::EligibilityPolicy {
+            min_velocity_per_day: resale_options.min_velocity_per_day,
+            min_buffer_sales: resale_options.min_buffer_sales,
+            max_roi: resale_options.max_roi,
+        };
+        let game_data = xiv_gen_db::data();
         let mut possible_sales: Vec<_> = region
             .item_map
             .iter()
             .flat_map(|(item_key, cheapest_price)| {
-                let (cheapest_history, sold_within) = *sale_history.get(item_key)?;
+                let stats = *sale_history.get(item_key)?;
+                let cheapest_history = stats.median;
+                let sold_within = stats.sold_within;
                 let current_cheapest_on_sale_world =
                     sale_world_listings.item_map.get(item_key).map(|l| l.price);
                 let est_sale_price =
-                    calculate_valuation(cheapest_history, current_cheapest_on_sale_world);
-                let profit = est_sale_price - cheapest_price.price;
+                    estimate_sale_price(cheapest_history, current_cheapest_on_sale_world);
+                // `?` drops rows whose buy price is nonpositive rather than
+                // emitting an inf/NaN ROI.
+                let (profit, return_on_investment) =
+                    flip_profit_and_roi(est_sale_price, cheapest_price.price)?;
+                // Eligibility judges the pre-tax list price against the
+                // vendor anchor (that is the price a laundering listing
+                // actually claims) but the post-tax ROI, since that is the
+                // figure both this card and the Flip Finder display.
+                let vendor_price = game_data
+                    .items
+                    .get(&xiv_gen::ItemId(item_key.item_id))
+                    .map(|i| i.price_mid)
+                    .unwrap_or(0);
+                if !policy.accepts(&crate::resale_eligibility::Candidate {
+                    est_sale_price,
+                    return_on_investment,
+                    velocity_per_day: stats.velocity_per_day,
+                    buffer_sale_count: stats.buffer_sale_count,
+                    vendor_price,
+                }) {
+                    return None;
+                }
                 Some(ResaleStats {
                     profit,
                     item_id: item_key.item_id,
                     hq: item_key.hq,
-                    return_on_investment: ((est_sale_price as f32) / (cheapest_price.price as f32)
-                        * 100.0)
-                        - 100.0,
+                    return_on_investment,
+                    buy_price: cheapest_price.price,
+                    est_sale_price,
                     world_id: cheapest_price.world_id,
                     sold_within,
+                    velocity_per_day: stats.velocity_per_day,
+                    buffer_sale_count: stats.buffer_sale_count,
+                    recent_price_low: stats.price_low,
+                    recent_price_high: stats.price_high,
                     // Pass-1 defaults; the deep-scan pass fills these in.
                     confidence_band: ultros_api_types::trends::ConfidenceBand::Unknown,
                     vwap_30d: 0,
@@ -1285,22 +1526,30 @@ impl AnalyzerService {
             ))
         });
         for (world_selector, region_selector, dc_selector, listing) in listings {
-            let entry = self
-                .cheapest_items
-                .get(&region_selector)
-                .expect("Unable to get region");
-            entry.write().await.add_listing(listing);
+            // Resolve both required entries before writing either, so a missing
+            // world can't leave the region map holding a price the world map
+            // never learned about.
+            let (Some(region_entry), Some(world_entry)) = (
+                self.cheapest_items.get(&region_selector),
+                self.cheapest_items.get(&world_selector),
+            ) else {
+                warn!(
+                    ?region_selector,
+                    ?world_selector,
+                    item_id = listing.item_id,
+                    "no cheapest-listing entry for selector, skipping listing"
+                );
+                skipped_event("add_listings", "unknown_selector");
+                continue;
+            };
+            region_entry.write().await.add_listing(listing);
             if let Some(dc_selector) = dc_selector {
                 #[allow(clippy::collapsible_if)]
                 if let Some(entry) = self.cheapest_items.get(&dc_selector) {
                     entry.write().await.add_listing(listing);
                 }
             }
-            let entry = self
-                .cheapest_items
-                .get(&world_selector)
-                .expect("Unable to get world");
-            entry.write().await.add_listing(listing);
+            world_entry.write().await.add_listing(listing);
         }
     }
 
@@ -1312,22 +1561,28 @@ impl AnalyzerService {
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
-        let entry = self
-            .cheapest_items
-            .get(&AnySelector::Region(region_id))
-            .expect("Unable to get region");
-        let mut entry = entry.write().await;
-        for (listing, _) in listings.listings.iter() {
-            entry
-                .remove_listing(
-                    listing,
-                    AnySelector::Region(region_id),
-                    world_cache,
-                    ultros_db,
-                )
-                .await;
+        // A missing region only costs us the region-level removal — keep going so
+        // the datacenter and world maps still drop the listing. Leaving a sold
+        // listing in place is what makes prices read as stale.
+        if let Some(entry) = self.cheapest_items.get(&AnySelector::Region(region_id)) {
+            let mut entry = entry.write().await;
+            for (listing, _) in listings.listings.iter() {
+                entry
+                    .remove_listing(
+                        listing,
+                        AnySelector::Region(region_id),
+                        world_cache,
+                        ultros_db,
+                    )
+                    .await;
+            }
+        } else {
+            warn!(
+                region_id,
+                "no cheapest-listing entry for region, skipping region-level removal"
+            );
+            skipped_event("remove_listings", "unknown_region");
         }
-        drop(entry);
         for (listing, _) in listings.listings.iter() {
             let world_result = world_cache.lookup_selector(&AnySelector::World(listing.world_id));
             if let Ok(w) = world_result {
@@ -1351,10 +1606,18 @@ impl AnalyzerService {
                     }
                 }
             }
-            let world = self
+            let Some(world) = self
                 .cheapest_items
                 .get(&AnySelector::World(listing.world_id))
-                .expect("Unable to find world");
+            else {
+                warn!(
+                    world_id = listing.world_id,
+                    item_id = listing.item_id,
+                    "no cheapest-listing entry for world, skipping world-level removal"
+                );
+                skipped_event("remove_listings", "unknown_world");
+                continue;
+            };
             world
                 .write()
                 .await
@@ -1368,11 +1631,21 @@ impl AnalyzerService {
         }
     }
 
+    /// Records a sale into the in-RAM history.
+    ///
+    /// Only the RAM cache is keyed by world here — the caller still mirrors the
+    /// sale into ClickHouse even when this drops it, because the ClickHouse row
+    /// carries the world id as a plain column and needs no `WorldCache` lookup.
     async fn add_sale(&self, sale: &ultros_api_types::SaleHistory) {
-        let entry = self
-            .recent_sale_history
-            .get(&sale.world_id)
-            .expect("Unknown world");
+        let Some(entry) = self.recent_sale_history.get(&sale.world_id) else {
+            warn!(
+                world_id = sale.world_id,
+                item_id = sale.sold_item_id,
+                "no sale history for world, dropping sale from the in-RAM cache"
+            );
+            skipped_event("add_sale", "unknown_world");
+            return;
+        };
         entry.write().await.add_sale(sale);
     }
 
@@ -1561,6 +1834,21 @@ impl<'a> FromIterator<&'a SaleSummary> for SoldWithin {
     }
 }
 
+/// Per-item statistics derived from the bounded recent-sales buffer.
+/// Everything here has 100% coverage — no ClickHouse dependency.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SaleHistoryStats {
+    /// Lower-middle median of the in-window prices.
+    pub(crate) median: i32,
+    pub(crate) sold_within: SoldWithin,
+    /// Lowest and highest in-window price, for the card's "recent" range.
+    pub(crate) price_low: i32,
+    pub(crate) price_high: i32,
+    /// Number of sales in the buffer (not the window) — the velocity basis.
+    pub(crate) buffer_sale_count: u8,
+    pub(crate) velocity_per_day: Option<f32>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResaleStats {
     pub(crate) profit: i32,
@@ -1568,7 +1856,19 @@ pub(crate) struct ResaleStats {
     pub(crate) hq: bool,
     pub(crate) sold_within: SoldWithin,
     pub(crate) return_on_investment: f32,
+    /// What the flip costs: the cheapest region listing. Always > 0 — rows
+    /// with a nonpositive buy price are dropped by `flip_profit_and_roi`.
+    pub(crate) buy_price: i32,
+    /// Pre-tax estimate of what the item sells for, i.e. the price to list
+    /// at. `profit` is this net of the 5% cut, minus `buy_price`, so
+    /// `buy_price + profit` is what you *keep*, not what you list at.
+    pub(crate) est_sale_price: i32,
     pub(crate) world_id: i32,
+    // === Buffer-derived, 100% coverage ===
+    pub(crate) velocity_per_day: Option<f32>,
+    pub(crate) buffer_sale_count: u8,
+    pub(crate) recent_price_low: i32,
+    pub(crate) recent_price_high: i32,
     // === Phase 2 deep-scan enrichment ===
     //
     // Filled in by the second pass against ClickHouse. Pass-1 results
@@ -1590,6 +1890,13 @@ pub(crate) struct ResaleOptions {
     /// sees suspicious (`Unusable` / high-launder) rows. Used by the
     /// analyzer's "Show suspicious" toggle.
     pub(crate) include_suspicious: bool,
+    /// Reject rows selling slower than this. `None` disables the floor.
+    pub(crate) min_velocity_per_day: Option<f32>,
+    /// Reject rows with fewer than this many sales in the buffer.
+    pub(crate) min_buffer_sales: Option<u8>,
+    /// Reject rows above this ROI percentage. Covers the velocity floor's
+    /// blind spot: laundering compressed into a short burst.
+    pub(crate) max_roi: Option<f32>,
 }
 
 #[cfg(test)]
@@ -1601,37 +1908,64 @@ mod test {
         CheapestListingValue, CheapestListings, ItemKey, SALE_HISTORY_SIZE,
     };
 
-    use super::{SaleHistory, SaleSummary, SoldAmount, SoldWithin, calculate_valuation};
+    use super::{
+        SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
+    };
+
+    /// The formula here must stay identical to the Flip Finder's
+    /// `estimated_sale_price` in `ultros-app/src/routes/analyzer.rs`, which is
+    /// `median.min(world_floor)` with the bare median on an empty board.
+    #[test]
+    fn test_estimate_sale_price() {
+        // Empty board: the median, with no scarcity bump.
+        assert_eq!(estimate_sale_price(100, None), 100);
+        assert_eq!(estimate_sale_price(10, None), 10);
+
+        // Floor above the median: the median caps it.
+        assert_eq!(estimate_sale_price(100, Some(200)), 100);
+
+        // Floor below the median: the floor caps it. No undercut is applied,
+        // so this is the floor itself and not floor - 1.
+        assert_eq!(estimate_sale_price(100, Some(90)), 90);
+
+        // Floor equal to the median.
+        assert_eq!(estimate_sale_price(100, Some(100)), 100);
+
+        // Degenerate floors pass straight through; `flip_profit_and_roi` is
+        // what keeps a nonpositive *buy* price out of the results.
+        assert_eq!(estimate_sale_price(100, Some(1)), 1);
+        assert_eq!(estimate_sale_price(1, Some(1)), 1);
+        assert_eq!(estimate_sale_price(100, Some(0)), 0);
+    }
 
     #[test]
-    fn test_calculate_valuation() {
-        // Case 1: Market empty (None), use 1.2 * median
-        assert_eq!(calculate_valuation(100, None), 120);
-        assert_eq!(calculate_valuation(10, None), 12);
+    fn profit_and_roi_apply_the_market_tax() {
+        // 1000 gil sale nets 950 post-tax; buying at 500 profits 450, not 500.
+        let (profit, roi) = flip_profit_and_roi(1000, 500).expect("positive cost is kept");
+        assert_eq!(profit, 450);
+        assert!((roi - 90.0).abs() < 1e-3, "roi was {roi}");
 
-        // Case 2: Market has listing higher than median
-        // min(listing - 1, median) -> min(200 - 1, 100) -> 100
-        assert_eq!(calculate_valuation(100, Some(200)), 100);
+        // The tax alone can flip a "profitable" row negative: 1000 gil sale
+        // bought at 960 loses 10 gil once the marketboard takes its cut.
+        let (profit, roi) = flip_profit_and_roi(1000, 960).expect("positive cost is kept");
+        assert_eq!(profit, -10);
+        assert!(roi < 0.0);
+    }
 
-        // Case 3: Market has listing lower than median
-        // min(listing - 1, median) -> min(90 - 1, 100) -> 89
-        assert_eq!(calculate_valuation(100, Some(90)), 89);
+    #[test]
+    fn profit_and_roi_reject_nonpositive_cost() {
+        // A 0-gil listing used to divide by zero and serialize inf/NaN.
+        assert_eq!(flip_profit_and_roi(1_000_000, 0), None);
+        assert_eq!(flip_profit_and_roi(1_000_000, -5), None);
+        // 1 gil is the cheapest legitimate buy and must survive.
+        assert!(flip_profit_and_roi(1_000_000, 1).is_some());
+    }
 
-        // Case 4: Market has listing equal to median
-        // min(100 - 1, 100) -> 99
-        assert_eq!(calculate_valuation(100, Some(100)), 99);
-
-        // Case 5: Listing is 1 gil
-        // min(max(1, 1 - 1), median) -> min(1, 100) -> 1
-        assert_eq!(calculate_valuation(100, Some(1)), 1);
-
-        // Case 6: Listing is 2 gil
-        // min(2 - 1, 100) -> 1
-        assert_eq!(calculate_valuation(100, Some(2)), 1);
-
-        // Case 7: Listing is 1 gil, median is 1 gil
-        // min(1, 1) -> 1
-        assert_eq!(calculate_valuation(1, Some(1)), 1);
+    #[test]
+    fn roi_is_clamped_and_always_finite() {
+        let (_, roi) = flip_profit_and_roi(i32::MAX, 1).expect("positive cost is kept");
+        assert!(roi.is_finite());
+        assert_eq!(roi, super::ROI_CEILING);
     }
 
     #[test]
@@ -2158,22 +2492,27 @@ mod tests {
         };
         assert!(new_analyzer_service.try_restore_from_snapshot().await);
 
-        // Check that the data was restored correctly
-        let sale_history = new_recent_sale_history.get(&1).unwrap().read().await;
-        assert_eq!(sale_history.item_map.len(), 1);
-        let cheapest_listings = new_cheapest_items
-            .get(&AnySelector::World(1))
-            .unwrap()
-            .read()
-            .await;
-        assert_eq!(cheapest_listings.item_map.len(), 1);
+        // Check that the data was restored correctly.
+        //
+        // These guards must not outlive this block. `restore_dc_analyzer_service`
+        // below shares `new_recent_sale_history`, and restoring takes a *write*
+        // lock on it — holding a read guard across that call deadlocks the test
+        // outright, which is why nothing past this point used to run.
+        let cheapest_listings = {
+            let sale_history = new_recent_sale_history.get(&1).unwrap().read().await;
+            assert_eq!(sale_history.item_map.len(), 1);
+            let cheapest_listings = new_cheapest_items
+                .get(&AnySelector::World(1))
+                .unwrap()
+                .read()
+                .await;
+            assert_eq!(cheapest_listings.item_map.len(), 1);
+            cheapest_listings.clone()
+        };
 
         // Check Datacenter support
         let mut dc_cheapest_items = BTreeMap::new();
-        dc_cheapest_items.insert(
-            AnySelector::Datacenter(1),
-            RwLock::new(cheapest_listings.clone()),
-        );
+        dc_cheapest_items.insert(AnySelector::Datacenter(1), RwLock::new(cheapest_listings));
         let dc_cheapest_items = Arc::new(dc_cheapest_items);
         let dc_analyzer_service = AnalyzerService {
             recent_sale_history: new_recent_sale_history.clone(),
@@ -2225,5 +2564,82 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 4);
+
+        // Part 3: Snapshot Age
+        // Restoring skips the Postgres reload entirely, so an old snapshot means
+        // the analyzer serves old prices as live with nothing to show for it.
+        // Every snapshot on disk was written just now, so a "now" far enough in
+        // the future makes all of them stale without touching the clock.
+        let restore_target = AnalyzerService {
+            recent_sale_history: Arc::new(
+                [(1, RwLock::new(SaleHistory::default()))]
+                    .into_iter()
+                    .collect(),
+            ),
+            cheapest_items: Arc::new(
+                [(
+                    AnySelector::World(1),
+                    RwLock::new(CheapestListings::default()),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            initiated: Arc::new(AtomicBool::new(false)),
+            ch_writer: ultros_clickhouse::writer::Writer::disabled(),
+            ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
+        };
+        assert!(
+            restore_target
+                .try_restore_from_snapshot_at(Utc::now())
+                .await,
+            "a snapshot written seconds ago must still be restorable"
+        );
+        assert!(
+            !restore_target
+                .try_restore_from_snapshot_at(
+                    Utc::now() + MAX_SNAPSHOT_AGE + chrono::Duration::minutes(1)
+                )
+                .await,
+            "a snapshot past MAX_SNAPSHOT_AGE must be rejected so run_worker falls back to the DB"
+        );
+        assert!(
+            !restore_target
+                .try_restore_from_snapshot_at(Utc::now() - chrono::Duration::hours(1))
+                .await,
+            "a future-dated snapshot (clock skew / copied file) must be rejected, \
+             not treated as fresh because its negative age passes the max-age check"
+        );
+    }
+
+    #[test]
+    fn snapshot_age_reads_the_timestamp_out_of_the_filename() {
+        let now = chrono::DateTime::from_timestamp(10_000, 0).unwrap();
+        assert_eq!(
+            snapshot_age("snapshot-9400.bin.gz", now),
+            Some(chrono::Duration::seconds(600))
+        );
+        // Uncompressed snapshots are still readable by try_restore_from_snapshot.
+        assert_eq!(
+            snapshot_age("snapshot-10000.bin", now),
+            Some(chrono::Duration::zero())
+        );
+        // A future-dated name yields a negative age, which the restore path
+        // must reject rather than let slide under MAX_SNAPSHOT_AGE.
+        assert_eq!(
+            snapshot_age("snapshot-10600.bin.gz", now),
+            Some(chrono::Duration::seconds(-600))
+        );
+    }
+
+    /// An unreadable name must not be treated as fresh — the whole point of the
+    /// check is that "we don't know how old this is" is a reason to reload from
+    /// Postgres, not a reason to serve it.
+    #[test]
+    fn snapshot_age_rejects_names_it_cannot_parse() {
+        let now = chrono::DateTime::from_timestamp(10_000, 0).unwrap();
+        assert_eq!(snapshot_age("snapshot.bin.gz", now), None);
+        assert_eq!(snapshot_age("snapshot-notanumber.bin.gz", now), None);
+        assert_eq!(snapshot_age("some-other-file.bin.gz", now), None);
+        assert_eq!(snapshot_age("", now), None);
     }
 }

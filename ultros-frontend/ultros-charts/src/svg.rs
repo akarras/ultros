@@ -92,6 +92,52 @@ pub(crate) fn dots_path_d(points: &[(f32, f32)], r: f32) -> Option<String> {
     Some(d)
 }
 
+/// Path data drawing one axis-aligned rect per `(x, y, w, h)` tuple, as one
+/// subpath each — candle bodies and density cells batch through this so 2,000
+/// marks share one node per fill color.
+pub(crate) fn rects_path_d(rects: &[(f32, f32, f32, f32)]) -> Option<String> {
+    if rects.is_empty() {
+        return None;
+    }
+    let mut d = String::with_capacity(rects.len() * 28);
+    for (x, y, w, h) in rects {
+        let _ = write!(d, "M{x:.1} {y:.1}h{w:.1}v{h:.1}h-{w:.1}Z");
+    }
+    Some(d)
+}
+
+/// Path data drawing one vertical stroke per `(x, y1, y2)` tuple — candle
+/// wicks batch through this into a single stroked node.
+pub(crate) fn vlines_path_d(lines: &[(f32, f32, f32)]) -> Option<String> {
+    if lines.is_empty() {
+        return None;
+    }
+    let mut d = String::with_capacity(lines.len() * 20);
+    for (x, y1, y2) in lines {
+        let _ = write!(d, "M{x:.1} {y1:.1}V{y2:.1}");
+    }
+    Some(d)
+}
+
+/// Closed polygon filling the area between two curves of equal length:
+/// forward along `upper`, back along `lower`. The ribbon primitive for
+/// range mode — `Node::Area` can only fill to a flat baseline.
+pub(crate) fn band_path_d(upper: &[(f32, f32)], lower: &[(f32, f32)]) -> Option<String> {
+    if upper.len() < 2 || upper.len() != lower.len() {
+        return None;
+    }
+    let mut d = String::with_capacity((upper.len() + lower.len()) * 12);
+    for (i, (x, y)) in upper.iter().enumerate() {
+        let cmd = if i == 0 { 'M' } else { 'L' };
+        let _ = write!(d, "{cmd}{x:.1} {y:.1}");
+    }
+    for (x, y) in lower.iter().rev() {
+        let _ = write!(d, "L{x:.1} {y:.1}");
+    }
+    d.push('Z');
+    Some(d)
+}
+
 fn escape_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -379,5 +425,31 @@ mod tests {
         assert_eq!(d.matches('M').count(), 2, "one move per dot: {d}");
         assert!(d.starts_with("M8.0 20.0a2.0,2.0"), "{d}");
         assert_eq!(dots_path_d(&[], 2.0), None);
+    }
+
+    #[test]
+    fn rects_path_batches_and_rejects_empty() {
+        assert_eq!(rects_path_d(&[]), None);
+        let d = rects_path_d(&[(1.0, 2.0, 3.0, 4.0), (5.0, 6.0, 7.0, 8.0)]).unwrap();
+        assert_eq!(d, "M1.0 2.0h3.0v4.0h-3.0ZM5.0 6.0h7.0v8.0h-7.0Z");
+    }
+
+    #[test]
+    fn vlines_path_batches_and_rejects_empty() {
+        assert_eq!(vlines_path_d(&[]), None);
+        let d = vlines_path_d(&[(1.0, 2.0, 9.0), (4.0, 5.0, 6.0)]).unwrap();
+        assert_eq!(d, "M1.0 2.0V9.0M4.0 5.0V6.0");
+    }
+
+    #[test]
+    fn band_path_closes_upper_and_lower_curves() {
+        assert_eq!(band_path_d(&[], &[]), None);
+        assert_eq!(
+            band_path_d(&[(0.0, 1.0)], &[(0.0, 2.0)]),
+            None,
+            "a band needs 2+ points"
+        );
+        let d = band_path_d(&[(0.0, 1.0), (10.0, 2.0)], &[(0.0, 5.0), (10.0, 6.0)]).unwrap();
+        assert_eq!(d, "M0.0 1.0L10.0 2.0L10.0 6.0L0.0 5.0Z");
     }
 }

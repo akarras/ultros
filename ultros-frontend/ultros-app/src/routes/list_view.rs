@@ -1,5 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashSet};
+use std::fmt;
+use std::str::FromStr;
 
 use crate::global_state::xiv_data::tracked_data;
 
@@ -30,20 +32,22 @@ use crate::components::{
     loading::*,
     make_place_importer::*,
     meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
+    modal::Modal,
     realtime_status::RealtimeStatus,
     tooltip::*,
 };
 use crate::i18n::*;
+use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use ultros_api_types::websocket::{
     FilterPredicate, ServerClient, SocketMessageType, is_list_market_update_relevant,
 };
+use xiv_gen::ItemId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
     None,
-    Item,
-    // Recipe is now handled by a modal
+    // Recipe and item search are now handled by modals
     MakePlace,
 }
 
@@ -71,11 +75,185 @@ fn filter_excluded_worlds(
         .collect()
 }
 
+/// Comma-separated list of world ids for a query param. Held sorted and
+/// deduped so encoding is canonical and a URL round-trips exactly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IdList(Vec<i32>);
+
+impl IdList {
+    fn from_set(set: HashSet<i32>) -> Self {
+        let mut ids: Vec<i32> = set.into_iter().collect();
+        ids.sort_unstable();
+        Self(ids)
+    }
+}
+
+impl FromStr for IdList {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut ids: Vec<i32> = s
+            .split(',')
+            .filter_map(|part| part.trim().parse().ok())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(Self(ids))
+    }
+}
+
+impl fmt::Display for IdList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, id) in self.0.iter().enumerate() {
+            if index > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{id}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Comma-separated list of datacenter names for a query param. Sorted and
+/// deduped for the same canonical-encoding reason as [`IdList`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NameList(Vec<String>);
+
+impl NameList {
+    fn from_set(set: HashSet<String>) -> Self {
+        let mut names: Vec<String> = set.into_iter().collect();
+        names.sort_unstable();
+        Self(names)
+    }
+}
+
+impl FromStr for NameList {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut names: Vec<String> = s
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        Ok(Self(names))
+    }
+}
+
+impl fmt::Display for NameList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, name) in self.0.iter().enumerate() {
+            if index > 0 {
+                write!(f, ",")?;
+            }
+            write!(f, "{name}")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SortKey {
+    Name,
+    Price,
+    Acquired,
+}
+
+/// Sort order for the list item table, encoded in the `sort` query param as
+/// `name`, `name-desc`, `price`, `price-desc`, `acquired`, or `acquired-desc`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SortSpec {
+    key: SortKey,
+    descending: bool,
+}
+
+impl FromStr for SortSpec {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (base, descending) = match s.strip_suffix("-desc") {
+            Some(base) => (base, true),
+            None => (s, false),
+        };
+        let key = match base {
+            "name" => SortKey::Name,
+            "price" => SortKey::Price,
+            "acquired" => SortKey::Acquired,
+            _ => return Err(()),
+        };
+        Ok(SortSpec { key, descending })
+    }
+}
+
+impl fmt::Display for SortSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let base = match self.key {
+            SortKey::Name => "name",
+            SortKey::Price => "price",
+            SortKey::Acquired => "acquired",
+        };
+        write!(f, "{base}")?;
+        if self.descending {
+            write!(f, "-desc")?;
+        }
+        Ok(())
+    }
+}
+
+fn remaining_quantity(item: &ListItem) -> i32 {
+    let quantity = item.quantity.unwrap_or(1).max(1);
+    quantity.saturating_sub(item.acquired.unwrap_or(0).clamp(0, quantity))
+}
+
+/// Cheapest per-unit price among the listings that match the item's quality
+/// requirement — mirrors what the price column displays.
+fn cheapest_price_per_unit(item: &ListItem, listings: &[ActiveListing]) -> Option<i32> {
+    listings
+        .iter()
+        .filter(|listing| item.hq.map(|hq| listing.hq == hq).unwrap_or(true))
+        .map(|listing| listing.price_per_unit)
+        .min()
+}
+
+/// Deterministic, total ordering: every comparison falls back to the unique
+/// list-item id, so equal keys can never surface backend (HashMap) order in
+/// the DOM — that would be an SSR/CSR hydration mismatch.
+fn sort_list_items<'a>(
+    items: &mut [(ListItem, Vec<ActiveListing>)],
+    spec: SortSpec,
+    name_of: impl Fn(i32) -> Option<&'a str>,
+) {
+    items.sort_by(|(a, a_listings), (b, b_listings)| {
+        let ordering = match spec.key {
+            SortKey::Name => {
+                let a_name = name_of(a.item_id).unwrap_or_default();
+                let b_name = name_of(b.item_id).unwrap_or_default();
+                a_name.cmp(b_name)
+            }
+            SortKey::Price => cheapest_price_per_unit(a, a_listings)
+                .unwrap_or(i32::MAX)
+                .cmp(&cheapest_price_per_unit(b, b_listings).unwrap_or(i32::MAX)),
+            SortKey::Acquired => remaining_quantity(a).cmp(&remaining_quantity(b)),
+        };
+        let ordering = if spec.descending {
+            ordering.reverse()
+        } else {
+            ordering
+        };
+        ordering.then_with(|| a.id.cmp(&b.id))
+    });
+}
+
 #[component]
 fn WorldExclusionControl(
     items: Vec<(ListItem, Vec<ActiveListing>)>,
-    excluded_worlds: RwSignal<HashSet<i32>>,
+    #[prop(into)] excluded_worlds: Signal<HashSet<i32>>,
+    #[prop(into)] set_excluded_worlds: Callback<HashSet<i32>>,
 ) -> impl IntoView {
+    let i18n = use_i18n();
     let world_data = use_context::<LocalWorldData>()
         .expect("LocalWorldData should be available")
         .0
@@ -111,7 +289,7 @@ fn WorldExclusionControl(
     view! {
         <div class="flex flex-wrap items-center gap-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2 text-sm">
             <label class="font-semibold text-[color:var(--color-text-muted)]" for="list-world-exclusion">
-                "Exclude worlds"
+                {t!(i18n, list_view_exclude_worlds)}
             </label>
             <select
                 id="list-world-exclusion"
@@ -119,17 +297,17 @@ fn WorldExclusionControl(
                 on:change=move |event| {
                     let value = event_target_value(&event);
                     if let Ok(world_id) = value.parse::<i32>() {
-                        excluded_worlds.update(|set| {
-                            set.insert(world_id);
-                        });
+                        let mut set = excluded_worlds.get_untracked();
+                        set.insert(world_id);
+                        set_excluded_worlds.run(set);
                     }
                 }
             >
                 <option value="">{move || {
                     if available_to_add.with(|worlds| worlds.is_empty()) {
-                        "No worlds left".to_string()
+                        t_string!(i18n, list_view_no_worlds_left).to_string()
                     } else {
-                        "Add world".to_string()
+                        t_string!(i18n, list_view_add_world).to_string()
                     }
                 }}</option>
                 <For
@@ -155,16 +333,18 @@ fn WorldExclusionControl(
                         }
                         key=|(world_id, _)| *world_id
                         children=move |(world_id, name)| {
-                            let aria_label = format!("Remove {name} world exclusion");
+                            let aria_label =
+                                t_string!(i18n, list_view_remove_world_exclusion_aria, name = name.clone())
+                                    .to_string();
                             view! {
                                 <button
                                     type="button"
                                     class="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text)] hover:border-[color:var(--color-outline-strong)]"
                                     aria-label=aria_label
                                     on:click=move |_| {
-                                        excluded_worlds.update(|set| {
-                                            set.remove(&world_id);
-                                        });
+                                        let mut set = excluded_worlds.get_untracked();
+                                        set.remove(&world_id);
+                                        set_excluded_worlds.run(set);
                                     }
                                 >
                                     <span>{name}</span>
@@ -176,9 +356,9 @@ fn WorldExclusionControl(
                     <button
                         type="button"
                         class="btn-ghost px-2 py-1 text-xs"
-                        on:click=move |_| excluded_worlds.update(|set| set.clear())
+                        on:click=move |_| set_excluded_worlds.run(HashSet::new())
                     >
-                        "Clear"
+                        {t!(i18n, list_view_clear_world_exclusions)}
                     </button>
                 </div>
             </Show>
@@ -213,6 +393,21 @@ pub fn ListView() -> impl IntoView {
     let edit_list_action =
         Action::new(move |list: &ultros_api_types::list::List| edit_list(list.clone()));
 
+    let bulk_pending =
+        Signal::derive(move || delete_items.pending().get() || edit_items_hq.pending().get());
+    let bulk_error = Signal::derive(move || {
+        delete_items
+            .value()
+            .get()
+            .and_then(|result| result.err().map(|e| e.to_string()))
+            .or_else(|| {
+                edit_items_hq
+                    .value()
+                    .get()
+                    .and_then(|result| result.err().map(|e| e.to_string()))
+            })
+    });
+
     // We need to trigger refetch when items are added via modal.
     // We can use a signal for versioning external updates.
     let (external_update_version, set_external_update_version) = signal(0);
@@ -220,8 +415,6 @@ pub fn ListView() -> impl IntoView {
     let (realtime_status, set_realtime_status) = signal("connecting".to_string());
     let (last_update_at, set_last_update_at) =
         signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
-    #[allow(unused_variables)]
-    let (clock_tick, set_clock_tick) = signal(0_u32);
 
     let list_view = Resource::new(
         move || {
@@ -322,27 +515,55 @@ pub fn ListView() -> impl IntoView {
         list_market_subscription.update_value(|sub| *sub = None);
     });
 
-    #[cfg(not(feature = "ssr"))]
-    {
-        use gloo_timers::callback::Interval;
-        let interval = Interval::new(1_000, move || {
-            set_clock_tick.update(|n| *n = n.wrapping_add(1));
-        });
-        interval.forget();
-    }
-
     let (menu, set_menu) = signal(MenuState::None);
+    let (item_modal_open, set_item_modal_open) = signal(false);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
-    let (buying_view, set_buying_view) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
     let (settings_open, set_settings_open) = signal(false);
     let (rename_open, set_rename_open) = signal(false);
     let (rename_value, set_rename_value) = signal(String::new());
+    let (confirm_bulk_delete, set_confirm_bulk_delete) = signal(false);
 
     let edit_list_mode = RwSignal::new(false);
     let selected_items = RwSignal::new(HashSet::new());
-    let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
-    let excluded_worlds = RwSignal::new(HashSet::<i32>::new());
+
+    // Shopping-view state lives in the URL so a shared link reproduces the
+    // sender's exact view. Query params resolve on the server too, so SSR
+    // renders the same view a hydrated client shows.
+    let (buying_view_param, set_buying_view_param) = filter_query_signal::<bool>("buy");
+    let buying_view = Memo::new(move |_| buying_view_param.get().unwrap_or(false));
+
+    let (excluded_worlds_param, set_excluded_worlds_param) =
+        filter_query_signal::<IdList>("excluded-worlds");
+    let excluded_worlds = Memo::new(move |_| {
+        excluded_worlds_param
+            .get()
+            .map(|list| list.0.into_iter().collect::<HashSet<i32>>())
+            .unwrap_or_default()
+    });
+    let set_excluded_worlds = Callback::new(move |set: HashSet<i32>| {
+        set_excluded_worlds_param.set((!set.is_empty()).then(|| IdList::from_set(set)));
+    });
+
+    let (excluded_datacenters_param, set_excluded_datacenters_param) =
+        filter_query_signal::<NameList>("excluded-datacenters");
+    let excluded_datacenters = Memo::new(move |_| {
+        excluded_datacenters_param
+            .get()
+            .map(|list| list.0.into_iter().collect::<HashSet<String>>())
+            .unwrap_or_default()
+    });
+    let set_excluded_datacenters = Callback::new(move |set: HashSet<String>| {
+        set_excluded_datacenters_param.set((!set.is_empty()).then(|| NameList::from_set(set)));
+    });
+
+    let (hide_acquired_param, set_hide_acquired_param) =
+        filter_query_signal::<bool>("hide-acquired");
+    let hide_acquired = Memo::new(move |_| hide_acquired_param.get().unwrap_or(false));
+
+    let (sort_spec, set_sort_spec) = filter_query_signal::<SortSpec>("sort");
+
+    let game_items = &tracked_data().items;
 
     type RowSnapshot = std::collections::HashMap<i32, (Option<i32>, Option<i32>)>;
     let recently_changed: RwSignal<HashSet<i32>> = RwSignal::new(HashSet::new());
@@ -435,13 +656,8 @@ pub fn ListView() -> impl IntoView {
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
                                     <button
                                         class="btn-primary"
-                                        class:active=move || menu() == MenuState::Item
-                                        on:click=move |_| set_menu(
-                                            match menu() {
-                                                MenuState::Item => MenuState::None,
-                                                _ => MenuState::Item,
-                                            },
-                                        )
+                                        class:active=move || item_modal_open()
+                                        on:click=move |_| set_item_modal_open(true)
                                     >
                                         <Icon icon=i::BiPlusRegular />
                                         <span>{t!(i18n, list_view_add_item)}</span>
@@ -493,7 +709,10 @@ pub fn ListView() -> impl IntoView {
                                 class:bg-brand-900=buying_view
                                 class:border-brand-500=buying_view
                                 class:active=buying_view
-                                on:click=move |_| set_buying_view.update(|v| *v = !*v)
+                                on:click=move |_| {
+                                    let next = !buying_view.get_untracked();
+                                    set_buying_view_param.set(next.then_some(true));
+                                }
                             >
                                 <Icon icon=i::BiCartRegular />
                                 <span>{t!(i18n, list_view_purchasing_view)}</span>
@@ -527,6 +746,7 @@ pub fn ListView() -> impl IntoView {
                                             <WorldExclusionControl
                                                 items=items
                                                 excluded_worlds=excluded_worlds
+                                                set_excluded_worlds=set_excluded_worlds
                                             />
                                         }
                                     })
@@ -558,14 +778,11 @@ pub fn ListView() -> impl IntoView {
                                                 let toggle = {
                                                     let name = dc.name.clone();
                                                     move |_| {
-                                                        excluded_datacenters
-                                                            .update(|set| {
-                                                                if set.contains(&name) {
-                                                                    set.remove(&name);
-                                                                } else {
-                                                                    set.insert(name.clone());
-                                                                }
-                                                            })
+                                                        let mut set = excluded_datacenters.get_untracked();
+                                                        if !set.remove(&name) {
+                                                            set.insert(name.clone());
+                                                        }
+                                                        set_excluded_datacenters.run(set);
                                                     }
                                                 };
                                                 view! {
@@ -587,6 +804,44 @@ pub fn ListView() -> impl IntoView {
                                 }
                             }}
                         </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <label
+                            class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]"
+                            for="list-sort-select"
+                        >
+                            {t!(i18n, list_view_sort_label)}
+                        </label>
+                        <select
+                            id="list-sort-select"
+                            class="input h-9 py-1 text-sm"
+                            prop:value=move || {
+                                sort_spec.get().map(|s| s.to_string()).unwrap_or_default()
+                            }
+                            on:change=move |event| {
+                                set_sort_spec.set(event_target_value(&event).parse::<SortSpec>().ok());
+                            }
+                        >
+                            <option value="">{t!(i18n, list_view_sort_default)}</option>
+                            <option value="name">{t!(i18n, list_view_sort_name_asc)}</option>
+                            <option value="name-desc">{t!(i18n, list_view_sort_name_desc)}</option>
+                            <option value="price">{t!(i18n, list_view_sort_price_asc)}</option>
+                            <option value="price-desc">{t!(i18n, list_view_sort_price_desc)}</option>
+                            <option value="acquired">{t!(i18n, list_view_sort_acquired_asc)}</option>
+                            <option value="acquired-desc">{t!(i18n, list_view_sort_acquired_desc)}</option>
+                        </select>
+                        <button
+                            type="button"
+                            class="btn-secondary px-3 py-1 text-xs"
+                            class:bg-brand-950=hide_acquired
+                            class:active=hide_acquired
+                            on:click=move |_| {
+                                let next = !hide_acquired.get_untracked();
+                                set_hide_acquired_param.set(next.then_some(true));
+                            }
+                        >
+                            {t!(i18n, list_view_hide_acquired)}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -619,148 +874,148 @@ pub fn ListView() -> impl IntoView {
                 }}
             </Show>
 
-            {move || match menu() {
-                MenuState::Item => {
-                    Some(
-                        Either::Left({
-                            let (search, set_search) = signal("".to_string());
-                            let items = &tracked_data().items;
-                            let item_search = move || {
-                                search
-                                    .with(|s| {
-                                        let s_lower = s.to_lowercase();
-                                        let mut score = items
-                                            .iter()
-                                            .filter(|(_, i)| i.item_search_category > 0)
-                                            .filter(|_| !s.is_empty())
-                                            .filter_map(|(id, i)| {
-                                                if i.name.to_lowercase().contains(&s_lower) {
-                                                    Some((id, i))
-                                                } else {
-                                                    None
+            <Show when=item_modal_open>
+                {move || {
+                    let (search, set_search) = signal("".to_string());
+                    let items = &tracked_data().items;
+                    let item_search = move || {
+                        search
+                            .with(|s| {
+                                let s_lower = s.to_lowercase();
+                                let mut score = items
+                                    .iter()
+                                    .filter(|(_, i)| i.item_search_category > 0)
+                                    .filter(|_| !s.is_empty())
+                                    .filter_map(|(id, i)| {
+                                        if i.name.to_lowercase().contains(&s_lower) {
+                                            Some((id, i))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+                                // ⚡ Bolt Optimization: Replace stable sort and vector reallocation
+                                // with in-place unstable sort and truncation to avoid O(N) allocation
+                                // during hot search filter renders.
+                                score
+                                    .sort_unstable_by_key(|(_, i)| (
+                                        Reverse(i.level_item),
+                                    ));
+                                score.truncate(100);
+                                score
+                            })
+                    };
+                    let adding = add_item.pending();
+                    let add_result = add_item.value();
+                    view! {
+                        <Modal set_visible=set_item_modal_open max_width="max-w-[90vw] w-[90vw] sm:w-[640px]">
+                            <div class="flex flex-col gap-4 h-[70vh]">
+                                <div class="flex flex-col gap-2 shrink-0">
+                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_add_item_to_list)}</h2>
+                                    <input
+                                        class="input w-full"
+                                        placeholder=t_string!(i18n, list_view_search_items).to_string()
+                                        aria-label=t_string!(i18n, list_view_search_items).to_string()
+                                        autofocus
+                                        prop:value=search
+                                        on:input=move |input| set_search(event_target_value(&input))
+                                    />
+                                    {move || add_result.get().map(|v| {
+                                        let text = match v {
+                                            Ok(()) => t_string!(i18n, list_view_added_to_list_success).to_string(),
+                                            Err(e) => format!("{} {e}", t_string!(i18n, list_view_failed_to_add)),
+                                        };
+                                        view! { <div class="text-sm text-[color:var(--color-text-muted)]">{text}</div> }.into_view()
+                                    })}
+                                </div>
+                                <div class="grid gap-2 flex-1 min-h-0 content-start overflow-y-auto pr-1">
+                                    {move || {
+                                        item_search()
+                                            .into_iter()
+                                            .map(move |(id, item)| {
+                                                let (quantity, set_quantity) = signal(1);
+                                                let read_input_quantity = move |input| {
+                                                    if let Ok(quantity) = event_target_value(&input).parse() {
+                                                        set_quantity(quantity)
+                                                    }
+                                                };
+                                                view! {
+                                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-2 flex flex-col gap-3 sm:flex-row sm:items-center">
+                                                        <div class="flex min-w-0 flex-1 items-center gap-3">
+                                                            <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
+                                                            <span class="min-w-0 truncate font-semibold">{item.name.as_str()}</span>
+                                                        </div>
+                                                        <div class="flex items-center gap-2">
+                                                            <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_qty)}</label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                class="input w-20"
+                                                                on:input=read_input_quantity
+                                                                prop:value=quantity
+                                                            />
+                                                            <button
+                                                                class="btn-primary"
+                                                                disabled=adding
+                                                                on:click=move |_| {
+                                                                    let item = ListItem {
+                                                                        item_id: id.0,
+                                                                        list_id: params
+                                                                            .with(|p| {
+                                                                                p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok())
+                                                                            })
+                                                                            .unwrap_or_default(),
+                                                                        quantity: Some(quantity()),
+                                                                        ..Default::default()
+                                                                    };
+                                                                    add_item.dispatch(item);
+                                                                }
+                                                            >
+                                                                {move || if adding() {
+                                                                    Either::Left(view! { <span>{t!(i18n, list_view_adding)}</span> })
+                                                                } else {
+                                                                    Either::Right(view! {
+                                                                        <>
+                                                                            <Icon icon=i::BiPlusRegular />
+                                                                            <span>{t!(i18n, list_view_add)}</span>
+                                                                        </>
+                                                                    })
+                                                                }}
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                 }
                                             })
-                                            .collect::<Vec<_>>();
-                                        // ⚡ Bolt Optimization: Replace stable sort and vector reallocation
-                                        // with in-place unstable sort and truncation to avoid O(N) allocation
-                                        // during hot search filter renders.
-                                        score
-                                            .sort_unstable_by_key(|(_, i)| (
-                                                Reverse(i.level_item),
-                                            ));
-                                        score.truncate(100);
-                                        score
-                                    })
-                            };
-                            let adding = add_item.pending();
-                            let add_result = add_item.value();
-                            view! {
-                                <section class="panel rounded-lg p-4 space-y-4">
-                                    <div class="flex flex-col gap-2">
-                                        <label class="text-sm font-semibold text-[color:var(--brand-fg)]">{t!(i18n, list_view_add_item_to_list)}</label>
-                                        <input
-                                            class="input w-full"
-                                            placeholder=t_string!(i18n, list_view_search_items).to_string()
-                                            prop:value=search
-                                            on:input=move |input| set_search(event_target_value(&input))
-                                        />
-                                        {move || add_result.get().map(|v| {
-                                            let text = match v {
-                                                Ok(()) => t_string!(i18n, list_view_added_to_list_success).to_string(),
-                                                Err(e) => format!("{} {e}", t_string!(i18n, list_view_failed_to_add)),
-                                            };
-                                            view! { <div class="text-sm text-[color:var(--color-text-muted)]">{text}</div> }.into_view()
-                                        })}
-                                    </div>
-                                    <div class="grid gap-2 max-h-96 overflow-y-auto pr-1">
-                                        {move || {
-                                            item_search()
-                                                .into_iter()
-                                                .map(move |(id, item)| {
-                                                    let (quantity, set_quantity) = signal(1);
-                                                    let read_input_quantity = move |input| {
-                                                        if let Ok(quantity) = event_target_value(&input).parse() {
-                                                            set_quantity(quantity)
-                                                        }
-                                                    };
-                                                    view! {
-                                                        <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-2 flex flex-col gap-3 sm:flex-row sm:items-center">
-                                                            <div class="flex min-w-0 flex-1 items-center gap-3">
-                                                                <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
-                                                                <span class="min-w-0 truncate font-semibold">{item.name.as_str()}</span>
-                                                            </div>
-                                                            <div class="flex items-center gap-2">
-                                                                <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_qty)}</label>
-                                                                <input
-                                                                    type="number"
-                                                                    min="1"
-                                                                    class="input w-20"
-                                                                    on:input=read_input_quantity
-                                                                    prop:value=quantity
-                                                                />
-                                                                <button
-                                                                    class="btn-primary"
-                                                                    disabled=adding
-                                                                    on:click=move |_| {
-                                                                        let item = ListItem {
-                                                                            item_id: id.0,
-                                                                            list_id: params
-                                                                                .with(|p| {
-                                                                                    p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok())
-                                                                                })
-                                                                                .unwrap_or_default(),
-                                                                            quantity: Some(quantity()),
-                                                                            ..Default::default()
-                                                                        };
-                                                                        add_item.dispatch(item);
-                                                                    }
-                                                                >
-                                                                    {move || if adding() {
-                                                                        Either::Left(view! { <span>{t!(i18n, list_view_adding)}</span> })
-                                                                    } else {
-                                                                        Either::Right(view! {
-                                                                            <>
-                                                                                <Icon icon=i::BiPlusRegular />
-                                                                                <span>{t!(i18n, list_view_add)}</span>
-                                                                            </>
-                                                                        })
-                                                                    }}
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    }
-                                                })
-                                                .collect::<Vec<_>>()
-                                        }}
+                                            .collect::<Vec<_>>()
+                                    }}
 
-                                    </div>
-                                </section>
-                            }
-                        }),
-                    )
-                }
+                                </div>
+                            </div>
+                        </Modal>
+                    }
+                }}
+            </Show>
+
+            {move || match menu() {
                 MenuState::None => None,
-                // Removed MenuState::Recipe block
                 MenuState::MakePlace => {
                     Some(
-                        Either::Right({
-                            view! {
-                                <section class="panel rounded-lg p-4">
-                                    <MakePlaceImporter
-                                        list_id=Signal::derive(move || {
-                                            params
-                                                .with(|p| {
-                                                    p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
-                                                })
-                                                .flatten()
-                                                .unwrap_or_default()
-                                        })
+                        view! {
+                            <section class="panel rounded-lg p-4">
+                                <MakePlaceImporter
+                                    list_id=Signal::derive(move || {
+                                        params
+                                            .with(|p| {
+                                                p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
+                                            })
+                                            .flatten()
+                                            .unwrap_or_default()
+                                    })
 
-                                        refresh=move || { list_view.refetch() }
-                                    />
-                                </section>
-                            }
-                        }),
+                                    refresh=move || { list_view.refetch() }
+                                />
+                            </section>
+                        },
                     )
                 }
             }}
@@ -807,7 +1062,15 @@ pub fn ListView() -> impl IntoView {
                                         &excluded_worlds.get(),
                                     );
                                     let filtered_items_for_buying = filtered_item_snapshot.clone();
-                                    let filtered_items_for_rows = filtered_item_snapshot.clone();
+                                    let mut filtered_items_for_rows = filtered_item_snapshot.clone();
+                                    if hide_acquired.get() {
+                                        filtered_items_for_rows.retain(|(item, _)| remaining_quantity(item) > 0);
+                                    }
+                                    if let Some(spec) = sort_spec.get() {
+                                        sort_list_items(&mut filtered_items_for_rows, spec, |item_id| {
+                                            game_items.get(&ItemId(item_id)).map(|item| item.name.as_str())
+                                        });
+                                    }
                                     let filtered_items_for_summary = filtered_item_snapshot.clone();
 
                                     if buying_view() {
@@ -826,7 +1089,7 @@ pub fn ListView() -> impl IntoView {
                                                                     last_update=last_update_at
                                                                 />
                                                                 <span class="rounded-lg border border-[color:var(--color-outline)] px-3 py-1 text-[color:var(--color-text-muted)]">
-                                                                    {format!("{remaining_items} remaining")}
+                                                                    {t!(i18n, list_view_count_remaining, count = remaining_items)}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -928,7 +1191,7 @@ pub fn ListView() -> impl IntoView {
                                                                         Either::Left(view! {
                                                                             <div
                                                                                 class="flex min-w-0 flex-1 flex-col gap-1"
-                                                                                aria-label=format!("Overall progress: {total_acquired} of {total_quantity} units acquired")
+                                                                                aria-label=t_string!(i18n, list_view_units_acquired_aria, acquired = total_acquired, quantity = total_quantity).to_string()
                                                                             >
                                                                                 <span class="text-[color:var(--color-text-muted)]">
                                                                                     {t!(i18n, list_view_units_acquired_progress, acquired = total_acquired, quantity = total_quantity, pct = pct)}
@@ -959,7 +1222,7 @@ pub fn ListView() -> impl IntoView {
                                                                     <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, list_view_remaining)}</div>
                                                                 </div>
                                                                 <Tooltip tooltip_text=Signal::derive(move || {
-                                                                    format!("{acquired_items} of {total_items} items fully acquired")
+                                                                    t_string!(i18n, list_view_acquired_items_tooltip, count = acquired_items, total = total_items).to_string()
                                                                 })>
                                                                     <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2">
                                                                         <div class="text-lg font-bold">{acquired_items}</div>
@@ -986,16 +1249,17 @@ pub fn ListView() -> impl IntoView {
                                                                     <Icon icon=i::BsPencilFill />
                                                                     <span>{t!(i18n, list_view_bulk_edit)}</span>
                                                                 </button>
-                                                                <div class:hidden=move || !edit_list_mode()>
+                                                                <div
+                                                                    class="flex flex-wrap items-center gap-2"
+                                                                    class:hidden=move || !edit_list_mode()
+                                                                >
                                                                     <button
                                                                         class="btn-danger"
+                                                                        disabled=bulk_pending
                                                                         on:click=move |_| {
-                                                                            let items = selected_items
-                                                                                .with_untracked(|s| {
-                                                                                    s.iter().copied().collect::<Vec<_>>()
-                                                                                });
-                                                                            selected_items.update(|i| i.clear());
-                                                                            delete_items.dispatch(items);
+                                                                            if !selected_items.with_untracked(|s| s.is_empty()) {
+                                                                                set_confirm_bulk_delete(true);
+                                                                            }
                                                                         }
                                                                     >
                                                                         <Icon icon=i::BiTrashSolid />
@@ -1003,6 +1267,7 @@ pub fn ListView() -> impl IntoView {
                                                                     </button>
                                                                     <button
                                                                         class="btn-secondary"
+                                                                        disabled=bulk_pending
                                                                         on:click=move |_| {
                                                                             let items = selected_items
                                                                                 .with_untracked(|s| {
@@ -1015,6 +1280,7 @@ pub fn ListView() -> impl IntoView {
                                                                     </button>
                                                                     <button
                                                                         class="btn-secondary"
+                                                                        disabled=bulk_pending
                                                                         on:click=move |_| {
                                                                             let items = selected_items
                                                                                 .with_untracked(|s| {
@@ -1025,6 +1291,27 @@ pub fn ListView() -> impl IntoView {
                                                                     >
                                                                         <span>{t!(i18n, list_view_bulk_any_quality)}</span>
                                                                     </button>
+                                                                    <Show when=move || bulk_pending.get()>
+                                                                        <span class="flex items-center gap-2 text-sm text-[color:var(--color-text-muted)]">
+                                                                            <Loading />
+                                                                            {t!(i18n, list_view_bulk_pending)}
+                                                                        </span>
+                                                                    </Show>
+                                                                    {move || {
+                                                                        (!bulk_pending.get())
+                                                                            .then(|| bulk_error.get())
+                                                                            .flatten()
+                                                                            .map(|error| {
+                                                                                view! {
+                                                                                    <span class="text-sm text-red-200">
+                                                                                        {format!(
+                                                                                            "{} {error}",
+                                                                                            t_string!(i18n, list_view_bulk_failed),
+                                                                                        )}
+                                                                                    </span>
+                                                                                }
+                                                                            })
+                                                                    }}
                                                                 </div>
                                                             </div>
                                                             <div
@@ -1054,6 +1341,45 @@ pub fn ListView() -> impl IntoView {
                                                                 </button>
                                                             </div>
                                                         </div>
+                                                        <Show when=confirm_bulk_delete>
+                                                            <Modal set_visible=set_confirm_bulk_delete>
+                                                                <div class="flex flex-col gap-4">
+                                                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                                                                        {t!(i18n, list_view_bulk_delete_confirm_title)}
+                                                                    </h2>
+                                                                    <p class="text-sm text-[color:var(--color-text-muted)]">
+                                                                        {move || t!(
+                                                                            i18n,
+                                                                            list_view_bulk_delete_confirm_body,
+                                                                            count = selected_items.with(|s| s.len()),
+                                                                        )}
+                                                                    </p>
+                                                                    <div class="flex justify-end gap-2">
+                                                                        <button
+                                                                            class="btn-secondary"
+                                                                            on:click=move |_| set_confirm_bulk_delete(false)
+                                                                        >
+                                                                            {t!(i18n, cancel)}
+                                                                        </button>
+                                                                        <button
+                                                                            class="btn-danger"
+                                                                            on:click=move |_| {
+                                                                                let items = selected_items
+                                                                                    .with_untracked(|s| {
+                                                                                        s.iter().copied().collect::<Vec<_>>()
+                                                                                    });
+                                                                                selected_items.update(|i| i.clear());
+                                                                                delete_items.dispatch(items);
+                                                                                set_confirm_bulk_delete(false);
+                                                                            }
+                                                                        >
+                                                                            <Icon icon=i::BiTrashSolid />
+                                                                            <span>{t!(i18n, list_view_delete)}</span>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </Modal>
+                                                        </Show>
                                                     </Show>
 
                                                     <div class="overflow-x-auto">
@@ -1065,7 +1391,7 @@ pub fn ListView() -> impl IntoView {
                                                                         class="w-12 px-3 py-3 text-left"
                                                                         class:hidden=move || !edit_list_mode()
                                                                     >
-                                                                        "Select"
+                                                                        {t!(i18n, list_view_select_column)}
                                                                     </th>
                                                                     <th scope="col" class="w-16 px-3 py-3 text-left">{t!(i18n, list_view_hq)}</th>
                                                                     <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_item)}</th>
@@ -1124,12 +1450,6 @@ pub fn ListView() -> impl IntoView {
                             Err(e) => {
                                 Either::Right(
                                     view! {
-                                        // TODO full table?
-                                        // let price_view = items.iter().flat_map(|(list, listings): &(ListItem, Vec<ActiveListing>)| listings.iter().map(|listing| {
-                                        // ShoppingListRow { item_id: ItemKey(ItemId(list.item_id)), amount: listing.quantity, lowest_price: listing.price_per_unit, lowest_price_world: listing.world_id.to_string(), lowest_price_datacenter: "TODO".to_string() }
-                                        // })).collect::<Vec<_>>();
-                                        // <TableContent rows=price_view on_change=move |_| {} />
-
                                         <div class="panel rounded-lg p-4">{format!("{}\n{e}", t_string!(i18n, list_view_failed_to_get_items))}</div>
                                     },
                                 )
@@ -1179,7 +1499,7 @@ fn ActivityFeed(
                             Ok(rows) if rows.is_empty() => {
                                 view! {
                                     <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-4 text-sm text-[color:var(--color-text-muted)]">
-                                        "No list activity yet."
+                                        {t!(i18n, list_view_no_activity)}
                                     </div>
                                 }
                                     .into_any()
@@ -1288,6 +1608,194 @@ mod tests {
         assert_eq!(
             filtered.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
             vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn id_list_round_trips_through_query_param_encoding() {
+        let parsed: IdList = "35,33,34".parse().unwrap();
+        assert_eq!(parsed, IdList(vec![33, 34, 35]));
+        assert_eq!(parsed.to_string(), "33,34,35");
+        assert_eq!(parsed.to_string().parse::<IdList>().unwrap(), parsed);
+    }
+
+    #[test]
+    fn id_list_skips_junk_and_dedupes() {
+        let parsed: IdList = "33,,junk,34, 33 ".parse().unwrap();
+        assert_eq!(parsed, IdList(vec![33, 34]));
+    }
+
+    #[test]
+    fn id_list_from_set_encodes_deterministically() {
+        let set = HashSet::from([5, 1, 3]);
+        assert_eq!(IdList::from_set(set).to_string(), "1,3,5");
+    }
+
+    #[test]
+    fn name_list_round_trips_through_query_param_encoding() {
+        let parsed: NameList = "Primal, Aether,".parse().unwrap();
+        assert_eq!(
+            parsed,
+            NameList(vec!["Aether".to_string(), "Primal".to_string()])
+        );
+        assert_eq!(parsed.to_string(), "Aether,Primal");
+        assert_eq!(parsed.to_string().parse::<NameList>().unwrap(), parsed);
+    }
+
+    #[test]
+    fn sort_spec_round_trips_through_query_param_encoding() {
+        for encoded in [
+            "name",
+            "name-desc",
+            "price",
+            "price-desc",
+            "acquired",
+            "acquired-desc",
+        ] {
+            let spec: SortSpec = encoded.parse().unwrap();
+            assert_eq!(spec.to_string(), encoded);
+        }
+        assert!("bogus".parse::<SortSpec>().is_err());
+        assert!("".parse::<SortSpec>().is_err());
+    }
+
+    fn priced_item(id: i32, item_id: i32, prices: &[i32]) -> (ListItem, Vec<ActiveListing>) {
+        let mut item = list_item(id);
+        item.item_id = item_id;
+        let listings = prices
+            .iter()
+            .enumerate()
+            .map(|(index, price)| {
+                let mut listing = listing(index as i32, 100);
+                listing.price_per_unit = *price;
+                listing
+            })
+            .collect();
+        (item, listings)
+    }
+
+    #[test]
+    fn sort_by_name_is_deterministic_with_id_tiebreak() {
+        let names = |item_id: i32| match item_id {
+            10 => Some("Bronze Ingot"),
+            11 => Some("Ash Lumber"),
+            // Two rows share a name: the unique row id must break the tie.
+            12 | 13 => Some("Copper Ore"),
+            _ => None,
+        };
+        let mut items = vec![
+            priced_item(4, 13, &[]),
+            priced_item(1, 10, &[]),
+            priced_item(3, 12, &[]),
+            priced_item(2, 11, &[]),
+        ];
+        sort_list_items(
+            &mut items,
+            SortSpec {
+                key: SortKey::Name,
+                descending: false,
+            },
+            names,
+        );
+        assert_eq!(
+            items.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![2, 1, 3, 4]
+        );
+
+        sort_list_items(
+            &mut items,
+            SortSpec {
+                key: SortKey::Name,
+                descending: true,
+            },
+            names,
+        );
+        // Reversed name order, but the id tiebreak stays ascending.
+        assert_eq!(
+            items.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![3, 4, 1, 2]
+        );
+    }
+
+    #[test]
+    fn sort_by_price_puts_unlisted_items_last_ascending() {
+        let mut items = vec![
+            priced_item(1, 10, &[500, 300]),
+            priced_item(2, 11, &[]),
+            priced_item(3, 12, &[100]),
+        ];
+        sort_list_items(
+            &mut items,
+            SortSpec {
+                key: SortKey::Price,
+                descending: false,
+            },
+            |_| None,
+        );
+        assert_eq!(
+            items.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![3, 1, 2]
+        );
+    }
+
+    #[test]
+    fn sort_by_price_respects_hq_requirement() {
+        let hq_listing = |price: i32| {
+            let mut l = listing(1, 100);
+            l.price_per_unit = price;
+            l.hq = true;
+            l
+        };
+        let mut hq_item = list_item(1);
+        hq_item.hq = Some(true);
+        // The cheap NQ listing must not count for an HQ-required row.
+        let cheap_nq = {
+            let mut l = listing(2, 100);
+            l.price_per_unit = 10;
+            l
+        };
+        let mut items = vec![
+            (hq_item, vec![cheap_nq, hq_listing(900)]),
+            priced_item(2, 11, &[500]),
+        ];
+        sort_list_items(
+            &mut items,
+            SortSpec {
+                key: SortKey::Price,
+                descending: false,
+            },
+            |_| None,
+        );
+        assert_eq!(
+            items.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+    }
+
+    #[test]
+    fn sort_by_acquired_orders_by_remaining_quantity() {
+        let with_progress = |id: i32, quantity: i32, acquired: i32| {
+            let mut item = list_item(id);
+            item.quantity = Some(quantity);
+            item.acquired = Some(acquired);
+            (item, vec![])
+        };
+        let mut items = vec![
+            with_progress(1, 10, 0),
+            with_progress(2, 5, 5),
+            with_progress(3, 4, 2),
+        ];
+        sort_list_items(
+            &mut items,
+            SortSpec {
+                key: SortKey::Acquired,
+                descending: false,
+            },
+            |_| None,
+        );
+        assert_eq!(
+            items.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![2, 3, 1]
         );
     }
 }

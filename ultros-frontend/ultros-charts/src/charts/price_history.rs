@@ -14,21 +14,24 @@ use itertools::Itertools;
 use ultros_api_types::price_series::{PriceBucket, PriceSeries, SeriesGroup};
 use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
+use crate::charts::ChartMode;
 use crate::data::grouping::GroupLevel;
-use crate::data::stats::median;
+use crate::data::stats::{median, robust_price_domain};
 use crate::data::trend::least_squares;
-use crate::scale::{LinearScale, TimeScale, short_number};
+use crate::scale::{LinearScale, TimeScale, format_percent, short_number};
 use crate::scene::{Color, Node, Scene, Stroke, TextAnchor};
-use crate::svg::dots_path_d;
+use crate::svg::{band_path_d, dots_path_d, rects_path_d, vlines_path_d};
 use crate::theme::Theme;
+
+/// Buckets with fewer sale rows than this render as a wick-only tick in
+/// candle mode: "range known, direction unknown". Two sales do not make an
+/// open/close trend.
+pub const MIN_CANDLE_SALES: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct PriceChartOptions {
     pub width: f32,
     pub height: f32,
-    /// Ignored: outlier filtering now happens server-side (or not at all —
-    /// the caller gates the toggle before requesting data).
-    pub remove_outliers: bool,
     pub show_market_average: bool,
     pub show_trendline: bool,
     pub show_volume: bool,
@@ -55,6 +58,18 @@ pub struct PriceChartOptions {
     /// `series` metadata (flagged `hidden`) but draw nothing, feed no hover
     /// values, and don't influence the axes.
     pub hidden_series: Vec<String>,
+    /// Price-lane rendering mode. `Density` falls back to `Price` here —
+    /// density has its own layout and payload.
+    pub mode: crate::charts::ChartMode,
+    /// Patch milestone bands (spec 4); empty = off. See
+    /// [`crate::charts::MilestoneSpec`] for the contract (sorted, includes
+    /// the latest patch before the window).
+    pub milestones: Vec<crate::charts::MilestoneSpec>,
+    /// Rebase every series to 0% at its first plotted bucket (spec 3's
+    /// "Index to % change"). Honoured in `Price` mode only; the y-axis
+    /// becomes percent and gil-valued overlays (market average, trendline,
+    /// raw dots) are suppressed as meaningless on that axis.
+    pub index_to_percent: bool,
     pub theme: Theme,
 }
 
@@ -63,7 +78,6 @@ impl Default for PriceChartOptions {
         Self {
             width: 960.0,
             height: 540.0,
-            remove_outliers: false,
             show_market_average: true,
             show_trendline: false,
             show_volume: true,
@@ -74,6 +88,9 @@ impl Default for PriceChartOptions {
             group_level: None,
             utc_offset_minutes: 0,
             hidden_series: Vec::new(),
+            mode: crate::charts::ChartMode::Price,
+            milestones: Vec::new(),
+            index_to_percent: false,
             theme: Theme::dark_card(),
         }
     }
@@ -256,13 +273,53 @@ pub fn build_price_history_chart(
         })
         .collect();
     let series_color = |index: usize| theme.palette[index % theme.palette.len()];
-    let visible_count = resolved.iter().filter(|s| !is_hidden(&s.name)).count();
+
+    // User-hidden plus mode-suppressed: modes with a series cap draw only
+    // the first `cap` visible series (spec: "shows only the first and
+    // surfaces a hint"). Suppressed series stay in `series_info` so the
+    // legend and the frontend hint can still name them. Axes, stats, volume
+    // and hover all consult this vector so they reflect what is drawn.
+    let mut draw_hidden: Vec<bool> = series_info.iter().map(|s| s.hidden).collect();
+    if let Some(cap) = options.mode.series_cap() {
+        let mut seen = 0usize;
+        for slot in draw_hidden.iter_mut() {
+            if !*slot {
+                seen += 1;
+                if seen > cap {
+                    *slot = true;
+                }
+            }
+        }
+    }
+    let visible_count = draw_hidden.iter().filter(|h| !**h).count();
 
     let all_visible_buckets = || {
         resolved
             .iter()
-            .filter(|s| !is_hidden(&s.name))
-            .flat_map(|s| s.buckets.iter())
+            .enumerate()
+            .filter(|(i, _)| !draw_hidden[*i])
+            .flat_map(|(_, s)| s.buckets.iter())
+    };
+
+    // ── Indexed % change ────────────────────────────────────────────────
+    // Each visible series rebases to its first plotted bucket; a series
+    // without a priceable bucket keeps raw values (it draws nothing anyway).
+    let percent = options.index_to_percent && options.mode == ChartMode::Price;
+    let percent_bases: Vec<Option<f64>> = resolved
+        .iter()
+        .enumerate()
+        .map(|(index, s)| {
+            (percent && !draw_hidden[index])
+                .then(|| s.buckets.iter().find_map(|b| b.vwap()))
+                .flatten()
+                .filter(|base| *base > 0.0)
+        })
+        .collect();
+    let series_value = |index: usize, vwap: f64| -> f64 {
+        match percent_bases.get(index).copied().flatten() {
+            Some(base) => (vwap / base - 1.0) * 100.0,
+            None => vwap,
+        }
     };
 
     let Some((first_ts, last_ts)) = all_visible_buckets().map(|b| b.ts).minmax().into_option()
@@ -331,15 +388,107 @@ pub fn build_price_history_chart(
 
     let time = TimeScale::new(first_ts, last_ts, (plot_left, plot_right));
     // Don't anchor the price axis at zero: gil prices cluster far above it
-    // and the signal is the variation. 5% headroom on both sides.
-    let price_pad = ((max_price - min_price) as f64 * 0.05).max(1.0);
-    let price = LinearScale::new(
-        (
-            (min_price as f64 - price_pad).max(0.0),
-            max_price as f64 + price_pad,
-        ),
-        (price_bottom, plot_top),
-    );
+    // and the signal is the variation. `robust_price_domain` also keeps a
+    // laundered sale from flattening the rest of the history against the
+    // floor (#1068) — which means marks derived from raw `low`/`high` can now
+    // land outside the lane, so everything below clips to `plot_top..
+    // price_bottom`. In % mode the domain comes from the rebased values
+    // instead, and may go negative.
+    let price_domain = if percent {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for (index, s) in resolved.iter().enumerate() {
+            if draw_hidden[index] {
+                continue;
+            }
+            for b in &s.buckets {
+                if let Some(v) = b.vwap() {
+                    let v = series_value(index, v);
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            }
+        }
+        if lo.is_finite() && hi.is_finite() {
+            let pad = ((hi - lo) * 0.05).max(0.1);
+            (lo - pad, hi + pad)
+        } else {
+            (0.0, 1.0)
+        }
+    } else {
+        robust_price_domain(all_visible_buckets()).unwrap_or((0.0, 1.0))
+    };
+    let price = LinearScale::new(price_domain, (price_bottom, plot_top));
+
+    // ── Patch milestone bands (behind everything, spec 4) ───────────────
+    // Each spec starts a band tinted by its expansion's hue, alternating
+    // lightness between consecutive patches so neighbours separate without
+    // a line; a single edge line marks expansion boundaries. Bands clamp to
+    // the visible window; the caller includes the latest patch released
+    // before the window so the leading stretch is tinted too. Nothing is
+    // drawn over the data, so bands compose with candles and ribbons
+    // identically.
+    if !options.milestones.is_empty() {
+        let mut parity_ex = u8::MAX;
+        let mut parity = false;
+        for (i, spec) in options.milestones.iter().enumerate() {
+            // Alternation follows the patch sequence, not the render set,
+            // so a band half-outside the window still alternates correctly
+            // against its neighbour.
+            if spec.ex_version == parity_ex {
+                parity = !parity;
+            } else {
+                parity_ex = spec.ex_version;
+                parity = false;
+            }
+            let band_end = options
+                .milestones
+                .get(i + 1)
+                .map(|next| next.start)
+                .unwrap_or(last_ts)
+                .min(last_ts);
+            let band_start = spec.start.max(first_ts);
+            if band_end <= band_start {
+                continue;
+            }
+            let x1 = time.scale(band_start);
+            let x2 = time.scale(band_end);
+            let hue =
+                theme.expansion_hues[spec.ex_version as usize % theme.expansion_hues.len().max(1)];
+            scene.nodes.push(Node::Rect {
+                x: x1,
+                y: plot_top,
+                width: x2 - x1,
+                height: plot_bottom - plot_top,
+                rx: 0.0,
+                fill: hue.with_alpha(if parity { 0.09 } else { 0.05 }),
+            });
+            if spec.version.is_multiple_of(100) && spec.start > first_ts && spec.start < last_ts {
+                scene.nodes.push(Node::Line {
+                    x1,
+                    y1: plot_top,
+                    x2: x1,
+                    y2: plot_bottom,
+                    stroke: Stroke {
+                        color: theme.text_muted.with_alpha(0.35),
+                        width: 1.0,
+                        dash: None,
+                    },
+                });
+            }
+            if x2 - x1 >= 48.0 {
+                scene.nodes.push(Node::Text {
+                    x: (x1 + x2) / 2.0,
+                    y: plot_top + 14.0,
+                    content: ultros_api_types::game_history::version_label(spec.version),
+                    size: 12.0,
+                    color: theme.text_muted.with_alpha(0.8),
+                    anchor: TextAnchor::Middle,
+                    bold: false,
+                });
+            }
+        }
+    }
 
     // ── Grid + axis labels ──────────────────────────────────────────────
     for tick in price.ticks(5) {
@@ -358,7 +507,11 @@ pub fn build_price_history_chart(
         scene.nodes.push(Node::Text {
             x: plot_left - 8.0,
             y: y + 4.0,
-            content: short_number(tick.round() as i32),
+            content: if percent {
+                format_percent(tick)
+            } else {
+                short_number(tick.round() as i32)
+            },
             size: 13.0,
             color: theme.text_muted,
             anchor: TextAnchor::End,
@@ -411,12 +564,16 @@ pub fn build_price_history_chart(
         }
     }
 
-    // ── Raw sale dots (under the lines) ─────────────────────────────────
+    // ── Raw sale dots (under the lines, Price mode only) ────────────────
     // Only drawn when the payload carries individual sales — dense windows
-    // omit `raw` and show only the VWAP lines.
-    if let Some(raw) = &series.raw {
+    // omit `raw` and show only the VWAP lines. Candle/Range modes already
+    // express intra-bucket spread, so dots would be noise there.
+    if options.mode == ChartMode::Price
+        && !percent
+        && let Some(raw) = &series.raw
+    {
         for (index, s) in resolved.iter().enumerate() {
-            if series_info[index].hidden {
+            if draw_hidden[index] {
                 continue;
             }
             let color = series_color(index);
@@ -425,11 +582,12 @@ pub fn build_price_history_chart(
                 .filter(|sale| {
                     series_id_for_world(world_helper, series.group, sale.world_id) == Some(s.id)
                 })
-                .map(|sale| {
-                    (
-                        time.scale(sale.sold_date),
-                        price.scale(sale.price_per_item as f64),
-                    )
+                .filter_map(|sale| {
+                    let y = price.scale(sale.price_per_item as f64);
+                    // Dropped rather than clamped: an outlying sale pinned to
+                    // the edge of the lane would claim a price it never had.
+                    // `stats.max`/`stats.min` still report the true extremes.
+                    (y >= plot_top && y <= price_bottom).then(|| (time.scale(sale.sold_date), y))
                 })
                 .collect();
             if let Some(d) = dots_path_d(&points, 2.0) {
@@ -442,62 +600,222 @@ pub fn build_price_history_chart(
         }
     }
 
-    // ── VWAP lines (the primary visual) ─────────────────────────────────
+    // ── Hover values (every mode) ───────────────────────────────────────
+    // Hover values are VWAP in every mode — the tooltip's one number stays
+    // consistent as the user flips modes.
     let mut hover_map: BTreeMap<NaiveDateTime, Vec<Option<(f32, f64)>>> = BTreeMap::new();
     for (index, s) in resolved.iter().enumerate() {
-        if series_info[index].hidden {
+        if draw_hidden[index] {
             continue;
         }
-        let color = series_color(index);
-        let mut line: Vec<(f32, f32)> = Vec::new();
         for bucket in &s.buckets {
             let Some(vwap) = bucket.vwap() else {
                 continue;
             };
+            let value = series_value(index, vwap);
             hover_map
                 .entry(bucket.ts)
                 .or_insert_with(|| vec![None; resolved.len()])[index] =
-                Some((price.scale(vwap), vwap));
-            let center = bucket.ts + TimeDelta::seconds(bucket_secs / 2);
-            line.push((time.scale(center), price.scale(vwap)));
+                Some((price.scale(value), value));
         }
-        if line.len() > 1 {
-            if visible_count == 1 {
-                scene.nodes.push(Node::Area {
-                    points: line.clone(),
-                    baseline_y: price_bottom,
-                    fill: color.with_alpha(0.08),
-                });
+    }
+
+    // ── Price lane, per mode ────────────────────────────────────────────
+    let half_bucket = TimeDelta::seconds(bucket_secs / 2);
+    match options.mode {
+        ChartMode::Price | ChartMode::Density => {
+            // VWAP polyline per series, area fill when a single series is
+            // visible. (`Density` never reaches this layout in practice —
+            // it has its own — but falls back to Price rendering if it does.)
+            for (index, s) in resolved.iter().enumerate() {
+                if draw_hidden[index] {
+                    continue;
+                }
+                let color = series_color(index);
+                let line: Vec<(f32, f32)> = s
+                    .buckets
+                    .iter()
+                    .filter_map(|b| {
+                        b.vwap().map(|v| {
+                            (
+                                time.scale(b.ts + half_bucket),
+                                price
+                                    .scale(series_value(index, v))
+                                    .clamp(plot_top, price_bottom),
+                            )
+                        })
+                    })
+                    .collect();
+                if line.len() > 1 {
+                    if visible_count == 1 {
+                        scene.nodes.push(Node::Area {
+                            points: line.clone(),
+                            baseline_y: price_bottom,
+                            fill: color.with_alpha(0.08),
+                        });
+                    }
+                    scene.nodes.push(Node::Polyline {
+                        points: line,
+                        stroke: Stroke {
+                            color,
+                            width: 2.0,
+                            dash: None,
+                        },
+                    });
+                }
             }
-            scene.nodes.push(Node::Polyline {
-                points: line,
-                stroke: Stroke {
-                    color,
-                    width: 2.0,
-                    dash: None,
-                },
-            });
+        }
+        ChartMode::Candles => {
+            if let Some((_, s)) = resolved.iter().enumerate().find(|(i, _)| !draw_hidden[*i]) {
+                let bucket_px =
+                    time.scale(first_ts + TimeDelta::seconds(bucket_secs)) - time.scale(first_ts);
+                let body_w = (bucket_px * 0.6).clamp(1.5, 18.0);
+                let mut up: Vec<(f32, f32, f32, f32)> = Vec::new();
+                let mut down: Vec<(f32, f32, f32, f32)> = Vec::new();
+                let mut wicks: Vec<(f32, f32, f32)> = Vec::new();
+                for b in &s.buckets {
+                    let x = time.scale(b.ts + half_bucket);
+                    // Trim to the lane and drop the mark entirely when the
+                    // bucket sits wholly off-axis, rather than smearing it
+                    // along the edge.
+                    if let Some(((_, y_high), (_, y_low))) = clip_segment_to_band(
+                        (x, price.scale(b.high as f64)),
+                        (x, price.scale(b.low as f64)),
+                        plot_top,
+                        price_bottom,
+                    ) {
+                        wicks.push((x, y_high, y_low));
+                    }
+                    if b.sales < MIN_CANDLE_SALES {
+                        continue; // wick-only tick: range known, direction unknown
+                    }
+                    let Some(((_, y_open), (_, y_close))) = clip_segment_to_band(
+                        (x, price.scale(b.open as f64)),
+                        (x, price.scale(b.close as f64)),
+                        plot_top,
+                        price_bottom,
+                    ) else {
+                        continue;
+                    };
+                    let height = (y_open - y_close).abs().max(1.2);
+                    let rect = (
+                        x - body_w / 2.0,
+                        // The 1.2px floor can push a body that was clipped
+                        // flush to the bottom back out of the lane.
+                        y_open.min(y_close).min(price_bottom - height).max(plot_top),
+                        body_w,
+                        height,
+                    );
+                    if b.close >= b.open {
+                        up.push(rect);
+                    } else {
+                        down.push(rect);
+                    }
+                }
+                if let Some(d) = vlines_path_d(&wicks) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: None,
+                        stroke: Some(Stroke {
+                            color: theme.text_muted.with_alpha(0.8),
+                            width: 1.0,
+                            dash: None,
+                        }),
+                    });
+                }
+                if let Some(d) = rects_path_d(&up) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(theme.candle_up),
+                        stroke: None,
+                    });
+                }
+                if let Some(d) = rects_path_d(&down) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(theme.candle_down),
+                        stroke: None,
+                    });
+                }
+            }
+        }
+        ChartMode::Range => {
+            let visible: Vec<usize> = (0..resolved.len()).filter(|i| !draw_hidden[*i]).collect();
+            // Ribbon edges and the median line clamp to the lane: a filled
+            // band running to the edge reads as "continues past the view",
+            // which is exactly what happened.
+            let curve = |s: &ResolvedSeries, f: fn(&PriceBucket) -> i32| -> Vec<(f32, f32)> {
+                s.buckets
+                    .iter()
+                    .map(|b| {
+                        (
+                            time.scale(b.ts + half_bucket),
+                            price.scale(f(b) as f64).clamp(plot_top, price_bottom),
+                        )
+                    })
+                    .collect()
+            };
+            // Bands for every drawn series first, medians after, so the p50
+            // lines always read on top of both ribbons.
+            for &i in &visible {
+                let s = &resolved[i];
+                let color = series_color(i);
+                if let Some(d) = band_path_d(&curve(s, |b| b.high), &curve(s, |b| b.low)) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(color.with_alpha(0.08)),
+                        stroke: None,
+                    });
+                }
+                if let Some(d) = band_path_d(&curve(s, |b| b.p75), &curve(s, |b| b.p25)) {
+                    scene.nodes.push(Node::Path {
+                        d,
+                        fill: Some(color.with_alpha(0.20)),
+                        stroke: None,
+                    });
+                }
+            }
+            for &i in &visible {
+                let s = &resolved[i];
+                let p50 = curve(s, |b| b.p50);
+                if p50.len() > 1 {
+                    scene.nodes.push(Node::Polyline {
+                        points: p50,
+                        stroke: Stroke {
+                            color: series_color(i),
+                            width: 2.0,
+                            dash: None,
+                        },
+                    });
+                }
+            }
         }
     }
 
     // ── Overlays ────────────────────────────────────────────────────────
     if options.show_market_average
+        && !percent
         && let Some(market_average) = stats.as_ref().and_then(|s| s.market_average)
     {
         let y = price.scale(market_average as f64);
-        scene.nodes.push(Node::Line {
-            x1: plot_left,
-            y1: y,
-            x2: plot_right,
-            y2: y,
-            stroke: Stroke {
-                color: theme.market_average.with_alpha(0.9),
-                width: 1.5,
-                dash: Some((2.0, 4.0)),
-            },
-        });
+        // The average is gil-weighted, so a laundered sale can drag it off
+        // the axis. Drawing it clamped to an edge would misstate it; the
+        // caption already carries the number.
+        if y >= plot_top && y <= price_bottom {
+            scene.nodes.push(Node::Line {
+                x1: plot_left,
+                y1: y,
+                x2: plot_right,
+                y2: y,
+                stroke: Stroke {
+                    color: theme.market_average.with_alpha(0.9),
+                    width: 1.5,
+                    dash: Some((2.0, 4.0)),
+                },
+            });
+        }
     }
-    if options.show_trendline {
+    if options.show_trendline && !percent {
         let points: Vec<(f64, f64)> = all_visible_buckets()
             .filter_map(|b| {
                 b.vwap().map(|vwap| {
@@ -630,6 +948,141 @@ mod tests {
         scene.nodes.iter().filter(|n| predicate(n)).count()
     }
 
+    fn milestone_specs() -> Vec<crate::charts::MilestoneSpec> {
+        // Fixture data spans 10 days from 1_700_006_400. One spec before
+        // the window (leading band), two inside — the second starting a new
+        // expansion.
+        let spec = |secs: i64, version: u16, ex: u8| crate::charts::MilestoneSpec {
+            start: crate::test_util::ts(secs),
+            version,
+            ex_version: ex,
+        };
+        vec![
+            spec(1_700_006_400 - 5 * 86_400, 650, 4),
+            spec(1_700_006_400 + 2 * 86_400, 655, 4),
+            spec(1_700_006_400 + 6 * 86_400, 700, 5),
+        ]
+    }
+
+    #[test]
+    fn milestone_bands_tile_the_window_behind_the_data() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                milestones: milestone_specs(),
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        // Bands are the very first nodes — behind grid lines and data.
+        assert!(
+            matches!(scene.nodes[0], Node::Rect { .. }),
+            "first node must be a milestone band"
+        );
+        let bands: Vec<(f32, f32, f32)> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Rect { x, width, rx, .. } if *rx == 0.0 => Some((*x, *width, x + width)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bands.len(), 3, "leading band + two in-window bands");
+        // Tiling: each band ends where the next begins, and together they
+        // span the plot area (68 .. 960-16) with no gaps or overlaps.
+        for pair in bands.windows(2) {
+            assert!(
+                (pair[0].2 - pair[1].0).abs() < 0.51,
+                "bands must tile without gaps/overlaps: {pair:?}"
+            );
+        }
+        assert!(
+            (bands[0].0 - 68.0).abs() < 0.51,
+            "first band starts at plot left"
+        );
+        assert!(
+            (bands.last().unwrap().2 - (960.0 - 16.0)).abs() < 0.51,
+            "last band ends at plot right"
+        );
+        // Expansion boundary: exactly one solid vertical line at the 7.0
+        // band start (dashed lines are overlays; market avg is off).
+        let boundary_lines = scene
+            .nodes
+            .iter()
+            .filter(|n| {
+                matches!(n, Node::Line { x1, x2, stroke, .. }
+                    if x1 == x2 && stroke.dash.is_none() && stroke.width == 1.0
+                        && stroke.color.a < 0.5)
+            })
+            .count();
+        assert_eq!(boundary_lines, 1, "one expansion-boundary line (7.0)");
+    }
+
+    #[test]
+    fn milestone_bands_alternate_within_an_expansion_and_recolor_across() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                milestones: milestone_specs(),
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let fills: Vec<crate::scene::Color> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Rect { rx, fill, .. } if *rx == 0.0 => Some(*fill),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 3);
+        // 6.5 and 6.55 share a hue but alternate alpha; 7.0 changes hue.
+        assert_eq!(
+            (fills[0].r, fills[0].g, fills[0].b),
+            (fills[1].r, fills[1].g, fills[1].b)
+        );
+        assert_ne!(
+            fills[0].a, fills[1].a,
+            "consecutive patches alternate lightness"
+        );
+        assert_ne!(
+            (fills[1].r, fills[1].g, fills[1].b),
+            (fills[2].r, fills[2].g, fills[2].b),
+            "a new expansion changes hue"
+        );
+        // Wide bands carry their version label.
+        let labels: Vec<&str> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Text { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&"6.55"), "band label present: {labels:?}");
+    }
+
+    #[test]
+    fn empty_milestones_render_identically_to_before() {
+        let with = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions::default(),
+        );
+        let without = build_price_history_scene(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                milestones: Vec::new(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(with, without);
+    }
+
     #[test]
     fn renders_lines_volume_and_labels() {
         let scene = build_price_history_scene(
@@ -730,6 +1183,462 @@ mod tests {
             "unknown world id 999 must be dropped"
         );
         assert!(model.series.iter().all(|s| s.name != "999"));
+    }
+
+    /// A one-world series with `n` daily buckets; `sales_per_bucket` drives
+    /// the sparse-candle rule.
+    fn one_world_series(n: usize, sales_per_bucket: u32) -> PriceSeries {
+        let buckets = (0..n)
+            .map(|i| {
+                let mut b = bucket(1_700_006_400 + i as i64 * 86_400, 100, 120, 90, 105, 2);
+                b.sales = sales_per_bucket;
+                b
+            })
+            .collect();
+        PriceSeries {
+            bucket_seconds: 86_400,
+            group: SeriesGroup::World,
+            from: crate::test_util::ts(1_700_006_400),
+            to: crate::test_util::ts(1_700_006_400 + n as i64 * 86_400),
+            series: vec![PriceSeriesEntry { id: 1, buckets }],
+            raw: None,
+        }
+    }
+
+    /// A market that trends from 1,000 to 1,380 gil with a ±40 spread — the
+    /// spread matters, because the outlier fence needs some ordinary
+    /// variation to measure against.
+    fn trending_series(n: usize) -> PriceSeries {
+        let buckets = (0..n)
+            .map(|i| {
+                let mid = 1_000 + i as i32 * 20;
+                let mut b = bucket(
+                    1_700_006_400 + i as i64 * 86_400,
+                    mid,
+                    mid + 40,
+                    mid - 40,
+                    mid,
+                    2,
+                );
+                b.sales = 5;
+                b
+            })
+            .collect();
+        PriceSeries {
+            bucket_seconds: 86_400,
+            group: SeriesGroup::World,
+            from: crate::test_util::ts(1_700_006_400),
+            to: crate::test_util::ts(1_700_006_400 + n as i64 * 86_400),
+            series: vec![PriceSeriesEntry { id: 1, buckets }],
+            raw: None,
+        }
+    }
+
+    /// [`trending_series`] plus one bucket priced a thousand times the market.
+    fn laundered_series(n: usize) -> PriceSeries {
+        const LAUNDERED: i32 = 1_000_000;
+        let mut series = trending_series(n);
+        let ts_secs = 1_700_006_400 + n as i64 * 86_400;
+        let mut outlier = bucket(ts_secs, LAUNDERED, LAUNDERED, LAUNDERED, LAUNDERED, 2);
+        outlier.sales = 5;
+        series.series[0].buckets.push(outlier);
+        series.to = crate::test_util::ts(ts_secs + 86_400);
+        series
+    }
+
+    /// Every path helper writes one `M` per mark, so counting them counts the
+    /// marks that survived clipping.
+    fn subpaths(d: &str) -> usize {
+        d.matches('M').count()
+    }
+
+    #[test]
+    fn a_laundered_sale_no_longer_flattens_the_price_lane() {
+        let model = build_price_history_chart(
+            &world_helper(),
+            &laundered_series(20),
+            &PriceChartOptions {
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let lane = model.hover.plot_bottom - model.hover.plot_top;
+        // Hover ys are the unclamped scale positions, so this measures the
+        // axis rather than the clipping. The 20 ordinary buckets come first.
+        let ordinary: Vec<f32> = model
+            .hover
+            .buckets
+            .iter()
+            .take(20)
+            .filter_map(|b| b.series_values.first().copied().flatten().map(|(y, _)| y))
+            .collect();
+        assert_eq!(ordinary.len(), 20, "every ordinary bucket should hover");
+        let spread = ordinary.iter().copied().fold(f32::MIN, f32::max)
+            - ordinary.iter().copied().fold(f32::MAX, f32::min);
+        // Before the fix this was ~0.05% of the lane: the real history was a
+        // flat line on the floor under a single 1,000,000 gil sale.
+        assert!(
+            spread > lane * 0.25,
+            "the real market must use the lane: {spread:.1}px of {lane:.1}px"
+        );
+        // The extreme is still reported numerically even though it's off-axis.
+        assert_eq!(model.stats.expect("stats").max, 1_000_000);
+    }
+
+    #[test]
+    fn the_vwap_line_stays_inside_the_price_lane() {
+        let model = build_price_history_chart(
+            &world_helper(),
+            &laundered_series(20),
+            &PriceChartOptions {
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let (top, bottom) = (model.hover.plot_top, model.hover.plot_bottom);
+        for node in &model.scene.nodes {
+            if let Node::Polyline { points, .. } = node {
+                for (_, y) in points {
+                    assert!(
+                        (top..=bottom).contains(y),
+                        "line point y={y} escaped {top}..{bottom}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn candle_marks_outside_the_lane_are_dropped_not_smeared_on_the_edge() {
+        let scene =
+            build_price_history_scene(&world_helper(), &laundered_series(20), &candle_options());
+        let wicks: usize = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Path {
+                    d,
+                    fill: None,
+                    stroke: Some(_),
+                } => Some(subpaths(d)),
+                _ => None,
+            })
+            .sum();
+        let bodies: usize = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Path {
+                    d, fill: Some(_), ..
+                } => Some(subpaths(d)),
+                _ => None,
+            })
+            .sum();
+        // 21 buckets in, 20 drawn: the laundered one is wholly off-axis, so
+        // it contributes neither a wick pinned to the top edge nor a body.
+        assert_eq!(wicks, 20, "one wick per on-axis bucket");
+        assert_eq!(bodies, 20, "one body per on-axis bucket");
+    }
+
+    #[test]
+    fn a_laundered_sale_is_dropped_from_the_raw_dot_layer() {
+        let mut series = laundered_series(20);
+        let mut raw: Vec<CompactSale> = (0..20)
+            .map(|i| CompactSale {
+                quantity: 1,
+                price_per_item: 1_000 + i * 20,
+                hq: false,
+                sold_date: crate::test_util::ts(1_700_006_400 + i as i64 * 86_400),
+                world_id: 1,
+            })
+            .collect();
+        raw.push(CompactSale {
+            quantity: 1,
+            price_per_item: 1_000_000,
+            hq: false,
+            sold_date: crate::test_util::ts(1_700_006_400 + 20 * 86_400),
+            world_id: 1,
+        });
+        series.raw = Some(raw);
+
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &series,
+            &PriceChartOptions {
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let dots: usize = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Path {
+                    d,
+                    fill: Some(_),
+                    stroke: None,
+                } => Some(subpaths(d)),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(
+            dots, 20,
+            "the off-axis sale must be dropped, not pinned to the lane edge"
+        );
+    }
+
+    #[test]
+    fn a_clean_series_keeps_the_domain_it_always_had() {
+        // The fence only pulls bounds inward, so nothing without outliers may
+        // shift: min(low)..max(high) with 5% padding, as before.
+        let model = build_price_history_chart(
+            &world_helper(),
+            &trending_series(20),
+            &PriceChartOptions {
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let stats = model.stats.expect("stats");
+        assert_eq!((stats.min, stats.max), (960, 1_420));
+        // The topmost gridline label is generated from the padded domain; if
+        // the fence had bitten, the axis would stop short of the real high.
+        let labels: Vec<&str> = model
+            .scene
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                Node::Text {
+                    content,
+                    anchor: TextAnchor::End,
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            labels.contains(&"1.40K"),
+            "axis should still reach the real high: {labels:?}"
+        );
+    }
+
+    fn candle_options() -> PriceChartOptions {
+        PriceChartOptions {
+            mode: ChartMode::Candles,
+            show_market_average: false,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn candles_batch_into_single_digit_node_count() {
+        let scene = build_price_history_scene(
+            &world_helper(),
+            &one_world_series(2_000, 5),
+            &candle_options(),
+        );
+        let paths = count(&scene, |n| matches!(n, Node::Path { .. }));
+        assert!(
+            paths <= 3,
+            "2,000 candles must batch into <= 3 Path nodes, got {paths}"
+        );
+        assert!(paths >= 2, "expected wick + body paths");
+        assert_eq!(
+            count(&scene, |n| matches!(n, Node::Polyline { .. })),
+            0,
+            "no VWAP line in candle mode"
+        );
+    }
+
+    #[test]
+    fn sparse_buckets_render_wick_only_ticks() {
+        // sales < 3 per bucket: range known, direction unknown -> no bodies.
+        let scene =
+            build_price_history_scene(&world_helper(), &one_world_series(10, 2), &candle_options());
+        let fills = count(&scene, |n| matches!(n, Node::Path { fill: Some(_), .. }));
+        assert_eq!(fills, 0, "sparse buckets must not grow candle bodies");
+        let strokes = count(&scene, |n| {
+            matches!(
+                n,
+                Node::Path {
+                    stroke: Some(_),
+                    fill: None,
+                    ..
+                }
+            )
+        });
+        assert_eq!(strokes, 1, "one batched wick path");
+    }
+
+    #[test]
+    fn flat_prices_keep_a_visible_body_floor() {
+        // open == close == high == low: bodies get the 1.2px floor rather
+        // than disappearing.
+        let mut series = one_world_series(5, 5);
+        for b in &mut series.series[0].buckets {
+            b.open = 100;
+            b.close = 100;
+            b.high = 100;
+            b.low = 100;
+        }
+        let scene = build_price_history_scene(&world_helper(), &series, &candle_options());
+        let body_d = scene
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                Node::Path {
+                    d, fill: Some(_), ..
+                } => Some(d.clone()),
+                _ => None,
+            })
+            .expect("flat candles must still emit a body path");
+        assert!(
+            body_d.contains("v1.2"),
+            "zero-height bodies floor at 1.2px: {body_d}"
+        );
+    }
+
+    #[test]
+    fn candles_draw_only_the_first_visible_series() {
+        let model =
+            build_price_history_chart(&world_helper(), &two_world_series(), &candle_options());
+        // Metadata keeps both series (legend + the frontend's hint need them)…
+        assert_eq!(model.series.len(), 2);
+        // …but only one series' candles draw: the fixture trends up
+        // (close > open, sales = 3), so exactly one up-body path exists.
+        let fills = count(&model.scene, |n| {
+            matches!(n, Node::Path { fill: Some(_), .. })
+        });
+        assert_eq!(fills, 1, "one body path for the single drawn series");
+    }
+
+    fn range_options() -> PriceChartOptions {
+        PriceChartOptions {
+            mode: ChartMode::Range,
+            show_market_average: false,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn range_mode_emits_two_bands_and_a_median_per_series_median_last() {
+        let model =
+            build_price_history_chart(&world_helper(), &two_world_series(), &range_options());
+        let bands = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Path { fill: Some(_), .. }))
+            .count();
+        assert_eq!(bands, 4, "low-high + p25-p75 band per series, two series");
+        let polylines: Vec<usize> = model
+            .scene
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| matches!(n, Node::Polyline { .. }).then_some(i))
+            .collect();
+        assert_eq!(polylines.len(), 2, "one p50 median line per series");
+        let last_band = model
+            .scene
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| matches!(n, Node::Path { fill: Some(_), .. }).then_some(i))
+            .max()
+            .unwrap();
+        assert!(
+            polylines.iter().all(|i| *i > last_band),
+            "medians draw after every band"
+        );
+    }
+
+    #[test]
+    fn range_mode_caps_at_two_visible_series() {
+        let mut series = two_world_series();
+        // A third resolvable series (world 3 = Behemoth in the fixture tree).
+        let mut third = series.series[0].clone();
+        third.id = 3;
+        series.series.push(third);
+        let model = build_price_history_chart(&world_helper(), &series, &range_options());
+        assert_eq!(model.series.len(), 3, "metadata keeps all three");
+        let medians = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Polyline { .. }))
+            .count();
+        assert_eq!(medians, 2, "third series is mode-suppressed");
+    }
+
+    #[test]
+    fn percent_mode_rebases_each_series_to_zero_at_its_first_bucket() {
+        let model = build_price_history_chart(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                index_to_percent: true,
+                show_market_average: true, // must be ignored in % mode
+                show_trendline: true,      // likewise
+                ..Default::default()
+            },
+        );
+        // Both series start at 0%: the first hover bucket carries ~0 each.
+        let first = model.hover.buckets.first().unwrap();
+        for v in first.series_values.iter().flatten() {
+            assert!(v.1.abs() < 1e-9, "first bucket rebases to 0%, got {}", v.1);
+        }
+        // Fixture trends +9%: later values are positive percents, not gil.
+        let last = model.hover.buckets.last().unwrap();
+        for v in last.series_values.iter().flatten() {
+            assert!(
+                (0.0..50.0).contains(&v.1),
+                "expected a small positive percent, got {}",
+                v.1
+            );
+        }
+        // Gil-valued overlays must not draw on a % axis.
+        let dashed_lines = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Line { stroke, .. } if stroke.dash.is_some()))
+            .count();
+        assert_eq!(dashed_lines, 0, "market average / trendline suppressed");
+        // Axis labels are percent-formatted.
+        assert!(
+            model
+                .scene
+                .nodes
+                .iter()
+                .any(|n| matches!(n, Node::Text { content, .. } if content.ends_with('%'))),
+            "y-axis renders percent labels"
+        );
+    }
+
+    #[test]
+    fn percent_flag_is_ignored_outside_price_mode() {
+        let with = build_price_history_chart(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                index_to_percent: true,
+                mode: ChartMode::Range,
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        let without = build_price_history_chart(
+            &world_helper(),
+            &two_world_series(),
+            &PriceChartOptions {
+                index_to_percent: false,
+                mode: ChartMode::Range,
+                show_market_average: false,
+                ..Default::default()
+            },
+        );
+        assert_eq!(with.scene, without.scene);
     }
 
     #[test]

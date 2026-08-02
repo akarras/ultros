@@ -14,6 +14,7 @@
  *  - STRICT_CONSOLE: "1" to fail on console errors / page errors (default "1")
  *  - CONSOLE_ALLOW: comma-separated substrings to ignore in console errors
  *  - SKIP_ASSERTS: "1" to skip per-route content assertions (default "0")
+ *  - SKIP_OVERFLOW: "1" to skip the horizontal-overflow assertion (default "0")
  */
 
 "use strict";
@@ -50,7 +51,7 @@ function sanitizeFileComponent(s) {
  */
 const ROUTE_ASSERTS = {
   "/": { titleIncludes: "Ultros" },
-  "/items": { titleIncludes: "Ultros" },
+  "/items": { titleIncludes: "Items Explorer" },
   "/item/46010": {
     titleIncludes: "Ceremonial Shamshir",
     bodyIncludesAny: ["Fresh", "Caution", "Verify In-Game", "No Data"],
@@ -66,6 +67,33 @@ const ROUTE_ASSERTS = {
   "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
   "/privacy": { titleIncludes: "Ultros", bodyIncludesAny: ["privacy", "Privacy"] },
   "/cookie-policy": { titleIncludes: "Ultros", bodyIncludesAny: ["cookie", "Cookie"] },
+};
+
+/**
+ * Routes known to overflow horizontally right now. Each entry names the
+ * `devices` it applies to and the `reason`.
+ *
+ * These are *not* silently tolerated: a listed route that has stopped
+ * overflowing fails the run, so a fix cannot land without also deleting its
+ * exception. Scope `devices` as narrowly as the bug actually is — a route
+ * exempted at a width where it already fits would mask a future regression
+ * there. Keep this empty.
+ */
+const KNOWN_OVERFLOW = {
+  // github.com/akarras/ultros/issues/1055 — the Flip Finder's sticky control
+  // bar has no shrinkable item in its first row, so at phone widths the row
+  // grows past the viewport (~159px at 390px) instead of fitting. The row can
+  // neither wrap (the bar is height-locked; the table header consumes
+  // STICKY_BAR_HEIGHT as its sticky offset) nor scroll (it is the containing
+  // block for the saved-views/columns popovers), so the fix is to make it
+  // shrink — PR #1082. Delete this entry when that merges.
+  //
+  // Desktop is deliberately not listed: the same row already fits at 1280px,
+  // and this check is what proves it stays that way.
+  "/flip-finder/Gilgamesh": {
+    devices: ["mobile"],
+    reason: "#1055, fixed by PR #1082 (sticky control bar row 1 cannot shrink)",
+  },
 };
 
 // Substrings in console errors that we always ignore (third-party noise, expected hydration churn).
@@ -143,6 +171,101 @@ async function runAsserts(page, route, asserts) {
   return failures;
 }
 
+/**
+ * Assert the page itself does not scroll horizontally.
+ *
+ * `html` is `overflow-x: hidden`, so a document wider than the viewport is not
+ * merely ugly — the surplus is clipped with no scrollbar and no wrap, i.e.
+ * simply unreachable. That is how #1055 presented: the Flip Finder's "Columns"
+ * and "Clear all" controls rendered outside the viewport.
+ *
+ * The assertion is on `documentElement` deliberately. Several surfaces are
+ * legitimately wider than the viewport and scroll inside their own scrollport
+ * (`.analyzer-hscroll` for the Flip Finder grid, `.filter-chip-row`,
+ * `.item-explorer-chip-row`); measuring descendants would flag all of them.
+ *
+ * Caveat for whoever extends this: headless Chrome uses overlay scrollbars, so
+ * `100vw === clientWidth` here. A page laid out against `100vw` while the real
+ * browser reserves a classic scrollbar gutter — the other half of #1082 — is
+ * invisible to this check. It guards content overflow, not viewport-unit
+ * mistakes.
+ */
+async function checkHorizontalOverflow(page, route, device) {
+  const result = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const limit = doc.clientWidth + 1;
+    const offenders = [];
+
+    for (const el of document.querySelectorAll("body *")) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      if (rect.right <= limit) continue;
+
+      const style = getComputedStyle(el);
+      // Viewport-anchored elements (toasts, full-bleed background layers) get
+      // stretched *by* an overflowing document rather than causing it.
+      if (style.position === "fixed") continue;
+
+      // Anything inside a horizontal scrollport is scrollable-to, not clipped.
+      let parent = el.parentElement;
+      let contained = false;
+      while (parent && parent !== document.body) {
+        const overflowX = getComputedStyle(parent).overflowX;
+        if (overflowX !== "visible") {
+          contained = true;
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      if (contained) continue;
+
+      const cls = typeof el.className === "string" ? el.className : "";
+      offenders.push({
+        desc: (el.tagName.toLowerCase() + (cls ? `.${cls}` : "")).slice(0, 90),
+        right: Math.round(rect.right),
+      });
+    }
+
+    offenders.sort((a, b) => b.right - a.right);
+    return {
+      scrollWidth: doc.scrollWidth,
+      clientWidth: doc.clientWidth,
+      offenders: offenders.slice(0, 5),
+    };
+  });
+
+  const surplus = result.scrollWidth - result.clientWidth;
+  const overflows = surplus > 1;
+  const entry = KNOWN_OVERFLOW[route];
+  const known = entry && entry.devices.includes(device) ? entry : null;
+
+  if (known) {
+    if (overflows) {
+      console.warn(
+        `[warn] ${route} [${device}]: known horizontal overflow (${surplus}px) — ${known.reason}`,
+      );
+      return [];
+    }
+    return [
+      `horizontal overflow check: no longer overflows on ${device} — drop "${device}" from ` +
+        `the KNOWN_OVERFLOW entry for "${route}" (was: ${known.reason})`,
+    ];
+  }
+
+  if (!overflows) return [];
+
+  const blame = result.offenders.length
+    ? `; widest offenders: ${result.offenders
+        .map((o) => `${o.desc} (right=${o.right})`)
+        .join(", ")}`
+    : "";
+  return [
+    `horizontal overflow: document is ${surplus}px wider than the viewport ` +
+      `(scrollWidth ${result.scrollWidth} vs clientWidth ${result.clientWidth}) — ` +
+      `html{overflow-x:hidden} clips the surplus, so it cannot be scrolled to${blame}`,
+  ];
+}
+
 async function main() {
   const puppeteer = require("puppeteer");
 
@@ -152,6 +275,10 @@ async function main() {
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 60000);
   const STRICT_CONSOLE = envFlag("STRICT_CONSOLE", true);
   const SKIP_ASSERTS = envFlag("SKIP_ASSERTS", false);
+  const SKIP_OVERFLOW = envFlag("SKIP_OVERFLOW", false);
+  // Both device passes share this runner, and the same route can fit at one
+  // width and not the other, so failures name the width they were seen at.
+  const DEVICE_LABEL = isMobile ? "mobile" : "desktop";
   const userAllow = (process.env.CONSOLE_ALLOW || "")
     .split(",")
     .map((s) => s.trim())
@@ -174,7 +301,9 @@ async function main() {
   console.log(`[info] DEVICE=${isMobile ? "mobile" : "desktop"}`);
   console.log(`[info] OUTPUT_DIR=${outdir}`);
   console.log(`[info] HEADLESS=${headless}`);
-  console.log(`[info] STRICT_CONSOLE=${STRICT_CONSOLE} SKIP_ASSERTS=${SKIP_ASSERTS}`);
+  console.log(
+    `[info] STRICT_CONSOLE=${STRICT_CONSOLE} SKIP_ASSERTS=${SKIP_ASSERTS} SKIP_OVERFLOW=${SKIP_OVERFLOW}`,
+  );
   if (executablePath) console.log(`[info] USING_EXECUTABLE=${executablePath}`);
   console.log(`[info] CONCURRENCY=${CONCURRENCY}`);
 
@@ -242,6 +371,12 @@ async function main() {
           for (const f of fails) failures.push(`${r}: ${f}`);
         }
 
+        // Applies to every route, not just the ones with content assertions.
+        if (!SKIP_OVERFLOW) {
+          const fails = await checkHorizontalOverflow(page, r, DEVICE_LABEL);
+          for (const f of fails) failures.push(`${r} [${DEVICE_LABEL}]: ${f}`);
+        }
+
         if (STRICT_CONSOLE) {
           const newConsole = consoleErrors.slice(beforeConsole);
           const newPage = pageErrors.slice(beforePage);
@@ -253,8 +388,25 @@ async function main() {
         const filename = `${safe}-${isMobile ? "mobile" : "desktop"}.png`;
         const file = path.join(outdir, filename);
 
-        await page.screenshot({ path: file, fullPage: true });
-        console.log(`[ok] ${url} -> ${file}`);
+        // Chrome refuses to capture past an internal bitmap limit, and a route
+        // whose list is long enough (the Flip Finder grid against a data-rich
+        // instance) trips it. That used to reject out of the worker and take
+        // Promise.all — i.e. every remaining route's assertions — down with it.
+        // A screenshot is a diagnostic; it must not decide whether the suite runs.
+        try {
+          await page.screenshot({ path: file, fullPage: true });
+          console.log(`[ok] ${url} -> ${file}`);
+        } catch (e) {
+          console.warn(
+            `[warn] ${r}: full-page screenshot failed (${e && e.message}); capturing viewport only`,
+          );
+          try {
+            await page.screenshot({ path: file });
+            console.log(`[ok] ${url} -> ${file} (viewport only)`);
+          } catch (e2) {
+            console.warn(`[warn] ${r}: viewport screenshot also failed (${e2 && e2.message})`);
+          }
+        }
       }
       await page.close();
     };
