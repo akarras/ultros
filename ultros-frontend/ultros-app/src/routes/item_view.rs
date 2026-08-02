@@ -1715,6 +1715,22 @@ fn DiscordCommandChip(
     }
 }
 
+/// Escape a JSON string for safe embedding inside a `<script>` element.
+fn escape_for_script_tag(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    for c in json.chars() {
+        match c {
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Builds the item page's `BreadcrumbList` JSON-LD.
 ///
 /// `category` is `(display_name, search_category_id)`. The id — not the
@@ -1771,7 +1787,7 @@ fn build_breadcrumb_json_ld(
         "itemListElement": items
     });
 
-    serde_json::to_string(&json_value).unwrap_or_default()
+    escape_for_script_tag(&serde_json::to_string(&json_value).unwrap_or_default())
 }
 
 /// Gates the item page on the `:id` route param actually naming a real item.
