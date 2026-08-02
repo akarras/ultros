@@ -108,6 +108,69 @@ pub(crate) async fn enable_browser_notifications() -> SubscribeResult {
     Err("Web Push is only available in the browser".into())
 }
 
+/// Drop this browser's live `PushSubscription` if it matches `endpoint_url` —
+/// the push-service URL of a subscription the server just deleted (returned by
+/// `DELETE /api/v1/endpoints/{id}`). The comparison is what keeps multi-device
+/// setups safe: the endpoints panel lists every browser's endpoint, and
+/// deleting another device's row from here must not kill this browser's own
+/// subscription.
+///
+/// Returns whether an unsubscribe actually happened. Best-effort — the server
+/// rows are already gone, so callers treat failure as cosmetic.
+#[cfg(all(feature = "hydrate", target_arch = "wasm32"))]
+pub(crate) async fn disable_browser_notifications(endpoint_url: &str) -> Result<bool, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{PushSubscription, ServiceWorkerRegistration};
+
+    let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+    let sw_container = window.navigator().service_worker();
+
+    // No registration (getRegistration() resolves undefined) means this
+    // browser never subscribed — nothing to do.
+    let reg_js = JsFuture::from(sw_container.get_registration())
+        .await
+        .map_err(|_| "service worker lookup failed".to_string())?;
+    if reg_js.is_undefined() || reg_js.is_null() {
+        return Ok(false);
+    }
+    let registration: ServiceWorkerRegistration = reg_js
+        .dyn_into()
+        .map_err(|_| "service worker lookup returned wrong type".to_string())?;
+
+    let push = registration
+        .push_manager()
+        .map_err(|_| "push manager unavailable".to_string())?;
+    let sub_promise = push
+        .get_subscription()
+        .map_err(|_| "getSubscription call failed".to_string())?;
+    let sub_js = JsFuture::from(sub_promise)
+        .await
+        .map_err(|_| "getSubscription rejected".to_string())?;
+    if sub_js.is_null() || sub_js.is_undefined() {
+        return Ok(false);
+    }
+    let subscription: PushSubscription = sub_js
+        .dyn_into()
+        .map_err(|_| "getSubscription returned wrong type".to_string())?;
+
+    if subscription.endpoint() != endpoint_url {
+        return Ok(false);
+    }
+    let unsub_promise = subscription
+        .unsubscribe()
+        .map_err(|_| "unsubscribe call failed".to_string())?;
+    JsFuture::from(unsub_promise)
+        .await
+        .map_err(|_| "unsubscribe rejected".to_string())?;
+    Ok(true)
+}
+
+#[cfg(not(all(feature = "hydrate", target_arch = "wasm32")))]
+pub(crate) async fn disable_browser_notifications(_endpoint_url: &str) -> Result<bool, String> {
+    Err("Web Push is only available in the browser".into())
+}
+
 #[cfg(all(feature = "hydrate", target_arch = "wasm32"))]
 fn subscription_key_b64url(
     sub: &web_sys::PushSubscription,

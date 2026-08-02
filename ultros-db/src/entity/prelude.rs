@@ -12,7 +12,6 @@ pub use super::alert_price::Entity as AlertPrice;
 pub use super::alert_retainer_undercut::Entity as AlertRetainerUndercut;
 pub use super::datacenter::Entity as Datacenter;
 pub use super::discord_user::Entity as DiscordUser;
-pub use super::ffxiv_character_verification::Entity as FfxivCharacterVerification;
 pub use super::final_fantasy_character::Entity as FinalFantasyCharacter;
 pub use super::list::Entity as List;
 pub use super::list_activity::Entity as ListActivity;

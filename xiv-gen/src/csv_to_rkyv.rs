@@ -62,6 +62,7 @@ pub fn read_data_from(root: &Path, lang: Language) -> Data {
         retainer_tasks: read_csv_to_map(&format!("{}RetainerTask.csv", base_path)),
         retainer_task_normals: read_csv_to_map(&format!("{}RetainerTaskNormal.csv", base_path)),
         recipe_level_tables: read_csv_to_map(&format!("{}RecipeLevelTable.csv", base_path)),
+        collectables_shops: read_csv_to_map(&format!("{}CollectablesShop.csv", base_path)),
         collectables_shop_items: read_csv_vec::<CollectablesShopItem>(&format!(
             "{}CollectablesShopItem.csv",
             base_path

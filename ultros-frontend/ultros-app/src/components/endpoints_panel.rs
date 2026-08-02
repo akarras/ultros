@@ -6,7 +6,9 @@ use crate::api::{
     create_endpoint, delete_endpoint, list_discord_writable_guilds, list_endpoints, test_endpoint,
 };
 use crate::components::icon::Icon;
-use crate::components::push_subscribe::enable_browser_notifications;
+use crate::components::push_subscribe::{
+    disable_browser_notifications, enable_browser_notifications,
+};
 use crate::global_state::toasts::use_toast;
 use crate::i18n::{t, t_string, use_i18n};
 
@@ -21,9 +23,18 @@ pub fn EndpointsPanel() -> impl IntoView {
     let on_delete = move |id: i32| {
         spawn_local(async move {
             match delete_endpoint(id).await {
-                Ok(()) => {
+                Ok(resp) => {
                     if let Some(t) = toasts {
                         t.success(t_string!(i18n, endpoints_deleted_toast));
+                    }
+                    // For WebPush endpoints the server also removed the push
+                    // subscription row and told us its push-service URL; if it
+                    // was this browser's own subscription, drop the live
+                    // registration too so the push service isn't left holding
+                    // a dead one. Best-effort — the server rows are gone
+                    // either way, and other devices' URLs simply won't match.
+                    if let Some(url) = resp.push_endpoint {
+                        let _ = disable_browser_notifications(&url).await;
                     }
                     version.update(|v| *v += 1);
                 }

@@ -34,6 +34,14 @@ pub fn get_status_info(status: &str) -> StatusInfo {
 pub fn RealtimeStatus(
     #[prop(into)] status: Signal<String>,
     #[prop(into)] last_update: Signal<Option<DateTime<Utc>>>,
+    /// Drop the text label below `md`, leaving just the colored dot.
+    ///
+    /// For callers in a height-locked row that has no horizontal slack on a
+    /// phone — the Flip Finder's control bar, where "Reconnecting" alone is
+    /// a quarter of a 375px row. The dot already carries the state, and the
+    /// label comes back at `md`.
+    #[prop(optional)]
+    compact: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
     #[allow(unused_variables)]
@@ -82,6 +90,7 @@ pub fn RealtimeStatus(
 
         let status_key_for_view = status_key.clone();
         let status_label_clone = status_label.clone();
+        let label_class = if compact { "hidden md:inline" } else { "" };
         let tooltip_text = Signal::derive(move || {
             let updated = updated_label.get();
             if updated.is_empty() {
@@ -108,7 +117,7 @@ pub fn RealtimeStatus(
                         }}
                         <span class=format!("relative inline-flex rounded-full h-2 w-2 {}", dot_class)></span>
                     </span>
-                    <span>{status_label.clone()}</span>
+                    <span class=label_class>{status_label.clone()}</span>
                 </span>
             </Tooltip>
         }

@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 pub(crate) mod alerts;
 pub(crate) mod analyzer_service;
+pub(crate) mod character_claim;
 mod discord;
 pub(crate) mod event;
 mod ingest_health;
@@ -24,6 +25,7 @@ use ::leptos::config::get_configuration;
 use analyzer_service::AnalyzerService;
 use anyhow::Result;
 use axum_extra::extract::cookie::Key;
+use character_claim::CharacterClaimService;
 use discord::start_discord;
 use dotenvy::dotenv;
 use event::{EventProducer, EventType, create_event_busses};
@@ -44,7 +46,6 @@ use ultros_db::world_data::world_cache::WorldCache;
 use universalis::websocket::SocketRx;
 use universalis::websocket::event_types::{EventChannel, SubscribeMode, WSMessage};
 use universalis::{DataCentersView, UniversalisClient, WebsocketClient, WorldId, WorldsView};
-use web::character_verifier_service::CharacterVerifierService;
 use web::oauth::{AuthUserCache, DiscordAuthConfig, OAuthScope};
 #[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
 #[global_allocator]
@@ -421,7 +422,7 @@ async fn main() -> Result<()> {
         ch_client.clone(),
     ));
 
-    let character_verification = CharacterVerifierService {
+    let character_claim = CharacterClaimService {
         client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -438,7 +439,7 @@ async fn main() -> Result<()> {
         analyzer_service,
         db,
         key: Key::from(key.as_bytes()),
-        character_verification,
+        character_claim,
         oauth_config: DiscordAuthConfig::new(
             discord_client_id,
             discord_client_secret,

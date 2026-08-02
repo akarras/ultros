@@ -165,25 +165,37 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
 
     view! {
         <div class="relative flex items-center gap-2" node_ref=container>
+            // Icon-only below `md`. The Flip Finder's control bar is
+            // height-locked and its first row cannot wrap, so on a phone the
+            // labels are what pushed it past the viewport (#1055). The
+            // `aria-label` carries the name at every width.
             <button
-                class="sticky-bar-button"
+                class="sticky-bar-button sticky-bar-button-shrink"
+                aria-label=t_string!(i18n, analyzer_saved_views)
                 aria-expanded=move || list_open.get().to_string()
                 on:click=move |_| {
                     save_open.set(false);
                     list_open.update(|v| *v = !*v);
                 }
             >
-                {t!(i18n, analyzer_saved_views)}
+                <Icon icon=icondata::MdiBookmarkMultipleOutline />
+                <span class="hidden md:inline sticky-bar-button-label">
+                    {t!(i18n, analyzer_saved_views)}
+                </span>
             </button>
             <button
-                class="sticky-bar-button"
+                class="sticky-bar-button sticky-bar-button-shrink"
+                aria-label=t_string!(i18n, analyzer_save_view)
                 aria-expanded=move || save_open.get().to_string()
                 on:click=move |_| {
                     list_open.set(false);
                     save_open.update(|v| *v = !*v);
                 }
             >
-                {t!(i18n, analyzer_save_view)}
+                <Icon icon=icondata::MdiContentSaveOutline />
+                <span class="hidden md:inline sticky-bar-button-label">
+                    {t!(i18n, analyzer_save_view)}
+                </span>
             </button>
 
             <Show when=move || list_open.get()>

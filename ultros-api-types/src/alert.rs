@@ -155,6 +155,19 @@ pub struct UpdateEndpointRequest {
     pub method: Option<EndpointMethod>,
 }
 
+/// Response for `DELETE /api/v1/endpoints/{id}`.
+///
+/// When the deleted endpoint was `WebPush`, `push_endpoint` carries the
+/// push-service URL of the subscription that was removed alongside it. The
+/// browser that owns that subscription compares it against its own
+/// `PushSubscription.endpoint` and calls `pushManager.unsubscribe()` on a
+/// match; every other browser sees a URL that isn't theirs and leaves its own
+/// subscription alone. `None` for all other endpoint methods.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteEndpointResponse {
+    pub push_endpoint: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResendResult {
     pub delivered: bool,

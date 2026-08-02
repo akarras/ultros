@@ -1,6 +1,5 @@
 mod alerts_websocket;
 pub(crate) mod api;
-pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
@@ -53,8 +52,8 @@ use ultros_api_types::user::{
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
-    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification, Retainer, WorldItemLastUpdated,
+    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter, Retainer,
+    WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_charts::data::buckets::{
@@ -67,7 +66,8 @@ use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
-use self::character_verifier_service::CharacterVerifierService;
+use crate::character_claim::CharacterClaimService;
+
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
@@ -87,7 +87,7 @@ use crate::web::api::{
     cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
     get_movers, get_trends, post_resale_quality, post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -437,6 +437,43 @@ fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
     }
 }
 
+/// How long a cached response stays servable, and — for an open-ended window
+/// — the grain [`open_window_cache_stamp`] quantizes its cache key onto.
+/// Deriving both from one place means exactly one entry per item/scope is live
+/// at a time: the key rolls over on the same schedule the entry expires on.
+///
+/// Capped at an hour so an open window is never served staler than that, and
+/// floored at a minute so a hypothetical sub-minute bucket couldn't turn the
+/// cache into a no-op. A closed window is immutable, so it just takes the cap.
+fn cache_ttl_secs(closed: bool, bucket_seconds: i64) -> u64 {
+    if closed {
+        3_600
+    } else {
+        (bucket_seconds as u64).clamp(60, 3_600)
+    }
+}
+
+/// Quantize an open-ended window's end onto a `grain`-second grid, for use in
+/// the **cache key only** — never for the window actually queried.
+///
+/// An open-ended request ends at "now", so feeding that raw timestamp into the
+/// cache key mints a fresh entry every second and the cache never hits.
+/// Rounding it onto the same grid as the entry's TTL keeps one live entry per
+/// item/scope, which is all the quantization was ever for.
+///
+/// This deliberately moves the *key* and not the queried window. Flooring the
+/// window itself — which both handlers used to do, at `bucket_seconds`
+/// granularity — drags the query's exclusive upper bound backwards, excluding
+/// every sale after the boundary. An open-ended "full history" request
+/// resolves to a 12-year span, the ladder duly picks its widest step (30
+/// days), and so the newest 0–30 days of sales silently vanished from every
+/// chart. Serving a slightly stale snapshot is the cache's job and is bounded
+/// by the TTL; narrowing the window is data loss and is not.
+fn open_window_cache_stamp(to_ts: i64, grain: i64) -> i64 {
+    let grain = grain.max(1);
+    to_ts - to_ts.rem_euclid(grain)
+}
+
 /// Uniform bin height covering `[lo, hi]` inclusive in `bins` steps, floored
 /// at 1 gil so degenerate windows (every sale at one price) still bin sanely.
 fn density_bin_width(lo: u32, hi: u32, bins: u16) -> f64 {
@@ -666,13 +703,18 @@ async fn price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
 
-    // Snap an open-ended `to` down to the current bucket boundary so live
-    // views share a cache entry instead of minting a unique key per second.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    // A closed window is immutable; an open one is a snapshot of "now" and
+    // stays servable until its TTL expires.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+
+    // `to` itself is left at `now`: only the cache key is quantized, so live
+    // views still share an entry without the query window losing its newest
+    // sales. See [`open_window_cache_stamp`] for why flooring `to` is a bug.
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
     } else {
-        to
+        to.timestamp()
     };
 
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
@@ -698,18 +740,11 @@ async fn price_series(
         item_id,
         scope: world.clone(),
         from: from.timestamp(),
-        to: to.timestamp(),
+        to: cache_to,
         bucket: bucket_seconds,
         group: group.as_str(),
         hq: hq.as_str(),
         bins: 0,
-    };
-    // A closed window is immutable; an open one only changes when the current
-    // bucket rolls over.
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
     };
     if let Some(hit) = cache.get(&cache_key) {
         return Ok(cached_json(hit, ttl));
@@ -830,29 +865,25 @@ async fn price_density(
         }
     }
 
-    // Snap an open-ended `to` to the bucket boundary — same cache-sharing
-    // rationale as price_series.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    // Quantize an open-ended `to` for the cache key only — same rationale, and
+    // same data-loss trap, as price_series.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
     } else {
-        to
+        to.timestamp()
     };
 
     let cache_key = crate::web::price_series_cache::CacheKey {
         item_id,
         scope: world.clone(),
         from: from.timestamp(),
-        to: to.timestamp(),
+        to: cache_to,
         bucket: bucket_seconds,
         group: "density",
         hq: hq.as_str(),
         bins,
-    };
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
     };
     if let Some(hit) = cache.get(&cache_key) {
         return Ok(cached_json(hit, ttl));
@@ -933,6 +964,75 @@ mod price_series_tests {
         assert_eq!(density_bin_width(100, 400, 4), 301.0 / 4.0);
         // Degenerate flat price: floor at 1.0 so floor((p-lo)/w) stays 0.
         assert_eq!(density_bin_width(100, 100, 32), 1.0);
+    }
+
+    /// 2026-08-01T12:00:00Z — an arbitrary but fixed "now" so these tests
+    /// don't depend on when they run.
+    const NOW: i64 = 1_785_585_600;
+
+    /// The whole point of quantizing: requests seconds apart must land on one
+    /// cache entry rather than minting a key each.
+    #[test]
+    fn cache_stamp_is_stable_across_the_grain() {
+        let grain = cache_ttl_secs(false, 30 * 86_400) as i64;
+        let base = open_window_cache_stamp(NOW, grain);
+        for offset in [0, 1, 59, 600, grain - 1] {
+            assert_eq!(
+                open_window_cache_stamp(NOW + offset, grain),
+                base,
+                "+{offset}s should still hit the same cache entry"
+            );
+        }
+        assert_ne!(
+            open_window_cache_stamp(NOW + grain, grain),
+            base,
+            "the key must roll over once the entry expires"
+        );
+    }
+
+    /// Regression, and the reason this function exists at all.
+    ///
+    /// An open-ended "full history" request (the item page's default — no
+    /// `from`, no `to`) resolves `from` to 12 years back, which puts the
+    /// bucket ladder at its widest step. Both handlers used to floor the
+    /// *queried* window's exclusive upper bound onto that step, so every sale
+    /// in the current bucket — up to a month of the newest data — was
+    /// excluded from the response. Pin that the quantization applied now is
+    /// bounded by the TTL instead of the bucket width, at every ladder step.
+    #[test]
+    fn cache_stamp_never_discards_more_than_the_ttl() {
+        let span_secs = 365 * 12 * 86_400;
+        assert_eq!(
+            resolve_bucket_seconds(None, span_secs),
+            30 * 86_400,
+            "full history sits on the widest rung — the old floor's grain"
+        );
+
+        // What the old code did to the window itself, at that rung.
+        let floored = NOW - NOW.rem_euclid(30 * 86_400);
+        assert!(
+            NOW - floored > 26 * 86_400,
+            "the old floor dropped {} days of the newest sales",
+            (NOW - floored) / 86_400
+        );
+
+        // What the fix does: bounded by the TTL, whatever the bucket width.
+        for step in ultros_charts::data::buckets::BUCKET_LADDER {
+            let grain = cache_ttl_secs(false, step) as i64;
+            let stamp = open_window_cache_stamp(NOW, grain);
+            assert!(
+                grain <= 3_600 && NOW - stamp < 3_600,
+                "at a {step}s bucket the stamp discarded {}s",
+                NOW - stamp
+            );
+        }
+    }
+
+    /// A grain of zero (or negative) must not panic on `rem_euclid`.
+    #[test]
+    fn cache_stamp_tolerates_a_degenerate_grain() {
+        assert_eq!(open_window_cache_stamp(NOW, 0), NOW);
+        assert_eq!(open_window_cache_stamp(NOW, -5), NOW);
     }
 
     // `world_group_map` at `SeriesGroup::World` is intentionally not tested
@@ -1192,17 +1292,6 @@ pub(crate) async fn user_retainer_listings(
         retainers: listings,
     };
     Ok(Json(retainers))
-}
-
-pub(crate) async fn verify_character(
-    State(character): State<CharacterVerifierService>,
-    Path(verification_id): Path<i32>,
-    user: AuthDiscordUser,
-) -> Result<Json<bool>, ApiError> {
-    character
-        .check_verification(verification_id, user.id as i64)
-        .await?;
-    Ok(Json(true))
 }
 
 pub(crate) async fn retainer_search(
@@ -1711,27 +1800,6 @@ async fn user_characters(
     ))
 }
 
-async fn pending_verifications(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-) -> Result<Json<Vec<FfxivCharacterVerification>>, ApiError> {
-    let verifications = db
-        .get_all_pending_verification_challenges(user.id as i64)
-        .await?;
-    Ok(Json(
-        verifications
-            .into_iter()
-            .flat_map(|(verification, character)| {
-                character.map(|character| FfxivCharacterVerification {
-                    id: verification.id,
-                    character: character.into(),
-                    verification_string: verification.challenge,
-                })
-            })
-            .collect::<Vec<_>>(),
-    ))
-}
-
 async fn character_search(
     _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
     Path(name): Path<String>,
@@ -1767,16 +1835,18 @@ async fn character_search(
     Ok(Json(characters))
 }
 
+/// Claims a character for the logged-in user.
+///
+/// There's no verification step: the Discord login already says who the user
+/// is, and a claim only groups their retainers. Several users may hold the same
+/// character.
 async fn claim_character(
     user: AuthDiscordUser,
     Path(character_id): Path<u32>,
-    State(verifier): State<CharacterVerifierService>,
-) -> Result<Json<(i32, String)>, ApiError> {
-    let result = verifier
-        .start_verification(character_id, user.id as i64)
-        .await?;
-    // db.create_character_challenge(character_id, user.id as i64, challenge)
-    Ok(Json(result))
+    State(claim): State<CharacterClaimService>,
+) -> Result<Json<FfxivCharacter>, ApiError> {
+    let character = claim.claim_character(character_id, user.id as i64).await?;
+    Ok(Json(character.into()))
 }
 
 #[derive(Deserialize)]
@@ -2315,12 +2385,7 @@ pub(crate) async fn start_web(
         .route("/api/v1/characters/search/{name}", get(character_search))
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
-        .route("/api/v1/characters/verify/{id}", get(verify_character))
         .route("/api/v1/characters", get(user_characters))
-        .route(
-            "/api/v1/characters/verifications",
-            get(pending_verifications),
-        )
         .route("/api/v1/detectregion", get(detect_region))
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))
@@ -2337,7 +2402,6 @@ pub(crate) async fn start_web(
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
-        .route("/sitemap/world/{s}", get(world_sitemap))
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))

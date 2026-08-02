@@ -28,9 +28,14 @@ impl UltrosDb {
         })
         .on_conflict(
             OnConflict::column(final_fantasy_character::Column::Id)
+                // The Lodestone is authoritative for all three, so a re-claim
+                // picks up renames *and* world transfers. `world_id` used to be
+                // left alone, which quietly pinned a transferred character to
+                // its old world.
                 .update_columns([
                     final_fantasy_character::Column::FirstName,
                     final_fantasy_character::Column::LastName,
+                    final_fantasy_character::Column::WorldId,
                 ])
                 .to_owned(),
         )
@@ -57,23 +62,6 @@ impl UltrosDb {
         model.first_name = ActiveValue::Set(first_name.to_string());
         model.last_name = ActiveValue::Set(last_name.to_string());
         Ok(model.update(&self.db).await?)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn create_character_challenge<T: ToString + std::fmt::Debug>(
-        &self,
-        lodestone_id: i32,
-        discord_user_id: i64,
-        challenge: T,
-    ) -> Result<ffxiv_character_verification::Model> {
-        let model = ffxiv_character_verification::ActiveModel {
-            id: ActiveValue::default(),
-            discord_user_id: Set(discord_user_id),
-            ffxiv_character_id: Set(lodestone_id),
-            challenge: Set(challenge.to_string()),
-        };
-        let model = model.insert(&self.db).await?;
-        Ok(model)
     }
 
     #[instrument(skip(self))]
@@ -107,78 +95,12 @@ impl UltrosDb {
         Ok(owned.is_some())
     }
 
-    #[instrument(skip(self))]
-    pub async fn get_pending_character_challenges_for_discord_user(
-        &self,
-        discord_user_id: i64,
-    ) -> Result<
-        Vec<(
-            ffxiv_character_verification::Model,
-            Option<final_fantasy_character::Model>,
-        )>,
-    > {
-        Ok(ffxiv_character_verification::Entity::find()
-            .filter(ffxiv_character_verification::Column::DiscordUserId.eq(discord_user_id))
-            .find_also_related(final_fantasy_character::Entity)
-            .all(&self.db)
-            .await?)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn create_verification_challenge(
-        &self,
-        challenge_string: &str,
-        discord_user_id: i64,
-        ffxiv_character_id: i32,
-    ) -> Result<ffxiv_character_verification::Model> {
-        use ffxiv_character_verification::*;
-        let model = ActiveModel {
-            id: ActiveValue::default(),
-            challenge: Set(challenge_string.to_string()),
-            discord_user_id: Set(discord_user_id),
-            ffxiv_character_id: Set(ffxiv_character_id),
-        };
-        Ok(Entity::insert(model).exec_with_returning(&self.db).await?)
-    }
-
-    pub async fn remove_verification_challenge(
-        &self,
-        challenge: ffxiv_character_verification::Model,
-    ) -> Result<()> {
-        let challenge = challenge.into_active_model();
-        ffxiv_character_verification::Entity::delete(challenge)
-            .exec(&self.db)
-            .await?;
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
-    pub async fn get_verification_challenge(
-        &self,
-        id: i32,
-    ) -> Result<ffxiv_character_verification::Model> {
-        ffxiv_character_verification::Entity::find_by_id(id)
-            .one(&self.db)
-            .await?
-            .ok_or(anyhow::Error::msg("Challenge ID not found"))
-    }
-
-    pub async fn get_all_pending_verification_challenges(
-        &self,
-        discord_user: i64,
-    ) -> Result<
-        Vec<(
-            ffxiv_character_verification::Model,
-            Option<final_fantasy_character::Model>,
-        )>,
-    > {
-        Ok(ffxiv_character_verification::Entity::find()
-            .find_also_related(final_fantasy_character::Entity)
-            .filter(ffxiv_character_verification::Column::DiscordUserId.eq(discord_user))
-            .all(&self.db)
-            .await?)
-    }
-
+    /// Records that `discord_user_id` has claimed `ffxiv_character_id`.
+    ///
+    /// Claiming is idempotent: re-claiming a character you already hold returns
+    /// the existing row rather than erroring, so a double-click or a retried
+    /// Discord command is harmless. Other users' claims on the same character
+    /// are untouched — see the composite primary key.
     pub async fn create_owned_character(
         &self,
         discord_user_id: i64,
@@ -188,7 +110,19 @@ impl UltrosDb {
             discord_user_id: Set(discord_user_id),
             ffxiv_character_id: Set(ffxiv_character_id),
         };
-        Ok(model.insert(&self.db).await?)
+        Ok(owned_ffxiv_character::Entity::insert(model)
+            .on_conflict(
+                OnConflict::columns([
+                    owned_ffxiv_character::Column::FfxivCharacterId,
+                    owned_ffxiv_character::Column::DiscordUserId,
+                ])
+                // A no-op update rather than `do_nothing`, so the conflicting
+                // row still comes back through RETURNING.
+                .update_column(owned_ffxiv_character::Column::DiscordUserId)
+                .to_owned(),
+            )
+            .exec_with_returning(&self.db)
+            .await?)
     }
 
     pub async fn delete_owned_character(

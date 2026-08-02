@@ -158,6 +158,99 @@ fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
     }
 }
 
+/// A single collectables turn-in: the item handed in, the scrip it pays and how
+/// much it pays at maximum collectability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScripTurnIn {
+    item_id: i32,
+    scrip_type: ScripType,
+    scrip_amount: u32,
+}
+
+/// `CollectablesShop.RewardType` for the turn-in counters that pay scrip.
+const SCRIP_REWARD_TYPE: i32 = 1;
+/// `CollectablesShop.RewardType` for the material exchanges, which hand back
+/// items and pay no scrip.
+const MATERIAL_EXCHANGE_REWARD_TYPE: i32 = 2;
+
+/// `CollectablesShopItem` groups that belong *only* to material-exchange shops.
+///
+/// `CollectablesShop.ShopItems[..]` lists a shop's item groups, and a group is
+/// the integer half of `CollectablesShopItem`'s `<group>.<index>` key — which is
+/// how `collectables_shop_items` is keyed, so the two join directly.
+///
+/// This deliberately collects the groups to *exclude* rather than the ones to
+/// keep. A group nobody claims, an unknown future `RewardType`, or a renamed
+/// sheet that leaves `collectables_shops` empty then all degrade to today's
+/// behaviour — a few oddly-labelled rows — instead of blanking the page, which
+/// is the failure mode this route has already shipped once. A group claimed by
+/// a scrip shop *and* an exchange shop stays visible for the same reason.
+fn material_exchange_groups(data: &xiv_gen::Data) -> HashSet<i32> {
+    let mut scrip_paying = HashSet::new();
+    let mut exchange_only = HashSet::new();
+
+    for shop in data.collectables_shops.values() {
+        let bucket = match shop.reward_type {
+            SCRIP_REWARD_TYPE => &mut scrip_paying,
+            MATERIAL_EXCHANGE_REWARD_TYPE => &mut exchange_only,
+            _ => continue,
+        };
+        for group in shop.shop_items {
+            if group != 0 {
+                bucket.insert(group);
+            }
+        }
+    }
+
+    exchange_only.retain(|group| !scrip_paying.contains(group));
+    exchange_only
+}
+
+/// Every turn-in the collectables shops offer, before any UI filtering or
+/// pricing.
+///
+/// Material-exchange trades are dropped here: they populate the same
+/// `CollectablesShopRewardScrip.Currency` column the real turn-ins do, so
+/// reading that column alone lists every one of them as a scrip source paying a
+/// scrip it never awards.
+fn scrip_turn_ins(data: &xiv_gen::Data) -> Vec<ScripTurnIn> {
+    let exchange_only = material_exchange_groups(data);
+    let mut turn_ins = Vec::new();
+
+    for (group, item_vec) in &data.collectables_shop_items {
+        if exchange_only.contains(&group.0) {
+            continue;
+        }
+        for item_entry in item_vec {
+            let reward_scrip_id = item_entry.collectables_shop_reward_scrip;
+            if reward_scrip_id == 0 {
+                continue;
+            }
+
+            let reward = match data
+                .collectables_shop_reward_scrips
+                .get(&CollectablesShopRewardScripId(reward_scrip_id))
+            {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let scrip_amount = reward.high_reward as u32;
+            if scrip_amount == 0 {
+                continue;
+            }
+
+            turn_ins.push(ScripTurnIn {
+                item_id: item_entry.item,
+                scrip_type: ScripType::from_currency(reward.currency as u32),
+                scrip_amount,
+            });
+        }
+    }
+
+    turn_ins
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     CostPerScrip,
@@ -398,119 +491,100 @@ fn ScripSourceTable(
         let scrip_filter_val = scrip_filter();
         let job_filter_val = job_filter();
 
-        for item_vec in data.collectables_shop_items.values() {
-            for item_entry in item_vec {
-                let reward_scrip_id = item_entry.collectables_shop_reward_scrip;
-                if reward_scrip_id == 0 {
-                    continue;
-                }
+        for turn_in in scrip_turn_ins(data) {
+            let ScripTurnIn {
+                item_id,
+                scrip_type,
+                scrip_amount,
+            } = turn_in;
 
-                let reward = match data
-                    .collectables_shop_reward_scrips
-                    .get(&CollectablesShopRewardScripId(reward_scrip_id))
-                {
-                    Some(r) => r,
-                    None => continue,
-                };
+            if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
+                continue;
+            }
 
-                // Reward has `currency` and `low/mid/high_reward`
-                let scrip_type = ScripType::from_currency(reward.currency as u32);
+            let item_def = match items.get(&ItemId(item_id)) {
+                Some(i) => i,
+                None => continue,
+            };
 
-                if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
-                    continue;
-                }
+            // Recipe lookup
+            let recipe = recipes_lookup.get(&item_id).copied();
 
-                // Reward amount (High Reward for max collectability)
-                let scrip_amount = reward.high_reward as u32;
-                if scrip_amount == 0 {
-                    continue;
-                }
-
-                let item_id = item_entry.item;
-                let item_def = match items.get(&ItemId(item_id)) {
-                    Some(i) => i,
-                    None => continue,
-                };
-
-                // Recipe lookup
-                let recipe = recipes_lookup.get(&item_id).copied();
-
-                // Filter Job
-                if let Some(ref j_filter) = job_filter_val {
-                    if let Some(r) = recipe {
-                        let job_abbrev = match r.craft_type {
-                            0 => "Carpenter",
-                            1 => "Blacksmith",
-                            2 => "Armorer",
-                            3 => "Goldsmith",
-                            4 => "Leatherworker",
-                            5 => "Weaver",
-                            6 => "Alchemist",
-                            7 => "Culinarian",
-                            _ => "",
-                        };
-                        if job_abbrev != j_filter {
-                            continue;
-                        }
-                    } else if !j_filter.is_empty() {
-                        // If no recipe (gathering?), skip if job filter is active for crafting jobs
-                        // Unless we add gathering job filters later
+            // Filter Job
+            if let Some(ref j_filter) = job_filter_val {
+                if let Some(r) = recipe {
+                    let job_abbrev = match r.craft_type {
+                        0 => "Carpenter",
+                        1 => "Blacksmith",
+                        2 => "Armorer",
+                        3 => "Goldsmith",
+                        4 => "Leatherworker",
+                        5 => "Weaver",
+                        6 => "Alchemist",
+                        7 => "Culinarian",
+                        _ => "",
+                    };
+                    if job_abbrev != j_filter {
                         continue;
                     }
-                }
-
-                // Cost Calculation. An ingredient with no market listing used
-                // to be priced at zero, which *understated* the cost and
-                // floated exactly the least trustworthy rows to the top of
-                // the best-efficiency sort. Instead, track how many
-                // ingredients could actually be priced: rows with partial
-                // coverage stay visible (badged, ranked below fully-priced
-                // rows), rows with *no* priced ingredient are dropped.
-                let mut cost = 0;
-                let mut priced_ingredients = 0u32;
-                let mut total_ingredients = 0u32;
-
-                if let Some(r) = recipe {
-                    // Sum ingredients
-                    for i in 0..8 {
-                        let ing_id = r.ingredient[i];
-                        let amount = r.amount_ingredient[i];
-                        if ing_id == 0 || amount == 0 {
-                            continue;
-                        }
-                        total_ingredients += 1;
-                        let price_summary = prices.find_matching_listings(ing_id);
-                        if let Some(price) = price_summary.lowest_gil() {
-                            priced_ingredients += 1;
-                            cost += price * amount;
-                        }
-                    }
-                } else {
-                    // Skip non-craftables for now
+                } else if !j_filter.is_empty() {
+                    // If no recipe (gathering?), skip if job filter is active for crafting jobs
+                    // Unless we add gathering job filters later
                     continue;
                 }
-
-                if priced_ingredients == 0 || cost == 0 {
-                    continue;
-                } // Nothing priceable, or free items: no cost to compare
-
-                let cost_per_scrip = cost as f32 / scrip_amount as f32;
-
-                results.push(ScripSourceData {
-                    item_id: ItemId(item_id),
-                    item_name: item_def.name.to_string(),
-                    level: item_def.level_item as u16,
-                    craft_type: recipe.map(|r| r.craft_type),
-                    scrip_type,
-                    scrip_amount,
-                    cost,
-                    cost_per_scrip,
-                    priced_ingredients,
-                    total_ingredients,
-                    cheapest_world_id: 0, // Not tracked per ingredient
-                    recipe,
-                });
             }
+
+            // Cost Calculation. An ingredient with no market listing used
+            // to be priced at zero, which *understated* the cost and
+            // floated exactly the least trustworthy rows to the top of
+            // the best-efficiency sort. Instead, track how many
+            // ingredients could actually be priced: rows with partial
+            // coverage stay visible (badged, ranked below fully-priced
+            // rows), rows with *no* priced ingredient are dropped.
+            let mut cost = 0;
+            let mut priced_ingredients = 0u32;
+            let mut total_ingredients = 0u32;
+
+            if let Some(r) = recipe {
+                // Sum ingredients
+                for i in 0..8 {
+                    let ing_id = r.ingredient[i];
+                    let amount = r.amount_ingredient[i];
+                    if ing_id == 0 || amount == 0 {
+                        continue;
+                    }
+                    total_ingredients += 1;
+                    let price_summary = prices.find_matching_listings(ing_id);
+                    if let Some(price) = price_summary.lowest_gil() {
+                        priced_ingredients += 1;
+                        cost += price * amount;
+                    }
+                }
+            } else {
+                // Skip non-craftables for now
+                continue;
+            }
+
+            if priced_ingredients == 0 || cost == 0 {
+                continue;
+            } // Nothing priceable, or free items: no cost to compare
+
+            let cost_per_scrip = cost as f32 / scrip_amount as f32;
+
+            results.push(ScripSourceData {
+                item_id: ItemId(item_id),
+                item_name: item_def.name.to_string(),
+                level: item_def.level_item as u16,
+                craft_type: recipe.map(|r| r.craft_type),
+                scrip_type,
+                scrip_amount,
+                cost,
+                cost_per_scrip,
+                priced_ingredients,
+                total_ingredients,
+                cheapest_world_id: 0, // Not tracked per ingredient
+                recipe,
+            });
         }
 
         let mode = sort_mode().unwrap_or(SortMode::CostPerScrip);
@@ -1244,5 +1318,109 @@ mod tests {
         for filter in [None, Some(""), Some("nonsense")] {
             assert!(passes_scrip_filter(ScripType::PurpleCrafters, filter));
         }
+    }
+
+    /// The material exchanges (`CollectablesShop.RewardType == 2`) hand back
+    /// *items*, not scrip — but they populate the same
+    /// `CollectablesShopRewardScrip.Currency` column the turn-in counters do, so
+    /// reading that column without joining `RewardType` lists every one of their
+    /// trades as a scrip source paying a scrip it never awards.
+    ///
+    /// These four are the craftable head of each `RewardType == 2` shop on the
+    /// pinned 7.55 data; ids are used rather than names because `Item.name` is
+    /// per-locale.
+    #[test]
+    fn material_exchange_trades_are_not_scrip_turn_ins() {
+        let data = xiv_gen_db::data();
+        let turn_ins = scrip_turn_ins(data);
+
+        for (item_id, shop) in [
+            (31101, "Oddly Specific Materials Exchange (Crafting)"),
+            (31750, "Oddly Delicate Materials Exchange"),
+            (36311, "Resplendent Materials Exchange"),
+            (38756, "Trade Goods Exchange"),
+        ] {
+            assert!(
+                !turn_ins.iter().any(|t| t.item_id == item_id),
+                "item {item_id} is traded at the {shop}, which pays no scrip, \
+                 but it is listed as a scrip turn-in"
+            );
+        }
+    }
+
+    /// Excluding the material exchanges must not empty the page — this route has
+    /// already shipped once rendering zero rows, and a join that silently
+    /// matches nothing would put it straight back there.
+    #[test]
+    fn the_real_turn_in_counters_survive_the_exclusion() {
+        let data = xiv_gen_db::data();
+        let turn_ins = scrip_turn_ins(data);
+
+        assert!(
+            turn_ins.len() > 1000,
+            "only {} turn-ins survived; the RewardType join has stopped matching",
+            turn_ins.len()
+        );
+        // A Dwarven collectable handed in for Orange Crafters' Scrip.
+        assert!(
+            turn_ins.iter().any(|t| t.item_id == 26271),
+            "a known scrip turn-in was excluded along with the material exchanges"
+        );
+    }
+
+    /// The exclusion set has to be non-empty, and must never swallow a group
+    /// that a scrip-paying shop offers.
+    #[test]
+    fn only_material_exchange_groups_are_excluded() {
+        let data = xiv_gen_db::data();
+        let excluded = material_exchange_groups(data);
+
+        assert!(
+            !excluded.is_empty(),
+            "no material-exchange groups found; CollectablesShop did not load"
+        );
+        for shop in data.collectables_shops.values() {
+            if shop.reward_type != SCRIP_REWARD_TYPE {
+                continue;
+            }
+            for group in shop.shop_items {
+                assert!(
+                    group == 0 || !excluded.contains(&group),
+                    "group {group} pays scrip but was excluded"
+                );
+            }
+        }
+    }
+
+    /// Gatherer scrips are paid for collectables that are *gathered*, so no
+    /// turn-in awarding one can have a recipe. The page relies on this: it
+    /// prices craft costs, skips anything without a recipe, and tells the user
+    /// the gatherer filters are empty by design instead of rendering a blank
+    /// table.
+    ///
+    /// Before the `RewardType` join this was false — 59 craftable material
+    /// exchange trades carried `Currency = 4`, so `?scrip=PurpleGatherers`
+    /// rendered 59 rows, every one of them wrong.
+    #[test]
+    fn no_craftable_turn_in_pays_a_gatherer_scrip() {
+        let data = xiv_gen_db::data();
+        let mut craftable = std::collections::HashSet::new();
+        for recipe in data.recipes.values() {
+            craftable.insert(recipe.item_result);
+        }
+
+        let offenders: Vec<i32> = scrip_turn_ins(data)
+            .into_iter()
+            .filter(|t| t.scrip_type.is_gatherer() && craftable.contains(&t.item_id))
+            .map(|t| t.item_id)
+            .collect();
+
+        assert!(
+            offenders.is_empty(),
+            "{} craftable turn-ins are labelled a gatherer scrip, so the \
+             gatherer filters render rows the page says can never exist: {:?}",
+            offenders.len(),
+            &offenders[..offenders.len().min(8)]
+        );
     }
 }
