@@ -244,13 +244,15 @@ pub(crate) fn CharacterRetainerList(
         .map(|(retainer, listings)| view! { <RetainerTable retainer listings /> })
         .collect();
     view! {
-        <div>
-            {if let Some(character) = character {
-                Either::Left(view! { <span>{character.first_name} {character.last_name}</span> })
-            } else {
-                Either::Right(listings)
-            }}
-
+        <div class="flex flex-col gap-2">
+            {character
+                .map(|character| {
+                    view! {
+                        <span class="content-title font-semibold mt-2">
+                            {character.first_name} " " {character.last_name}
+                        </span>
+                    }
+                })} {listings}
         </div>
     }
     .into_any()
@@ -266,15 +268,15 @@ pub(crate) fn CharacterRetainerUndercutList(
         .map(|(retainer, listings)| view! { <RetainerUndercutTable retainer listings /> })
         .collect();
     view! {
-        <div>
-            {if let Some(character) = character {
-                Either::Left(
-                    view! { <span>{character.first_name} {character.last_name}</span> }.into_view(),
-                )
-            } else {
-                Either::Right(listings)
-            }}
-
+        <div class="flex flex-col gap-2">
+            {character
+                .map(|character| {
+                    view! {
+                        <span class="content-title font-semibold mt-2">
+                            {character.first_name} " " {character.last_name}
+                        </span>
+                    }
+                })} {listings}
         </div>
     }
     .into_any()
