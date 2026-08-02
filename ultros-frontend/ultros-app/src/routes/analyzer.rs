@@ -13,6 +13,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
+        dismissable::use_dismissable,
         filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
         gil::*,
         icon::Icon,
@@ -1013,6 +1014,14 @@ fn AnalyzerTable(
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
     let show_filter_menu = RwSignal::new(false);
+    // Route change, click outside, Escape. Both popovers and both trigger
+    // buttons live inside the sticky bar, so one container covers both;
+    // the triggers keep their own mutual exclusivity.
+    let sticky_bar_ref = NodeRef::<leptos::html::Div>::new();
+    use_dismissable(sticky_bar_ref, move || {
+        show_columns_picker.set(false);
+        show_filter_menu.set(false);
+    });
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1617,7 +1626,10 @@ fn AnalyzerTable(
             // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
             // header sticks directly beneath it at that offset, so a bar that
             // grew with its content would cover its own column headers.
-            <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1">
+            <div
+                class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1"
+                node_ref=sticky_bar_ref
+            >
                 // Row 1 — result count and view-level controls.
                 <div class="h-8 flex items-center gap-3 min-w-0">
                     <span class="text-sm text-[color:var(--brand-fg)] font-semibold whitespace-nowrap">

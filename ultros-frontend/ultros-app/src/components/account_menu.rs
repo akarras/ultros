@@ -11,16 +11,15 @@
 //!    switcher at all.
 
 use crate::api::get_login;
+use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::components::language_picker::LanguageAccordion;
 use crate::components::theme_picker::QuickThemeToggle;
 use crate::i18n::{t, t_string, use_i18n};
-use cfg_if::cfg_if;
 use icondata as i;
 use leptos::html;
 use leptos::prelude::*;
 use leptos_router::components::A;
-use leptos_router::hooks::use_location;
 
 #[component]
 pub fn AccountMenu() -> impl IntoView {
@@ -29,30 +28,11 @@ pub fn AccountMenu() -> impl IntoView {
     let user = Resource::new(move || {}, move |_| async move { get_login().await.ok() });
     let root_ref = NodeRef::<html::Div>::new();
 
-    // Outside-click dismissal. Hydrate-only: there is no document to listen
-    // to on the server, and the same cfg_if guard is used for
-    // `use_element_hover` elsewhere in this codebase.
-    cfg_if! {
-        if #[cfg(feature = "hydrate")] {
-            let _ = leptos_use::on_click_outside(root_ref, move |_| set_open(false));
-        }
-    }
-
-    // Dismiss on navigation, so the panel never survives a route change.
-    let location = use_location();
-    Effect::new(move |_| {
-        let _ = location.pathname.get();
-        set_open(false);
-    });
-
-    let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
-        if ev.key() == "Escape" {
-            set_open(false);
-        }
-    };
+    // Route change, click outside, Escape — the shared idiom.
+    use_dismissable(root_ref, move || set_open(false));
 
     view! {
-        <div class="side-nav-account" node_ref=root_ref on:keydown=on_keydown>
+        <div class="side-nav-account" node_ref=root_ref>
             <button
                 class="side-nav-account-trigger"
                 aria-haspopup="true"
