@@ -152,6 +152,27 @@ pub(crate) fn synthetic_price_series() -> PriceSeries {
     }
 }
 
+/// [`synthetic_price_series`] with one bucket laundered to roughly twenty
+/// times the market — the outlier shape from #1068, where a single sale used
+/// to stretch the y axis until the real history rendered as a line along the
+/// bottom edge.
+pub(crate) fn synthetic_price_series_with_outlier() -> PriceSeries {
+    const LAUNDERED: i32 = 1_000_000;
+    let mut series = synthetic_price_series();
+    let buckets = &mut series.series[0].buckets;
+    let index = buckets.len() / 2;
+    let target = &mut buckets[index];
+    target.open = LAUNDERED;
+    target.high = LAUNDERED;
+    target.low = LAUNDERED;
+    target.close = LAUNDERED;
+    target.p25 = LAUNDERED;
+    target.p50 = LAUNDERED;
+    target.p75 = LAUNDERED;
+    target.gil = LAUNDERED as i64 * target.units;
+    series
+}
+
 /// Two regions; region 1 has two datacenters; datacenter 1 has two worlds.
 /// World ids: 1 = Gilgamesh (Aether), 2 = Adamantoise (Aether),
 /// 3 = Behemoth (Primal), 4 = Cerberus (Chaos / Europe).

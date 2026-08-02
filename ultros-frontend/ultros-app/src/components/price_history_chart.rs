@@ -795,9 +795,6 @@ pub fn PriceHistoryChart(
             &PriceChartOptions {
                 width,
                 height,
-                // Ignored by the layout: outlier filtering and grouping now
-                // happen server-side. `series.group` is authoritative.
-                remove_outliers: false,
                 show_market_average: show_market_average.get(),
                 show_trendline: show_trend.get(),
                 // Density has no quantity lane (spec: disabled with a
