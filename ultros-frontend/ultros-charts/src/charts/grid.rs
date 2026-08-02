@@ -10,6 +10,7 @@ use ultros_api_types::world_helper::{AnySelector, WorldHelper};
 
 use crate::charts::ChartMode;
 use crate::charts::price_history::MIN_CANDLE_SALES;
+use crate::data::stats::robust_price_domain;
 use crate::data::union_index::{UnionIndex, build_union_index};
 use crate::scale::{LinearScale, TimeScale};
 use crate::scene::{Color, Node, Scene, Stroke};
@@ -214,22 +215,10 @@ pub fn build_price_grid(
         .map(|ts| time.scale(*ts + half_bucket))
         .collect();
 
-    // Domain over low..high covers every mode's marks (a vwap line always
-    // sits inside its buckets' low/high band). 5% pad like the overlay.
+    // Same robust domain as the overlay chart, so an outlier can't flatten
+    // every cell against its floor (#1068). Marks outside it clip below.
     let padded_extent = |cells: &[&ResolvedCell]| -> (f64, f64) {
-        let mut lo = f64::INFINITY;
-        let mut hi = f64::NEG_INFINITY;
-        for cell in cells {
-            for b in &cell.buckets {
-                lo = lo.min(b.low as f64);
-                hi = hi.max(b.high as f64);
-            }
-        }
-        if !lo.is_finite() || !hi.is_finite() {
-            return (0.0, 1.0);
-        }
-        let pad = ((hi - lo) * 0.05).max(1.0);
-        ((lo - pad).max(0.0), hi + pad)
+        robust_price_domain(cells.iter().flat_map(|cell| cell.buckets.iter())).unwrap_or((0.0, 1.0))
     };
     let all_refs: Vec<&ResolvedCell> = visible.iter().collect();
     let y_domain = padded_extent(&all_refs);
@@ -258,7 +247,12 @@ pub fn build_price_grid(
             let curve = |f: fn(&PriceBucket) -> i32| -> Vec<(f32, f32)> {
                 cell.buckets
                     .iter()
-                    .map(|b| (time.scale(b.ts + half_bucket), price.scale(f(b) as f64)))
+                    .map(|b| {
+                        (
+                            time.scale(b.ts + half_bucket),
+                            price.scale(f(b) as f64).clamp(plot_top, plot_bottom),
+                        )
+                    })
                     .collect()
             };
             match options.mode {
@@ -267,8 +261,12 @@ pub fn build_price_grid(
                         .buckets
                         .iter()
                         .filter_map(|b| {
-                            b.vwap()
-                                .map(|v| (time.scale(b.ts + half_bucket), price.scale(v)))
+                            b.vwap().map(|v| {
+                                (
+                                    time.scale(b.ts + half_bucket),
+                                    price.scale(v).clamp(plot_top, plot_bottom),
+                                )
+                            })
                         })
                         .collect();
                     if line.len() > 1 {
@@ -293,17 +291,20 @@ pub fn build_price_grid(
                     let mut wicks: Vec<(f32, f32, f32)> = Vec::new();
                     for b in &cell.buckets {
                         let x = time.scale(b.ts + half_bucket);
-                        wicks.push((x, price.scale(b.high as f64), price.scale(b.low as f64)));
+                        let y_high = price.scale(b.high as f64).clamp(plot_top, plot_bottom);
+                        let y_low = price.scale(b.low as f64).clamp(plot_top, plot_bottom);
+                        wicks.push((x, y_high, y_low));
                         if b.sales < MIN_CANDLE_SALES {
                             continue;
                         }
-                        let y_open = price.scale(b.open as f64);
-                        let y_close = price.scale(b.close as f64);
+                        let y_open = price.scale(b.open as f64).clamp(plot_top, plot_bottom);
+                        let y_close = price.scale(b.close as f64).clamp(plot_top, plot_bottom);
+                        let height = (y_open - y_close).abs().max(1.2);
                         let rect = (
                             x - body_w / 2.0,
-                            y_open.min(y_close),
+                            y_open.min(y_close).min(plot_bottom - height).max(plot_top),
                             body_w,
-                            (y_open - y_close).abs().max(1.2),
+                            height,
                         );
                         if b.close >= b.open {
                             up.push(rect);
@@ -394,6 +395,46 @@ pub fn build_price_grid(
 mod tests {
     use super::*;
     use crate::test_util::{two_world_series, world_helper};
+
+    #[test]
+    fn a_laundered_cell_does_not_flatten_the_shared_domain() {
+        const LAUNDERED: i32 = 1_000_000;
+        let mut series = two_world_series();
+        let mut outlier = crate::test_util::bucket(
+            1_700_006_400 + 10 * 86_400,
+            LAUNDERED,
+            LAUNDERED,
+            LAUNDERED,
+            LAUNDERED,
+            2,
+        );
+        outlier.sales = 5;
+        series.series[0].buckets.push(outlier);
+
+        let model = build_price_grid(&world_helper(), &series, &GridOptions::default());
+        assert!(
+            model.y_domain.1 < 5_000.0,
+            "one laundered bucket blew out every cell: domain {:?}",
+            model.y_domain
+        );
+        // The ordinary market still fits: worlds span 990..1310.
+        assert!(model.y_domain.0 <= 990.0 && model.y_domain.1 >= 1_310.0);
+
+        // …and nothing draws outside its cell.
+        for cell in &model.cells {
+            for node in &cell.scene.nodes {
+                if let Node::Polyline { points, .. } = node {
+                    for (_, y) in points {
+                        assert!(
+                            (model.plot_top..=model.plot_bottom).contains(y),
+                            "cell {} drew at y={y}",
+                            cell.name
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn one_cell_per_visible_series_sorted_by_name() {

@@ -2,6 +2,7 @@ pub mod about;
 pub mod alerts;
 pub mod analyzer;
 pub mod bot;
+pub mod changelog;
 pub mod currency_exchange;
 pub mod edit_retainers;
 pub mod fc_crafting_analyzer;
@@ -29,6 +30,7 @@ pub mod trends;
 pub mod vendor_resale;
 pub mod venture_analyzer;
 pub mod welcome;
+pub mod world_nav;
 
 pub mod legal {
     pub mod cookie_policy;

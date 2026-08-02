@@ -4,8 +4,8 @@ use axum::{
 };
 use serde_json::Value as JsonValue;
 use ultros_api_types::alert::{
-    CreateEndpointRequest, DiscordWritableGuild, Endpoint, EndpointMethod, ResendResult,
-    UpdateEndpointRequest,
+    CreateEndpointRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint, EndpointMethod,
+    ResendResult, UpdateEndpointRequest,
 };
 use ultros_db::UltrosDb;
 
@@ -232,11 +232,43 @@ pub(crate) async fn delete_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-) -> Result<Json<()>, ApiError> {
+) -> Result<Json<DeleteEndpointResponse>, ApiError> {
+    // Look the endpoint up before deleting it: a WebPush endpoint references
+    // its push_subscription row only through the JSON config (there's no FK),
+    // so the subscription has to be cleaned up here or it's orphaned forever.
+    let endpoint = db
+        .get_endpoint_owned_by(user.id as i64, id)
+        .await
+        .map_err(ApiError::from)?;
     db.delete_endpoint(user.id as i64, id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(()))
+
+    let mut push_endpoint = None;
+    if let Ok(EndpointMethod::WebPush { subscription_id }) =
+        db_to_method(&endpoint.method, &endpoint.config)
+    {
+        // The lookup can miss legitimately: delivery deletes the subscription
+        // row itself when the push service reports it revoked, leaving the
+        // endpoint row behind. Nothing to clean up in that case.
+        if let Ok(sub) = db.get_push_subscription_by_id(subscription_id).await
+            && sub.user_id == user.id as i64
+        {
+            match db
+                .delete_push_subscription_by_id(user.id as i64, subscription_id)
+                .await
+            {
+                Ok(()) => push_endpoint = Some(sub.endpoint),
+                Err(e) => tracing::warn!(
+                    error = ?e,
+                    endpoint_id = id,
+                    subscription_id,
+                    "endpoint deleted but linked push subscription was not"
+                ),
+            }
+        }
+    }
+    Ok(Json(DeleteEndpointResponse { push_endpoint }))
 }
 
 pub(crate) async fn test_endpoint(
@@ -283,6 +315,7 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            "/alerts",
             &db,
             ctx,
         )
@@ -293,6 +326,7 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            "/alerts",
             &db,
         )
         .await
@@ -422,6 +456,17 @@ mod tests {
             let back = db_to_method(method, &config).unwrap();
             assert_eq!(m, back);
         }
+    }
+
+    #[test]
+    fn method_to_db_round_trip_web_push() {
+        // delete_endpoint relies on this parse to find the push_subscription
+        // row linked through the JSON config — there is no FK.
+        let m = EndpointMethod::WebPush { subscription_id: 7 };
+        let (method, config) = method_to_db(&m);
+        assert_eq!(method, "WebPush");
+        assert_eq!(config, json!({"subscription_id": 7}));
+        assert_eq!(db_to_method(method, &config).unwrap(), m);
     }
 
     #[test]

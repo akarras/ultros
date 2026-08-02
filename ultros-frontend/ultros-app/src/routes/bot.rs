@@ -35,7 +35,7 @@ pub fn BotGuide() -> impl IntoView {
             <section id="getting-started" class="flex flex-col gap-3">
                 <h2 class="text-2xl font-semibold text-brand-300">{t!(i18n, bot_section_getting_started_heading)}</h2>
                 <ol class="list-decimal list-inside flex flex-col gap-2">
-                    <li>{t!(i18n, bot_setup_step_verify)}</li>
+                    <li>{t!(i18n, bot_setup_step_add_character)}</li>
                     <li>{t!(i18n, bot_setup_step_discord_run_prefix)} <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add"</code> {t!(i18n, bot_setup_step_discord_run_suffix)}</li>
                     <li>{t!(i18n, bot_setup_step_run_in_channel_prefix)} <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add_undercut_alert margin_percent:0"</code> {t!(i18n, bot_setup_step_run_in_channel_suffix)}</li>
                 </ol>

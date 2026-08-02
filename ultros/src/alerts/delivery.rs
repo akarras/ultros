@@ -101,10 +101,16 @@ pub(crate) fn parse_endpoint_config(
 /// for endpoint test + alert-event resend. The `_db` arg is unused today but kept in the
 /// signature so future endpoint methods (e.g. ones that need to look up retainer info) can
 /// be added without rippling the call sites.
+///
+/// `click_url` is the in-app path a Web Push notification opens when clicked
+/// (e.g. `/retainers/undercuts` for undercut alerts); use `/alerts` when no
+/// more specific destination applies. Other endpoint methods ignore it — their
+/// bodies already carry full links.
 pub(crate) async fn deliver_to_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
@@ -118,7 +124,7 @@ pub(crate) async fn deliver_to_endpoint(
         EndpointConfig::WebPush { subscription_id } => {
             let cfg = get_web_push_config()
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
-            send_webpush(subscription_id, title, body, db, cfg).await
+            send_webpush(subscription_id, title, body, click_url, db, cfg).await
         }
     }
 }
@@ -131,6 +137,7 @@ pub(crate) async fn deliver_non_discord_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
 ) -> Result<()> {
     let parsed = parse_endpoint_config(&endpoint.method, &endpoint.config)?;
@@ -142,7 +149,7 @@ pub(crate) async fn deliver_non_discord_endpoint(
         EndpointConfig::WebPush { subscription_id } => {
             let cfg = get_web_push_config()
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
-            send_webpush(subscription_id, title, body, db, cfg).await
+            send_webpush(subscription_id, title, body, click_url, db, cfg).await
         }
     }
 }
@@ -153,6 +160,7 @@ pub(crate) async fn dispatch_alert(
     alert_id: i32,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
@@ -166,7 +174,7 @@ pub(crate) async fn dispatch_alert(
     let mut any_ok = false;
 
     for endpoint in endpoints {
-        match deliver_to_endpoint(&endpoint, title, body, db, ctx).await {
+        match deliver_to_endpoint(&endpoint, title, body, click_url, db, ctx).await {
             Ok(()) => any_ok = true,
             Err(e) => {
                 error!("delivery failed for alert {alert_id}: {e}");
@@ -243,10 +251,22 @@ async fn send_dm(
 /// (b) the crate's `From<isahc::Error>` impl discards the underlying cause and
 /// surfaces every transport failure as `WebPushError::Unspecified`, leaving
 /// operators with no signal about what actually broke.
+/// Build the JSON body the service worker reads out of `event.data.json()`.
+/// `click_url` becomes `data.url`, which `notificationclick` opens — an alert
+/// that hardcodes this loses the user's actual destination.
+fn build_push_payload(title: &str, body: &str, click_url: &str) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": click_url,
+    }))?)
+}
+
 async fn send_webpush(
     subscription_id: i32,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
     config: &WebPushConfig,
 ) -> Result<()> {
@@ -266,12 +286,7 @@ async fn send_webpush(
         .build()
         .map_err(|e| anyhow!("VAPID build failed: {e:?}"))?;
 
-    // Payload is the JSON the service worker will see in `event.data.json()`.
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "title": title,
-        "body": body,
-        "url": "/alerts",
-    }))?;
+    let payload = build_push_payload(title, body, click_url)?;
 
     let mut builder = WebPushMessageBuilder::new(&info);
     builder.set_payload(ContentEncoding::Aes128Gcm, &payload);
@@ -360,6 +375,15 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn push_payload_carries_the_callers_click_url() {
+        let payload = build_push_payload("Undercut Alert", "body", "/retainers/undercuts").unwrap();
+        let decoded: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(decoded["url"], json!("/retainers/undercuts"));
+        assert_eq!(decoded["title"], json!("Undercut Alert"));
+        assert_eq!(decoded["body"], json!("body"));
+    }
 
     #[test]
     fn parses_discord_dm_from_method_plus_config() {

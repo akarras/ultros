@@ -1,6 +1,5 @@
 mod alerts_websocket;
 pub(crate) mod api;
-pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
@@ -55,8 +54,8 @@ use ultros_api_types::user::{
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
-    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification, Retainer, WorldItemLastUpdated,
+    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter, Retainer,
+    WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
 use ultros_charts::data::buckets::{
@@ -69,7 +68,8 @@ use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
-use self::character_verifier_service::CharacterVerifierService;
+use crate::character_claim::CharacterClaimService;
+
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
@@ -89,7 +89,7 @@ use crate::web::api::{
     cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
     get_movers, get_trends, post_resale_quality, post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -1296,17 +1296,6 @@ pub(crate) async fn user_retainer_listings(
     Ok(Json(retainers))
 }
 
-pub(crate) async fn verify_character(
-    State(character): State<CharacterVerifierService>,
-    Path(verification_id): Path<i32>,
-    user: AuthDiscordUser,
-) -> Result<Json<bool>, ApiError> {
-    character
-        .check_verification(verification_id, user.id as i64)
-        .await?;
-    Ok(Json(true))
-}
-
 pub(crate) async fn retainer_search(
     State(db): State<UltrosDb>,
     Path(retainer_name): Path<String>,
@@ -1813,27 +1802,6 @@ async fn user_characters(
     ))
 }
 
-async fn pending_verifications(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-) -> Result<Json<Vec<FfxivCharacterVerification>>, ApiError> {
-    let verifications = db
-        .get_all_pending_verification_challenges(user.id as i64)
-        .await?;
-    Ok(Json(
-        verifications
-            .into_iter()
-            .flat_map(|(verification, character)| {
-                character.map(|character| FfxivCharacterVerification {
-                    id: verification.id,
-                    character: character.into(),
-                    verification_string: verification.challenge,
-                })
-            })
-            .collect::<Vec<_>>(),
-    ))
-}
-
 async fn character_search(
     _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
     Path(name): Path<String>,
@@ -1869,16 +1837,18 @@ async fn character_search(
     Ok(Json(characters))
 }
 
+/// Claims a character for the logged-in user.
+///
+/// There's no verification step: the Discord login already says who the user
+/// is, and a claim only groups their retainers. Several users may hold the same
+/// character.
 async fn claim_character(
     user: AuthDiscordUser,
     Path(character_id): Path<u32>,
-    State(verifier): State<CharacterVerifierService>,
-) -> Result<Json<(i32, String)>, ApiError> {
-    let result = verifier
-        .start_verification(character_id, user.id as i64)
-        .await?;
-    // db.create_character_challenge(character_id, user.id as i64, challenge)
-    Ok(Json(result))
+    State(claim): State<CharacterClaimService>,
+) -> Result<Json<FfxivCharacter>, ApiError> {
+    let character = claim.claim_character(character_id, user.id as i64).await?;
+    Ok(Json(character.into()))
 }
 
 #[derive(Deserialize)]
@@ -2485,12 +2455,7 @@ pub(crate) async fn start_web(
         .route("/api/v1/characters/search/{name}", get(character_search))
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
-        .route("/api/v1/characters/verify/{id}", get(verify_character))
         .route("/api/v1/characters", get(user_characters))
-        .route(
-            "/api/v1/characters/verifications",
-            get(pending_verifications),
-        )
         .route("/api/v1/detectregion", get(detect_region))
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))
@@ -2507,7 +2472,6 @@ pub(crate) async fn start_web(
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
-        .route("/sitemap/world/{s}", get(world_sitemap))
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))

@@ -106,13 +106,19 @@
 
     html {
         overflow-x: hidden;
-        width: 100vw;
+        /* Deliberately `100%`, not `100vw`. The viewport unit includes the
+           width of a classic (non-overlay) scrollbar, so on desktop the page
+           laid out ~15px wider than the space it actually had — and because
+           the x-axis is hidden, that surplus was not scrollable but simply
+           clipped off the right edge of every page. `100%` resolves against
+           the real content box, so the two agree. */
+        width: 100%;
     }
 
     body {
         background-size: 500px;
         background-position: top;
-        max-width: 100vw;
+        max-width: 100%;
         background-color: var(--color-background);
         color: var(--text-color);
         position: relative;
@@ -768,6 +774,65 @@
     }
     100% {
         transform: translate(24px, 0);
+    }
+}
+
+/* === Loading skeletons ===
+ *
+ * Two classes that compose:
+ *
+ *   `.skeleton-block`   paints a placeholder surface (the grey bar that
+ *                       stands in for a word, a number, an icon).
+ *   `.skeleton-shimmer` sweeps a highlight across whatever it is put on,
+ *                       left to right.
+ *
+ * The sweep is a translated pseudo-element rather than an animated
+ * `background-position`, so the highlight keeps a constant width and speed
+ * no matter how wide the host element is — a full-width table row and a
+ * 40px cell shimmer identically. (The previous `.background-animate`
+ * approach scaled the gradient to the element, and it lived in
+ * `style/legacy.css`, which is not part of the stylesheet build at all, so
+ * nothing was animating in the shipped bundle.)
+ *
+ * Put `.skeleton-shimmer` on a single bar for a per-bar sweep, or on a
+ * container for one highlight that travels across every bar inside it.
+ * The container form is what the table skeletons use — dozens of bars each
+ * pulsing on their own reads as noise. */
+.skeleton-block {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+
+.skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--color-text) 9%, transparent) 50%,
+        transparent 100%
+    );
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* Motion is decoration here — the placeholders still communicate "content
+   is loading" while completely still. */
+@media (prefers-reduced-motion: reduce) {
+    .skeleton-shimmer::after {
+        animation: none;
     }
 }
 
@@ -2128,6 +2193,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
            on-screen keyboard open it can outgrow 100dvh, so the sheet
            itself has to scroll or the tail becomes unreachable. */
         overflow-y: auto;
+        /* Tapping the sheet's empty space closes it (#1067). iOS Safari only
+           bubbles taps on non-interactive elements up to the document — where
+           Leptos's delegated click listener lives — when they look clickable,
+           and `cursor: pointer` is what satisfies that heuristic. No visual
+           cost: this rule is phone-only and phones have no cursor. */
+        cursor: pointer;
     }
     /* Keep the close button reachable even when the sheet above has
        scrolled the input out of view. */
@@ -2137,6 +2208,28 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         z-index: 2;
         background-color: var(--color-background);
         padding-bottom: 0.5rem;
+        /* The header is a normal control row — don't inherit the sheet's
+           tap-to-close pointer cursor. */
+        cursor: auto;
+    }
+    /* On a phone the explicit close button crowded the input row and put a
+       second X right next to the input's own clear-X (#1067). Tapping the
+       sheet's empty space closes the overlay instead, so collapse the button
+       to a screen-reader-only control: still in the accessibility tree and
+       keyboard-focusable (tap-off is a bare div and Escape needs a hardware
+       keyboard), and it pops back into the row when keyboard-focused so
+       sighted keyboard users at narrow widths aren't tabbed onto an
+       invisible control. */
+    .search-overlay-close:not(:focus-visible) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        border: 0;
+        white-space: nowrap;
     }
 }
 
@@ -2332,6 +2425,28 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .sticky-bar-button:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
 }
+/* Opt-in shrink, for the control bar's own first row.
+   `.sticky-bar-button` is `flex: 0 0 auto` + `white-space: nowrap`, so a row
+   built out of them can only grow. The first row grew past a phone viewport
+   by ~210px, and since `html` is `overflow-x: hidden` that surplus was not
+   scrollable but simply unreachable — the last button sat off-screen (#1055).
+   A breakpoint alone cannot fix it: the side nav claims 240px at `lg`, so the
+   row is barely wider at 1024px than at 768px, and the German labels overflow
+   in that band. These yield instead, in a deliberate order — the row count
+   gives up space first (it is `flex-1`), then labels ellipsize, and the icon
+   never shrinks, so a control is always identifiable. */
+.sticky-bar-button-shrink {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+.sticky-bar-button-shrink > svg {
+    flex: 0 0 auto;
+}
+.sticky-bar-button-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 /* Popovers hung off the bar (columns picker, + Filter menu). The bar is
    `position: sticky`, so it is already the containing block for these. */
 .sticky-bar-popover {
@@ -2415,6 +2530,20 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     border-radius: 0.25rem;
     padding: 0.05rem 0.25rem;
 }
+/* Unread "what's new" dot on a sidebar row. Sits at the trailing edge like
+   `.side-nav-kbd`, and deliberately survives the collapsed sidebar — the dot
+   is the only thing left saying "there's something here" once the label is
+   gone. Sized to read as a marker rather than compete with the sign-in
+   button. */
+.side-nav-badge {
+    margin-left: auto;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 9999px;
+    background-color: var(--brand-ring);
+    flex-shrink: 0;
+}
+
 .side-nav-rule {
     height: 1px;
     background-color: var(--color-outline);
