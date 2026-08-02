@@ -28,13 +28,16 @@ use crate::{
         world_picker::WorldOnlyPicker,
     },
     global_state::{
-        cookies::Cookies, crafter_levels::CrafterLevels, home_world::use_home_world,
-        region_for_world::use_region_for_world,
+        LocalWorldData, cookies::Cookies, crafter_levels::CrafterLevels,
+        home_world::use_home_world, region_for_world::use_region_for_world,
     },
 };
 use icondata as i;
 use leptos::prelude::*;
-use leptos_router::hooks::{query_signal, use_params_map};
+use leptos_router::{
+    NavigateOptions,
+    hooks::{query_signal, use_navigate, use_query_map},
+};
 use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
@@ -57,6 +60,88 @@ struct RecipeProfitData {
     avg_price: i32,
     total_sales: usize,
     required_level: i32,
+}
+
+/// Acronym for a `Recipe::craft_type`, matching the `CraftType` sheet order.
+/// Empty for anything outside the eight crafters.
+fn craft_type_acronym(craft_type: i32) -> &'static str {
+    match craft_type {
+        0 => "CRP",
+        1 => "BSM",
+        2 => "ARM",
+        3 => "GSM",
+        4 => "LTW",
+        5 => "WVR",
+        6 => "ALC",
+        7 => "CUL",
+        _ => "",
+    }
+}
+
+/// The user's level for a job acronym, or `None` if the acronym isn't a
+/// crafter. Shares one table with the recipe filter so the per-job empty state
+/// can never disagree with the rows the filter actually kept.
+fn level_for_job_code(levels: &CrafterLevels, code: &str) -> Option<i32> {
+    Some(match code {
+        "CRP" => levels.carpenter,
+        "BSM" => levels.blacksmith,
+        "ARM" => levels.armorer,
+        "GSM" => levels.goldsmith,
+        "LTW" => levels.leatherworker,
+        "WVR" => levels.weaver,
+        "ALC" => levels.alchemist,
+        "CUL" => levels.culinarian,
+        _ => return None,
+    })
+}
+
+/// Every crafter acronym, in `CraftType` order.
+const JOB_CODES: [&str; 8] = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
+
+/// Whether any crafter is above level 0. A user with all-zero levels can't
+/// craft anything, so the analyzer has nothing to rank.
+fn has_any_level(levels: &CrafterLevels) -> bool {
+    JOB_CODES
+        .iter()
+        .any(|code| level_for_job_code(levels, code).unwrap_or(0) > 0)
+}
+
+/// Why the results table has nothing in it. Each variant maps to a distinct
+/// empty state — a blank table with no explanation is what made #1063 read as
+/// "BSM is broken" rather than "this filter combination excludes everything".
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EmptyReason {
+    /// Every crafter level is 0.
+    NoLevels,
+    /// A job filter is active and that one job's level is 0.
+    JobLevelZero(String),
+    /// Levels are set and recipes exist, but the filters removed all of them.
+    FiltersExcludeAll,
+}
+
+/// Classify an empty results table. `results_empty` is the outcome of the full
+/// filter pipeline; the other arguments are the inputs that most often explain
+/// it. Returns `None` whenever there are rows to show, so an explanation can
+/// never render above a populated table.
+fn empty_reason(
+    results_empty: bool,
+    levels: &CrafterLevels,
+    job_filter: Option<&str>,
+) -> Option<EmptyReason> {
+    if !results_empty {
+        return None;
+    }
+    // A zeroed job is named ahead of the all-zero case: it's the filter the
+    // user is actually looking at, and it's the one thing they can act on.
+    if let Some(job) = job_filter
+        && level_for_job_code(levels, job) == Some(0)
+    {
+        return Some(EmptyReason::JobLevelZero(job.to_string()));
+    }
+    if !has_any_level(levels) {
+        return Some(EmptyReason::NoLevels);
+    }
+    Some(EmptyReason::FiltersExcludeAll)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -151,17 +236,7 @@ fn RecipeAnalyzerTable(
         use_on_hand_url().unwrap_or_else(|| craft_options.get().unwrap_or_default().use_on_hand)
     };
 
-    let has_levels = Memo::new(move |_| {
-        let levels = crafter_levels.get().unwrap_or_default();
-        levels.carpenter > 0
-            || levels.blacksmith > 0
-            || levels.armorer > 0
-            || levels.goldsmith > 0
-            || levels.leatherworker > 0
-            || levels.weaver > 0
-            || levels.alchemist > 0
-            || levels.culinarian > 0
-    });
+    let has_levels = Memo::new(move |_| has_any_level(&crafter_levels.get().unwrap_or_default()));
 
     let computed_data = Memo::new(move |_| {
         let recipes_by_output = recipes_by_output();
@@ -205,18 +280,8 @@ fn RecipeAnalyzerTable(
                 .map(|t| t.class_job_level as i32)
                 .unwrap_or(0);
 
-            // Job mapping: 0=CRP, 1=BSM, 2=ARM, 3=GSM, 4=LTW, 5=WVR, 6=ALC, 7=CUL
-            let (user_level, job_code) = match recipe.craft_type {
-                0 => (levels.carpenter, "CRP"),
-                1 => (levels.blacksmith, "BSM"),
-                2 => (levels.armorer, "ARM"),
-                3 => (levels.goldsmith, "GSM"),
-                4 => (levels.leatherworker, "LTW"),
-                5 => (levels.weaver, "WVR"),
-                6 => (levels.alchemist, "ALC"),
-                7 => (levels.culinarian, "CUL"),
-                _ => (0, ""),
-            };
+            let job_code = craft_type_acronym(recipe.craft_type);
+            let user_level = level_for_job_code(&levels, job_code).unwrap_or(0);
 
             if let Some(filter) = job_filter()
                 && filter != job_code
@@ -370,6 +435,36 @@ fn RecipeAnalyzerTable(
             .enumerate()
             .collect::<Vec<_>>()
     });
+
+    let empty_state = Memo::new(move |_| {
+        empty_reason(
+            computed_data.with(|d| d.is_empty()),
+            &crafter_levels.get().unwrap_or_default(),
+            job_filter().as_deref(),
+        )
+    });
+
+    // Localized display name for a job acronym, for the per-job empty state.
+    let job_name = move |code: &str| -> String {
+        match code {
+            "CRP" => t_string!(i18n, carpenter).to_string(),
+            "BSM" => t_string!(i18n, blacksmith).to_string(),
+            "ARM" => t_string!(i18n, armorer).to_string(),
+            "GSM" => t_string!(i18n, goldsmith).to_string(),
+            "LTW" => t_string!(i18n, leatherworker).to_string(),
+            "WVR" => t_string!(i18n, weaver).to_string(),
+            "ALC" => t_string!(i18n, alchemist).to_string(),
+            "CUL" => t_string!(i18n, culinarian).to_string(),
+            other => other.to_string(),
+        }
+    };
+
+    let clear_filters = Callback::new(move |()| {
+        set_minimum_profit(None);
+        set_minimum_roi(None);
+        set_min_daily_sales(None);
+    });
+    let clear_job_filter = Callback::new(move |()| set_job_filter(None));
 
     view! {
         <div class="flex flex-col gap-6">
@@ -550,14 +645,40 @@ fn RecipeAnalyzerTable(
                     />
             </Toolbar>
 
-            <Show when=move || !has_levels()>
-                <ActionableEmptyState
-                    title=t_string!(i18n, recipe_analyzer_empty_set_levels_title).to_string()
-                    body="Recipe Analyzer filters to crafts your character can make. Open the crafting profile section above and enter at least one crafter level."
-                    action_href="/help/recipe-analyzer"
-                    action_label="Read recipe help"
-                />
-            </Show>
+            {move || match empty_state.get() {
+                None => ().into_any(),
+                Some(EmptyReason::NoLevels) => view! {
+                    <ActionableEmptyState
+                        title=t_string!(i18n, recipe_analyzer_empty_set_levels_title).to_string()
+                        body=t_string!(i18n, recipe_analyzer_empty_set_levels_body).to_string()
+                        action_href="/help/recipe-analyzer"
+                        action_label=t_string!(i18n, recipe_analyzer_empty_read_help).to_string()
+                    />
+                }.into_any(),
+                Some(EmptyReason::JobLevelZero(job)) => {
+                    let job = job_name(&job);
+                    view! {
+                        <ActionableEmptyState
+                            title=t_string!(i18n, recipe_analyzer_empty_job_level_zero_title, job = job.clone()).to_string()
+                            body=t_string!(i18n, recipe_analyzer_empty_job_level_zero_body, job = job).to_string()
+                            on_action=clear_job_filter
+                            action_label=t_string!(i18n, recipe_analyzer_empty_clear_job_filter).to_string()
+                            secondary_action_href="/help/recipe-analyzer"
+                            secondary_action_label=t_string!(i18n, recipe_analyzer_empty_read_help).to_string()
+                        />
+                    }.into_any()
+                }
+                Some(EmptyReason::FiltersExcludeAll) => view! {
+                    <ActionableEmptyState
+                        title=t_string!(i18n, recipe_analyzer_empty_filters_title).to_string()
+                        body=t_string!(i18n, recipe_analyzer_empty_filters_body).to_string()
+                        on_action=clear_filters
+                        action_label=t_string!(i18n, recipe_analyzer_empty_clear_filters).to_string()
+                        secondary_action_href="/help/recipe-analyzer"
+                        secondary_action_label=t_string!(i18n, recipe_analyzer_empty_read_help).to_string()
+                    />
+                }.into_any(),
+            }}
 
             // Results Table
              <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
@@ -618,17 +739,7 @@ fn RecipeAnalyzerTable(
                             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                         };
 
-                        let job_abbrev = match data.recipe.craft_type {
-                            0 => "CRP",
-                            1 => "BSM",
-                            2 => "ARM",
-                            3 => "GSM",
-                            4 => "LTW",
-                            5 => "WVR",
-                            6 => "ALC",
-                            7 => "CUL",
-                            _ => "",
-                        };
+                        let job_abbrev = craft_type_acronym(data.recipe.craft_type);
 
                         let sales_tooltip = format!(
                             "Based on {} sales over {:.1} days",
@@ -741,21 +852,67 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // Suspense closure and remounts whenever its resources change, which would
     // keep undoing a filter the user had cleared.
     seed_query_default("min-sales", DEFAULT_MIN_DAILY_SALES);
-    let params = use_params_map();
+    let query = use_query_map();
     let (home_world, _) = use_home_world();
+    let nav = use_navigate();
 
-    let region = use_region_for_world(move || params.with(|p| p.get("world").clone()));
+    // The route has no `:world` path segment, so shared links carry the world
+    // in the query string (`?world=Gilgamesh`), same as the leve analyzer.
+    let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
 
     let global_cheapest_listings = ArcResource::new(region, move |region: String| async move {
         get_cheapest_listings(&region).await
     });
 
-    let (selected_world, set_selected_world) = signal(None);
+    let worlds = use_context::<LocalWorldData>()
+        .expect("Should always have local world data")
+        .0
+        .unwrap();
+
+    let initial_world = query.with_untracked(|p| {
+        let binding = p.get("world");
+        let world = binding.as_deref().unwrap_or_default();
+        worlds
+            .lookup_world_by_name(world)
+            .and_then(|w| w.as_world().cloned())
+    });
+
+    let (selected_world, set_selected_world) = signal(initial_world);
+
+    // If no world is selected initially, try to use home world
     Effect::new(move |_| {
         if selected_world.get_untracked().is_none()
             && let Some(home) = home_world.get()
         {
             set_selected_world(Some(home));
+        }
+    });
+
+    // When selected world changes, update the URL
+    Effect::new(move |_| {
+        if let Some(world) = selected_world.get() {
+            let world_name = world.name;
+            let current_query = query.get_untracked();
+            let world_matches = current_query
+                .get("world")
+                .map(|s| s == world_name)
+                .unwrap_or(false);
+
+            if !world_matches {
+                let mut query_string = format!("?world={}", world_name);
+                for (k, v) in current_query.into_iter() {
+                    if k != "world" {
+                        query_string.push_str(&format!("&{}={}", k, v));
+                    }
+                }
+                nav(
+                    &query_string,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     });
 
@@ -802,7 +959,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 on:click=move |_| set_show_settings.update(|v| *v = !*v)
                             >
                                 <Icon icon=i::AiSettingOutlined />
-                                "Adjust Crafter Levels"
+                                {t!(i18n, recipe_analyzer_adjust_levels)}
                                 <CollapseIcon collapsed=show_settings.into() />
                             </button>
                             <div class=move || {
@@ -828,17 +985,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_sales_velocity).to_string() />
                 </div>
 
-                <Show when=move || selected_world.get().is_some()>
-                    <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world_for_sales_data)}</label>
-                        <div class="w-full md:w-auto">
-                            <WorldOnlyPicker
-                                current_world=selected_world.into()
-                                set_current_world=set_selected_world.into()
-                            />
-                        </div>
+                // Rendered unconditionally: gating on `selected_world.is_some()`
+                // hid the only control that can set a world from a visitor who
+                // has neither a home-world cookie nor `?world=` in the URL.
+                <div class="flex flex-col md:flex-row items-center gap-2">
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world_for_sales_data)}</label>
+                    <div class="w-full md:w-auto">
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world.into()
+                        />
                     </div>
-                </Show>
+                </div>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -878,5 +1036,177 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use xiv_gen::ClassJobId;
+
+    /// `Recipe::craft_type` is a row index into the `CraftType` sheet, which
+    /// xiv-gen doesn't load. The eight Disciple of the Hand jobs are
+    /// consecutive `ClassJob` rows starting at carpenter, in the same order
+    /// `CraftType` uses, so walk those rows and pin both the spelling and the
+    /// ordering against real game data instead of a second copy of the same
+    /// hand-written list.
+    ///
+    /// `doh_dol_job_index` alone can't anchor this: it restarts at 0 for the
+    /// gatherers, so miner also reports index 0. It's checked here as a second
+    /// signal once the row is known to be a crafter.
+    #[test]
+    fn craft_type_acronyms_match_the_crafter_class_jobs() {
+        let data = xiv_gen_db::data();
+        let carpenter = data
+            .class_jobs
+            .iter()
+            .find(|(_, j)| j.abbreviation == "CRP")
+            .map(|(id, _)| id.0)
+            .expect("game data should have a carpenter");
+
+        for (offset, expected) in JOB_CODES.iter().enumerate() {
+            let row = ClassJobId(carpenter + offset as i32);
+            let class_job = data
+                .class_jobs
+                .get(&row)
+                .unwrap_or_else(|| panic!("no ClassJob at row {}", row.0));
+            assert_eq!(
+                &class_job.abbreviation, expected,
+                "ClassJob row {} is {:?}, not {expected}",
+                row.0, class_job.abbreviation
+            );
+            assert_eq!(
+                class_job.doh_dol_job_index as usize, offset,
+                "{expected} should be crafter #{offset}"
+            );
+            assert_eq!(craft_type_acronym(offset as i32), *expected);
+        }
+    }
+
+    #[test]
+    fn craft_type_acronym_is_empty_outside_the_crafters() {
+        assert_eq!(craft_type_acronym(8), "");
+        assert_eq!(craft_type_acronym(-1), "");
+    }
+
+    /// Every acronym the job-filter dropdown can emit must resolve to a level.
+    /// A missing arm here is what turns "filter by BSM" into a silent zero.
+    #[test]
+    fn every_job_code_resolves_to_a_level() {
+        let levels = CrafterLevels::default();
+        for code in JOB_CODES {
+            assert_eq!(
+                level_for_job_code(&levels, code),
+                Some(100),
+                "{code} should read back the default level"
+            );
+        }
+        assert_eq!(level_for_job_code(&levels, "MIN"), None);
+        assert_eq!(level_for_job_code(&levels, ""), None);
+    }
+
+    #[test]
+    fn level_for_job_code_reads_the_matching_field() {
+        let levels = CrafterLevels {
+            blacksmith: 0,
+            ..Default::default()
+        };
+        assert_eq!(level_for_job_code(&levels, "BSM"), Some(0));
+        assert_eq!(level_for_job_code(&levels, "CRP"), Some(100));
+    }
+
+    /// An explanation must never render above a populated table, whatever the
+    /// levels and filter say.
+    #[test]
+    fn no_empty_state_when_there_are_results() {
+        assert_eq!(
+            empty_reason(false, &CrafterLevels::default(), None),
+            None,
+            "a populated table needs no explanation"
+        );
+        let zeroed = CrafterLevels {
+            blacksmith: 0,
+            ..Default::default()
+        };
+        assert_eq!(empty_reason(false, &zeroed, Some("BSM")), None);
+    }
+
+    #[test]
+    fn all_zero_levels_reports_no_levels() {
+        let levels = CrafterLevels {
+            carpenter: 0,
+            blacksmith: 0,
+            armorer: 0,
+            goldsmith: 0,
+            leatherworker: 0,
+            weaver: 0,
+            alchemist: 0,
+            culinarian: 0,
+        };
+        assert!(!has_any_level(&levels));
+        assert_eq!(
+            empty_reason(true, &levels, None),
+            Some(EmptyReason::NoLevels)
+        );
+    }
+
+    /// The #1063 report: filtering to a job whose level is 0 produced a blank
+    /// table that read as "this job is broken".
+    #[test]
+    fn zeroed_job_under_its_own_filter_is_called_out() {
+        let levels = CrafterLevels {
+            blacksmith: 0,
+            ..Default::default()
+        };
+        assert!(
+            has_any_level(&levels),
+            "the other seven jobs are still leveled"
+        );
+        assert_eq!(
+            empty_reason(true, &levels, Some("BSM")),
+            Some(EmptyReason::JobLevelZero("BSM".to_string()))
+        );
+    }
+
+    /// A zeroed job is worth naming even when the *other* jobs are also zero:
+    /// it's the filter the user is actually looking at.
+    #[test]
+    fn job_level_zero_outranks_no_levels() {
+        let levels = CrafterLevels {
+            carpenter: 0,
+            blacksmith: 0,
+            armorer: 0,
+            goldsmith: 0,
+            leatherworker: 0,
+            weaver: 0,
+            alchemist: 0,
+            culinarian: 0,
+        };
+        assert_eq!(
+            empty_reason(true, &levels, Some("BSM")),
+            Some(EmptyReason::JobLevelZero("BSM".to_string()))
+        );
+    }
+
+    /// A leveled job with no rows left is the filters' doing, not the level's.
+    #[test]
+    fn leveled_job_with_no_rows_blames_the_filters() {
+        assert_eq!(
+            empty_reason(true, &CrafterLevels::default(), Some("BSM")),
+            Some(EmptyReason::FiltersExcludeAll)
+        );
+        assert_eq!(
+            empty_reason(true, &CrafterLevels::default(), None),
+            Some(EmptyReason::FiltersExcludeAll)
+        );
+    }
+
+    /// An unknown job filter can't be blamed on a level of 0.
+    #[test]
+    fn unknown_job_filter_falls_through_to_the_filter_message() {
+        assert_eq!(
+            empty_reason(true, &CrafterLevels::default(), Some("MIN")),
+            Some(EmptyReason::FiltersExcludeAll)
+        );
     }
 }
