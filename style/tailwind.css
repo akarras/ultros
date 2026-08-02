@@ -2218,7 +2218,10 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
    tree while the track is still free to transition. */
 .item-explorer-accordion-panel[data-open="true"] .item-explorer-accordion-inner {
     visibility: visible;
-    transition: visibility 0s;
+    padding-bottom: 0.9rem;
+    transition:
+        visibility 0s,
+        padding-bottom 200ms ease;
 }
 .item-explorer-accordion-inner {
     display: flex;
@@ -2226,10 +2229,18 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
     gap: 1rem;
     min-height: 0;
     overflow: hidden;
-    padding: 0 0.9rem 0.9rem;
-    /* Deferred until the collapse animation finishes, so the chips don't
+    padding: 0 0.9rem 0;
+    /* `min-height: 0` zeroes the content box for the `0fr` collapse, but not
+       the padding box — bottom padding would otherwise survive as a visible
+       gap under the collapsed header. So bottom padding is state-dependent
+       too: 0 here, restored to 0.9rem by the open-state rule above, and
+       transitioned on the same curve as the grid track so it grows and
+       shrinks with the panel instead of popping.
+       Deferred until the collapse animation finishes, so the chips don't
        vanish mid-slide; the open-state rule above flips this back
        immediately, with no delay. */
     visibility: hidden;
-    transition: visibility 0s linear 200ms;
+    transition:
+        visibility 0s linear 200ms,
+        padding-bottom 200ms ease;
 }
