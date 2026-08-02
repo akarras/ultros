@@ -2189,6 +2189,14 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
 .item-explorer-accordion-header:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 8%, transparent);
 }
+/* The wrapper's `overflow: hidden` clips anything painted outside its
+   padding box, and this header's border box fills that box edge-to-edge.
+   The global `:focus-visible` rule's positive `outline-offset: 2px` would
+   paint the entire ring outside the clip region, so it renders nothing.
+   Pull the ring inward instead. */
+.item-explorer-accordion-header:focus-visible {
+    outline-offset: -2px;
+}
 .item-explorer-accordion-chevron {
     margin-left: auto;
     flex-shrink: 0;
@@ -2243,4 +2251,16 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
     transition:
         visibility 0s linear 200ms,
         padding-bottom 200ms ease;
+}
+/* The global `prefers-reduced-motion: reduce` block zeroes
+   `transition-duration` on everything but doesn't touch
+   `transition-delay`, so the 200ms delay above survives it: the panel
+   snaps shut instantly but the chips stay focusable and in the a11y tree
+   for another 200ms — reappearing, for assistive-tech users specifically,
+   as the exact bug the `visibility` delay exists to prevent. Zero the
+   delay here instead of touching the global rule. */
+@media (prefers-reduced-motion: reduce) {
+    .item-explorer-accordion-inner {
+        transition-delay: 0s;
+    }
 }

@@ -159,7 +159,9 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
     let pill = move |group: u8, label_view: AnyView| {
         view! {
             <button
+                type="button"
                 aria-pressed=move || (selected_group.get() == group).to_string()
+                aria-controls="item-explorer-subcategories"
                 on:click=move |_| {
                     selected_group.set(group);
                     open.set(true);

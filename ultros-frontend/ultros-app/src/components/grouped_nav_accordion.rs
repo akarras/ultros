@@ -50,6 +50,7 @@ pub fn GroupedNavAccordion(
     view! {
         <div class="item-explorer-accordion">
             <button
+                type="button"
                 class="item-explorer-accordion-header"
                 aria-expanded=move || open.get().to_string()
                 aria-controls="item-explorer-subcategories"
@@ -58,6 +59,7 @@ pub fn GroupedNavAccordion(
                 <span>{move || button_label.get()}</span>
                 <Icon
                     icon=i::BiChevronDownRegular
+                    aria_hidden=true
                     attr:class="item-explorer-accordion-chevron"
                 />
             </button>
