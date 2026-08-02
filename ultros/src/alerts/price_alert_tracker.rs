@@ -456,7 +456,9 @@ async fn handle_added(
             rule.price_threshold,
         );
 
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, db, ctx).await;
+        let click_url = format!("/item/{}", rule.item_id);
+        let delivery_result =
+            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
@@ -495,7 +497,9 @@ async fn handle_added(
             rule.target_price,
         );
 
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, db, ctx).await;
+        let click_url = format!("/list/{}", rule.list_id);
+        let delivery_result =
+            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
