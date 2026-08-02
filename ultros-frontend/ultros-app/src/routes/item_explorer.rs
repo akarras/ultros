@@ -5,6 +5,7 @@ use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
+use crate::components::item_tooltip::ItemTooltip;
 use crate::components::job_set_card::JobSetCard;
 use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
@@ -893,12 +894,14 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                     }
                                 }
                             >
-                                <A href=move || format!("/item/{}/{}",
-                                    scope_name.get(),
-                                    item.key_id.0)
-                                >
-                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
-                                </A>
+                                <ItemTooltip item_id=item_id>
+                                    <A href=move || format!("/item/{}/{}",
+                                        scope_name.get(),
+                                        item_id)
+                                    >
+                                        <ItemIcon item_id=item_id icon_size=IconSize::Small />
+                                    </A>
+                                </ItemTooltip>
                                 <div class="flex flex-col min-w-0">
                                     <A href=move || format!("/item/{}/{}",
                                         scope_name.get(),

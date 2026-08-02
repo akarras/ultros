@@ -1,170 +1,34 @@
-use cfg_if::cfg_if;
-#[cfg(feature = "hydrate")]
-use leptos::{ev::resize, portal::Portal};
-use leptos::{html::Div, prelude::*};
-#[cfg(feature = "hydrate")]
-use leptos_use::{
-    UseElementBoundingReturn, UseElementSizeReturn, UseEventListenerOptions, use_element_bounding,
-    use_element_size, use_event_listener_with_options, use_window, use_window_scroll,
-};
+use leptos::prelude::*;
 
-#[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
-fn use_window_size() -> (Signal<f64>, Signal<f64>) {
-    cfg_if! { if #[cfg(feature = "ssr")] {
-        let initial_x = 0.0;
-        let initial_y = 0.0;
-    } else {
-        let initial_x = window().inner_width().unwrap_or_default().as_f64().unwrap_or_default();
-        let initial_y = window().inner_height().unwrap_or_default().as_f64().unwrap_or_default();
-    }}
-    let (x, set_x) = signal(initial_x);
-    let (y, set_y) = signal(initial_y);
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = set_x;
-        let _ = set_y;
-    }
+use super::hover_card::{AccentHairline, HOVER_CARD_CHROME, HoverCard};
 
-    cfg_if! {
-        if #[cfg(feature = "hydrate")] {
-            let _ = use_event_listener_with_options(
-                use_window(),
-                resize,
-                move |_| {
-                    set_x.set(
-                        window()
-                            .inner_width()
-                            .unwrap_or_default()
-                            .as_f64()
-                            .unwrap_or_default(),
-                    );
-                    set_y.set(
-                        window()
-                            .inner_height()
-                            .unwrap_or_default()
-                            .as_f64()
-                            .unwrap_or_default(),
-                    );
-                },
-                UseEventListenerOptions::default()
-                    .capture(false)
-                    .passive(true),
-            );
-        }
-    }
-
-    (x.into(), y.into())
-}
-
+/// Plain-text tooltip. Thin wrapper over [`HoverCard`] — same public API as
+/// the original standalone implementation.
 #[component]
 pub fn Tooltip<T>(
-    #[prop(into)]
-    #[allow(unused_variables)]
-    tooltip_text: Signal<String>,
+    #[prop(into)] tooltip_text: Signal<String>,
     #[prop(optional, into)] class: Option<String>,
     children: TypedChildrenFn<T>,
 ) -> impl IntoView
 where
-    T: Sized + Render + RenderHtml + Send,
+    T: Sized + Render + RenderHtml + Send + 'static,
 {
-    let (is_hovered, set_is_hovered) = signal(false);
-    let (is_focused, set_is_focused) = signal(false);
-    // Suppress unused variable warnings for non-hydrate builds
-    #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = is_hovered;
-        let _ = is_focused;
-    }
-    let target = NodeRef::<Div>::new();
-
-    let children = children.into_inner();
-    let tooltip = {
-        cfg_if! {
-            if #[cfg(feature = "hydrate")] {
-                let UseElementBoundingReturn {
-                    bottom,
-                    top,
-                    left,
-                    width,
-                    ..
-                } = use_element_bounding(target);
-
-                move || {
-                    (tooltip_text.with(|t| !t.is_empty()) && (is_hovered.get() || is_focused.get())).then(move || {
-                        let (screen_width, screen_height) = use_window_size();
-                        let (scroll_x, scroll_y) = use_window_scroll();
-                        let node_ref = NodeRef::<Div>::new();
-                        let UseElementSizeReturn {
-                            width: tooltip_width,
-                            height: tooltip_height,
-                        } = use_element_size(node_ref);
-
-                        let calculate_position = move || {
-                            let element_center_x = left() + (width() / 2.0);
-                            let viewport_right = scroll_x() + screen_width();
-                            let _viewport_bottom = scroll_y() + screen_height();
-
-                            let mut pos_y = top() - tooltip_height() - 8.0;
-                            let mut pos_x = element_center_x - (tooltip_width() / 2.0);
-
-                            if pos_y < scroll_y() {
-                                pos_y = bottom() + 8.0;
-                            }
-
-                            pos_x = pos_x.clamp(
-                                scroll_x() + 8.0,
-                                viewport_right - tooltip_width() - 8.0,
-                            );
-
-                            format!("top: {}px; left: {}px;", pos_y, pos_x)
-                        };
-
-                        view! {
-                            <Portal mount=document().body().unwrap()>
-                                <div
-                                    node_ref=node_ref
-                                    role="tooltip"
-                                    class="fixed z-50 px-4 py-2 text-sm
-                                    bg-gradient-to-br from-brand-950/95 to-brand-900/95
-                                    border border-brand-800/50
-                                    rounded-lg shadow-lg shadow-brand-950/50
-                                    backdrop-blur-md
-                                    text-gray-200
-                                    transition-opacity duration-150
-                                    animate-fade-in"
-                                    style=calculate_position
-                                >
-                                    {move || tooltip_text().to_string()}
-                                </div>
-                            </Portal>
-                        }.into_any()
-                    })
-                }
-            } else {
-                move || None::<AnyView>
-            }
-        }
-    };
-
+    let disabled = Signal::derive(move || tooltip_text.with(|t| t.is_empty()));
     view! {
-        <div
-            class=move || {
-                format!("inline-block {}", class.clone().unwrap_or_default())
-            }
-            on:mouseenter=move |_| set_is_hovered.set(true)
-            on:mouseleave=move |_| set_is_hovered.set(false)
-            on:focusin=move |_| set_is_focused.set(true)
-            on:focusout=move |_| set_is_focused.set(false)
-            on:keydown=move |ev| {
-                if ev.key() == "Escape" {
-                    set_is_hovered.set(false);
-                    set_is_focused.set(false);
+        <HoverCard
+            disabled=disabled
+            class=format!("inline-block {}", class.unwrap_or_default())
+            content=move || {
+                view! {
+                    <div class=format!(
+                        "{HOVER_CARD_CHROME} px-4 py-2 text-sm text-[color:var(--color-text)]",
+                    )>
+                        <AccentHairline />
+                        {move || tooltip_text.get()}
+                    </div>
                 }
             }
-            node_ref=target
-        >
-            {children()}
-            {tooltip}
-        </div>
+            children=children
+        />
     }
 }

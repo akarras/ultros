@@ -18,6 +18,7 @@ use crate::{
         },
         icon::Icon,
         item_icon::ItemIcon,
+        item_tooltip::ItemTooltip,
         on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap},
         skeleton::SingleLineSkeleton,
     },
@@ -945,7 +946,9 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     >
 
                         <div class="flex items-center gap-2 text-sm">
-                            <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                            <ItemTooltip item_id=item.key_id.0 class="shrink-0">
+                                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                            </ItemTooltip>
                             <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
                             <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
                         </div>
@@ -994,7 +997,9 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                         >
 
                                             <div class="flex items-center gap-2 text-sm">
-                                                <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                <ItemTooltip item_id=item.key_id.0 class="shrink-0">
+                                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Medium />
+                                                </ItemTooltip>
                                                 <span class="flex-1 truncate font-medium text-brand-100">{item.name.as_str()}</span>
                                                 <span class="text-xs text-[color:var(--color-text-muted)] px-1.5 py-0.5 rounded border border-[color:var(--color-outline)]">"iLvl " {item.level_item}</span>
                                             </div>
