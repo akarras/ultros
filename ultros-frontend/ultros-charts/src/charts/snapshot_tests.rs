@@ -20,7 +20,9 @@ use crate::charts::grid::{GridOptions, build_price_grid};
 use crate::charts::price_density::{DensityChartOptions, build_price_density_chart};
 use crate::charts::price_history::{PriceChartOptions, build_price_history_chart};
 use crate::svg::scene_to_svg;
-use crate::test_util::{Lcg, SYNTH_START, synthetic_price_series, ts, world_helper};
+use crate::test_util::{
+    Lcg, SYNTH_START, synthetic_price_series, synthetic_price_series_with_outlier, ts, world_helper,
+};
 use crate::theme::Theme;
 use ultros_api_types::price_density::{DensityCell, PriceDensity};
 
@@ -69,6 +71,20 @@ fn snapshot_price_mode_with_raw_dots() {
         &web_options(ChartMode::Price),
     );
     assert_snapshot("price", &scene_to_svg(&model.scene));
+}
+
+/// The #1068 axis case. Same fixture as `snapshot_price_mode_with_raw_dots`
+/// with one bucket laundered to twenty-odd times the market: the y axis must
+/// still frame the real history, and the laundered bucket's marks must be
+/// clipped away rather than smeared along the top edge.
+#[test]
+fn snapshot_price_mode_with_an_outlier() {
+    let model = build_price_history_chart(
+        &world_helper(),
+        &synthetic_price_series_with_outlier(),
+        &web_options(ChartMode::Price),
+    );
+    assert_snapshot("price_outlier", &scene_to_svg(&model.scene));
 }
 
 #[test]
