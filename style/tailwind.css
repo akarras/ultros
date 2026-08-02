@@ -771,6 +771,65 @@
     }
 }
 
+/* === Loading skeletons ===
+ *
+ * Two classes that compose:
+ *
+ *   `.skeleton-block`   paints a placeholder surface (the grey bar that
+ *                       stands in for a word, a number, an icon).
+ *   `.skeleton-shimmer` sweeps a highlight across whatever it is put on,
+ *                       left to right.
+ *
+ * The sweep is a translated pseudo-element rather than an animated
+ * `background-position`, so the highlight keeps a constant width and speed
+ * no matter how wide the host element is — a full-width table row and a
+ * 40px cell shimmer identically. (The previous `.background-animate`
+ * approach scaled the gradient to the element, and it lived in
+ * `style/legacy.css`, which is not part of the stylesheet build at all, so
+ * nothing was animating in the shipped bundle.)
+ *
+ * Put `.skeleton-shimmer` on a single bar for a per-bar sweep, or on a
+ * container for one highlight that travels across every bar inside it.
+ * The container form is what the table skeletons use — dozens of bars each
+ * pulsing on their own reads as noise. */
+.skeleton-block {
+    background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+
+.skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+}
+
+.skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--color-text) 9%, transparent) 50%,
+        transparent 100%
+    );
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* Motion is decoration here — the placeholders still communicate "content
+   is loading" while completely still. */
+@media (prefers-reduced-motion: reduce) {
+    .skeleton-shimmer::after {
+        animation: none;
+    }
+}
+
 @theme {
     /* Custom violet scale tuned for dark UI */
     --color-brand-50: #f6f2ff;
