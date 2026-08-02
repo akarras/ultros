@@ -354,6 +354,7 @@ impl RetainerAlertListener {
                                             alert_id,
                                             title,
                                             &undercut_msg,
+                                            "/retainers/undercuts",
                                             &ultros_db,
                                             &ctx,
                                         )
