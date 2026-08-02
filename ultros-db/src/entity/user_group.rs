@@ -8,6 +8,12 @@ pub struct Model {
     pub id: i32,
     pub name: String,
     pub owner_id: i64,
+    /// Discord guild this group was created from, if any. Unique when present.
+    pub guild_id: Option<i64>,
+    /// Denormalized guild icon, refreshed on creation. Cosmetic only.
+    pub guild_icon_url: Option<String>,
+    /// How membership is maintained. See `ultros_api_types::user::group::GroupSource`.
+    pub source: i16,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

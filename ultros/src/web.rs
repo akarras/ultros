@@ -46,7 +46,9 @@ use ultros_api_types::price_series::{
     HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup,
 };
 use ultros_api_types::retainer::RetainerListings;
-use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
+use ultros_api_types::user::group::{
+    CreateGroup, CreateGroupFromGuild, DiscordManageableGuild, UserGroup, UserGroupMember,
+};
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
 };
@@ -1921,6 +1923,66 @@ pub(crate) async fn create_group(
     Ok(Json(UserGroup::from(group)))
 }
 
+/// Discord servers the user could turn into a group, annotated with whether a
+/// group already exists for each.
+pub(crate) async fn get_group_discord_guilds(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+) -> Result<Json<Vec<DiscordManageableGuild>>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot load your servers right now"
+        ))
+    })?;
+    let guilds =
+        crate::web::api::discord_lookup::manageable_guilds_for_user(&ctx, user.id as i64).await?;
+
+    let guild_ids: Vec<i64> = guilds.iter().map(|(id, _, _)| *id).collect();
+    let existing = db.group_ids_for_guilds(&guild_ids).await?;
+
+    Ok(Json(
+        guilds
+            .into_iter()
+            .map(|(id, name, icon_url)| DiscordManageableGuild {
+                id,
+                name,
+                icon_url,
+                existing_group_id: existing.get(&id).copied(),
+            })
+            .collect(),
+    ))
+}
+
+pub(crate) async fn create_group_from_guild(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(CreateGroupFromGuild { guild_id }): Json<CreateGroupFromGuild>,
+) -> Result<Json<UserGroup>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot create a group from a server right now"
+        ))
+    })?;
+
+    // Re-check against Discord rather than trusting the picker: the guild id
+    // arrives from the client, and the user's roles may have changed since the
+    // list was rendered. This also proves the bot is in the guild, and hands
+    // back the name and icon so a group can't claim to be a server it isn't.
+    let guild =
+        crate::web::api::discord_lookup::require_manageable_guild(&ctx, guild_id, user.id as i64)
+            .await?;
+
+    let group = db
+        .create_group_from_guild(
+            guild.name.clone(),
+            user.id as i64,
+            guild_id,
+            guild.icon_url(),
+        )
+        .await?;
+    Ok(Json(UserGroup::from(group)))
+}
+
 pub(crate) async fn delete_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -2367,6 +2429,14 @@ pub(crate) async fn start_web(
         .route("/api/v1/list/item/hq", post(bulk_edit_list_items_hq))
         .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
+        .route(
+            "/api/v1/group/discord-guilds",
+            get(get_group_discord_guilds),
+        )
+        .route(
+            "/api/v1/group/create-from-guild",
+            post(create_group_from_guild),
+        )
         .route("/api/v1/group/{id}", delete(delete_group))
         .route("/api/v1/group/{id}/members", get(get_group_members))
         .route(

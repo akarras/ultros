@@ -30,7 +30,9 @@ use ultros_api_types::{
     trends::TrendsData,
     user::{
         AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
-        group::{CreateGroup, UserGroup, UserGroupMember},
+        group::{
+            CreateGroup, CreateGroupFromGuild, DiscordManageableGuild, UserGroup, UserGroupMember,
+        },
     },
 };
 
@@ -545,6 +547,20 @@ pub(crate) async fn create_group(group: CreateGroup) -> AppResult<()> {
 
 pub(crate) async fn delete_group(id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/group/{id}")).await
+}
+
+/// Discord servers the logged-in user could turn into a group. Hits Discord on
+/// the server side, so only call this when the guild picker is actually open.
+pub(crate) async fn list_manageable_discord_guilds() -> AppResult<Vec<DiscordManageableGuild>> {
+    fetch_api("/api/v1/group/discord-guilds").await
+}
+
+pub(crate) async fn create_group_from_guild(guild_id: i64) -> AppResult<UserGroup> {
+    post_api(
+        "/api/v1/group/create-from-guild",
+        CreateGroupFromGuild { guild_id },
+    )
+    .await
 }
 
 pub(crate) async fn get_group_members(id: i32) -> AppResult<Vec<UserGroupMember>> {

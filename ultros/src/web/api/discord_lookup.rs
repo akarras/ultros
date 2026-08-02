@@ -86,6 +86,19 @@ pub(crate) async fn require_user_is_guild_admin(
     guild_id: i64,
     user_id: i64,
 ) -> Result<(), ApiError> {
+    require_manageable_guild(ctx, guild_id, user_id)
+        .await
+        .map(|_| ())
+}
+
+/// As [`require_user_is_guild_admin`], but hands back the guild it already had
+/// to fetch, so callers that need the guild's name or icon don't pay for a
+/// second round trip.
+pub(crate) async fn require_manageable_guild(
+    ctx: &serenity::Context,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<serenity::PartialGuild, ApiError> {
     let guild_id =
         u64::try_from(guild_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid guild_id")))?;
     let user_id =
@@ -102,7 +115,7 @@ pub(crate) async fn require_user_is_guild_admin(
         ))
     })?;
     if partial.owner_id == UserId::new(user_id) {
-        return Ok(());
+        return Ok(partial);
     }
 
     let member = guild
@@ -122,36 +135,31 @@ pub(crate) async fn require_user_is_guild_admin(
     }
 
     if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-        Ok(())
+        Ok(partial)
     } else {
         Err(ApiError::from(anyhow::anyhow!(
-            "you must have Administrator or Manage Server permission in that Discord \
-             server to bind alerts to its channels"
+            "you must have Administrator or Manage Server permission in that Discord server"
         )))
     }
 }
 
-/// Return guilds that:
+/// Every guild the bot is in where `user_id` is a member with Administrator or
+/// Manage Server.
 ///
-/// - the bot is in,
-/// - the authenticated web user is a member of,
-/// - the authenticated web user can administer or manage,
-/// - and the bot can post embeds into at least one text/news channel.
+/// This intentionally uses the bot token only: the user's OAuth session
+/// currently has `identify`, not `guilds`, and the bot can answer the
+/// shared-guild question by probing its own guilds for the user member.
+/// Fetching a single member over REST does not require the privileged
+/// `GUILD_MEMBERS` intent, which is why this works under
+/// `GatewayIntents::non_privileged()`.
 ///
-/// This powers the web "Discord channel" endpoint picker. It intentionally
-/// uses the bot token only: the user's OAuth session currently has `identify`,
-/// not `guilds`, and the bot can answer the shared-guild question by probing
-/// its own guilds for the user member.
-pub(crate) async fn writable_guilds_for_user(
+/// Cost is O(guilds the bot is in), not O(guilds the user is in) — see #1076
+/// for the `guilds` OAuth scope that would invert that.
+async fn guilds_user_manages(
     ctx: &serenity::Context,
-    user_id: i64,
-) -> Result<Vec<DiscordWritableGuild>, ApiError> {
-    let user_id =
-        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
-    let user_id = UserId::new(user_id);
-    let bot_user_id = ctx.cache.current_user().id;
+    user_id: UserId,
+) -> Vec<serenity::PartialGuild> {
     let mut guilds = Vec::new();
-
     for guild_id in ctx.cache.guilds() {
         let partial = match guild_id.to_partial_guild(&ctx.http).await {
             Ok(guild) => guild,
@@ -164,6 +172,8 @@ pub(crate) async fn writable_guilds_for_user(
             }
         };
 
+        // A miss here is the overwhelmingly common case (the user is not in
+        // most of the bot's guilds), so it is not worth logging.
         let user_member = match partial.member(&ctx.http, user_id).await {
             Ok(member) => member,
             Err(_) => continue,
@@ -174,7 +184,57 @@ pub(crate) async fn writable_guilds_for_user(
         {
             continue;
         }
+        guilds.push(partial);
+    }
+    guilds
+}
 
+/// Guilds the user may turn into an Ultros group: the bot is in them and the
+/// user can manage them. Unlike [`writable_guilds_for_user`] this does not
+/// probe channels — a group has nothing to post, so requiring a bot-writable
+/// channel would wrongly exclude valid servers (and the channel fetch is the
+/// expensive part of that function).
+pub(crate) async fn manageable_guilds_for_user(
+    ctx: &serenity::Context,
+    user_id: i64,
+) -> Result<Vec<(i64, String, Option<String>)>, ApiError> {
+    let user_id =
+        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
+    let mut guilds = guilds_user_manages(ctx, UserId::new(user_id))
+        .await
+        .into_iter()
+        .map(|partial| {
+            (
+                partial.id.get() as i64,
+                partial.name.clone(),
+                partial.icon_url(),
+            )
+        })
+        .collect::<Vec<_>>();
+    guilds.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    Ok(guilds)
+}
+
+/// Return guilds that:
+///
+/// - the bot is in,
+/// - the authenticated web user is a member of,
+/// - the authenticated web user can administer or manage,
+/// - and the bot can post embeds into at least one text/news channel.
+///
+/// This powers the web "Discord channel" endpoint picker.
+pub(crate) async fn writable_guilds_for_user(
+    ctx: &serenity::Context,
+    user_id: i64,
+) -> Result<Vec<DiscordWritableGuild>, ApiError> {
+    let user_id =
+        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
+    let user_id = UserId::new(user_id);
+    let bot_user_id = ctx.cache.current_user().id;
+    let mut guilds = Vec::new();
+
+    for partial in guilds_user_manages(ctx, user_id).await {
+        let guild_id = partial.id;
         let bot_member = match partial.member(&ctx.http, bot_user_id).await {
             Ok(member) => member,
             Err(e) => {
