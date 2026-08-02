@@ -2235,6 +2235,16 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
 .item-explorer-accordion-panel[data-open="true"] {
     grid-template-rows: 1fr;
 }
+/* The collapsed `0fr` track only clips the chips visually — every chip's
+   `<A>` stays focusable via Tab and exposed to the accessibility tree,
+   contradicting the header's `aria-expanded="false"`. `display: none`
+   would fix that but can't animate the grid-track collapse. `visibility:
+   hidden` gets both: it drops descendants from the tab order and the a11y
+   tree while the track is still free to transition. */
+.item-explorer-accordion-panel[data-open="true"] .item-explorer-accordion-inner {
+    visibility: visible;
+    transition: visibility 0s;
+}
 .item-explorer-accordion-inner {
     display: flex;
     flex-direction: column;
@@ -2242,4 +2252,9 @@ a:not(.nav-link):not(.side-nav-item):not(.btn):not(.btn-primary):not(
     min-height: 0;
     overflow: hidden;
     padding: 0 0.9rem 0.9rem;
+    /* Deferred until the collapse animation finishes, so the chips don't
+       vanish mid-slide; the open-state rule above flips this back
+       immediately, with no delay. */
+    visibility: hidden;
+    transition: visibility 0s linear 200ms;
 }

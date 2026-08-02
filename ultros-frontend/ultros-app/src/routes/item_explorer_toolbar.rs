@@ -10,7 +10,7 @@ use crate::routes::item_explorer::resolve_category_param;
 use crate::routes::item_explorer_roles::{RoleGroup, role_for_job_abbr, role_for_weapon_category};
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, href_with_world};
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_location, use_params_map};
 use xiv_gen::{ClassJob, ItemSearchCategoryId};
 
 /// Resolve the active top-level category group (1=Weapons, 2=Armor,
@@ -114,6 +114,7 @@ fn role_buckets(
 pub fn ItemExplorerToolbar() -> impl IntoView {
     let i18n = use_i18n();
     let params = use_params_map();
+    let location = use_location();
     let scope = use_context::<ExplorerPriceScope>().expect(
         "ItemExplorerToolbar is always rendered inside ItemExplorer, which provides the scope",
     );
@@ -138,16 +139,20 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
         accordion_open_for_route(p.get("jobset").as_deref(), p.get("category").as_deref())
     });
 
-    // Collapse onto a chosen subcategory; re-open on the bare /items route.
+    // Collapse onto any navigation; re-open on the bare /items route.
     //
-    // `active_group` MUST stay a `Memo` — this effect leans on the memo's
-    // value diffing. Navigating between two categories in the same group
-    // (/items/category/24 -> /items/category/25) leaves it at the same
-    // `Some(group)`, the memo stays quiet, and the accordion stays collapsed.
-    // Tracking `active_group` also reads `params`, so no separate
-    // `pathname.track()` is needed. On its first run it writes the value
-    // `open` was already initialised to, so there is no hydration flicker.
+    // Choosing any subcategory means the user is done picking, so every
+    // navigation should collapse the accordion — including between two
+    // categories in the same group (/items/category/24 ->
+    // /items/category/25, both Armor). `active_group` is a `Memo` that only
+    // notifies when its *value* changes, and that same-group case leaves it
+    // at `Some(2)` on both sides, so tracking it alone would miss the nav.
+    // Tracking the pathname directly makes every navigation re-run this.
+    // On its first run it writes the same value `open` was already
+    // initialised to, so there is no hydration flicker. Pill clicks don't
+    // navigate, so they can't be undone by this effect.
     Effect::new(move |_| {
+        location.pathname.track();
         open.set(active_group.get().is_none());
     });
 
