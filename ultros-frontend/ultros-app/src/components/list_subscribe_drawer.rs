@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use ultros_api_types::alert::{Alert, AlertTrigger, CreateAlertRequest, UpdateAlertRequest};
 
 use crate::api::{create_alert, get_alerts, list_endpoints, patch_alert};
-use crate::components::{icon::Icon, modal::Modal};
+use crate::components::{endpoint_picker::EndpointPicker, icon::Icon, modal::Modal};
 use crate::global_state::toasts::use_toast;
 use crate::i18n::*;
 
@@ -26,14 +26,6 @@ pub fn ListSubscribeDrawer(
     let (mode, set_mode) = signal::<&'static str>("list_updates");
     let (error, set_error) = signal::<Option<String>>(None);
     let toasts = use_toast();
-
-    let toggle = move |id: i32| {
-        selected.update(|s| {
-            if !s.insert(id) {
-                s.remove(&id);
-            }
-        });
-    };
 
     let existing_alert = Memo::new(move |_| {
         alerts.get().and_then(|result| {
@@ -150,45 +142,7 @@ pub fn ListSubscribeDrawer(
                     </button>
                 </div>
 
-                <div class="space-y-1">
-                    <label class="text-sm font-semibold">{t!(i18n, alert_drawer_deliver_to)}</label>
-                    <Suspense fallback=move || {
-                        view! { <div class="text-sm opacity-70">{t!(i18n, alert_drawer_loading_endpoints)}</div> }
-                    }>
-                        {move || endpoints.get().map(|r| match r {
-                            Ok(list) if list.is_empty() => view! {
-                                <p class="text-sm opacity-70">
-                                    {t!(i18n, alert_drawer_no_endpoints_prefix)}
-                                    <a href="/alerts" class="underline">{t!(i18n, alert_drawer_no_endpoints_link)}</a>
-                                    {t!(i18n, alert_drawer_no_endpoints_suffix)}
-                                </p>
-                            }.into_any(),
-                            Ok(list) => view! {
-                                <ul class="space-y-1">
-                                    {list.into_iter().map(|e| {
-                                        let id = e.id;
-                                        let is_sel = move || selected.get().contains(&id);
-                                        view! {
-                                            <li>
-                                                <label class="flex items-center gap-2">
-                                                    <input
-                                                        type="checkbox"
-                                                        prop:checked=is_sel
-                                                        on:change=move |_| toggle(id)
-                                                    />
-                                                    <span>{e.name}</span>
-                                                </label>
-                                            </li>
-                                        }
-                                    }).collect_view()}
-                                </ul>
-                            }.into_any(),
-                            Err(e) => view! {
-                                <div class="text-red-500">{format!("{e}")}</div>
-                            }.into_any(),
-                        })}
-                    </Suspense>
-                </div>
+                <EndpointPicker endpoints selected />
 
                 <Show when=move || error.get().is_some()>
                     <div class="text-sm text-red-500">{move || error.get().unwrap_or_default()}</div>

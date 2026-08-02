@@ -67,6 +67,30 @@ fn normalize_time_range(a: i64, b: i64, domain: (i64, i64)) -> (i64, i64) {
     (start, end)
 }
 
+/// True when a freshly fetched `domain` can't be explained as the server's
+/// answer to a request for `range` — i.e. the item/world identity changed out
+/// from under an active selection and the selection should snap back to full
+/// range.
+///
+/// The server reports the domain as the min/max of *bucket start* timestamps
+/// (`ultros_api_types::price_series::PriceBucket::ts`), floored to absolute
+/// time boundaries. So a perfectly faithful answer to "give me
+/// `range.0..range.1`" still reports a `from` up to one bucket width *before*
+/// `range.0`, and the server re-derives that width from the requested span.
+/// Comparing bounds exactly therefore called every zoom stale and snapped the
+/// chart back to the full range on every window adjustment (issue #1068);
+/// one bucket width of slop is the largest a floored bucket start can be off
+/// by, so it separates rounding from a genuine identity change.
+///
+/// Only the `from` side actually needs the slack — the ClickHouse window
+/// predicate is `sold_date < to`, so a bucket start can never reach the
+/// requested `to`. The `to` side carries it anyway so the two bounds can't
+/// drift apart if that predicate ever becomes inclusive.
+fn range_is_stale(domain: (i64, i64), range: (i64, i64), bucket_seconds: i64) -> bool {
+    let slop = bucket_seconds.max(0);
+    domain.0 < range.0.saturating_sub(slop) || domain.1 > range.1.saturating_add(slop)
+}
+
 fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
     let span = domain.1 - domain.0;
     if span <= 0 {
@@ -195,6 +219,74 @@ mod tests {
     #[test]
     fn normalize_time_range_orders_and_clamps() {
         assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
+    }
+
+    // One day of buckets — the width the server picks for a month-ish
+    // window, and the slack `range_is_stale` is allowed.
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn range_is_stale_tolerates_a_floored_first_bucket() {
+        // The regression from #1068: the user drags the slicer to an
+        // arbitrary instant, the server answers with the bucket *containing*
+        // that instant, and its start sits before the request. That is a
+        // faithful answer, not a stale one.
+        let requested = (1_700_000_000, 1_702_000_000);
+        let answered = (requested.0 - DAY + 1, requested.1);
+        assert!(!range_is_stale(answered, requested, DAY));
+    }
+
+    #[test]
+    fn range_is_stale_tolerates_exactly_one_bucket_of_floor() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 - DAY, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_beyond_the_slack() {
+        // A different item's history: more than a bucket earlier than
+        // anything we asked for, so the selection no longer means anything.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0 - DAY - 1, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_running_past_the_selection() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0, requested.1 + DAY + 1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_accepts_a_domain_nested_in_the_selection() {
+        // The documented "echo of our own zoom" case: the server reports a
+        // narrower actual-data span than we requested.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 + DAY, requested.1 - DAY),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_without_a_bucket_width_compares_exactly() {
+        // `bucket_seconds` is 0 on the empty-payload fallback; the guard must
+        // degrade to the old exact comparison rather than misbehave.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale((requested.0 - 1, requested.1), requested, 0));
+        assert!(!range_is_stale(requested, requested, 0));
     }
 
     #[test]
@@ -707,14 +799,16 @@ pub fn PriceHistoryChart(
     // zoom request (the server may report a slightly narrower "actual data"
     // domain than requested) — leave the selection alone. A domain that
     // *doesn't* fit means the item/world identity changed out from under an
-    // active selection, so snap back to full range.
+    // active selection, so snap back to full range. See `range_is_stale` for
+    // why "fits" is measured with a bucket's worth of slack.
     Effect::new(move |_| {
         let Some(domain) = available_domain.get() else {
             return;
         };
+        let bucket_seconds = resolved_series.with_untracked(|s| s.bucket_seconds);
         let stale = selected_range
             .get_untracked()
-            .is_some_and(|(start, end)| domain.0 < start || domain.1 > end);
+            .is_some_and(|range| range_is_stale(domain, range, bucket_seconds));
         if stale {
             set_selected_range.set(None);
         }
@@ -852,9 +946,6 @@ pub fn PriceHistoryChart(
             &PriceChartOptions {
                 width,
                 height,
-                // Ignored by the layout: outlier filtering and grouping now
-                // happen server-side. `series.group` is authoritative.
-                remove_outliers: false,
                 show_market_average: show_market_average.get(),
                 show_trendline: show_trend.get(),
                 // Density has no quantity lane (spec: disabled with a

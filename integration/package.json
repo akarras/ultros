@@ -20,6 +20,7 @@
     "test:fc-crafting-breakdown": "node ./fc-crafting-breakdown.cjs",
     "test:dashboard": "node ./dashboard.cjs",
     "test:jobset-card-hydration": "node ./jobset-card-hydration.cjs",
+    "test:flip-finder-mobile-bar": "node ./flip-finder-mobile-bar.cjs",
     "test:group-shared-list": "node ./group-shared-list.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs",
     "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs",

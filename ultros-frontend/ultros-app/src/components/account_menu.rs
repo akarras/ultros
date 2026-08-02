@@ -11,6 +11,7 @@
 //!    switcher at all.
 
 use crate::api::get_login;
+use crate::components::character_switcher::CharacterSwitcher;
 use crate::components::icon::Icon;
 use crate::components::language_picker::LanguageAccordion;
 use crate::components::theme_picker::QuickThemeToggle;
@@ -99,6 +100,10 @@ pub fn AccountMenu() -> impl IntoView {
                             let signed_in = user.get().flatten().is_some();
                             if signed_in {
                                 view! {
+                                    // Switching home world is the most frequent
+                                    // thing a signed-in player does here, so it
+                                    // sits above the navigation links.
+                                    <CharacterSwitcher />
                                     <A href="/profile" attr:class="menu-item">
                                         <Icon icon=i::BsPersonCircle width="1.1em" height="1.1em" />
                                         <span class="ml-2">{t!(i18n, profile)}</span>

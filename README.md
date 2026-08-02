@@ -1,40 +1,68 @@
 # Ultros
 
-Ultros is a Final Fantasy XIV market board analysis tool that utilizes data sourced from Universalis. It is built with Rust for high performance and reliability.
+**Live market board analytics for Final Fantasy XIV** — find cross-world flips, price your crafts, and know the moment you're undercut. Free, on every data center, at **[ultros.app](https://ultros.app)**.
+
+[![CI](https://github.com/akarras/ultros/actions/workflows/rust.yml/badge.svg)](https://github.com/akarras/ultros/actions/workflows/rust.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/pgdq9nGUP2)
+[![Rust](https://img.shields.io/badge/built%20with-Rust-orange?logo=rust)](https://www.rust-lang.org/)
+
+Ultros is a hobby project built for fun by one person — full-stack Rust ([Axum](https://github.com/tokio-rs/axum) + [Leptos](https://github.com/leptos-rs/leptos)), fed by live [Universalis](https://universalis.app) data. It runs optional ads purely to cover hosting: you can turn them off in the settings, and ad blockers work fine too.
+
+![Ultros home dashboard](docs/screenshots/home.png)
+
+## What it does
+
+- **[Flip Finder](https://ultros.app/flip-finder)** — scan every world on your data center for items you can buy cheap and resell on your home world, with profit/day, sale velocity, drift, and confidence scoring.
+- **[Item pages](https://ultros.app/item/Sargatanas/50327)** — live cross-world listings, sale history charts, outlier-filtered "real price", and vendor/exchange source info for every marketable item.
+- **Analyzers for every gil-maker** — [recipe crafting profits](https://ultros.app/recipe-analyzer) (ingredient cost vs. sale price, with subcraft recursion), [levequest turn-ins](https://ultros.app/leve-analyzer), [retainer ventures](https://ultros.app/venture-analyzer), [scrip spending](https://ultros.app/scrip-sources), [vendor resale](https://ultros.app/vendor-resale), and [Free Company crafting](https://ultros.app/fc-crafting-analyzer).
+- **[Market Trends](https://ultros.app/trends)** — 24-hour movers, category heat, and rising/falling items per world.
+- **[Currency Exchange](https://ultros.app/currency-exchange)** — the best marketable items to buy with tomestones, scrips, seals, and every other in-game currency.
+- **[Lists](https://ultros.app/list)** — shareable shopping lists with cheapest-listing lookups; plan a craft or a glam and share it with your Free Company.
+- **[Retainer tracking](https://ultros.app/retainers)** — track your listings and get told the moment you're undercut.
+- **[Price alerts](https://ultros.app/alerts)** — per-item price thresholds delivered by Discord DM or webhook.
+- **[Discord bot](https://ultros.app/bot)** — market lookups and undercut alerts right in your server.
+
+Every feature has an in-app guide at [ultros.app/help](https://ultros.app/help).
+
+| Flip Finder | Sale history |
+| --- | --- |
+| ![Flip Finder](docs/screenshots/flip-finder.png) | ![Item sale history](docs/screenshots/item.png) |
+
+| Market Trends | Recipe Analyzer |
+| --- | --- |
+| ![Market Trends](docs/screenshots/trends.png) | ![Recipe Analyzer](docs/screenshots/recipe-analyzer.png) |
+
+<details>
+<summary>More screenshots</summary>
+
+![Venture Analyzer](docs/screenshots/venture-analyzer.png)
+
+![Currency Exchange](docs/screenshots/currency-exchange.png)
+
+</details>
+
+## Links
+
+- **Website**: [ultros.app](https://ultros.app)
+- **Discord**: [discord.gg/pgdq9nGUP2](https://discord.gg/pgdq9nGUP2)
+- **Discord bot setup**: [ultros.app/bot](https://ultros.app/bot)
+- **Help & guides**: [ultros.app/help](https://ultros.app/help)
+
+## Roadmap
+
+Bigger plans live in [`docs/`](docs/) — for example the [price alerts feature notes](docs/price-alerts.md). Have an idea? [Open an issue](https://github.com/akarras/ultros/issues) or drop by the Discord.
+
+## Development
+
+<details>
+<summary>Prerequisites, running locally, environment variables, and project structure</summary>
 
 The project is built using:
 - **[Axum](https://github.com/tokio-rs/axum)**: Backend web framework
 - **[Leptos](https://github.com/leptos-rs/leptos)**: Full-stack Rust web framework
 - **[SeaORM](https://github.com/SeaQL/sea-orm)**: Async ORM for the database
 - **[Serenity](https://github.com/serenity-rs/serenity)**: Discord bot library
-
-The live version is hosted at [https://ultros.app](https://ultros.app).
-
-Feature help now lives inside the app at [https://ultros.app/help](https://ultros.app/help).
-
-## Ads
-
-The site currently runs ads to help cover hosting expenses without relying on donations. These ads are completely optional and can be disabled via the settings page. Ad blockers will also continue to work without issue.
-
-## Price Alerts
-
-Logged-in users can create per-item price-threshold alerts via the UI:
-1. Add an item to a List
-2. Click the bell icon on the item row
-3. Pick a world/DC, set a threshold, choose Discord DM or webhook delivery
-4. Manage rules + view recent fires at `/alerts`
-
-API: `GET/POST /api/v1/alerts`, `PATCH/DELETE /api/v1/alerts/{id}`, `GET /api/v1/alerts/events`.
-
-Delivery methods:
-- Discord DM (default — uses your Discord OAuth identity)
-- Discord channel webhook (paste a webhook URL from a channel's Integrations settings)
-
-See `docs/superpowers/plans/2026-05-11-price-alerts-phase-2-3.md` for the Phase 2+3 implementation plan.
-
-(Phase 4 — AI-suggested alert thresholds — is tracked separately.)
-
-## Development
 
 ### Prerequisites
 
@@ -103,7 +131,7 @@ See `docs/superpowers/plans/2026-05-11-price-alerts-phase-2-3.md` for the Phase 
 | `RUST_LOG` | Log filtering configuration | `ultros=info,warn` |
 | `POSTGRES_MAX_CONNECTIONS`| Max DB connections | `50` |
 
-## Project Structure
+### Project Structure
 
 This repository contains several crates that make up the Ultros ecosystem:
 
@@ -117,6 +145,10 @@ This repository contains several crates that make up the Ultros ecosystem:
 *   **`xiv-gen`**: Generates Rust structs from FFXIV game data (sourced from `ffxiv-datamining`).
 *   **`xiv-gen-db`**: Statically embeds compressed game data for fast access.
 *   **`migration`**: Database migration tool.
+
+See [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md) for the full contributor workflow (CI checks, services overview, and environment gotchas).
+
+</details>
 
 ## Contributing
 

@@ -23,6 +23,7 @@ use std::{
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
+use ultros_api_types::user::group::GroupSource;
 use universalis::ItemId;
 
 #[derive(Debug, Error)]
@@ -685,11 +686,60 @@ impl UltrosDb {
     // --- Group Management ---
 
     pub async fn create_group(&self, name: String, owner_id: i64) -> Result<user_group::Model> {
+        self.insert_group(name, owner_id, None, None, GroupSource::Manual)
+            .await
+    }
+
+    /// Create a group backed by a Discord guild. The caller is responsible for
+    /// having verified that `owner_id` may manage `guild_id` and that the bot
+    /// is present there — this layer only enforces one group per guild.
+    pub async fn create_group_from_guild(
+        &self,
+        name: String,
+        owner_id: i64,
+        guild_id: i64,
+        guild_icon_url: Option<String>,
+    ) -> Result<user_group::Model> {
+        // Checked up front so the common case gets a useful message instead of
+        // a unique-constraint violation. The index is still the real guarantee:
+        // two concurrent creates can both pass this check, and the loser gets a
+        // database error rather than a duplicate row.
+        if user_group::Entity::find()
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .one(&self.db)
+            .await?
+            .is_some()
+        {
+            return Err(
+                ListError::BadRequest("A group already exists for that Discord server").into(),
+            );
+        }
+        self.insert_group(
+            name,
+            owner_id,
+            Some(guild_id),
+            guild_icon_url,
+            GroupSource::DiscordGuild,
+        )
+        .await
+    }
+
+    async fn insert_group(
+        &self,
+        name: String,
+        owner_id: i64,
+        guild_id: Option<i64>,
+        guild_icon_url: Option<String>,
+        source: GroupSource,
+    ) -> Result<user_group::Model> {
         let txn = self.db.begin().await?;
         let group = user_group::ActiveModel {
             id: Default::default(),
             name: ActiveValue::Set(name),
             owner_id: ActiveValue::Set(owner_id),
+            guild_id: ActiveValue::Set(guild_id),
+            guild_icon_url: ActiveValue::Set(guild_icon_url),
+            source: ActiveValue::Set(source as i16),
         }
         .insert(&txn)
         .await?;
@@ -701,6 +751,22 @@ impl UltrosDb {
         .await?;
         txn.commit().await?;
         Ok(group)
+    }
+
+    /// Map of `guild_id -> group_id` for the given guilds, so the guild picker
+    /// can mark the ones that are already taken. Scoped to the guilds asked
+    /// about rather than returning every linked guild in the database.
+    pub async fn group_ids_for_guilds(&self, guild_ids: &[i64]) -> Result<HashMap<i64, i32>> {
+        if guild_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        Ok(user_group::Entity::find()
+            .filter(user_group::Column::GuildId.is_in(guild_ids.iter().copied()))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .filter_map(|group| group.guild_id.map(|guild_id| (guild_id, group.id)))
+            .collect())
     }
 
     pub async fn delete_group(&self, group_id: i32, owner_id: i64) -> Result<()> {

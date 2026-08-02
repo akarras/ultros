@@ -25,7 +25,7 @@ use ultros_db::{
 
 use crate::{analyzer_service::AnalyzerError, event};
 
-use super::character_verifier_service::VerifierError;
+use crate::character_claim::ClaimError;
 
 /// Generates an `Error`-deriving enum with the variants shared between `ApiError` and `WebError`.
 /// The shared variants and their `#[from]` / `#[error]` attributes are kept in one place so the
@@ -73,8 +73,8 @@ macro_rules! define_error_enum {
             TimeoutElapsed(#[from] Elapsed),
             #[error("Analyzer Error: {0}")]
             AnalyzerError(#[from] AnalyzerError),
-            #[error("Verifier error {0}")]
-            VerificationError(#[from] VerifierError),
+            #[error("Character claim error {0}")]
+            CharacterClaimError(#[from] ClaimError),
             #[error("Error generating sitemap {0}")]
             SiteMapError(#[from] SitemapIndexError),
             #[error("Error generating url set {0}")]

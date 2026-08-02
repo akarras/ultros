@@ -47,8 +47,7 @@ use xiv_gen::ItemId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MenuState {
     None,
-    Item,
-    // Recipe is now handled by a modal
+    // Recipe and item search are now handled by modals
     MakePlace,
 }
 
@@ -517,6 +516,7 @@ pub fn ListView() -> impl IntoView {
     });
 
     let (menu, set_menu) = signal(MenuState::None);
+    let (item_modal_open, set_item_modal_open) = signal(false);
     let (recipe_modal_open, set_recipe_modal_open) = signal(false);
     let (subscribe_open, set_subscribe_open) = signal(false);
     let (settings_open, set_settings_open) = signal(false);
@@ -656,13 +656,8 @@ pub fn ListView() -> impl IntoView {
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
                                     <button
                                         class="btn-primary"
-                                        class:active=move || menu() == MenuState::Item
-                                        on:click=move |_| set_menu(
-                                            match menu() {
-                                                MenuState::Item => MenuState::None,
-                                                _ => MenuState::Item,
-                                            },
-                                        )
+                                        class:active=move || item_modal_open()
+                                        on:click=move |_| set_item_modal_open(true)
                                     >
                                         <Icon icon=i::BiPlusRegular />
                                         <span>{t!(i18n, list_view_add_item)}</span>
@@ -879,148 +874,148 @@ pub fn ListView() -> impl IntoView {
                 }}
             </Show>
 
-            {move || match menu() {
-                MenuState::Item => {
-                    Some(
-                        Either::Left({
-                            let (search, set_search) = signal("".to_string());
-                            let items = &tracked_data().items;
-                            let item_search = move || {
-                                search
-                                    .with(|s| {
-                                        let s_lower = s.to_lowercase();
-                                        let mut score = items
-                                            .iter()
-                                            .filter(|(_, i)| i.item_search_category > 0)
-                                            .filter(|_| !s.is_empty())
-                                            .filter_map(|(id, i)| {
-                                                if i.name.to_lowercase().contains(&s_lower) {
-                                                    Some((id, i))
-                                                } else {
-                                                    None
+            <Show when=item_modal_open>
+                {move || {
+                    let (search, set_search) = signal("".to_string());
+                    let items = &tracked_data().items;
+                    let item_search = move || {
+                        search
+                            .with(|s| {
+                                let s_lower = s.to_lowercase();
+                                let mut score = items
+                                    .iter()
+                                    .filter(|(_, i)| i.item_search_category > 0)
+                                    .filter(|_| !s.is_empty())
+                                    .filter_map(|(id, i)| {
+                                        if i.name.to_lowercase().contains(&s_lower) {
+                                            Some((id, i))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+                                // ⚡ Bolt Optimization: Replace stable sort and vector reallocation
+                                // with in-place unstable sort and truncation to avoid O(N) allocation
+                                // during hot search filter renders.
+                                score
+                                    .sort_unstable_by_key(|(_, i)| (
+                                        Reverse(i.level_item),
+                                    ));
+                                score.truncate(100);
+                                score
+                            })
+                    };
+                    let adding = add_item.pending();
+                    let add_result = add_item.value();
+                    view! {
+                        <Modal set_visible=set_item_modal_open max_width="max-w-[90vw] w-[90vw] sm:w-[640px]">
+                            <div class="flex flex-col gap-4 h-[70vh]">
+                                <div class="flex flex-col gap-2 shrink-0">
+                                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, list_view_add_item_to_list)}</h2>
+                                    <input
+                                        class="input w-full"
+                                        placeholder=t_string!(i18n, list_view_search_items).to_string()
+                                        aria-label=t_string!(i18n, list_view_search_items).to_string()
+                                        autofocus
+                                        prop:value=search
+                                        on:input=move |input| set_search(event_target_value(&input))
+                                    />
+                                    {move || add_result.get().map(|v| {
+                                        let text = match v {
+                                            Ok(()) => t_string!(i18n, list_view_added_to_list_success).to_string(),
+                                            Err(e) => format!("{} {e}", t_string!(i18n, list_view_failed_to_add)),
+                                        };
+                                        view! { <div class="text-sm text-[color:var(--color-text-muted)]">{text}</div> }.into_view()
+                                    })}
+                                </div>
+                                <div class="grid gap-2 flex-1 min-h-0 content-start overflow-y-auto pr-1">
+                                    {move || {
+                                        item_search()
+                                            .into_iter()
+                                            .map(move |(id, item)| {
+                                                let (quantity, set_quantity) = signal(1);
+                                                let read_input_quantity = move |input| {
+                                                    if let Ok(quantity) = event_target_value(&input).parse() {
+                                                        set_quantity(quantity)
+                                                    }
+                                                };
+                                                view! {
+                                                    <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-2 flex flex-col gap-3 sm:flex-row sm:items-center">
+                                                        <div class="flex min-w-0 flex-1 items-center gap-3">
+                                                            <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
+                                                            <span class="min-w-0 truncate font-semibold">{item.name.as_str()}</span>
+                                                        </div>
+                                                        <div class="flex items-center gap-2">
+                                                            <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_qty)}</label>
+                                                            <input
+                                                                type="number"
+                                                                min="1"
+                                                                class="input w-20"
+                                                                on:input=read_input_quantity
+                                                                prop:value=quantity
+                                                            />
+                                                            <button
+                                                                class="btn-primary"
+                                                                disabled=adding
+                                                                on:click=move |_| {
+                                                                    let item = ListItem {
+                                                                        item_id: id.0,
+                                                                        list_id: params
+                                                                            .with(|p| {
+                                                                                p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok())
+                                                                            })
+                                                                            .unwrap_or_default(),
+                                                                        quantity: Some(quantity()),
+                                                                        ..Default::default()
+                                                                    };
+                                                                    add_item.dispatch(item);
+                                                                }
+                                                            >
+                                                                {move || if adding() {
+                                                                    Either::Left(view! { <span>{t!(i18n, list_view_adding)}</span> })
+                                                                } else {
+                                                                    Either::Right(view! {
+                                                                        <>
+                                                                            <Icon icon=i::BiPlusRegular />
+                                                                            <span>{t!(i18n, list_view_add)}</span>
+                                                                        </>
+                                                                    })
+                                                                }}
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                 }
                                             })
-                                            .collect::<Vec<_>>();
-                                        // ⚡ Bolt Optimization: Replace stable sort and vector reallocation
-                                        // with in-place unstable sort and truncation to avoid O(N) allocation
-                                        // during hot search filter renders.
-                                        score
-                                            .sort_unstable_by_key(|(_, i)| (
-                                                Reverse(i.level_item),
-                                            ));
-                                        score.truncate(100);
-                                        score
-                                    })
-                            };
-                            let adding = add_item.pending();
-                            let add_result = add_item.value();
-                            view! {
-                                <section class="panel rounded-lg p-4 space-y-4">
-                                    <div class="flex flex-col gap-2">
-                                        <label class="text-sm font-semibold text-[color:var(--brand-fg)]">{t!(i18n, list_view_add_item_to_list)}</label>
-                                        <input
-                                            class="input w-full"
-                                            placeholder=t_string!(i18n, list_view_search_items).to_string()
-                                            prop:value=search
-                                            on:input=move |input| set_search(event_target_value(&input))
-                                        />
-                                        {move || add_result.get().map(|v| {
-                                            let text = match v {
-                                                Ok(()) => t_string!(i18n, list_view_added_to_list_success).to_string(),
-                                                Err(e) => format!("{} {e}", t_string!(i18n, list_view_failed_to_add)),
-                                            };
-                                            view! { <div class="text-sm text-[color:var(--color-text-muted)]">{text}</div> }.into_view()
-                                        })}
-                                    </div>
-                                    <div class="grid gap-2 max-h-96 overflow-y-auto pr-1">
-                                        {move || {
-                                            item_search()
-                                                .into_iter()
-                                                .map(move |(id, item)| {
-                                                    let (quantity, set_quantity) = signal(1);
-                                                    let read_input_quantity = move |input| {
-                                                        if let Ok(quantity) = event_target_value(&input).parse() {
-                                                            set_quantity(quantity)
-                                                        }
-                                                    };
-                                                    view! {
-                                                        <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] p-2 flex flex-col gap-3 sm:flex-row sm:items-center">
-                                                            <div class="flex min-w-0 flex-1 items-center gap-3">
-                                                                <ItemIcon item_id=id.0 icon_size=IconSize::Medium />
-                                                                <span class="min-w-0 truncate font-semibold">{item.name.as_str()}</span>
-                                                            </div>
-                                                            <div class="flex items-center gap-2">
-                                                                <label class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, list_view_qty)}</label>
-                                                                <input
-                                                                    type="number"
-                                                                    min="1"
-                                                                    class="input w-20"
-                                                                    on:input=read_input_quantity
-                                                                    prop:value=quantity
-                                                                />
-                                                                <button
-                                                                    class="btn-primary"
-                                                                    disabled=adding
-                                                                    on:click=move |_| {
-                                                                        let item = ListItem {
-                                                                            item_id: id.0,
-                                                                            list_id: params
-                                                                                .with(|p| {
-                                                                                    p.get("id").as_ref().and_then(|id| id.parse::<i32>().ok())
-                                                                                })
-                                                                                .unwrap_or_default(),
-                                                                            quantity: Some(quantity()),
-                                                                            ..Default::default()
-                                                                        };
-                                                                        add_item.dispatch(item);
-                                                                    }
-                                                                >
-                                                                    {move || if adding() {
-                                                                        Either::Left(view! { <span>{t!(i18n, list_view_adding)}</span> })
-                                                                    } else {
-                                                                        Either::Right(view! {
-                                                                            <>
-                                                                                <Icon icon=i::BiPlusRegular />
-                                                                                <span>{t!(i18n, list_view_add)}</span>
-                                                                            </>
-                                                                        })
-                                                                    }}
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    }
-                                                })
-                                                .collect::<Vec<_>>()
-                                        }}
+                                            .collect::<Vec<_>>()
+                                    }}
 
-                                    </div>
-                                </section>
-                            }
-                        }),
-                    )
-                }
+                                </div>
+                            </div>
+                        </Modal>
+                    }
+                }}
+            </Show>
+
+            {move || match menu() {
                 MenuState::None => None,
-                // Removed MenuState::Recipe block
                 MenuState::MakePlace => {
                     Some(
-                        Either::Right({
-                            view! {
-                                <section class="panel rounded-lg p-4">
-                                    <MakePlaceImporter
-                                        list_id=Signal::derive(move || {
-                                            params
-                                                .with(|p| {
-                                                    p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
-                                                })
-                                                .flatten()
-                                                .unwrap_or_default()
-                                        })
+                        view! {
+                            <section class="panel rounded-lg p-4">
+                                <MakePlaceImporter
+                                    list_id=Signal::derive(move || {
+                                        params
+                                            .with(|p| {
+                                                p.get("id").as_ref().map(|id| id.parse::<i32>().ok())
+                                            })
+                                            .flatten()
+                                            .unwrap_or_default()
+                                    })
 
-                                        refresh=move || { list_view.refetch() }
-                                    />
-                                </section>
-                            }
-                        }),
+                                    refresh=move || { list_view.refetch() }
+                                />
+                            </section>
+                        },
                     )
                 }
             }}
