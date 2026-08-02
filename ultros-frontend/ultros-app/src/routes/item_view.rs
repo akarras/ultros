@@ -1908,7 +1908,9 @@ fn ItemViewContent() -> impl IntoView {
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
-                            <ItemIcon item_id icon_size=IconSize::Large />
+                            // The hero icon is the LCP candidate on the item page —
+                            // eager-load it; every other icon stays lazy.
+                            <ItemIcon item_id icon_size=IconSize::Large loading="eager" />
                             <div class="flex flex-col min-w-0">
                                 <h1 class="text-3xl sm:text-4xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
