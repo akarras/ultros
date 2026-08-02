@@ -16,7 +16,6 @@ pub mod crafting_cost;
 pub mod create_alert_drawer;
 pub mod datacenter_name;
 pub mod endpoints_panel;
-pub mod filter_card;
 pub mod filter_chip;
 pub mod fonts;
 pub mod freshness_badge;
