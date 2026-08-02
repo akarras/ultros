@@ -98,6 +98,30 @@ track size animates) *and* animates, which a `hidden` toggle cannot.
 Because the panel is in flow rather than overlaid, `overflow: hidden` on it
 clips nothing that needs to escape.
 
+Two things the track alone does not handle, both settled during
+implementation:
+
+- **`overflow: hidden` clips but does not hide.** A clipped chip stays in the
+  tab order and in the accessibility tree, so a collapsed accordion would
+  leak 15–33 invisible tab stops and announce links its own
+  `aria-expanded="false"` says are collapsed — a regression against the
+  popover's `display: none`. The inner element therefore also carries
+  `visibility: hidden`, restored by the `[data-open="true"]` rule. The hide
+  is delayed by the animation's duration (`transition: visibility 0s linear
+  200ms`) and the show is immediate (`0s`), so content stays visible for
+  exactly as long as it is still moving. `display: none` would remove the
+  content from both — but it cannot animate, which is the whole point of the
+  track.
+- **`min-height: 0` zeroes the content box, not the padding box.** The inner
+  element's `0.9rem` bottom padding survives a `0fr` track and leaves a
+  14.4px phantom gap under every collapsed header (measured). Its vertical
+  padding is therefore state-dependent too, transitioned on the same
+  200ms/ease curve as the track. Horizontal padding is unconditional.
+
+Both are expressed as a comma-separated `transition` list rather than
+competing shorthands — overwriting the shorthand would silently drop the
+`visibility` timing and restore the accessibility regression.
+
 ### 3. Toolbar collapses to one path
 
 In `item_explorer_toolbar.rs`:
@@ -135,26 +159,29 @@ on:click = move |_| { selected_group.set(group); open.set(true); }
 // `active_group.get().is_none()` is `accordion_open_for_route` applied to
 // the current route — the same rule as the initialiser above.
 Effect::new(move |_| {
+    location.pathname.track();
     open.set(active_group.get().is_none());
 });
 ```
 
-`active_group` reads `params`, so tracking it is what makes the effect re-run
-on navigation; no separate `pathname.track()` is needed.
-
-**`active_group` must stay a `Memo`, not a `Signal::derive`.** The effect
-relies on the memo's value diffing to *not* fire when the group is unchanged.
+**The `pathname.track()` is load-bearing — do not remove it as redundant.**
+`active_group` is a `Memo`, and a memo notifies only when its *value* changes.
 Category-to-category navigation within one group (`/items/category/24` →
-`/items/category/25`) leaves the group at `Some(3)`; the memo stays quiet and
-the accordion stays collapsed, which is what we want. Under `Signal::derive`
-the effect would re-run on every param change — harmless here since it would
-write the same `false`, but the gating is load-bearing enough to note, and a
-future "optimise Memo → Signal::derive" pass must not touch this one.
+`/items/category/25`) leaves it at `Some(3)`, so tracking `active_group` alone
+would leave the accordion expanded after the user had already chosen a
+subcategory — contradicting the behaviour table above, which says choosing any
+subcategory collapses it. Tracking the pathname is what makes every navigation
+re-run the effect.
+
+(An earlier draft of this spec dropped the `pathname.track()` on the reasoning
+that `active_group` reads `params` and therefore covers it. That is true of
+*dependency* but not of *notification*, and the same-group case is the gap it
+opens. The Task 2 review caught it.)
 
 The effect needs no first-run guard: on its initial run it computes the value
 `open` was already initialised to, so there is no hydration flicker. Pill
-clicks do not change the pathname, so they never re-trigger it and cannot be
-undone by it.
+clicks do not navigate — they only write signals — so they never re-trigger it
+and the `open.set(true)` they perform cannot be undone by it.
 
 The existing effect that syncs `selected_group` from the route stays as-is and
 must not touch `open` — if it did, browser-back would expand the accordion.
