@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
         CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
@@ -435,17 +435,11 @@ pub(crate) async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
     fetch_api("/api/v1/characters").await
 }
 
-/// Gets pending character verifications for this user
-pub(crate) async fn get_character_verifications() -> AppResult<Vec<FfxivCharacterVerification>> {
-    fetch_api("/api/v1/characters/verifications").await
-}
-
-pub(crate) async fn check_character_verification(character_id: i32) -> AppResult<bool> {
-    fetch_api(&format!("/api/v1/characters/verify/{character_id}")).await
-}
-
-/// Starts to claim the given character
-pub(crate) async fn claim_character(id: i32) -> AppResult<(i32, String)> {
+/// Claims the given character for the logged-in user.
+///
+/// Claims aren't verified — they only group the user's retainers — so this
+/// takes effect immediately and returns the claimed character.
+pub(crate) async fn claim_character(id: i32) -> AppResult<FfxivCharacter> {
     fetch_api(&format!("/api/v1/characters/claim/{id}")).await
 }
 

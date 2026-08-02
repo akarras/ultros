@@ -14,9 +14,9 @@ use universalis::UniversalisClient;
 use ultros_clickhouse::ClickHouseClient;
 
 use crate::analyzer_service::AnalyzerService;
+use crate::character_claim::CharacterClaimService;
 use crate::event::{EventReceivers, EventSenders};
 use crate::search_service::SearchService;
-use crate::web::character_verifier_service::CharacterVerifierService;
 use crate::web::oauth::{AuthUserCache, DiscordAuthConfig};
 
 #[derive(Clone)]
@@ -31,7 +31,7 @@ pub(crate) struct WebState {
     /// Common variant of world_cache. Maybe get rid of world_cache?
     pub(crate) world_helper: Arc<WorldHelper>,
     pub(crate) analyzer_service: AnalyzerService,
-    pub(crate) character_verification: CharacterVerifierService,
+    pub(crate) character_claim: CharacterClaimService,
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
     pub(crate) token: CancellationToken,
@@ -100,9 +100,9 @@ impl FromRef<WebState> for EventSenders {
     }
 }
 
-impl FromRef<WebState> for CharacterVerifierService {
+impl FromRef<WebState> for CharacterClaimService {
     fn from_ref(input: &WebState) -> Self {
-        input.character_verification.clone()
+        input.character_claim.clone()
     }
 }
 
