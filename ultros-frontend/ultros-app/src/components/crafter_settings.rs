@@ -69,8 +69,12 @@ pub fn CrafterSettings() -> impl IntoView {
                                         min="0"
                                         max="100"
                                         class="input w-full"
+                                        // Fall back to CrafterLevels::default(), not 0.
+                                        // The analyzers read the same default when the
+                                        // cookie is absent, and showing 0 here made the
+                                        // box disagree with the recipes actually listed.
                                         prop:value=move || {
-                                            levels.get().map(|l| getter(&l)).unwrap_or(0)
+                                            getter(&levels.get().unwrap_or_default())
                                         }
                                         on:change=move |ev| {
                                             let val = event_target_value(&ev).parse::<i32>().unwrap_or(0);

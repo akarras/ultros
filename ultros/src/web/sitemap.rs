@@ -136,6 +136,7 @@ pub(crate) async fn generic_pages_sitemap() -> Result<Xml, WebError> {
         ("https://ultros.app/bot", 0.6, ChangeFrequency::Monthly),
         ("https://ultros.app/about", 0.5, ChangeFrequency::Monthly),
         ("https://ultros.app/help", 0.6, ChangeFrequency::Monthly),
+        ("https://ultros.app/changelog", 0.5, ChangeFrequency::Weekly),
         ("https://ultros.app/privacy", 0.3, ChangeFrequency::Yearly),
         (
             "https://ultros.app/cookie-policy",

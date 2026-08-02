@@ -1,0 +1,306 @@
+use crate::components::icon::Icon;
+use crate::components::meta::{MetaDescription, MetaTitle};
+use crate::global_state::changelog::use_mark_changelog_seen;
+use crate::i18n::*;
+use icondata as i;
+use leptos::prelude::*;
+use leptos_router::components::A;
+
+/// One shipped, user-visible change, written for players rather than for
+/// people reading the commit log.
+///
+/// `date` is an ISO-8601 `YYYY-MM-DD` string and is rendered verbatim. It is
+/// both what the reader sees and what the last-seen cookie is compared
+/// against. Formatting it on the client (locale-aware month names, "3 days
+/// ago") would produce different text on the server and the client and take
+/// hydration down with it — this repo has been bitten by that more than once —
+/// and ISO dates read the same in every locale we ship.
+#[derive(Clone, Copy, PartialEq)]
+pub struct ChangelogEntry {
+    pub date: &'static str,
+    pub title: &'static str,
+    pub blurb: &'static str,
+    /// Where to go to use the thing, when there is one obvious place.
+    pub link: Option<&'static str>,
+}
+
+/// Newest first. Both [`latest_changelog_date`] and the sidebar's what's-new
+/// dot depend on that ordering; `entries_are_sorted_newest_first` guards it.
+///
+/// Append new entries at the top when you ship something a player would
+/// notice. Purely internal work (refactors, dependency bumps, CI) does not
+/// belong here.
+pub const CHANGELOG: &[ChangelogEntry] = &[
+    ChangelogEntry {
+        date: "2026-08-01",
+        title: "One sidebar instead of a top bar",
+        blurb: "Navigation, search, your account and the language picker all moved into a single sidebar, so tools get the full width of the window. The sidebar collapses to icons when you want the space back.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-01",
+        title: "Patch markers on sale history",
+        blurb: "Price charts now shade each game patch and show a calendar of past updates, so you can see which patch moved an item's price instead of guessing at the date.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "Compare worlds side by side",
+        blurb: "Sale history can be drawn as a grid of small charts, one per world, sharing a crosshair — line up the same moment across your whole data center.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "Candles, ranges and density on price charts",
+        blurb: "A toolbar above the chart switches how sales are drawn. Candles and ranges show how far prices spread within a day, not just the average.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "Pick your own colors",
+        blurb: "Setup now offers a palette step, and you can change the color scheme any time from settings.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "Share a list exactly as you left it",
+        blurb: "Sorting and filters on a list are kept in the address bar, so a link you paste shows what you were looking at. Deleting a list now asks first.",
+        link: Some("/list"),
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "Flip Finder is easier to read",
+        blurb: "Empty states that explain what to do next, a history of filters you have used, tooltips on every column, and a mobile layout that actually fits.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "Screenshots in the help guides",
+        blurb: "Help topics now show the screen they are describing.",
+        link: Some("/help"),
+    },
+    ChangelogEntry {
+        date: "2026-07-31",
+        title: "A real privacy policy",
+        blurb: "The privacy and cookie pages now spell out what Ultros stores about you and why.",
+        link: Some("/privacy"),
+    },
+    ChangelogEntry {
+        date: "2026-07-30",
+        title: "Filter on any Flip Finder column",
+        blurb: "Profit, ROI, sale speed, volume, category, name — every column in the table can be filtered, not just a fixed handful.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-07-30",
+        title: "Scrip Sources shows results again",
+        blurb: "The page was reading the wrong field and came up empty for most scrip types. It lists collectables properly now.",
+        link: Some("/scrip-sources"),
+    },
+    ChangelogEntry {
+        date: "2026-07-29",
+        title: "Item pages load fast on busy items",
+        blurb: "Sales are summarized on the server and the chart only draws the detail you are zoomed into, so items with years of history open quickly.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-07-29",
+        title: "Saved views in Flip Finder",
+        blurb: "Save a set of filters you keep coming back to and reopen it in one click.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-07-29",
+        title: "A rebuilt item page",
+        blurb: "Listings live in one merged table, sections are ordered the way you actually read them, and a jump menu gets you to the part you want.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-07-29",
+        title: "Search hints at job sets",
+        blurb: "The search bar sits front and center, and searching a job abbreviation takes you to that job's gear.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-07-25",
+        title: "Browse gear by job set",
+        blurb: "Item Explorer groups equipment into gear sets with their own detail pages, adds a world picker, and tucks subcategories into grouped menus.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-06-28",
+        title: "Attach characters to your retainers",
+        blurb: "Verify a character and assign the retainers it owns, so undercut checks know which listings are yours.",
+        link: Some("/retainers/listings"),
+    },
+    ChangelogEntry {
+        date: "2026-06-26",
+        title: "Live market updates",
+        blurb: "Item and list pages show whether live data is connected and refresh as new sales and listings arrive.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-06-26",
+        title: "See who shared a list with you",
+        blurb: "Shared lists show their owner on the card, so a long list of lists stays readable.",
+        link: Some("/list"),
+    },
+    ChangelogEntry {
+        date: "2026-06-10",
+        title: "A faster, sharper price chart",
+        blurb: "Price history and sparklines are drawn by our own chart engine. Smaller download, smoother zooming, and a crosshair that reads the sale under your cursor.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-06-08",
+        title: "Real Price on the item page",
+        blurb: "A price estimate that ignores gil-transfer trades between friends, so a single fake 99,999,999 sale stops skewing what an item is worth.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-05-19",
+        title: "Market Trends",
+        blurb: "See what is selling fastest on your world, and what is climbing or sliding in price.",
+        link: Some("/trends"),
+    },
+    ChangelogEntry {
+        date: "2026-05-16",
+        title: "A home page worth landing on",
+        blurb: "The front page is a dashboard of live market activity for your world instead of a static welcome.",
+        link: Some("/"),
+    },
+    ChangelogEntry {
+        date: "2026-05-12",
+        title: "Ultros speaks seven languages",
+        blurb: "French, German, Japanese, Korean, and Simplified and Traditional Chinese alongside English. Item names follow the language you pick.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-05-12",
+        title: "Price alerts, on Discord or in your browser",
+        blurb: "Get pinged when an item crosses the price you set, or when someone undercuts your retainer.",
+        link: Some("/alerts"),
+    },
+    ChangelogEntry {
+        date: "2026-05-11",
+        title: "Shared lists",
+        blurb: "Invite people to a shopping list and choose who can read it and who can change it.",
+        link: Some("/list"),
+    },
+    ChangelogEntry {
+        date: "2026-05-11",
+        title: "A shorter first run",
+        blurb: "New here? A quick setup asks for your home world so prices are relevant from the first page you open.",
+        link: Some("/welcome"),
+    },
+];
+
+/// Date of the newest entry, as an ISO-8601 `YYYY-MM-DD` string. Empty when
+/// there are no entries.
+pub fn latest_changelog_date() -> &'static str {
+    CHANGELOG.first().map(|entry| entry.date).unwrap_or("")
+}
+
+#[component]
+pub fn Changelog() -> impl IntoView {
+    let i18n = use_i18n();
+    // Visiting the page is what clears the sidebar dot.
+    use_mark_changelog_seen();
+
+    view! {
+        <MetaTitle title=t_string!(i18n, changelog_meta_title).to_string() />
+        <MetaDescription text=t_string!(i18n, changelog_meta_desc).to_string() />
+        <div class="main-content p-2 sm:p-6">
+            <div class="container mx-auto max-w-4xl flex flex-col gap-6">
+                <section class="panel p-6 sm:p-8 rounded-2xl">
+                    <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mb-3">
+                        {t!(i18n, changelog_page_heading)}
+                    </h1>
+                    <p class="text-lg text-[color:var(--color-text)] max-w-2xl">
+                        {t!(i18n, changelog_intro)}
+                    </p>
+                </section>
+                <ol class="flex flex-col gap-4">
+                    {CHANGELOG.iter().map(|entry| view! {
+                        <li class="panel p-5 rounded-xl flex flex-col gap-2">
+                            <time
+                                datetime=entry.date
+                                class="text-xs font-bold uppercase tracking-wide text-brand-300 tabular-nums"
+                            >
+                                {entry.date}
+                            </time>
+                            <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{entry.title}</h2>
+                            <p class="text-sm text-[color:var(--color-text-muted)]">{entry.blurb}</p>
+                            {entry.link.map(|href| view! {
+                                <A
+                                    href=href
+                                    attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-1.5 self-start"
+                                >
+                                    {t!(i18n, changelog_try_it)}
+                                    <Icon icon=i::FaArrowRightSolid width="0.8em" height="0.8em" />
+                                </A>
+                            })}
+                        </li>
+                    }).collect_view()}
+                </ol>
+            </div>
+        </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The what's-new dot reads `CHANGELOG[0]` as "the newest thing we
+    /// shipped". Appending to the bottom instead of the top would silently
+    /// stop the dot from ever appearing again.
+    #[test]
+    fn entries_are_sorted_newest_first() {
+        for pair in CHANGELOG.windows(2) {
+            assert!(
+                pair[0].date >= pair[1].date,
+                "changelog is out of order: {} ({}) precedes {} ({})",
+                pair[0].title,
+                pair[0].date,
+                pair[1].title,
+                pair[1].date,
+            );
+        }
+    }
+
+    /// Dates are compared as strings against the last-seen cookie, which is
+    /// only chronological while every date is zero-padded `YYYY-MM-DD`.
+    #[test]
+    fn dates_are_iso_8601() {
+        for entry in CHANGELOG {
+            let date = entry.date;
+            assert_eq!(date.len(), 10, "not YYYY-MM-DD: {date}");
+            assert!(
+                date.chars().enumerate().all(|(i, c)| match i {
+                    4 | 7 => c == '-',
+                    _ => c.is_ascii_digit(),
+                }),
+                "not YYYY-MM-DD: {date}"
+            );
+        }
+    }
+
+    #[test]
+    fn links_are_internal_routes() {
+        for entry in CHANGELOG {
+            if let Some(link) = entry.link {
+                assert!(
+                    link.starts_with('/'),
+                    "{} links off-site ({link}); the router only handles app routes",
+                    entry.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn latest_date_is_the_first_entry() {
+        assert_eq!(latest_changelog_date(), CHANGELOG[0].date);
+    }
+}

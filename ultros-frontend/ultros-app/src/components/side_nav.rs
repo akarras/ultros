@@ -1,5 +1,6 @@
 use crate::components::account_menu::AccountMenu;
 use crate::components::icon::Icon;
+use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
@@ -38,6 +39,17 @@ fn SideNavItem(
     /// visually paired with the Search button that sits beside it.
     #[prop(optional)]
     hero: bool,
+    /// When true, a small unread dot appears at the trailing edge of the row.
+    ///
+    /// The signal must be false during SSR and the first client render — the
+    /// dot is added to the DOM by a client `Effect`, not rendered by the
+    /// server — or hydration will find a node the server never wrote. See
+    /// `use_whats_new_indicator`.
+    #[prop(optional, into)]
+    badge: Option<Signal<bool>>,
+    /// Accessible name for `badge`, read out after the row's label.
+    #[prop(optional, into)]
+    badge_label: Option<Signal<String>>,
     children: Children,
 ) -> impl IntoView {
     let location = use_location();
@@ -53,10 +65,21 @@ fn SideNavItem(
         "side-nav-item"
     };
 
+    let badge_view = move || {
+        badge.is_some_and(|badge| badge.get()).then(|| {
+            let label = badge_label.map(|label| label.get()).unwrap_or_default();
+            view! {
+                <span class="side-nav-badge" aria-hidden="true"></span>
+                <span class="sr-only">{label}</span>
+            }
+        })
+    };
+
     view! {
         <a href=move || href.get() class=class aria-current=current>
             <Icon icon=icon />
             <span class="side-nav-label">{children()}</span>
+            {badge_view}
         </a>
     }
 }
@@ -73,6 +96,7 @@ pub fn SideNav() -> impl IntoView {
     let nav = use_side_nav_settings();
     let search_overlay = use_search_overlay_state();
     let (homeworld, _set_homeworld) = use_home_world();
+    let whats_new = use_whats_new_indicator();
 
     // Build world-aware URLs from the current home world, falling back to
     // the world-less route when none is set.
@@ -220,6 +244,15 @@ pub fn SideNav() -> impl IntoView {
                 </SideNavItem>
                 <SideNavItem href="/help".to_string() section="help" icon=i::BsBook>
                     {t!(i18n, help_label)}
+                </SideNavItem>
+                <SideNavItem
+                    href="/changelog".to_string()
+                    section="changelog"
+                    icon=i::BsMegaphone
+                    badge=whats_new
+                    badge_label=Signal::derive(move || t_string!(i18n, changelog_whats_new).to_string())
+                >
+                    {t!(i18n, changelog_label)}
                 </SideNavItem>
             </nav>
 

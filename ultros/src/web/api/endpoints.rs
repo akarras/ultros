@@ -283,6 +283,7 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            "/alerts",
             &db,
             ctx,
         )
@@ -293,6 +294,7 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            "/alerts",
             &db,
         )
         .await

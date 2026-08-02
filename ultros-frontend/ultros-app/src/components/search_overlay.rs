@@ -14,6 +14,7 @@ use crate::components::search_box::SearchBox;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::i18n::{t_string, use_i18n};
 use icondata as i;
+use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_hotkeys::use_hotkeys;
 use leptos_router::hooks::use_location;
@@ -23,6 +24,7 @@ pub fn SearchOverlay() -> impl IntoView {
     let i18n = use_i18n();
     let state = use_search_overlay_state();
     let open = state.open;
+    let panel = NodeRef::<Div>::new();
 
     use_hotkeys!(("MetaLeft+KeyK,ControlLeft+KeyK", "*") => move |_| {
         state.toggle();
@@ -59,18 +61,45 @@ pub fn SearchOverlay() -> impl IntoView {
                     class="search-overlay-backdrop"
                     on:click=move |_| state.close()
                 />
-                <div class="search-overlay-panel">
+                // On mobile the panel is an opaque full-viewport sheet, so
+                // the backdrop underneath can never be tapped — instead a tap
+                // on the sheet's own empty space dismisses it (#1067).
+                // Matching on the event target rather than stopping
+                // propagation in the header keeps this independent of how
+                // Leptos's delegated click handling bubbles: only a hit on
+                // the panel's own box counts, so the input, its clear button
+                // and the absolutely-positioned result/hint dropdowns are all
+                // untouched.
+                <div
+                    node_ref=panel
+                    class="search-overlay-panel"
+                    on:click=move |ev: leptos::ev::MouseEvent| {
+                        let hit_panel = ev
+                            .target()
+                            .zip(panel.get_untracked())
+                            .is_some_and(|(target, panel)| {
+                                let panel: &web_sys::EventTarget = &panel;
+                                &target == panel
+                            });
+                        if hit_panel {
+                            state.close();
+                        }
+                    }
+                >
                     <div class="search-overlay-header">
                         <div class="search-overlay-searchbox">
                             <SearchBox autofocus=true />
                         </div>
-                        // The backdrop click target and Escape key are both
-                        // unreachable on mobile once the panel goes opaque
-                        // full-viewport (see the CSS below), so this is the
-                        // only way out of the sheet on a phone. Always
-                        // rendered — not just below 1024px — so keyboard and
-                        // mouse users on desktop get an explicit close
-                        // affordance too.
+                        // Explicit close affordance. Visible on desktop only:
+                        // at 375px it sat 20px from the input's own clear-X —
+                        // two adjacent X's meaning different things (#1067) —
+                        // and cost 52px of a 351px row. Below 1024px the CSS
+                        // collapses it to a visually-hidden control (it comes
+                        // back at full size on :focus-visible) and tap-off
+                        // takes over as the pointer path. It stays in the DOM
+                        // at every width so keyboard and assistive-tech users
+                        // always have a reachable, labelled exit — tap-off is
+                        // a plain div and Escape needs a hardware keyboard.
                         <button
                             type="button"
                             class="search-overlay-close"
