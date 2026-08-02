@@ -53,7 +53,18 @@ const ROUTE_ASSERTS = {
   "/items": { titleIncludes: "Ultros" },
   "/item/46010": {
     titleIncludes: "Ceremonial Shamshir",
-    bodyIncludesAny: ["Fresh", "Caution", "Verify In-Game", "No Data"],
+    // The freshness verdict words ("Fresh"/"Caution"/"Verify In-Game"/"No Data")
+    // are no longer visible text — FreshnessBadge shows the data age ("Data 1h
+    // 17m old") and moved the verdict into its `title` tooltip, which innerText
+    // never sees. Assert on the sales-cadence badge sitting beside it instead:
+    // same market-data header, and its four labels cover every data state
+    // (including "no sales"), so this still proves the page rendered its data.
+    bodyIncludesAny: [
+      "Fast mover",
+      "Steady mover",
+      "Slow mover",
+      "Not enough data",
+    ],
   },
   "/items/category/Gunbreaker's Arms": { titleIncludes: "Gunbreaker" },
   "/flip-finder": { titleIncludes: "Ultros" },
@@ -64,8 +75,10 @@ const ROUTE_ASSERTS = {
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
   "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
-  "/privacy": { titleIncludes: "Ultros", bodyIncludesAny: ["privacy", "Privacy"] },
-  "/cookie-policy": { titleIncludes: "Ultros", bodyIncludesAny: ["cookie", "Cookie"] },
+  // Both legal pages set their own <MetaTitle> now, so neither falls back to the
+  // app-default title that carries "Ultros". Assert the page's own name instead.
+  "/privacy": { titleIncludes: "Privacy Policy", bodyIncludesAny: ["privacy", "Privacy"] },
+  "/cookie-policy": { titleIncludes: "Cookie Policy", bodyIncludesAny: ["cookie", "Cookie"] },
 };
 
 // Substrings in console errors that we always ignore (third-party noise, expected hydration churn).
