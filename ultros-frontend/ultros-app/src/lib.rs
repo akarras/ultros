@@ -681,3 +681,4 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
     }
 }
+pub mod script_escape;

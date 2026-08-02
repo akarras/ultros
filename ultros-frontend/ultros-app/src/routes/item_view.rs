@@ -21,6 +21,7 @@ use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
 use crate::routes::item_view_scope::item_href;
 use crate::routes::not_found::NotFound;
+use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
@@ -1771,7 +1772,7 @@ fn build_breadcrumb_json_ld(
         "itemListElement": items
     });
 
-    serde_json::to_string(&json_value).unwrap_or_default()
+    escape_for_script_tag(&serde_json::to_string(&json_value).unwrap_or_default())
 }
 
 /// Gates the item page on the `:id` route param actually naming a real item.
