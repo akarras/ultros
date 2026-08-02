@@ -8,8 +8,8 @@ use ultros_api_types::{
     ActiveListing, CurrentlyShownItem, FfxivCharacter,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
-        CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
-        UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
+        CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
+        ResendResult, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     item_stats::ItemStatsResponse,
@@ -650,7 +650,7 @@ pub(crate) async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppR
     patch_api(&format!("/api/v1/endpoints/{id}"), req).await
 }
 
-pub(crate) async fn delete_endpoint(id: i32) -> AppResult<()> {
+pub(crate) async fn delete_endpoint(id: i32) -> AppResult<DeleteEndpointResponse> {
     delete_api(&format!("/api/v1/endpoints/{id}")).await
 }
 
