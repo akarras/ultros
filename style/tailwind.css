@@ -106,13 +106,19 @@
 
     html {
         overflow-x: hidden;
-        width: 100vw;
+        /* Deliberately `100%`, not `100vw`. The viewport unit includes the
+           width of a classic (non-overlay) scrollbar, so on desktop the page
+           laid out ~15px wider than the space it actually had — and because
+           the x-axis is hidden, that surplus was not scrollable but simply
+           clipped off the right edge of every page. `100%` resolves against
+           the real content box, so the two agree. */
+        width: 100%;
     }
 
     body {
         background-size: 500px;
         background-position: top;
-        max-width: 100vw;
+        max-width: 100%;
         background-color: var(--color-background);
         color: var(--text-color);
         position: relative;
@@ -2331,6 +2337,28 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 .sticky-bar-button:hover {
     background-color: color-mix(in srgb, var(--brand-ring) 14%, transparent);
+}
+/* Opt-in shrink, for the control bar's own first row.
+   `.sticky-bar-button` is `flex: 0 0 auto` + `white-space: nowrap`, so a row
+   built out of them can only grow. The first row grew past a phone viewport
+   by ~210px, and since `html` is `overflow-x: hidden` that surplus was not
+   scrollable but simply unreachable — the last button sat off-screen (#1055).
+   A breakpoint alone cannot fix it: the side nav claims 240px at `lg`, so the
+   row is barely wider at 1024px than at 768px, and the German labels overflow
+   in that band. These yield instead, in a deliberate order — the row count
+   gives up space first (it is `flex-1`), then labels ellipsize, and the icon
+   never shrinks, so a control is always identifiable. */
+.sticky-bar-button-shrink {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+.sticky-bar-button-shrink > svg {
+    flex: 0 0 auto;
+}
+.sticky-bar-button-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 /* Popovers hung off the bar (columns picker, + Filter menu). The bar is
    `position: sticky`, so it is already the containing block for these. */
