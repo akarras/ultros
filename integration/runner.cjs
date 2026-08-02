@@ -79,22 +79,7 @@ const ROUTE_ASSERTS = {
  * exempted at a width where it already fits would mask a future regression
  * there. Keep this empty.
  */
-const KNOWN_OVERFLOW = {
-  // github.com/akarras/ultros/issues/1055 — the Flip Finder's sticky control
-  // bar has no shrinkable item in its first row, so at phone widths the row
-  // grows past the viewport (~159px at 390px) instead of fitting. The row can
-  // neither wrap (the bar is height-locked; the table header consumes
-  // STICKY_BAR_HEIGHT as its sticky offset) nor scroll (it is the containing
-  // block for the saved-views/columns popovers), so the fix is to make it
-  // shrink — PR #1082. Delete this entry when that merges.
-  //
-  // Desktop is deliberately not listed: the same row already fits at 1280px,
-  // and this check is what proves it stays that way.
-  "/flip-finder/Gilgamesh": {
-    devices: ["mobile"],
-    reason: "#1055, fixed by PR #1082 (sticky control bar row 1 cannot shrink)",
-  },
-};
+const KNOWN_OVERFLOW = {};
 
 // Substrings in console errors that we always ignore (third-party noise, expected hydration churn).
 const DEFAULT_CONSOLE_ALLOW = [
