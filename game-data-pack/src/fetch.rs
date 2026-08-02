@@ -19,7 +19,7 @@ pub const DATAMINING_LANGS: [&str; 4] = ["en", "ja", "de", "fr"];
 
 /// Every sheet `xiv_gen::csv_to_rkyv::read_data_from` reads. Adding a sheet
 /// there means adding it here, or the sparse checkout will not contain it.
-pub const SHEETS: [&str; 31] = [
+pub const SHEETS: [&str; 32] = [
     "Item",
     "Recipe",
     "ClassJob",
@@ -48,6 +48,7 @@ pub const SHEETS: [&str; 31] = [
     "RetainerTask",
     "RetainerTaskNormal",
     "RecipeLevelTable",
+    "CollectablesShop",
     "CollectablesShopItem",
     "CollectablesShopRewardScrip",
     "CraftLeve",
@@ -266,13 +267,16 @@ mod tests {
 
     #[test]
     fn sheets_list_covers_every_read_sheet() {
-        assert_eq!(SHEETS.len(), 31);
+        assert_eq!(SHEETS.len(), 32);
         let mut sorted = SHEETS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), SHEETS.len(), "SHEETS contains duplicates");
         assert!(SHEETS.contains(&"Item"));
         assert!(SHEETS.contains(&"CollectablesShopRewardScrip"));
+        // Omitting this one leaves the sparse checkout without the sheet that
+        // separates scrip turn-ins from material exchanges.
+        assert!(SHEETS.contains(&"CollectablesShop"));
     }
 
     #[test]
