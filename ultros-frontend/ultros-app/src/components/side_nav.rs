@@ -256,8 +256,11 @@ pub fn SideNav() -> impl IntoView {
                 </SideNavItem>
             </nav>
 
-            <AccountMenu />
-
+            // Footer sits ABOVE the account row so the account row is the
+            // bottom-most control. Collapsed, the 56px sidebar has no room for
+            // the Discord + GitHub pair (GitHub was clipped by the right edge)
+            // and the version hash is hidden anyway, so the whole footer is
+            // hidden at that width — see `.app-shell-collapsed .side-nav-footer`.
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />
@@ -273,6 +276,8 @@ pub fn SideNav() -> impl IntoView {
                     {git_hash}
                 </a>
             </div>
+
+            <AccountMenu />
         </aside>
     }
     .into_any()

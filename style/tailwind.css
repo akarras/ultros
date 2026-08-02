@@ -1938,8 +1938,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 @media (min-width: 1024px) {
     .app-shell-collapsed .side-nav-label,
     .app-shell-collapsed .side-nav-section-header,
-    .app-shell-collapsed .side-nav-brand-text,
-    .app-shell-collapsed .side-nav-version {
+    .app-shell-collapsed .side-nav-brand-text {
+        display: none;
+    }
+    /* The whole footer goes, not just the version hash: 56px minus the row's
+       0.75rem side padding leaves 32px, which the Discord + GitHub pair
+       overflows — GitHub was clipped by the sidebar's right edge. Both links
+       are reachable again the moment the sidebar is expanded. */
+    .app-shell-collapsed .side-nav-footer {
         display: none;
     }
     .app-shell-collapsed .side-nav-item {
@@ -2067,15 +2073,16 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
            the viewport instead. `left` is unchanged in value: `.side-nav`
            is itself pinned to the viewport's left edge, so 0.35rem means
            the same thing whether measured from the sidebar or the
-           viewport. `bottom` is re-derived from the viewport instead,
-           approximating the collapsed footer row (~3.06rem: 2 x 0.75rem
-           padding + a 1.5rem icon row + border) plus the collapsed
-           trigger row (~3.1rem worst case, sized to the 32px avatar) plus
-           the same 0.35rem gap the expanded state uses above the trigger. */
+           viewport. `bottom` is re-derived from the viewport instead: the
+           account row is the bottom-most thing in the collapsed sidebar
+           (the footer is hidden at this width), so it only has to clear
+           the collapsed trigger row (~3.1rem worst case, sized to the
+           32px avatar) plus the same 0.35rem gap the expanded state uses
+           above the trigger. */
         position: fixed;
         left: 0.35rem;
         right: auto;
-        bottom: 6.5rem;
+        bottom: 3.5rem;
         width: 15rem;
     }
 }
