@@ -9,7 +9,6 @@ use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
-use crate::components::filter_card::FilterCard;
 use crate::components::icon::Icon;
 use crate::components::item_icon::ItemIcon;
 use crate::components::loading::Loading;
@@ -233,6 +232,74 @@ fn FilterModal(filter_name: &'static str) -> impl IntoView {
     .into_any()
 }
 
+/// Every min/max query key the filter bar can set; used both to detect
+/// "any filter active" and to clear them all at once.
+const FILTER_QUERY_KEYS: &[&str] = &[
+    "price_per_item_min",
+    "price_per_item_max",
+    "number_received_min",
+    "number_received_max",
+    "total_profit_min",
+    "total_profit_max",
+    "hours_between_sales_min",
+    "hours_between_sales_max",
+];
+
+/// Per-column responsive visibility for the results table, keyed by the
+/// column's index in `CurrencyTrade::field_labels()`.
+///
+/// All seven columns at once are ~1200px wide, so on a phone the table became
+/// a horizontal scroll strip where the profit — the number the page exists to
+/// show — sat off-screen. Drop to item/qty/profit on the smallest screens and
+/// add the rest back as width allows, the same tiering the item explorer's
+/// result rows use. Header and body cells must be given the same class or the
+/// columns shear apart.
+fn column_visibility(index: usize) -> &'static str {
+    match index {
+        // Shops and Cost: the least useful pair on a phone. Cost in particular
+        // barely varies — every row on this page is priced in the same currency.
+        0 | 1 => "hidden lg:table-cell",
+        // Price per item and hours between sales: useful, not essential.
+        3 | 6 => "hidden sm:table-cell",
+        // Item, quantity received, profit.
+        _ => "",
+    }
+}
+
+/// Compact min/max input pair for one numeric column, bound to the
+/// `{filter_name}_min` / `{filter_name}_max` query params.
+#[component]
+fn FilterRange(#[prop(into)] label: String, filter_name: &'static str) -> impl IntoView {
+    let i18n = use_i18n();
+    let (min, set_min) = query_signal::<i32>(format!("{filter_name}_min"));
+    let (max, set_max) = query_signal::<i32>(format!("{filter_name}_max"));
+    let aria_name = filter_name.replace("_", " ");
+    view! {
+        <div class="flex flex-col gap-1">
+            <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
+                {label}
+            </span>
+            <div class="flex flex-row gap-2">
+                <ParseableInputBox
+                    input=Signal::derive(min)
+                    set_value=SignalSetter::map(set_min)
+                    aria_label=t_string!(i18n, currency_exchange_min_field_aria, name = aria_name.clone())
+                        .to_string()
+                    placeholder=t_string!(i18n, currency_exchange_min).to_string()
+                />
+                <ParseableInputBox
+                    input=Signal::derive(max)
+                    set_value=SignalSetter::map(set_max)
+                    aria_label=t_string!(i18n, currency_exchange_max_field_aria, name = aria_name)
+                        .to_string()
+                    placeholder=t_string!(i18n, currency_exchange_max).to_string()
+                />
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
 fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
     let max = query_map
         .get(&format!("{field_label}_max"))
@@ -322,6 +389,20 @@ fn ExchangeItemContent() -> impl IntoView {
 
     let (sorted_by, _set_sorted_by) = query_signal::<String>("sorted-by");
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
+
+    // The filter inputs live behind a toggle: the chip row below already says
+    // which filters are set, so the expanded controls were pure duplication
+    // occupying the whole fold. Start expanded only when a deep link arrives
+    // with filters already applied, so those inputs are editable without a
+    // click.
+    let active_filter_count = Signal::derive(move || {
+        let q = query();
+        FILTER_QUERY_KEYS
+            .iter()
+            .filter(|key| q.get(key).and_then(|v| v.parse::<i32>().ok()).is_some())
+            .count()
+    });
+    let (filters_open, set_filters_open) = signal(active_filter_count.get_untracked() > 0);
 
     // Define the computation logic as a separate closure that takes data as arguments.
     // This avoids capturing the ArcResources directly, preventing move/FnOnce issues.
@@ -413,12 +494,6 @@ fn ExchangeItemContent() -> impl IntoView {
         };
 
     // Create derived signals to access resources, avoiding ownership issues in view closures.
-    let sales_1 = sales.clone();
-    let s_getter_1 = Signal::derive(move || sales_1.get());
-
-    let listings_1 = world_cheapest_listings.clone();
-    let l_getter_1 = Signal::derive(move || listings_1.get());
-
     let sales_2 = sales.clone();
     let s_getter_2 = Signal::derive(move || sales_2.get());
 
@@ -431,154 +506,83 @@ fn ExchangeItemContent() -> impl IntoView {
             <MetaDescription text=move || {
                 t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
             } />
-            <div class="panel p-6 rounded-xl mb-6">
-                <h2 class="text-2xl font-bold mb-4 text-[color:var(--brand-fg)]">
-                    {move || item().map(|i| i.name.as_str())} " - " {t!(i18n, currency_exchange_title)}
-                </h2>
-                <div class="flex items-center gap-4 mb-4">
-                    <label class="text-[color:var(--color-text-muted)]">{t!(i18n, currency_exchange_how_many)}</label>
-                    <input
-                        class="input w-24"
-                        prop:value=currency_quantity
-                        on:input=move |e| {
-                            let event = event_target_value(&e);
-                            if let Ok(p) = event.parse() {
-                                set_currency_quantity.set(Some(p));
+            <div class="panel p-4 rounded-xl mb-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                        {move || item().map(|i| i.name.as_str())} " - " {t!(i18n, currency_exchange_title)}
+                    </h2>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <label
+                            for="currency-quantity"
+                            class="text-sm text-[color:var(--color-text-muted)]"
+                        >
+                            {t!(i18n, currency_exchange_how_many)}
+                        </label>
+                        <input
+                            id="currency-quantity"
+                            class="input w-24"
+                            prop:value=currency_quantity
+                            on:input=move |e| {
+                                let event = event_target_value(&e);
+                                if let Ok(p) = event.parse() {
+                                    set_currency_quantity.set(Some(p));
+                                }
                             }
-                        }
-                    />
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_price_per_item_title)
-                        description=t_string!(i18n, currency_exchange_price_per_item_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("price_per_item_min");
-                            let (max, set_max) = query_signal::<i32>("price_per_item_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_price).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_price).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_qty_received_title)
-                        description=t_string!(i18n, currency_exchange_qty_received_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("number_received_min");
-                            let (max, set_max) = query_signal::<i32>("number_received_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_qty).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_qty).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_profit_title)
-                        description=t_string!(i18n, currency_exchange_profit_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("total_profit_min");
-                            let (max, set_max) = query_signal::<i32>("total_profit_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_profit).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_profit).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
-
-                    <FilterCard
-                        title=t_string!(i18n, currency_exchange_sales_velocity_title)
-                        description=t_string!(i18n, currency_exchange_sales_velocity_desc)
-                    >
-                        {move || {
-                            let (min, set_min) = query_signal::<i32>("hours_between_sales_min");
-                            let (max, set_max) = query_signal::<i32>("hours_between_sales_max");
-                            view! {
-                                <div class="flex flex-col gap-2">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_min)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(min)
-                                            set_value=SignalSetter::map(set_min)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_min_hours).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                                        />
-                                    </div>
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[color:var(--color-text)]">{t!(i18n, currency_exchange_max)}</span>
-                                        <ParseableInputBox
-                                            input=Signal::derive(max)
-                                            set_value=SignalSetter::map(set_max)
-                                            aria_label=t_string!(i18n, currency_exchange_aria_max_hours).to_string()
-                                            placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                                        />
-                                    </div>
-                                </div>
-                            }
-                        }}
-                    </FilterCard>
+                        />
+                        <button
+                            type="button"
+                            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium
+                            border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)]
+                            hover:text-[color:var(--brand-fg)] hover:bg-white/5 transition-colors"
+                            aria-expanded=move || filters_open().to_string()
+                            aria-controls="currency-filter-panel"
+                            on:click=move |_| set_filters_open.update(|open| *open = !*open)
+                        >
+                            <Icon icon=icondata::AiFilterFilled />
+                            {t!(i18n, currency_exchange_filters)}
+                            {move || {
+                                let count = active_filter_count();
+                                (count > 0)
+                                    .then(|| {
+                                        view! {
+                                            <span class="inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full text-xs
+                                            bg-[color:color-mix(in_srgb,var(--brand-ring)_25%,transparent)]
+                                            text-[color:var(--brand-fg)]">
+                                                {count}
+                                            </span>
+                                        }
+                                    })
+                            }}
+                        </button>
+                    </div>
                 </div>
 
-                <div class="flex flex-wrap gap-2 mt-2">
+                <Show when=move || filters_open() fallback=|| ()>
+                    <div
+                        id="currency-filter-panel"
+                        class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-3 pt-3
+                        border-t border-[color:var(--color-outline)]"
+                    >
+                        <FilterRange
+                            label=t_string!(i18n, currency_exchange_price_per_item_title).to_string()
+                            filter_name="price_per_item"
+                        />
+                        <FilterRange
+                            label=t_string!(i18n, currency_exchange_qty_received_title).to_string()
+                            filter_name="number_received"
+                        />
+                        <FilterRange
+                            label=t_string!(i18n, currency_exchange_profit_title).to_string()
+                            filter_name="total_profit"
+                        />
+                        <FilterRange
+                            label=t_string!(i18n, currency_exchange_sales_velocity_title).to_string()
+                            filter_name="hours_between_sales"
+                        />
+                    </div>
+                </Show>
+
+                <div class="flex flex-wrap gap-2 mt-3">
                     {move || {
                         let q = query();
                         let mut chips: Vec<AnyView> = Vec::new();
@@ -627,16 +631,7 @@ fn ExchangeItemContent() -> impl IntoView {
                                         value=Signal::derive(move || sorted_by().unwrap_or_else(|| "total_profit".into()))
                                         class="inline-flex items-center gap-1 text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]"
                                         active_classes=""
-                                        remove_queries=&[
-                                            "price_per_item_min",
-                                            "price_per_item_max",
-                                            "number_received_min",
-                                            "number_received_max",
-                                            "total_profit_min",
-                                            "total_profit_max",
-                                            "hours_between_sales_min",
-                                            "hours_between_sales_max",
-                                        ]
+                                        remove_queries=FILTER_QUERY_KEYS
                                     >
                                         <span class="inline-flex items-center gap-1">
                                             <Icon icon=icondata::MdiClose />
@@ -650,7 +645,7 @@ fn ExchangeItemContent() -> impl IntoView {
                     }}
                 </div>
             </div>
-            <div class="overflow-x-auto">
+            <div>
                 {move || {
                     if home_world().is_none() {
                         let left = view! {
@@ -670,56 +665,10 @@ fn ExchangeItemContent() -> impl IntoView {
                             <div class="text-xs text-[color:var(--color-text-muted)] mb-2">
                                 {move || home_world().map(|w| t!(i18n, currency_exchange_assuming_sales_on, world = w.name))}
                             </div>
-                            {move || {
-                                let s_res = s_getter_1.get();
-                                let l_res = l_getter_1.get();
-                                let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
-                                let l = l_res.as_ref().and_then(|r| r.as_ref().ok());
-                                let q = currency_quantity.get();
-                                compute_prices(s, l, q).map(|mut rows: Vec<CurrencyTrade>| {
-                                    rows.sort_by(|a, b| b.total_profit.cmp(&a.total_profit));
-                                    rows.truncate(5);
-                                    let top = rows;
-                                    view! {
-                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3 mb-4 items-stretch">
-                                            {top.into_iter().map(|t| view! {
-                                                <div
-                                                    class="card p-4 rounded-lg transition-colors cursor-pointer"
-                                                    on:click=move |_| {
-                                                        let url = t
-                                                            .receive_item
-                                                            .as_ref()
-                                                            .map(|ri| format!("/item/{}", ri.item.key_id.0))
-                                                            .unwrap_or_default();
-                                                        if let Some(w) = web_sys::window() {
-                                                            let _ = w.location().set_href(&url);
-                                                        }
-                                                    }
-                                                >
-                                                    <div class="text-sm text-[color:var(--color-text-muted)] mb-1">
-                                                        <ShopNames shop_names=t.shop_names.clone() />
-                                                    </div>
-                                                    <div class="flex items-center justify-between">
-                                                        <div class="flex items-center gap-2 min-w-0">
-                                                            <ItemAmount item_amount=t.receive_item />
-                                                        </div>
-                                                        <div class="text-right">
-                                                            <div class="text-xs text-[color:var(--color-text-muted)]">{t!(i18n, currency_exchange_profit_label)}</div>
-                                                            {t.total_profit}
-                                                        </div>
-                                                    </div>
-                                                    <div class="mt-2 flex items-center justify-between gap-2 min-w-0 text-xs text-[color:var(--color-text-muted)]">
-                                            <span class="truncate">{t!(i18n, currency_exchange_items_count, count = t.number_received)}</span>
-                                            <span class="truncate">{t!(i18n, currency_exchange_hours_per_sale, hours = t.hours_between_sales)}</span>
-                                                    </div>
-                                                </div>
-                                            }).collect_view()}
-                                        </div>
-                                    }
-                                })
-                            }}
-                            <div class="panel p-6 rounded-xl mb-6">
-                                <h3 class="text-xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, currency_exchange_full_results)}</h3>
+                            <div class="panel rounded-xl border border-white/5 overflow-hidden mb-4">
+                                <h3 class="px-3 py-2 border-b border-white/5 text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
+                                    {t!(i18n, currency_exchange_full_results)}
+                                </h3>
                                 <Suspense fallback=Loading>
                                     {move || {
                                         let sort_label = sorted_by();
@@ -775,20 +724,26 @@ fn ExchangeItemContent() -> impl IntoView {
                                                 p.into_iter()
                                                     .map(|p| {
                                                         view! {
-                                                            <tr class="transition-colors">
-                                                                <td class="px-6 py-4">
+                                                            <tr class="hover:bg-white/5 transition-colors">
+                                                                <td class=format!("px-3 py-2 text-[color:var(--color-text-muted)] {}", column_visibility(0))>
                                                                     <ShopNames shop_names=p.shop_names />
                                                                 </td>
-                                                                <td class="px-6 py-4">
+                                                                <td class=format!("px-3 py-2 {}", column_visibility(1))>
                                                                     <ItemAmount item_amount=p.cost_item />
                                                                 </td>
-                                                                <td class="px-6 py-4">
+                                                                <td class="px-3 py-2">
                                                                     <ItemAmount item_amount=p.receive_item />
                                                                 </td>
-                                                                <td class="px-6 py-4">{p.price_per_item}</td>
-                                                                <td class="px-6 py-4">{p.number_received}</td>
-                                                                <td class="px-6 py-4">{p.total_profit}</td>
-                                                                <td class="px-6 py-4">{p.hours_between_sales}</td>
+                                                                <td class=format!("px-3 py-2 text-right tabular-nums {}", column_visibility(3))>
+                                                                    {p.price_per_item}
+                                                                </td>
+                                                                <td class="px-3 py-2 text-right tabular-nums">{p.number_received}</td>
+                                                                <td class="px-3 py-2 text-right tabular-nums font-medium text-[color:var(--color-text)]">
+                                                                    {p.total_profit}
+                                                                </td>
+                                                                <td class=format!("px-3 py-2 text-right tabular-nums text-[color:var(--color-text-muted)] {}", column_visibility(6))>
+                                                                    {p.hours_between_sales}
+                                                                </td>
                                                             </tr>
                                                         }
                                                     })
@@ -802,17 +757,28 @@ fn ExchangeItemContent() -> impl IntoView {
                                             info!("{sales:?} items: {count} p: {trades}");
                                             let labels = CurrencyTrade::field_labels();
                                             view! {
+                                                // Only the table scrolls sideways on narrow
+                                                // viewports; the surrounding panel must not, or
+                                                // `overflow-x` would force `overflow-y: auto` and
+                                                // trap anything absolutely positioned inside it.
+                                                <div class="overflow-x-auto">
                                                 <table class="w-full text-sm text-left">
-                                                    <thead class="text-xs uppercase">
-                                                        <tr>
+                                                    <thead class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
+                                                        <tr class="border-b border-white/5">
                                                             {labels
                                                                 .iter()
                                                                 .enumerate()
                                                                 .filter(|(i, _)| *i <= 6)
                                                                 .map(|(i, l)| {
+                                                                    // Columns 3+ are numeric and right-aligned in the
+                                                                    // body, so their headers follow.
+                                                                    let align = if i >= 3 { "justify-end" } else { "" };
                                                                     view! {
-                                                                        <th scope="col" class="px-6 py-3">
-                                                                            <div class="flex flex-row items-center gap-2">
+                                                                        <th
+                                                                            scope="col"
+                                                                            class=format!("px-3 py-2 font-bold whitespace-nowrap {}", column_visibility(i))
+                                                                        >
+                                                                            <div class=format!("flex flex-row items-center gap-2 {align}")>
                                                                                 <QueryButton
                                                                                     key="sorted-by"
                                                                                     value=*l
@@ -846,10 +812,11 @@ fn ExchangeItemContent() -> impl IntoView {
                                                                 .collect_view()}
                                                         </tr>
                                                     </thead>
-                                                    <tbody class="divide-y divide-[color:var(--color-outline)]">
+                                                    <tbody class="divide-y divide-white/5">
                                                         {sorted_and_filtered_rows}
                                                     </tbody>
                                                 </table>
+                                                </div>
                                             }
                                         })
                                 }}
@@ -991,39 +958,40 @@ pub fn CurrencySelection() -> impl IntoView {
     });
 
     view! {
-        <div class="container mx-auto space-y-6">
-            // Description Card
-            <div class="panel p-6 rounded-xl">
-                <p class="text-[color:var(--color-text)] leading-relaxed">
-                    {t!(i18n, currency_exchange_hero_desc)}
-                </p>
-            </div>
-
+        <div class="container mx-auto space-y-4">
             <MetaTitle title=t_string!(i18n, currency_exchange_meta_title_ultros) />
             <MetaDescription text=t_string!(i18n, currency_exchange_meta_desc_default) />
 
-            // Search Section
-            <div class="panel p-6 rounded-xl">
-                <div class="flex items-center gap-4">
-                    <div class="relative flex-1 max-w-xl">
-                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Icon
-                                icon=icondata::BiSearchAlt2Regular
-                                attr:class="w-5 h-5 text-[color:var(--color-text-muted)]"
-                            />
-                        </div>
-                        <input
-                            type="text"
-                            placeholder=t_string!(i18n, currency_exchange_search_placeholder)
-                            class="input w-full pl-10"
-                            on:input=move |ev| set_search_text(event_target_value(&ev))
+            // One panel for the blurb and the search box. The blurb is a single
+            // sentence — the long marketing paragraph pushed the currency grid
+            // below the fold on every viewport.
+            <div class="panel p-4 rounded-xl flex flex-col sm:flex-row sm:items-center gap-3">
+                <p class="flex-1 text-sm text-[color:var(--color-text-muted)]">
+                    {t!(i18n, currency_exchange_hero_desc)}
+                </p>
+                <div class="relative w-full sm:w-72">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Icon
+                            icon=icondata::BiSearchAlt2Regular
+                            attr:class="w-4 h-4 text-[color:var(--color-text-muted)]"
                         />
                     </div>
+                    <input
+                        type="text"
+                        placeholder=t_string!(i18n, currency_exchange_search_placeholder)
+                        aria-label=t_string!(i18n, currency_exchange_search_placeholder)
+                        class="input w-full pl-9"
+                        on:input=move |ev| set_search_text(event_target_value(&ev))
+                    />
                 </div>
             </div>
 
-            // Currency List
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            // Currency grid: icon + name + category on one dense row per
+            // currency, the same shape the item explorer's result rows use.
+            // `card-link` opts the anchor out of the global `a:not(...)` rule
+            // in tailwind.css, which otherwise forces a transparent background
+            // and underlines every text node inside the tile on hover.
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                 <For
                     each=filtered_currencies
                     key=|(item_id, _, _)| *item_id
@@ -1031,15 +999,20 @@ pub fn CurrencySelection() -> impl IntoView {
                         view! {
                             <A
                                 href=item_id.to_string()
-                                attr:class="card p-4 rounded-lg transition-colors duration-200 group"
+                                attr:class="card-link group flex items-center gap-2 px-3 py-2 rounded-lg border \
+                                           border-white/5 bg-[color:var(--color-background-elevated)] \
+                                           hover:bg-white/5 hover:border-brand-500/40 transition-colors"
                             >
-                                <div class="flex flex-col gap-2">
-                                    <span class="text-lg font-medium text-[color:var(--color-text)]
-                                    group-hover:text-[color:var(--brand-fg)] transition-colors">
+                                <ItemIcon item_id=item_id icon_size=IconSize::Small />
+                                <div class="flex flex-col min-w-0">
+                                    <span
+                                        class="truncate text-sm font-medium text-[color:var(--color-text)]
+                                        group-hover:text-brand-300 transition-colors"
+                                        title=item_name
+                                    >
                                         {item_name}
                                     </span>
-                                    <span class="text-sm text-[color:var(--color-text)] italic
-                                    group-hover:text-[color:var(--brand-fg)] transition-colors">
+                                    <span class="truncate text-xs text-[color:var(--color-text-muted)]">
                                         {category_name}
                                     </span>
                                 </div>
@@ -1088,6 +1061,52 @@ pub fn CurrencyExchange() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The phone layout drops four of the seven columns. Whatever else moves,
+    /// the three that answer "which trade should I make" have to survive, so
+    /// name them explicitly rather than trusting the index arithmetic in
+    /// `column_visibility`.
+    #[test]
+    fn the_smallest_layout_keeps_the_columns_that_carry_the_answer() {
+        let labels = CurrencyTrade::field_labels();
+        let always_visible: Vec<&str> = (0..=6)
+            .filter(|i| column_visibility(*i).is_empty())
+            .map(|i| labels[i])
+            .collect();
+
+        assert_eq!(
+            always_visible,
+            ["receive_item", "number_received", "total_profit"],
+            "the phone layout must always show the item, how many you get, \
+             and the profit",
+        );
+    }
+
+    /// The results table hangs a `FilterModal` off every column past index 2,
+    /// and each of those writes `{field_label}_min` / `{field_label}_max` to
+    /// the query string. `FILTER_QUERY_KEYS` is the other half of that
+    /// contract: it drives the "N active" badge, whether the filter panel
+    /// opens on a deep link, and which keys "Clear all" removes. Adding a
+    /// numeric column to `CurrencyTrade` without extending the constant would
+    /// silently give that column a filter no button can clear, so pin the two
+    /// lists together.
+    #[test]
+    fn filter_query_keys_cover_every_filterable_column() {
+        let expected: Vec<String> = CurrencyTrade::field_labels()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i > 2 && *i <= 6)
+            .flat_map(|(_, label)| [format!("{label}_min"), format!("{label}_max")])
+            .collect();
+
+        assert_eq!(
+            FILTER_QUERY_KEYS.to_vec(),
+            expected,
+            "FILTER_QUERY_KEYS is out of sync with the filterable columns of \
+             CurrencyTrade; the active-filter badge and 'Clear all' would miss \
+             the difference",
+        );
+    }
 
     /// `CurrencySelection` builds its category whitelist from the stable
     /// `ItemUICategory` row IDs (Currency = 100, Miscellany = 61, Other = 63)
