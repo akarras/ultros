@@ -16,7 +16,7 @@ use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_navigate, use_params_map},
+    hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
 };
 use ultros_api_types::{icon_size::IconSize, trends::TrendItem};
 
@@ -39,6 +39,7 @@ use crate::{
         world_picker::WorldOnlyPicker,
     },
     global_state::LocalWorldData,
+    routes::world_nav::world_nav_url,
 };
 
 const DEFAULT_WINDOW: u16 = 30;
@@ -328,17 +329,29 @@ fn TrendsWorldNavigator() -> impl IntoView {
     });
 
     let (current_world, set_current_world) = signal(initial_world);
+    let query = use_query_map();
+    let location = use_location();
 
     Effect::new(move |_| {
         if let Some(world) = current_world() {
-            let world = world.name;
-            nav(
-                &format!("/trends/{world}"),
-                NavigateOptions {
-                    scroll: false,
-                    ..Default::default()
-                },
+            // This effect also runs on mount, where the world already matches
+            // the path. Navigating anyway — and without the query — wiped every
+            // filter out of a shared link as it hydrated (issue #1053).
+            let url = world_nav_url(
+                "/trends",
+                &world.name,
+                &location.pathname.get_untracked(),
+                &query.get_untracked(),
             );
+            if let Some(url) = url {
+                nav(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     });
 
