@@ -236,6 +236,17 @@ async fn send_dm(
     Ok(())
 }
 
+/// Build the JSON body the service worker reads out of `event.data.json()`.
+/// `click_url` becomes `data.url`, which `notificationclick` opens — an alert
+/// that hardcodes this loses the user's actual destination.
+fn build_push_payload(title: &str, body: &str, click_url: &str) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": click_url,
+    }))?)
+}
+
 /// Send a Web Push notification to a single subscription. Body is JSON-encoded
 /// `{title, body, url}` — the service worker decodes that in its `push` handler.
 ///
@@ -251,17 +262,6 @@ async fn send_dm(
 /// (b) the crate's `From<isahc::Error>` impl discards the underlying cause and
 /// surfaces every transport failure as `WebPushError::Unspecified`, leaving
 /// operators with no signal about what actually broke.
-/// Build the JSON body the service worker reads out of `event.data.json()`.
-/// `click_url` becomes `data.url`, which `notificationclick` opens — an alert
-/// that hardcodes this loses the user's actual destination.
-fn build_push_payload(title: &str, body: &str, click_url: &str) -> Result<Vec<u8>> {
-    Ok(serde_json::to_vec(&serde_json::json!({
-        "title": title,
-        "body": body,
-        "url": click_url,
-    }))?)
-}
-
 async fn send_webpush(
     subscription_id: i32,
     title: &str,
