@@ -255,21 +255,29 @@ async fn main() -> Result<()> {
         .ok()
         .filter(|_| !error_reporting_disabled(environment.as_deref()))
         .map(|dsn| {
+            // Clamped rather than passed through: 0.48 took this as a plain
+            // struct field and tolerated anything, but 0.49's setter *panics*
+            // outside [0.0, 1.0]. Since this is operator-supplied, the natural
+            // typo for a "sample rate" — `=50`, meaning 50% — would otherwise
+            // take the server down at boot, before the DB is even reachable.
+            // `is_finite` first because "NaN"/"inf" parse successfully as f32
+            // and would panic just the same.
             let traces_sample_rate = std::env::var("GLITCHTIP_TRACES_SAMPLE_RATE")
                 .ok()
-                .and_then(|v| v.parse().ok())
+                .and_then(|v| v.parse::<f32>().ok())
+                .filter(|rate| rate.is_finite())
+                .map(|rate| rate.clamp(0.0, 1.0))
                 .unwrap_or(0.0);
-            sentry::init((
-                dsn,
-                sentry::ClientOptions {
-                    release: sentry::release_name!(),
-                    environment: environment.clone().map(Into::into),
-                    traces_sample_rate,
-                    attach_stacktrace: true,
-                    send_default_pii: false,
-                    ..Default::default()
-                },
-            ))
+            // sentry 0.49 made `ClientOptions` `#[non_exhaustive]` and dropped
+            // `traces_sample_rate` as a public field in favor of a builder
+            // setter, so we can no longer use struct-literal + `..Default`.
+            // The remaining fields are still public and assignable directly.
+            let mut options = sentry::ClientOptions::new().traces_sample_rate(traces_sample_rate);
+            options.release = sentry::release_name!();
+            options.environment = environment.clone().map(Into::into);
+            options.attach_stacktrace = true;
+            options.send_default_pii = false;
+            sentry::init((dsn, options))
         });
 
     // Create the db before we proceed
