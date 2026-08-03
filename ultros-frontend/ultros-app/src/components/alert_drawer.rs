@@ -96,10 +96,7 @@ pub fn AlertDrawer(
         }
         matches.sort_unstable_by_key(|(_, i)| Reverse(i.level_item));
 
-        matches
-            .into_iter()
-            .map(|(id, item)| (*id, item))
-            .collect()
+        matches.into_iter().map(|(id, item)| (*id, item)).collect()
     };
 
     let submit = move |_| {
