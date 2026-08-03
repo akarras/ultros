@@ -1,4 +1,4 @@
-//! Role grouping for the item explorer's subcategory popovers.
+//! Role grouping for the item explorer's subcategory accordion.
 //!
 //! FFXIV's game data has no per-job "role" field in the sheets we ship
 //! (`ClassJob` carries only indices/priorities), so the grouping is a
@@ -24,7 +24,7 @@ pub(crate) enum RoleGroup {
 }
 
 impl RoleGroup {
-    /// Display order of the popover sections.
+    /// Display order of the accordion's role sections.
     pub(crate) const ORDERED: [RoleGroup; 8] = [
         RoleGroup::Tank,
         RoleGroup::Healer,
@@ -87,9 +87,10 @@ pub(crate) fn role_for_weapon_category(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::item_explorer_toolbar::{
-        category_chips_for_group, job_chips_sorted, job_chips_sorted_in,
-    };
+    // `category_chips_for_group` went with `non_weapon_groups_have_expected_sizes`:
+    // that test pinned the deleted >8-categories popover/chip-strip fork, and
+    // nothing else in this module reads it.
+    use crate::routes::item_explorer_toolbar::{job_chips_sorted, job_chips_sorted_in};
     use xiv_gen::Language;
 
     #[test]
@@ -110,7 +111,7 @@ mod tests {
     /// broken, because the test process loads English data. Keying the lookup
     /// on the localized `abbreviation` dropped 23 of 36 German and 22 of 36
     /// French jobs into `Other`, collapsing the role sections of the Job Sets
-    /// popover into one undifferentiated list.
+    /// accordion into one undifferentiated list.
     #[test]
     fn role_grouping_is_identical_in_every_locale() {
         let en = xiv_gen_db::data_for(Language::En);
@@ -163,22 +164,6 @@ mod tests {
                 cat.name,
                 id.0,
                 cat.class_job,
-            );
-        }
-    }
-
-    /// Documents the chips-vs-dropdown decision for the non-grouped tabs:
-    /// with >8 subcategories a tab renders the popover, with <=8 it keeps
-    /// the inline chip strip. If game data ever changes these counts the
-    /// toolbar adapts automatically — this test just makes the change
-    /// visible in review.
-    #[test]
-    fn non_weapon_groups_have_expected_sizes() {
-        for group in 2..=4u8 {
-            let count = category_chips_for_group(group).len();
-            assert!(
-                count > 8,
-                "group {group} has {count} subcategories; expected >8 (popover branch)",
             );
         }
     }

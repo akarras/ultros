@@ -1,10 +1,15 @@
 //! Shared dismissal wiring for toggle-button popovers.
 //!
-//! Extracted from `GroupedNavPopover`, the reference implementation of the
-//! idiom: a popover closes on route change, on a click/tap outside its
-//! container, and on Escape. A menu whose only way to close is re-tapping
-//! its own trigger is a bug on mobile, where there is no hover state to
-//! hint at that (#1056, the overlays bullet of #1068).
+//! Extracted from the item explorer's `GroupedNavPopover`, which was the
+//! reference implementation of the idiom: a popover closes on route change,
+//! on a click/tap outside its container, and on Escape. A menu whose only way
+//! to close is re-tapping its own trigger is a bug on mobile, where there is
+//! no hover state to hint at that (#1056, the overlays bullet of #1068).
+//!
+//! That popover has since been replaced by an in-flow accordion
+//! (`GroupedNavAccordion`), which needs none of this — it is not an overlay,
+//! so there is nothing to tap away from. The helper lives on for the seven
+//! call sites that are still overlays.
 
 use leptos::html::Div;
 use leptos::prelude::*;
