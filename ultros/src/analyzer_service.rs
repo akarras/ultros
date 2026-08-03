@@ -27,6 +27,7 @@ use ultros_db::{
 use universalis::{ItemId, WorldId};
 
 use crate::event::{BusRecv, EventReceivers, handle_bus_recv};
+use crate::trend_candidates::{TrendCandidate, select_trend_candidates};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -1101,21 +1102,47 @@ impl AnalyzerService {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
+        // Acquired in the same order as `get_trends` (sale history, then
+        // cheapest) so the two paths cannot deadlock against each other.
+        let sale_history = self.recent_sale_history.get(&world_id)?.read().await;
         let cheapest = self
             .cheapest_items
             .get(&AnySelector::World(world_id))?
             .read()
             .await;
 
-        // Build the request tuple list from every item the cheapest map
-        // knows about on this world. Cap to a sane upper bound so a fresh
-        // world with thousands of listings doesn't blow up the SQL.
+        // Build the request tuple list from the items the cheapest map
+        // knows about on this world, capped to a sane upper bound so a
+        // world with tens of thousands of listings doesn't blow up the
+        // SQL. Which items make the cut is a real decision rather than a
+        // truncation: the map is keyed on item id, so taking the first N
+        // would ask only about the N lowest ids in the game.
         const MAX_TUPLES: usize = 1500;
-        let mut requests: Vec<(i32, u8, i32)> = cheapest
-            .item_map
-            .iter()
-            .take(MAX_TUPLES)
-            .map(|(key, _)| (key.item_id, key.hq as u8, world_id))
+        let candidates = select_trend_candidates(
+            cheapest
+                .item_map
+                .keys()
+                .map(|key| {
+                    let buffered = sale_history.item_map.get(key);
+                    TrendCandidate {
+                        item_id: key.item_id,
+                        hq: key.hq,
+                        // `SaleHistory::add_sale` keeps the buffer sorted
+                        // newest-first, so the head is the latest sale.
+                        last_sale: buffered.and_then(|s| s.first()).map(|s| s.sale_date),
+                        buffered_sales: buffered.map_or(0, |s| s.len() as u8),
+                    }
+                })
+                .collect(),
+            MAX_TUPLES,
+        );
+        // Dropped before the ClickHouse round-trips below — live sale
+        // ingestion needs this lock to write, and a deep scan is slow.
+        drop(sale_history);
+
+        let mut requests: Vec<(i32, u8, i32)> = candidates
+            .into_iter()
+            .map(|c| (c.item_id, c.hq as u8, world_id))
             .collect();
         requests.sort_unstable();
         requests.dedup();
