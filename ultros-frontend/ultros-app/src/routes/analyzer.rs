@@ -13,6 +13,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
+        dismissable::use_dismissable,
         filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
         gil::*,
         icon::Icon,
@@ -22,7 +23,7 @@ use crate::{
         realtime_status::RealtimeStatus,
         sales_cadence_badge::SalesCadenceBadge,
         saved_views::SavedViewsMenu,
-        skeleton::{BoxSkeleton, SingleLineSkeleton},
+        skeleton::{SingleLineSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton},
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
@@ -33,7 +34,11 @@ use crate::{
     error::AppError,
     global_state::LocalWorldData,
     math::filter_outliers_iqr_in_place,
-    query_defaults::{DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_query_default},
+    query_defaults::{
+        DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_flip_finder_default_view,
+        seed_query_default,
+    },
+    routes::world_nav::world_nav_url,
 };
 use ultros_api_types::{
     resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
@@ -804,6 +809,141 @@ fn extra_column_widths_px(visible: &std::collections::HashSet<&'static str>) -> 
     }
 }
 
+/// The loading skeleton's version of the grid, in DOM order.
+///
+/// Each entry's class string is the matching cell's class from the row markup
+/// below — same width, same responsive visibility, same alignment — so the
+/// placeholder columns sit exactly where the real ones will. Keep the two in
+/// step: a column added to the row markup but not here makes the table appear
+/// to gain a column when it loads.
+///
+/// Three cells differ from their real counterparts on purpose. World,
+/// datacenter and last-sold are written `hidden lg:block flex` / `hidden
+/// md:block flex` in the row markup — `block` and `flex` on the same element,
+/// where which one wins is down to stylesheet order rather than intent — so
+/// the skeleton spells them `hidden lg:flex` / `hidden md:flex`, which is what
+/// the `items-center` beside them was reaching for. The widths, which are all
+/// the alignment depends on, are identical either way.
+fn analyzer_skeleton_columns(
+    visible: &std::collections::HashSet<&'static str>,
+) -> Vec<SkeletonColumn> {
+    /// `(gate, class, cell)` in DOM order. A `None` gate is a column that
+    /// always renders; the rest follow `?cols=`.
+    const COLUMNS: &[(Option<&str>, &str, SkeletonCell)] = &[
+        // HQ. Most rows are NQ, so this one stays empty.
+        (
+            None,
+            "px-2 py-2 w-[44px] shrink-0 flex items-center justify-center",
+            SkeletonCell::Blank,
+        ),
+        (
+            None,
+            "px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2",
+            SkeletonCell::IconText,
+        ),
+        // Profit.
+        (
+            None,
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_PROFIT_PER_DAY),
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_VELOCITY),
+            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_DRIFT),
+            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_CONFIDENCE),
+            "px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center",
+            SkeletonCell::Badge,
+        ),
+        (
+            Some(COL_ROI),
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Badge,
+        ),
+        // Buy price. Always on, and it sits after ROI in the row markup.
+        (
+            None,
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_WORLD),
+            "px-3 py-2 w-28 shrink-0 hidden lg:flex items-center",
+            SkeletonCell::Text,
+        ),
+        (
+            Some(COL_DATACENTER),
+            "px-3 py-2 w-28 shrink-0 hidden xl:flex items-center",
+            SkeletonCell::Text,
+        ),
+        (
+            Some(COL_TREND),
+            "px-3 py-2 w-[100px] shrink-0 hidden md:flex items-center justify-center",
+            SkeletonCell::Spark,
+        ),
+        (
+            Some(COL_SALES_PER_DAY),
+            "px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center",
+            SkeletonCell::Badge,
+        ),
+        (
+            Some(COL_VOLUME_30D),
+            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            SkeletonCell::Number,
+        ),
+        (
+            Some(COL_LAST_SOLD),
+            "px-3 py-2 w-28 shrink-0 hidden md:flex items-center",
+            SkeletonCell::Text,
+        ),
+    ];
+    COLUMNS
+        .iter()
+        .filter(|(gate, _, _)| gate.is_none_or(|col| visible.contains(col)))
+        .map(|(_, class, cell)| SkeletonColumn::new(class, *cell))
+        .collect()
+}
+
+/// The Flip Finder's loading state: the results grid, drawn empty.
+///
+/// Reads `?cols=` the same way the table does, so the skeleton shows the
+/// columns this particular user has switched on rather than a generic set —
+/// and reproduces the container's `--analyzer-extra-cols-*` variables, which
+/// is what makes `.analyzer-grid-row` give the placeholder rows the same
+/// min-width as the real ones.
+#[component]
+fn AnalyzerTableSkeleton() -> impl IntoView {
+    let (cols_param, _) = query_signal::<String>("cols");
+    let visible = parse_visible_cols(cols_param.get_untracked().as_deref());
+    let widths = extra_column_widths_px(&visible);
+    view! {
+        <TableSkeleton
+            columns=analyzer_skeleton_columns(&visible)
+            rows=14
+            class="analyzer-table border border-[color:var(--color-outline)]"
+            row_class="analyzer-grid-row"
+            style=format!(
+                "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
+                widths.base,
+                widths.md,
+                widths.xl,
+            )
+        />
+    }
+}
+
 /// Tailwind class that hides a column's "desktop only" note in the Columns
 /// picker once the viewport is wide enough to actually render the column.
 /// `None` for columns visible at every width. Must mirror the `hidden
@@ -1013,6 +1153,14 @@ fn AnalyzerTable(
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
     let show_columns_picker = RwSignal::new(false);
     let show_filter_menu = RwSignal::new(false);
+    // Route change, click outside, Escape. Both popovers and both trigger
+    // buttons live inside the sticky bar, so one container covers both;
+    // the triggers keep their own mutual exclusivity.
+    let sticky_bar_ref = NodeRef::<leptos::html::Div>::new();
+    use_dismissable(sticky_bar_ref, move || {
+        show_columns_picker.set(false);
+        show_filter_menu.set(false);
+    });
 
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
@@ -1617,43 +1765,73 @@ fn AnalyzerTable(
             // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
             // header sticks directly beneath it at that offset, so a bar that
             // grew with its content would cover its own column headers.
-            <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1">
+            <div
+                class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1"
+                node_ref=sticky_bar_ref
+            >
                 // Row 1 — result count and view-level controls.
-                <div class="h-8 flex items-center gap-3 min-w-0">
-                    <span class="text-sm text-[color:var(--brand-fg)] font-semibold whitespace-nowrap">
+                //
+                // The row cannot wrap (the bar is height-locked) and cannot
+                // scroll (it holds the popovers, and `html` is `overflow-x:
+                // hidden`), so it has to *fit*, at every width and in every
+                // locale. It did not: every control is a `.sticky-bar-button`
+                // — `flex: 0 0 auto` — so the row could only grow, and at
+                // 375px it ran ~210px past the viewport with the last button
+                // stranded off-screen (#1055).
+                //
+                // Three things keep it inside now, in the order they give up
+                // space: the count group is `flex-1` and truncates first;
+                // labels are hidden below `md` and ellipsize above it
+                // (`.sticky-bar-button-shrink`); icons never shrink. A
+                // breakpoint alone would not do — the side nav takes 240px at
+                // `lg`, so the row is no wider at 1024px than at 768px.
+                //
+                // Anything added here needs to be able to yield too.
+                <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
+                    // The one item allowed to give up space. `overflow-hidden`
+                    // is safe on this wrapper specifically: it holds two spans
+                    // and nothing sticky or absolutely positioned, so it does
+                    // not become a scrollport for anything that matters.
+                    <div class="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+                        <span class="text-sm text-[color:var(--brand-fg)] font-semibold truncate min-w-0">
+                            {move || {
+                                t_string!(i18n, analyzer_rows_count)
+                                    .to_string()
+                                    .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
+                            }}
+                        </span>
+                        // Data-transparency note: the drift / confidence / volume
+                        // floors each meet rows with no underlying data (drift
+                        // needs >= 4 buffered sales; the other two need CH
+                        // enrichment) and resolve it differently — drop, judge on
+                        // a derived band, pass. Say how many rows that was rather
+                        // than letting the row count move for invisible reasons.
+                        // Zero (and absent) whenever none of those floors is set.
                         {move || {
-                            t_string!(i18n, analyzer_rows_count)
-                                .to_string()
-                                .replace("%count%", &sorted_data.with(|d| d.len()).to_string())
+                            let n = rows_lacking_data();
+                            (n > 0)
+                                .then(|| {
+                                    view! {
+                                        <span class="text-xs text-[color:var(--color-text-muted)] truncate min-w-0">
+                                            {t_string!(i18n, analyzer_rows_lacking_data)
+                                                .to_string()
+                                                .replace("%count%", &n.to_string())}
+                                        </span>
+                                    }
+                                })
                         }}
-                    </span>
-                    // Data-transparency note: the drift / confidence / volume
-                    // floors each meet rows with no underlying data (drift
-                    // needs >= 4 buffered sales; the other two need CH
-                    // enrichment) and resolve it differently — drop, judge on
-                    // a derived band, pass. Say how many rows that was rather
-                    // than letting the row count move for invisible reasons.
-                    // Zero (and absent) whenever none of those floors is set.
-                    {move || {
-                        let n = rows_lacking_data();
-                        (n > 0)
-                            .then(|| {
-                                view! {
-                                    <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                        {t_string!(i18n, analyzer_rows_lacking_data)
-                                            .to_string()
-                                            .replace("%count%", &n.to_string())}
-                                    </span>
-                                }
-                            })
-                    }}
+                    </div>
                     // Live-market indicator, carried over from the realtime work on
                     // main. It sat in the results-summary panel this bar replaced.
-                    <RealtimeStatus status=realtime_status last_update=last_update />
-                    <div class="flex-1" />
+                    <RealtimeStatus
+                        status=realtime_status
+                        last_update=last_update
+                        compact=true
+                    />
                     <SavedViewsMenu current_world=world />
                     <button
-                        class="sticky-bar-button"
+                        class="sticky-bar-button sticky-bar-button-shrink"
+                        aria-label=t_string!(i18n, analyzer_columns_button)
                         aria-expanded=move || show_columns_picker.get().to_string()
                         on:click=move |_| {
                             show_filter_menu.set(false);
@@ -1661,14 +1839,19 @@ fn AnalyzerTable(
                         }
                     >
                         <Icon icon=i::FaTableColumnsSolid />
-                        {t!(i18n, analyzer_columns_button)}
+                        <span class="hidden md:inline sticky-bar-button-label">
+                            {t!(i18n, analyzer_columns_button)}
+                        </span>
                     </button>
                     <button
-                        class="sticky-bar-button"
+                        class="sticky-bar-button sticky-bar-button-shrink"
                         aria-label=t_string!(i18n, aria_clear_all_filters)
                         on:click=move |_| clear_all_filters()
                     >
-                        {t!(i18n, analyzer_clear_all)}
+                        <Icon icon=icondata::MdiFilterRemove />
+                        <span class="hidden md:inline sticky-bar-button-label">
+                            {t!(i18n, analyzer_clear_all)}
+                        </span>
                     </button>
                 </div>
 
@@ -2769,7 +2952,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
     // closure and remounts on every market refetch, which would keep undoing a
     // filter the user had cleared.
-    seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    //
+    // A bare URL is a first visit with nothing to honor, so it gets a whole
+    // view — the user's saved default, or "Realistic flips". Anything else is
+    // a filter the visitor chose (a link, a preset, a back-navigation), and
+    // only the single `next-sale` param is filled in. The two are exclusive:
+    // the view already filters on recency, and adding `next-sale` on top would
+    // narrow a view the user picked verbatim.
+    if !seed_flip_finder_default_view() {
+        seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
+    }
     // Owned here for the same reason as the seed above — AnalyzerTable
     // remounts on every realtime market tick, and this state must survive
     // those remounts. `name_chip_pending` keeps a not-yet-committed name
@@ -2888,7 +3080,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // `<Suspense>` below: `AnalyzerTable` (and the sticky bar
                     // it renders) only exists once every resource has
                     // resolved, so a control placed there vanishes behind
-                    // `BoxSkeleton` on every load — including a world change,
+                    // the skeleton on every load — including a world change,
                     // which is exactly when a user most needs to be able to
                     // change worlds again. Keeping it here means it is always
                     // on screen, load or no load.
@@ -2912,7 +3104,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // the table virtualizes against the window, so the page
                     // itself is what scrolls.
                     <div>
-                        <Suspense fallback=BoxSkeleton>
+                        <Suspense fallback=AnalyzerTableSkeleton>
                             {move || {
                                 let world_cheapest = world_cheapest_listings.get();
                                 let sales = sales.get();
@@ -2987,23 +3179,25 @@ fn AnalyzerWorldNavigator() -> impl IntoView {
 
     let (current_world, set_current_world) = signal(initial_world);
     let query = use_query_map();
+    let location = use_location();
 
     Effect::new(move |_| {
         if let Some(world) = current_world() {
-            let world = world.name;
-            let query_map = query.get_untracked();
-            // `to_query_string()` already includes the leading `?` when the map
-            // is non-empty (and is "" when empty) — don't add another, or the
-            // URL becomes `/flip-finder/World??cols=…`, which parses the query
-            // key as `?cols` and silently drops the column selection on reload.
-            let query = query_map.to_query_string();
-            nav(
-                &format!("/flip-finder/{world}{query}"),
-                NavigateOptions {
-                    scroll: false,
-                    ..Default::default()
-                },
+            let url = world_nav_url(
+                "/flip-finder",
+                &world.name,
+                &location.pathname.get_untracked(),
+                &query.get_untracked(),
             );
+            if let Some(url) = url {
+                nav(
+                    &url,
+                    NavigateOptions {
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     });
 

@@ -164,7 +164,7 @@ pub fn ThemePicker() -> impl IntoView {
 
 /// A compact button for the navbar that cycles theme mode Dark -> Light -> System
 #[component]
-pub fn QuickThemeToggle() -> impl IntoView {
+pub fn QuickThemeToggle(#[prop(optional)] menu_item: bool) -> impl IntoView {
     let i18n = use_i18n();
     let settings = provide_theme_settings();
     let mode = settings.mode;
@@ -183,13 +183,13 @@ pub fn QuickThemeToggle() -> impl IntoView {
 
     view! {
         <button
-            class="nav-link"
+            class=move || if menu_item { "menu-item" } else { "nav-link" }
             title=move || t_string!(i18n, theme_toggle_title).to_string()
             aria-label=move || t_string!(i18n, theme_toggle_aria, theme = label.get()).to_string()
             on:click=move |_| cycle()
         >
             <Icon icon=icon />
-            <span class="hidden lg:inline">{label}</span>
+            <span class=move || if menu_item { "ml-2" } else { "hidden lg:inline" }>{label}</span>
         </button>
     }
 }

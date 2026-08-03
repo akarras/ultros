@@ -8,10 +8,12 @@
 //! and world filter.
 
 use icondata as i;
+use leptos::html::Div;
 use leptos::prelude::*;
 use ultros_charts::charts::ChartMode;
 use ultros_charts::data::grouping::GroupLevel;
 
+use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::i18n::{t_string, use_i18n};
 
@@ -60,6 +62,11 @@ pub fn ChartToolbar(
     /// disabled with a reason (spec: disabled, never hidden).
     #[prop(into)]
     quantity_disabled: Signal<bool>,
+    /// Patch milestone bands (spec 4). Default on; bands vanish naturally
+    /// under 30 days via the LOD tier, so no disabled state is needed here.
+    #[prop(into)]
+    show_patches: Signal<bool>,
+    set_show_patches: WriteSignal<bool>,
     #[prop(into)] view: Signal<ChartView>,
     set_view: WriteSignal<ChartView>,
     /// Grid is per-series; density's payload is scope-wide, so grid
@@ -87,6 +94,16 @@ pub fn ChartToolbar(
     let (overlays_open, set_overlays_open) = signal(false);
     let (filter_query, set_filter_query) = signal(String::new());
 
+    // Route change, click outside, Escape. Each chip owns its own anchor,
+    // so a tap on one popover's chip doesn't count as "outside" for that
+    // popover but does dismiss the others.
+    let group_ref = NodeRef::<Div>::new();
+    let filter_ref = NodeRef::<Div>::new();
+    let overlays_ref = NodeRef::<Div>::new();
+    use_dismissable(group_ref, move || set_group_open.set(false));
+    use_dismissable(filter_ref, move || filter_open.set(false));
+    use_dismissable(overlays_ref, move || set_overlays_open.set(false));
+
     let mode_name = move |m: ChartMode| match m {
         ChartMode::Price => t_string!(i18n, chart_mode_price).to_string(),
         ChartMode::Candles => t_string!(i18n, chart_mode_candles).to_string(),
@@ -110,7 +127,11 @@ pub fn ChartToolbar(
     });
 
     view! {
-        <div class="flex items-center gap-2 overflow-x-auto text-xs">
+        // Wrapping, NOT `overflow-x-auto`: a scroll container computes
+        // `overflow-y: auto` too, which clips the absolutely-positioned
+        // popovers below into the toolbar's own one-line-high scroll area —
+        // every popover (group-by, world filter, overlays) opened invisibly.
+        <div class="flex flex-wrap items-center gap-2 text-xs">
             // ── Mode: icon-only segmented group ──
             <div
                 role="group"
@@ -204,7 +225,7 @@ pub fn ChartToolbar(
             </div>
             // ── Group by: dropdown chip ──
             <Show when=move || group_options.with(|o| o.len() > 1)>
-                <div class="relative shrink-0">
+                <div class="relative shrink-0" node_ref=group_ref>
                     <button
                         type="button"
                         class=CHIP
@@ -268,7 +289,7 @@ pub fn ChartToolbar(
             <Show when=move || {
                 filter_groups.with(|g| g.iter().map(|(_, w)| w.len()).sum::<usize>() > 1)
             }>
-                <div class="relative shrink-0">
+                <div class="relative shrink-0" node_ref=filter_ref>
                     <button
                         type="button"
                         class=CHIP
@@ -412,7 +433,7 @@ pub fn ChartToolbar(
                 </div>
             </Show>
             // ── Overlays: chip + count badge + popover ──
-            <div class="relative shrink-0">
+            <div class="relative shrink-0" node_ref=overlays_ref>
                 <button
                     type="button"
                     class=CHIP
@@ -475,6 +496,15 @@ pub fn ChartToolbar(
                             disabled_reason=Signal::derive(move || {
                                 t_string!(i18n, chart_percent_overlay_only).to_string()
                             })
+                        />
+                        <OverlayRow
+                            label=Signal::derive(move || {
+                                t_string!(i18n, chart_toggle_patches).to_string()
+                            })
+                            checked=show_patches
+                            set_checked=set_show_patches
+                            disabled=Signal::derive(|| false)
+                            disabled_reason=Signal::derive(String::new)
                         />
                     </div>
                 </Show>

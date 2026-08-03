@@ -8,10 +8,10 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_panel::ListingsPanel,
-    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
-    toggle::Toggle, ui_text::*,
+    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, item_tooltip::ItemTooltip,
+    listings_panel::ListingsPanel, meta::*, realtime_status::RealtimeStatus,
+    recently_viewed::RecentItems, related_items::*, sale_history_table::*, section_nav::SectionNav,
+    skeleton::BoxSkeleton, stats_display::*, toggle::Toggle,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -21,6 +21,7 @@ use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
 use crate::routes::item_view_scope::item_href;
 use crate::routes::not_found::NotFound;
+use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
@@ -1305,7 +1306,22 @@ pub fn ChartWrapper(
         let id = item_id.get();
         let world_name = world.get();
         let hq_filter = hq.get();
-        let range = debounced_range.get();
+        // With no slicer selection, bound the request to the domain the
+        // series response reported (its `to` is the last bucket's *start*,
+        // so extend one bucket width to keep the newest sales). An unbounded
+        // request would make the server derive its bucket from the default
+        // multi-year window, yielding a couple of month-wide columns no
+        // matter how little history actually exists — the same
+        // one-data-point failure the price series had, so keep both charts
+        // on the same window.
+        let range = debounced_range.get().or_else(|| {
+            series.get().filter(|s| !s.is_empty()).map(|s| {
+                (
+                    s.from.and_utc().timestamp(),
+                    s.to.and_utc().timestamp() + s.bucket_seconds,
+                )
+            })
+        });
         async move {
             if !active {
                 return None;
@@ -1756,7 +1772,7 @@ fn build_breadcrumb_json_ld(
         "itemListElement": items
     });
 
-    serde_json::to_string(&json_value).unwrap_or_default()
+    escape_for_script_tag(&serde_json::to_string(&json_value).unwrap_or_default())
 }
 
 /// Gates the item page on the `:id` route param actually naming a real item.
@@ -1824,15 +1840,6 @@ fn ItemViewContent() -> impl IntoView {
 
     let item = move || tracked_data().items.get(&ItemId(item_id()));
 
-    let item_description = move || {
-        tracked_data()
-            .items
-            .get(&ItemId(item_id()))
-            .map(|item| item.description.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
-
     let item_category = move || {
         let data = tracked_data();
         data.items.get(&ItemId(item_id())).and_then(|item| {
@@ -1893,7 +1900,12 @@ fn ItemViewContent() -> impl IntoView {
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
-                            <ItemIcon item_id icon_size=IconSize::Large />
+                            <ItemTooltip item_id=item_id>
+                                // The hero icon is the LCP candidate on the item page —
+                                // eager-load it; every other icon stays lazy.
+                                <ItemIcon item_id icon_size=IconSize::Large loading="eager" />
+                            </ItemTooltip>
+
                             <div class="flex flex-col min-w-0">
                                 <h1 class="text-3xl sm:text-4xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
@@ -1958,12 +1970,6 @@ fn ItemViewContent() -> impl IntoView {
                             </span>
                         </div>
                         <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
-                        <div
-                            class="lg:col-span-2 text-sm sm:text-base text-[color:var(--color-text-muted)] line-clamp-3"
-                            class:hidden=move || { item_description().is_empty() }
-                        >
-                            {move || view! { <UIText text=item_description().to_string() /> }}
-                        </div>
                     </div>
                 </div>
             </div>

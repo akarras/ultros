@@ -1,7 +1,23 @@
 pub mod grid;
 pub mod price_density;
 pub mod price_history;
+#[cfg(test)]
+mod snapshot_tests;
 pub mod sparkline;
+
+/// One patch boundary prepared for rendering (spec 4). The app builds these
+/// from `ultros_api_types::game_history` — layouts only draw. The vec a
+/// layout receives must be date-sorted and include the latest patch released
+/// *before* the visible window, so the leading stretch is tinted too.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MilestoneSpec {
+    /// Patch release instant (UTC midnight of the release date).
+    pub start: chrono::NaiveDateTime,
+    /// `PatchMark` convention: 700 = 7.0, 715 = 7.15.
+    pub version: u16,
+    /// Expansion index (ARR = 0 …), selecting the band hue.
+    pub ex_version: u8,
+}
 
 /// Which rendering the price chart uses for its price lane (spec 2 of the
 /// chart revamp). `Density` is listed for the toolbar's benefit but is drawn

@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use tracing::error;
 use tracing::instrument;
 use ultros_api_types::{
-    ActiveListing, CurrentlyShownItem, FfxivCharacter, FfxivCharacterVerification,
+    ActiveListing, CurrentlyShownItem, FfxivCharacter,
     alert::{
         Alert, AlertEvent, CreateAlertRequest, CreateEndpointRequest,
-        CreatePushSubscriptionRequest, DiscordWritableGuild, Endpoint, ResendResult,
-        UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
+        CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
+        ResendResult, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     item_stats::ItemStatsResponse,
@@ -30,7 +30,9 @@ use ultros_api_types::{
     trends::TrendsData,
     user::{
         AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
-        group::{CreateGroup, UserGroup, UserGroupMember},
+        group::{
+            CreateGroup, CreateGroupFromGuild, DiscordManageableGuild, UserGroup, UserGroupMember,
+        },
     },
 };
 
@@ -435,17 +437,11 @@ pub(crate) async fn get_characters() -> AppResult<Vec<FfxivCharacter>> {
     fetch_api("/api/v1/characters").await
 }
 
-/// Gets pending character verifications for this user
-pub(crate) async fn get_character_verifications() -> AppResult<Vec<FfxivCharacterVerification>> {
-    fetch_api("/api/v1/characters/verifications").await
-}
-
-pub(crate) async fn check_character_verification(character_id: i32) -> AppResult<bool> {
-    fetch_api(&format!("/api/v1/characters/verify/{character_id}")).await
-}
-
-/// Starts to claim the given character
-pub(crate) async fn claim_character(id: i32) -> AppResult<(i32, String)> {
+/// Claims the given character for the logged-in user.
+///
+/// Claims aren't verified — they only group the user's retainers — so this
+/// takes effect immediately and returns the claimed character.
+pub(crate) async fn claim_character(id: i32) -> AppResult<FfxivCharacter> {
     fetch_api(&format!("/api/v1/characters/claim/{id}")).await
 }
 
@@ -545,6 +541,20 @@ pub(crate) async fn create_group(group: CreateGroup) -> AppResult<()> {
 
 pub(crate) async fn delete_group(id: i32) -> AppResult<()> {
     delete_api(&format!("/api/v1/group/{id}")).await
+}
+
+/// Discord servers the logged-in user could turn into a group. Hits Discord on
+/// the server side, so only call this when the guild picker is actually open.
+pub(crate) async fn list_manageable_discord_guilds() -> AppResult<Vec<DiscordManageableGuild>> {
+    fetch_api("/api/v1/group/discord-guilds").await
+}
+
+pub(crate) async fn create_group_from_guild(guild_id: i64) -> AppResult<UserGroup> {
+    post_api(
+        "/api/v1/group/create-from-guild",
+        CreateGroupFromGuild { guild_id },
+    )
+    .await
 }
 
 pub(crate) async fn get_group_members(id: i32) -> AppResult<Vec<UserGroupMember>> {
@@ -656,7 +666,7 @@ pub(crate) async fn update_endpoint(id: i32, req: UpdateEndpointRequest) -> AppR
     patch_api(&format!("/api/v1/endpoints/{id}"), req).await
 }
 
-pub(crate) async fn delete_endpoint(id: i32) -> AppResult<()> {
+pub(crate) async fn delete_endpoint(id: i32) -> AppResult<DeleteEndpointResponse> {
     delete_api(&format!("/api/v1/endpoints/{id}")).await
 }
 

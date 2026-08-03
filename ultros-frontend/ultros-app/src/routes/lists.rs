@@ -375,6 +375,7 @@ pub fn EditLists() -> impl IntoView {
     let (creating, set_creating) = signal(false);
     let (filter, set_filter) = signal(String::new());
     let (invite_id, set_invite_id) = signal(String::new());
+    let (redeem_open, set_redeem_open) = signal(false);
 
     let filtered_lists = Signal::derive(move || {
         let filter_text = filter.get().to_lowercase();
@@ -413,19 +414,18 @@ pub fn EditLists() -> impl IntoView {
                     }
                     Some(Some(_)) => {
                         view! {
-                            <div class="flex items-center gap-2 md:gap-3">
-                                <A exact=true attr:class="nav-link" href="/list">
-                                    <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
-                                    <span>{t!(i18n, lists)}</span>
-                                </A>
-                            </div>
-
                             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, lists_page_title)}</h1>
-                                 <button class="btn-primary" on:click=move |_| set_creating(!creating())>
-                                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                                    {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
-                                </button>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button class="btn-secondary" on:click=move |_| set_redeem_open(true)>
+                                        <Icon icon=i::BiLinkRegular />
+                                        {t!(i18n, lists_redeem_invite_label)}
+                                    </button>
+                                    <button class="btn-primary" on:click=move |_| set_creating(!creating())>
+                                        <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
+                                        {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
+                                    </button>
+                                </div>
                             </div>
 
                             {move || {
@@ -494,31 +494,41 @@ pub fn EditLists() -> impl IntoView {
                                 />
                             </div>
 
-                            <div class="panel p-4 rounded-xl flex flex-col md:flex-row gap-3 md:items-end">
-                                <div class="flex-1">
-                                    <label for="invite-code-input" class="label text-sm font-semibold">{t!(i18n, lists_redeem_invite_label)}</label>
-                                    <input
-                                        id="invite-code-input"
-                                        class="input w-full"
-                                        placeholder=t_string!(i18n, lists_invite_code_placeholder)
-                                        prop:value=invite_id
-                                        on:input=move |ev| set_invite_id(event_target_value(&ev))
-                                    />
-                                </div>
-                                <button
-                                    class="btn-secondary"
-                                    prop:disabled=move || invite_id().trim().is_empty()
-                                    on:click=move |_| {
-                                        let id = invite_id().trim().to_string();
-                                        if !id.is_empty() {
-                                            redeem_invite.dispatch(id);
-                                            set_invite_id(String::new());
-                                        }
-                                    }
-                                >
-                                    <Icon icon=i::BiLinkRegular /> {t!(i18n, lists_redeem_button)}
-                                </button>
-                            </div>
+                            <Show when=redeem_open>
+                                <Modal set_visible=set_redeem_open>
+                                    <div class="flex flex-col gap-4">
+                                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                                            {t!(i18n, lists_redeem_invite_label)}
+                                        </h2>
+                                        <div>
+                                            <label for="invite-code-input" class="label text-sm font-semibold">{t!(i18n, lists_invite_code_placeholder)}</label>
+                                            <input
+                                                id="invite-code-input"
+                                                class="input w-full"
+                                                placeholder=t_string!(i18n, lists_invite_code_placeholder)
+                                                prop:value=invite_id
+                                                on:input=move |ev| set_invite_id(event_target_value(&ev))
+                                            />
+                                        </div>
+                                        <div class="flex justify-end">
+                                            <button
+                                                class="btn-primary"
+                                                prop:disabled=move || invite_id().trim().is_empty()
+                                                on:click=move |_| {
+                                                    let id = invite_id().trim().to_string();
+                                                    if !id.is_empty() {
+                                                        redeem_invite.dispatch(id);
+                                                        set_invite_id(String::new());
+                                                        set_redeem_open(false);
+                                                    }
+                                                }
+                                            >
+                                                <Icon icon=i::BiLinkRegular /> {t!(i18n, lists_redeem_button)}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </Modal>
+                            </Show>
 
                             <Suspense fallback=move || view! { <Loading /> }>
                                 {move || {
@@ -555,7 +565,6 @@ pub fn EditLists() -> impl IntoView {
                                                                 {if !owned.is_empty() {
                                                                     Some(view! {
                                                                         <section class="flex flex-col gap-3">
-                                                                            <h2 class="text-xl font-semibold text-[color:var(--brand-fg)]">{t!(i18n, my_lists)}</h2>
                                                                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                                                                 <For
                                                                                     each=move || owned.clone()

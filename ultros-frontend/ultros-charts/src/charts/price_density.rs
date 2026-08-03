@@ -22,6 +22,10 @@ pub struct DensityChartOptions {
     /// Label shift for viewer-local times; geometry stays UTC (same contract
     /// as `PriceChartOptions::utc_offset_minutes`).
     pub utc_offset_minutes: i32,
+    /// Patch milestones (spec 4). Density is the exception to bands: a
+    /// tinted background beneath a sequential color ramp would misread as
+    /// data, so milestones degrade to boundary lines only here.
+    pub milestones: Vec<crate::charts::MilestoneSpec>,
     pub theme: Theme,
 }
 
@@ -31,6 +35,7 @@ impl Default for DensityChartOptions {
             width: 960.0,
             height: 540.0,
             utc_offset_minutes: 0,
+            milestones: Vec::new(),
             theme: Theme::dark_card(),
         }
     }
@@ -142,6 +147,25 @@ pub fn build_price_density_chart(
             anchor: TextAnchor::Middle,
             bold: false,
         });
+    }
+
+    // ── Patch milestones: boundary lines only (never band rects) ────────
+    let window_end = last_ts + TimeDelta::seconds(bucket_secs);
+    for spec in &options.milestones {
+        if spec.start > first_ts && spec.start < window_end {
+            let x = time.scale(spec.start);
+            scene.nodes.push(Node::Line {
+                x1: x,
+                y1: plot_top,
+                x2: x,
+                y2: plot_bottom,
+                stroke: Stroke {
+                    color: theme.text_muted.with_alpha(0.35),
+                    width: 1.0,
+                    dash: None,
+                },
+            });
+        }
     }
 
     // ── Cells, one batched path per ramp step ───────────────────────────
@@ -269,6 +293,48 @@ mod tests {
             subpaths, expected_cells,
             "every populated cell draws exactly once"
         );
+    }
+
+    #[test]
+    fn milestones_degrade_to_boundary_lines_never_band_rects() {
+        let cells = vec![
+            DensityCell {
+                ts: ts(0),
+                bin: 0,
+                n: 2,
+            },
+            DensityCell {
+                ts: ts(9 * 86_400),
+                bin: 1,
+                n: 4,
+            },
+        ];
+        let model = build_price_density_chart(
+            &fixture(cells),
+            &DensityChartOptions {
+                milestones: vec![crate::charts::MilestoneSpec {
+                    start: ts(4 * 86_400),
+                    version: 700,
+                    ex_version: 5,
+                }],
+                ..Default::default()
+            },
+        );
+        assert!(
+            !model
+                .scene
+                .nodes
+                .iter()
+                .any(|n| matches!(n, Node::Rect { .. })),
+            "density must never draw band rects beneath the ramp"
+        );
+        let vertical_lines = model
+            .scene
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, Node::Line { x1, x2, .. } if x1 == x2))
+            .count();
+        assert_eq!(vertical_lines, 1, "one boundary line per in-window patch");
     }
 
     #[test]

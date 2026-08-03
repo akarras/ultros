@@ -103,6 +103,7 @@ define_id!(SpecialShopId);
 define_id!(RetainerTaskId);
 define_id!(RetainerTaskNormalId);
 define_id!(RecipeLevelTableId);
+define_id!(CollectablesShopId);
 define_id!(CollectablesShopItemId);
 define_id!(CollectablesShopRewardScripId);
 define_id!(CraftLeveId);
@@ -963,6 +964,34 @@ pub struct RecipeLevelTable {
     FromCsv,
 )]
 #[archive(check_bytes)]
+#[xiv_gen(sheet = "CollectablesShop")]
+pub struct CollectablesShop {
+    #[xiv_gen(column = "#")]
+    pub key_id: CollectablesShopId,
+    /// The `CollectablesShopItem` groups this shop offers, i.e. the integer half
+    /// of that sheet's `<group>.<index>` key. Trailing slots are `0`.
+    #[xiv_gen(column = "ShopItems[{}]", count = 11)]
+    pub shop_items: [i32; 11],
+    /// `1` for the turn-in counters that pay scrip, `2` for the material
+    /// exchanges that hand back items. Both kinds fill in
+    /// `CollectablesShopRewardScrip.Currency`, so this is the only column that
+    /// separates them.
+    #[xiv_gen(column = "RewardType")]
+    pub reward_type: i32,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Archive,
+    RkyvDeserialize,
+    RkyvSerialize,
+    FromCsv,
+)]
+#[archive(check_bytes)]
 #[xiv_gen(sheet = "CollectablesShopItem")]
 pub struct CollectablesShopItem {
     #[xiv_gen(column = "#")]
@@ -1061,6 +1090,7 @@ pub struct Data {
     pub retainer_tasks: HashMap<RetainerTaskId, RetainerTask>,
     pub retainer_task_normals: HashMap<RetainerTaskNormalId, RetainerTaskNormal>,
     pub recipe_level_tables: HashMap<RecipeLevelTableId, RecipeLevelTable>,
+    pub collectables_shops: HashMap<CollectablesShopId, CollectablesShop>,
     pub collectables_shop_items: HashMap<CollectablesShopItemId, Vec<CollectablesShopItem>>,
     pub collectables_shop_reward_scrips:
         HashMap<CollectablesShopRewardScripId, CollectablesShopRewardScrip>,
@@ -1075,6 +1105,12 @@ impl HasId for Item {
 }
 impl HasId for RecipeLevelTable {
     type Id = RecipeLevelTableId;
+    fn get_id(&self) -> Self::Id {
+        self.key_id
+    }
+}
+impl HasId for CollectablesShop {
+    type Id = CollectablesShopId;
     fn get_id(&self) -> Self::Id {
         self.key_id
     }

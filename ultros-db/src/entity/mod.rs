@@ -14,7 +14,6 @@ pub mod alert_price;
 pub mod alert_retainer_undercut;
 pub mod datacenter;
 pub mod discord_user;
-pub mod ffxiv_character_verification;
 pub mod final_fantasy_character;
 pub mod list;
 pub mod list_activity;

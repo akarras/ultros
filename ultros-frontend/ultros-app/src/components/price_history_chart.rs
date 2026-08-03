@@ -5,7 +5,9 @@ use ultros_api_types::price_density::PriceDensity;
 use ultros_api_types::price_series::{PriceSeries, SeriesGroup};
 use ultros_charts::charts::ChartMode;
 use ultros_charts::charts::grid::{GridOptions, GridSort, build_price_grid, nearest_x};
-use ultros_charts::charts::price_density::{DensityChartOptions, build_price_density_chart};
+use ultros_charts::charts::price_density::{
+    DensityChartModel, DensityChartOptions, build_price_density_chart,
+};
 use ultros_charts::charts::price_history::{
     PriceChartModel, PriceChartOptions, build_price_history_chart,
 };
@@ -63,6 +65,30 @@ fn normalize_time_range(a: i64, b: i64, domain: (i64, i64)) -> (i64, i64) {
     }
 
     (start, end)
+}
+
+/// True when a freshly fetched `domain` can't be explained as the server's
+/// answer to a request for `range` — i.e. the item/world identity changed out
+/// from under an active selection and the selection should snap back to full
+/// range.
+///
+/// The server reports the domain as the min/max of *bucket start* timestamps
+/// (`ultros_api_types::price_series::PriceBucket::ts`), floored to absolute
+/// time boundaries. So a perfectly faithful answer to "give me
+/// `range.0..range.1`" still reports a `from` up to one bucket width *before*
+/// `range.0`, and the server re-derives that width from the requested span.
+/// Comparing bounds exactly therefore called every zoom stale and snapped the
+/// chart back to the full range on every window adjustment (issue #1068);
+/// one bucket width of slop is the largest a floored bucket start can be off
+/// by, so it separates rounding from a genuine identity change.
+///
+/// Only the `from` side actually needs the slack — the ClickHouse window
+/// predicate is `sold_date < to`, so a bucket start can never reach the
+/// requested `to`. The `to` side carries it anyway so the two bounds can't
+/// drift apart if that predicate ever becomes inclusive.
+fn range_is_stale(domain: (i64, i64), range: (i64, i64), bucket_seconds: i64) -> bool {
+    let slop = bucket_seconds.max(0);
+    domain.0 < range.0.saturating_sub(slop) || domain.1 > range.1.saturating_add(slop)
 }
 
 fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
@@ -133,6 +159,21 @@ fn timestamp_from_pointer(
     Some(domain.0 + ((domain.1 - domain.0) as f64 * pct).round() as i64)
 }
 
+/// Bucket under a pointer over one grid cell. Cells resolve their own
+/// position because every cell's svg shares the same x space, so the
+/// container can't map a position that lands in an arbitrary cell.
+fn bucket_at_cell_pointer(event: &PointerEvent, xs: &[f32], cell_width: f32) -> Option<usize> {
+    let target = event
+        .current_target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())?;
+    let rect = target.get_bounding_client_rect();
+    if rect.width() <= 0.0 {
+        return None;
+    }
+    let x_css = event.client_x() - rect.left();
+    nearest_x(xs, (x_css / rect.width()) as f32 * cell_width)
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -178,6 +219,74 @@ mod tests {
     #[test]
     fn normalize_time_range_orders_and_clamps() {
         assert_eq!(normalize_time_range(250, 50, (100, 200)), (100, 200));
+    }
+
+    // One day of buckets — the width the server picks for a month-ish
+    // window, and the slack `range_is_stale` is allowed.
+    const DAY: i64 = 86_400;
+
+    #[test]
+    fn range_is_stale_tolerates_a_floored_first_bucket() {
+        // The regression from #1068: the user drags the slicer to an
+        // arbitrary instant, the server answers with the bucket *containing*
+        // that instant, and its start sits before the request. That is a
+        // faithful answer, not a stale one.
+        let requested = (1_700_000_000, 1_702_000_000);
+        let answered = (requested.0 - DAY + 1, requested.1);
+        assert!(!range_is_stale(answered, requested, DAY));
+    }
+
+    #[test]
+    fn range_is_stale_tolerates_exactly_one_bucket_of_floor() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 - DAY, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_beyond_the_slack() {
+        // A different item's history: more than a bucket earlier than
+        // anything we asked for, so the selection no longer means anything.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0 - DAY - 1, requested.1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_flags_a_domain_running_past_the_selection() {
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale(
+            (requested.0, requested.1 + DAY + 1),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_accepts_a_domain_nested_in_the_selection() {
+        // The documented "echo of our own zoom" case: the server reports a
+        // narrower actual-data span than we requested.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(!range_is_stale(
+            (requested.0 + DAY, requested.1 - DAY),
+            requested,
+            DAY
+        ));
+    }
+
+    #[test]
+    fn range_is_stale_without_a_bucket_width_compares_exactly() {
+        // `bucket_seconds` is 0 on the empty-payload fallback; the guard must
+        // degrade to the old exact comparison rather than misbehave.
+        let requested = (1_700_000_000, 1_702_000_000);
+        assert!(range_is_stale((requested.0 - 1, requested.1), requested, 0));
+        assert!(!range_is_stale(requested, requested, 0));
     }
 
     #[test]
@@ -486,6 +595,51 @@ fn HoverLayer(model: Memo<PriceChartModel>, hover_index: RwSignal<Option<usize>>
     }
 }
 
+/// Horizontal placement for a tooltip anchored to a bucket: flips to the left
+/// of the crosshair past the midpoint so it never clips on the right edge.
+fn tooltip_offset_style(x: f32, scene_width: f32) -> String {
+    let left_pct = (x / scene_width * 100.0).clamp(0.0, 100.0);
+    if left_pct > 55.0 {
+        format!("left:calc({left_pct:.1}% - 12px);transform:translateX(-100%)")
+    } else {
+        format!("left:calc({left_pct:.1}% + 12px)")
+    }
+}
+
+/// Readout for density mode. Density draws sale *counts* per price bin, so it
+/// has no per-series price to report — the hovered bucket's date and how many
+/// sales landed in it is the whole story. Without this the mode drew a
+/// crosshair that explained nothing (#1068).
+#[component]
+fn DensityTooltip(
+    density_model: Memo<Option<DensityChartModel>>,
+    hover_index: RwSignal<Option<usize>>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    move || {
+        hover_index.get().and_then(|i| {
+            density_model.with(|m| {
+                let m = m.as_ref()?;
+                let bucket = m.hover.buckets.get(i)?;
+                let style = tooltip_offset_style(bucket.x, m.scene.width);
+                let label = bucket.label.clone();
+                let sales = t_string!(i18n, chart_stat_n_sales)
+                    .to_string()
+                    .replace("{n}", &bucket.volume.to_string());
+                Some(view! {
+                    <div
+                        class="pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg"
+                        style=style
+                    >
+                        <div class="mb-1 font-semibold text-[color:var(--color-text)]">{label}</div>
+                        <div class="tabular-nums text-[color:var(--color-text-muted)]">{sales}</div>
+                    </div>
+                })
+            })
+        })
+    }
+}
+
 /// HTML tooltip positioned over the chart container; flips to the left of
 /// the crosshair past the midpoint so it never clips on the right edge.
 #[component]
@@ -500,12 +654,7 @@ fn HoverTooltip(
             model.with(|m| {
                 let bucket = m.hover.buckets.get(i)?.clone();
                 let series = m.series.clone();
-                let left_pct = (bucket.x / m.scene.width * 100.0).clamp(0.0, 100.0);
-                let style = if left_pct > 55.0 {
-                    format!("left:calc({left_pct:.1}% - 12px);transform:translateX(-100%)")
-                } else {
-                    format!("left:calc({left_pct:.1}% + 12px)")
-                };
+                let style = tooltip_offset_style(bucket.x, m.scene.width);
                 Some(view! {
                     <div
                         class="pointer-events-none absolute top-2 z-10 min-w-36 rounded-md border border-[color:var(--color-outline)] bg-violet-950/95 px-3 py-2 text-xs shadow-lg"
@@ -578,6 +727,9 @@ pub fn PriceHistoryChart(
     let (show_market_average, set_show_market_average) = signal(true);
     let (show_trend, set_show_trend) = signal(false);
     let (show_quantity, set_show_quantity) = signal(false);
+    // Patch milestone bands (spec 4): on by default — under 30 days the LOD
+    // tier empties the mark set anyway, so narrow zooms stay clean.
+    let (show_patches, set_show_patches) = signal(true);
     // Overlay vs small-multiples grid. Owned here (not item_view): nothing
     // about the view gates a fetch — grid cells re-divide the same payload.
     let (view, set_view) = signal(ChartView::Overlay);
@@ -647,14 +799,16 @@ pub fn PriceHistoryChart(
     // zoom request (the server may report a slightly narrower "actual data"
     // domain than requested) — leave the selection alone. A domain that
     // *doesn't* fit means the item/world identity changed out from under an
-    // active selection, so snap back to full range.
+    // active selection, so snap back to full range. See `range_is_stale` for
+    // why "fits" is measured with a bucket's worth of slack.
     Effect::new(move |_| {
         let Some(domain) = available_domain.get() else {
             return;
         };
+        let bucket_seconds = resolved_series.with_untracked(|s| s.bucket_seconds);
         let stale = selected_range
             .get_untracked()
-            .is_some_and(|(start, end)| domain.0 < start || domain.1 > end);
+            .is_some_and(|range| range_is_stale(domain, range, bucket_seconds));
         if stale {
             set_selected_range.set(None);
         }
@@ -684,6 +838,104 @@ pub fn PriceHistoryChart(
     });
 
     let helper_for_model = helper.clone();
+    // ── Patch milestones (spec 4) ───────────────────────────────────────
+    // The patch calendar the viewed scope follows. At Region grouping the
+    // chart can show regions on different patch schedules at once — then
+    // there is no correct single calendar, so `None` turns milestones off
+    // and the caption says why (picking a winner would silently mislabel
+    // half the chart).
+    let helper_for_track = helper.clone();
+    let milestone_track = Memo::new(move |_| {
+        use ultros_api_types::game_history::{PatchTrack, track_for_region};
+        use ultros_api_types::world_helper::AnySelector;
+        let series_value = resolved_series.get();
+        if series_value.group == SeriesGroup::Region {
+            let hidden = hidden_series.get();
+            let mut tracks: Vec<PatchTrack> = series_value
+                .series
+                .iter()
+                .filter_map(|entry| {
+                    let name = helper_for_track
+                        .lookup_selector(AnySelector::Region(entry.id))?
+                        .get_name()
+                        .to_string();
+                    (!hidden.contains(&name)).then(|| track_for_region(&name))
+                })
+                .collect();
+            tracks.sort_by_key(|t| t.as_str());
+            tracks.dedup();
+            return match tracks.len() {
+                0 => Some(PatchTrack::Global),
+                1 => Some(tracks[0]),
+                _ => None,
+            };
+        }
+        // World/DC/unknown scope: a single region — walk the scope up to it.
+        // An unresolvable scope falls back to Global, like an unknown region.
+        let region_name = helper_for_track
+            .lookup_world_by_name(&scope_name.get())
+            .and_then(|result| {
+                if let Some(region) = result.as_region() {
+                    Some(region.name.clone())
+                } else if let Some(dc) = result.as_datacenter() {
+                    helper_for_track
+                        .lookup_selector(AnySelector::Region(dc.region_id))
+                        .map(|r| r.get_name().to_string())
+                } else if let Some(world) = result.as_world() {
+                    helper_for_track
+                        .lookup_selector(AnySelector::Datacenter(world.datacenter_id))
+                        .and_then(|d| d.as_datacenter().map(|d| d.region_id))
+                        .and_then(|region_id| {
+                            helper_for_track.lookup_selector(AnySelector::Region(region_id))
+                        })
+                        .map(|r| r.get_name().to_string())
+                } else {
+                    None
+                }
+            });
+        Some(track_for_region(region_name.as_deref().unwrap_or("")))
+    });
+
+    let milestones = Memo::new(move |_| {
+        use ultros_charts::charts::MilestoneSpec;
+        if !show_patches.get() {
+            return Vec::new();
+        }
+        let Some(track) = milestone_track.get() else {
+            return Vec::new();
+        };
+        let Some((from, to)) = selected_domain.get() else {
+            return Vec::new();
+        };
+        let span = (to - from).max(1);
+        // Every LOD-visible patch inside the window, plus the latest one
+        // released before it so the leading stretch is tinted — the band
+        // layout's documented contract.
+        let mut specs: Vec<MilestoneSpec> = Vec::new();
+        for patch in ultros_api_types::game_history::visible_patches(track, span) {
+            let ts = patch
+                .released
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight is always valid")
+                .and_utc()
+                .timestamp();
+            if ts >= to {
+                break;
+            }
+            if ts <= from {
+                specs.clear(); // only the latest pre-window patch survives
+            }
+            specs.push(MilestoneSpec {
+                start: chrono::DateTime::from_timestamp(ts, 0)
+                    .expect("seed dates are valid timestamps")
+                    .naive_utc(),
+                version: patch.version,
+                ex_version: patch.ex_version,
+            });
+        }
+        specs
+    });
+
     let model = Memo::new(move |_| {
         let series_value = resolved_series.get();
         let width = chart_width.get();
@@ -694,9 +946,6 @@ pub fn PriceHistoryChart(
             &PriceChartOptions {
                 width,
                 height,
-                // Ignored by the layout: outlier filtering and grouping now
-                // happen server-side. `series.group` is authoritative.
-                remove_outliers: false,
                 show_market_average: show_market_average.get(),
                 show_trendline: show_trend.get(),
                 // Density has no quantity lane (spec: disabled with a
@@ -710,6 +959,7 @@ pub fn PriceHistoryChart(
                 utc_offset_minutes: utc_offset.get(),
                 hidden_series: hidden_series.get(),
                 mode: mode.get(),
+                milestones: milestones.get(),
                 index_to_percent: percent_change.get()
                     && mode.get() == ChartMode::Price
                     && view.get() == ChartView::Overlay,
@@ -799,6 +1049,7 @@ pub fn PriceHistoryChart(
                     width,
                     height,
                     utc_offset_minutes: utc_offset.get(),
+                    milestones: milestones.get(),
                     theme: Theme::site(),
                 },
             )
@@ -817,25 +1068,18 @@ pub fn PriceHistoryChart(
         hover_index.set(None);
     });
 
-    let on_pointer_move = move |evt: web_sys::PointerEvent| {
-        use web_sys::wasm_bindgen::JsCast;
-        let Some(target) = evt
+    // Bucket under a pointer position over the chart container. `None` when
+    // the container is unmeasured or the position maps to no bucket.
+    let bucket_at_pointer = move |evt: &web_sys::PointerEvent| -> Option<usize> {
+        let target = evt
             .current_target()
-            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-        else {
-            return;
-        };
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())?;
         let rect = target.get_bounding_client_rect();
         if rect.width() <= 0.0 {
-            return;
-        }
-        // Grid cells resolve their own pointer position (per-cell svg rects
-        // share one x space); the container handler is overlay/density only.
-        if view.get_untracked() == ChartView::Grid && mode.get_untracked() != ChartMode::Density {
-            return;
+            return None;
         }
         let x_css = evt.client_x() - rect.left();
-        let index = if mode.get_untracked() == ChartMode::Density {
+        if mode.get_untracked() == ChartMode::Density {
             density_model.with_untracked(|m| {
                 m.as_ref().and_then(|m| {
                     m.hover
@@ -847,9 +1091,89 @@ pub fn PriceHistoryChart(
                 m.hover
                     .nearest_index((x_css / rect.width()) as f32 * m.scene.width)
             })
-        };
-        hover_index.set(index);
+        }
     };
+
+    // Grid cells resolve their own pointer position (per-cell svg rects share
+    // one x space); the container handlers are overlay/density only.
+    let container_owns_pointer = move || {
+        !(view.get_untracked() == ChartView::Grid && mode.get_untracked() != ChartMode::Density)
+    };
+
+    let on_pointer_move = move |evt: web_sys::PointerEvent| {
+        if !container_owns_pointer() {
+            return;
+        }
+        // On touch this only fires between pointerdown and pointerup, which
+        // is exactly the scrub gesture — `touch-action: pan-y` on the
+        // container is what stops the browser claiming a sideways drag for
+        // scrolling and cancelling the pointer mid-scrub.
+        hover_index.set(bucket_at_pointer(&evt));
+    };
+
+    let on_pointer_down = move |evt: web_sys::PointerEvent| {
+        if !container_owns_pointer() {
+            return;
+        }
+        let touch = evt.pointer_type() != "mouse";
+        // A mouse already hovers without pressing; only the primary button
+        // should move the cursor, and pressing must not toggle it off.
+        if !touch && evt.button() != 0 {
+            return;
+        }
+        let resolved = bucket_at_pointer(&evt);
+        if touch && resolved.is_some() && resolved == hover_index.get_untracked() {
+            // Second tap on the same bucket puts the readout away — touch has
+            // no "move the pointer elsewhere", so without this (and the
+            // tap-away below) the cursor was permanent once placed.
+            hover_index.set(None);
+            return;
+        }
+        hover_index.set(resolved);
+        if touch
+            && let Some(target) = evt
+                .current_target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        {
+            // Capture so a scrub that wanders off the chart keeps feeding
+            // this handler instead of silently ending. Mouse doesn't need it
+            // and capturing would swallow clicks elsewhere on the page.
+            let _ = target.set_pointer_capture(evt.pointer_id());
+        }
+    };
+
+    let release_pointer = move |evt: &web_sys::PointerEvent| {
+        if let Some(target) = evt
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        {
+            let _ = target.release_pointer_capture(evt.pointer_id());
+        }
+    };
+    // A normal lift leaves the cursor where the finger put it — that anchor
+    // *is* the touch equivalent of hovering. `pointercancel` is different:
+    // the browser took the gesture (a page scroll), so the anchor the user
+    // was placing never landed and would otherwise be left behind.
+    let on_pointer_up = move |evt: web_sys::PointerEvent| release_pointer(&evt);
+    let on_pointer_cancel = move |evt: web_sys::PointerEvent| {
+        release_pointer(&evt);
+        hover_index.set(None);
+    };
+    let on_pointer_leave = move |evt: web_sys::PointerEvent| {
+        // Mouse only: on touch, "leave" fires as the finger lifts, which
+        // would wipe the anchor the tap just placed.
+        if evt.pointer_type() == "mouse" {
+            hover_index.set(None);
+        }
+    };
+
+    // Tap-away dismissal, the other half of the touch cursor's exit.
+    // Hydrate-only: there is no document to listen to on the server, matching
+    // the guard `account_menu.rs` uses for the same helper.
+    #[cfg(feature = "hydrate")]
+    {
+        let _ = leptos_use::on_click_outside(container, move |_| hover_index.set(None));
+    }
 
     view! {
         <div class="flex flex-col gap-3">
@@ -866,6 +1190,8 @@ pub fn PriceHistoryChart(
                 show_quantity=show_quantity
                 set_show_quantity=set_show_quantity
                 quantity_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
+                show_patches=show_patches
+                set_show_patches=set_show_patches
                 view=view
                 set_view=set_view
                 grid_disabled=Signal::derive(move || mode.get() == ChartMode::Density)
@@ -971,9 +1297,17 @@ pub fn PriceHistoryChart(
                         .replace("{to}", &to)
                 }
                 class="price-history-chart relative w-full overflow-visible"
+                // `pan-y` keeps vertical page scrolling but hands sideways
+                // gestures to us, so scrubbing the chart doesn't get stolen
+                // by the scroller and cancelled. `touch-action` restrictions
+                // accumulate down the tree, so this covers the grid cells too.
+                style="touch-action: pan-y;"
                 node_ref=container
+                on:pointerdown=on_pointer_down
                 on:pointermove=on_pointer_move
-                on:pointerleave=move |_| hover_index.set(None)
+                on:pointerup=on_pointer_up
+                on:pointercancel=on_pointer_cancel
+                on:pointerleave=on_pointer_leave
             >
                 {move || {
                     // ── Grid view: small multiples under one crosshair ──
@@ -996,23 +1330,31 @@ pub fn PriceHistoryChart(
                                 .and_then(|i| grid_model.with(|g| g.xs.get(i).copied()))
                         });
                         let xs_for_move = gm.xs.clone();
+                        let xs_for_down = gm.xs.clone();
                         let cell_width = gm.cell_width;
                         let on_cell_pointer_move = move |evt: web_sys::PointerEvent| {
-                            let Some(target) = evt
-                                .current_target()
-                                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-                            else {
-                                return;
-                            };
-                            let rect = target.get_bounding_client_rect();
-                            if rect.width() <= 0.0 {
+                            hover_index.set(bucket_at_cell_pointer(
+                                &evt,
+                                &xs_for_move,
+                                cell_width,
+                            ));
+                        };
+                        // Same tap-to-anchor / tap-again-to-dismiss contract
+                        // as the overlay, so the crosshair is reachable by
+                        // touch in the grid too.
+                        let on_cell_pointer_down = move |evt: web_sys::PointerEvent| {
+                            let touch = evt.pointer_type() != "mouse";
+                            if !touch && evt.button() != 0 {
                                 return;
                             }
-                            let x_css = evt.client_x() - rect.left();
-                            hover_index.set(nearest_x(
-                                &xs_for_move,
-                                (x_css / rect.width()) as f32 * cell_width,
-                            ));
+                            let resolved =
+                                bucket_at_cell_pointer(&evt, &xs_for_down, cell_width);
+                            if touch && resolved.is_some() && resolved == hover_index.get_untracked()
+                            {
+                                hover_index.set(None);
+                                return;
+                            }
+                            hover_index.set(resolved);
                         };
                         return view! {
                             <div class="flex flex-col gap-2">
@@ -1053,7 +1395,7 @@ pub fn PriceHistoryChart(
                                 <div
                                     class="grid gap-2"
                                     style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));"
-                                    on:pointerleave=move |_| hover_index.set(None)
+                                    on:pointerleave=on_pointer_leave
                                 >
                                     {gm
                                         .cells
@@ -1063,6 +1405,7 @@ pub fn PriceHistoryChart(
                                             let name = cell.name.clone();
                                             let color = cell.color;
                                             let handler = on_cell_pointer_move.clone();
+                                            let down_handler = on_cell_pointer_down.clone();
                                             view! {
                                                 <div class="rounded-md border border-[color:var(--color-outline)]/60 p-1.5">
                                                     <div class="mb-1 flex items-center gap-1.5 text-xs text-[color:var(--color-text)]">
@@ -1080,6 +1423,7 @@ pub fn PriceHistoryChart(
                                                             scene.height,
                                                         )
                                                         preserveAspectRatio="none"
+                                                        on:pointerdown=down_handler
                                                         on:pointermove=handler
                                                     >
                                                         {scene_view(&scene)}
@@ -1248,11 +1592,15 @@ pub fn PriceHistoryChart(
                         .into_any()
                 }}
                 // Overlay-only: grid renders its own container tooltip and
-                // density's crosshair index doesn't map onto `model.hover`.
+                // density's crosshair index doesn't map onto `model.hover` —
+                // it gets its own readout below.
                 <Show when=move || {
                     view.get() == ChartView::Overlay && mode.get() != ChartMode::Density
                 }>
                     <HoverTooltip model=model hover_index=hover_index show_quantity=show_quantity />
+                </Show>
+                <Show when=move || mode.get() == ChartMode::Density>
+                    <DensityTooltip density_model=density_model hover_index=hover_index />
                 </Show>
             </div>
             // Caption line: the resolved state spelled out once — what makes
@@ -1292,6 +1640,15 @@ pub fn PriceHistoryChart(
                         {view_label.map(|v| view! { <span>"· " {v}</span> })}
                         {percent_label.map(|p| view! { <span>"· " {p}</span> })}
                         {grouped.map(|g| view! { <span>"· " {g}</span> })}
+                        {(show_patches.get() && milestone_track.get().is_none())
+                            .then(|| {
+                                view! {
+                                    <span class="text-amber-200/85">
+                                        "· "
+                                        {t_string!(i18n, chart_milestones_mixed_tracks).to_string()}
+                                    </span>
+                                }
+                            })}
                         {s
                             .as_ref()
                             .map(|s| {

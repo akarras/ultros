@@ -1,5 +1,8 @@
+use crate::components::account_menu::AccountMenu;
 use crate::components::icon::Icon;
+use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
@@ -32,6 +35,21 @@ fn SideNavItem(
     #[prop(into)] href: Signal<String>,
     section: &'static str,
     #[prop(into)] icon: Signal<icondata_core::Icon>,
+    /// Renders as one of the two "find an item" rows above the tool list,
+    /// visually paired with the Search button that sits beside it.
+    #[prop(optional)]
+    hero: bool,
+    /// When true, a small unread dot appears at the trailing edge of the row.
+    ///
+    /// The signal must be false during SSR and the first client render — the
+    /// dot is added to the DOM by a client `Effect`, not rendered by the
+    /// server — or hydration will find a node the server never wrote. See
+    /// `use_whats_new_indicator`.
+    #[prop(optional, into)]
+    badge: Option<Signal<bool>>,
+    /// Accessible name for `badge`, read out after the row's label.
+    #[prop(optional, into)]
+    badge_label: Option<Signal<String>>,
     children: Children,
 ) -> impl IntoView {
     let location = use_location();
@@ -41,11 +59,27 @@ fn SideNavItem(
             .with(|path| section_of(path) == section)
             .then_some("page")
     };
+    let class = if hero {
+        "side-nav-item side-nav-item-hero"
+    } else {
+        "side-nav-item"
+    };
+
+    let badge_view = move || {
+        badge.is_some_and(|badge| badge.get()).then(|| {
+            let label = badge_label.map(|label| label.get()).unwrap_or_default();
+            view! {
+                <span class="side-nav-badge" aria-hidden="true"></span>
+                <span class="sr-only">{label}</span>
+            }
+        })
+    };
 
     view! {
-        <a href=move || href.get() class="side-nav-item" aria-current=current>
+        <a href=move || href.get() class=class aria-current=current>
             <Icon icon=icon />
             <span class="side-nav-label">{children()}</span>
+            {badge_view}
         </a>
     }
 }
@@ -60,9 +94,12 @@ fn SideNavItem(
 pub fn SideNav() -> impl IntoView {
     let i18n = use_i18n();
     let nav = use_side_nav_settings();
+    let search_overlay = use_search_overlay_state();
     let (homeworld, _set_homeworld) = use_home_world();
+    let whats_new = use_whats_new_indicator();
 
-    // Build world-aware URLs the same way `AppsMenu` does.
+    // Build world-aware URLs from the current home world, falling back to
+    // the world-less route when none is set.
     let with_world = move |path_with_world: &str, path_no_world: &str| {
         let path_with_world = path_with_world.to_string();
         let path_no_world = path_no_world.to_string();
@@ -92,6 +129,25 @@ pub fn SideNav() -> impl IntoView {
             </div>
 
             <nav class="side-nav-sections">
+                // Search and Item Explorer are the two "find me an item"
+                // surfaces — Search jumps to a known item, Explorer browses
+                // when you don't know what you want — so they pair above the
+                // rule, leaving Tools an honest list of nine analyzers.
+                <button
+                    class="side-nav-item side-nav-item-hero"
+                    aria-label=t_string!(i18n, search).to_string()
+                    on:click=move |_| search_overlay.toggle()
+                >
+                    <Icon icon=i::AiSearchOutlined />
+                    <span class="side-nav-label">{t!(i18n, search)}</span>
+                    <span class="side-nav-kbd">"⌘K"</span>
+                </button>
+                <SideNavItem href="/items".to_string() section="items" icon=i::MdiJellyfish hero=true>
+                    {t!(i18n, item_explorer)}
+                </SideNavItem>
+
+                <div class="side-nav-rule"></div>
+
                 <SideNavItem href="/".to_string() section="" icon=i::AiHomeFilled>
                     {t!(i18n, home)}
                 </SideNavItem>
@@ -154,9 +210,6 @@ pub fn SideNav() -> impl IntoView {
                 >
                     {t!(i18n, venture_analyzer)}
                 </SideNavItem>
-                <SideNavItem href="/items".to_string() section="items" icon=i::MdiJellyfish>
-                    {t!(i18n, item_explorer)}
-                </SideNavItem>
                 <SideNavItem
                     href="/currency-exchange".to_string()
                     section="currency-exchange"
@@ -192,8 +245,22 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem href="/help".to_string() section="help" icon=i::BsBook>
                     {t!(i18n, help_label)}
                 </SideNavItem>
+                <SideNavItem
+                    href="/changelog".to_string()
+                    section="changelog"
+                    icon=i::BsMegaphone
+                    badge=whats_new
+                    badge_label=Signal::derive(move || t_string!(i18n, changelog_whats_new).to_string())
+                >
+                    {t!(i18n, changelog_label)}
+                </SideNavItem>
             </nav>
 
+            // Footer sits ABOVE the account row so the account row is the
+            // bottom-most control. Collapsed, the 56px sidebar has no room for
+            // the Discord + GitHub pair (GitHub was clipped by the right edge)
+            // and the version hash is hidden anyway, so the whole footer is
+            // hidden at that width — see `.app-shell-collapsed .side-nav-footer`.
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />
@@ -209,6 +276,8 @@ pub fn SideNav() -> impl IntoView {
                     {git_hash}
                 </a>
             </div>
+
+            <AccountMenu />
         </aside>
     }
     .into_any()

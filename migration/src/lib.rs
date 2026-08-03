@@ -30,6 +30,8 @@ mod m20260513_000002_alert_list_threshold;
 mod m20260514_000001_notification_endpoint_created_at_tz;
 mod m20260514_000002_alert_list_update;
 mod m20260514_000003_list_activity;
+mod m20260802_000001_authless_character_claims;
+mod m20260802_000002_user_group_discord_guild;
 
 pub struct Migrator;
 
@@ -69,6 +71,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000001_notification_endpoint_created_at_tz::Migration),
             Box::new(m20260514_000002_alert_list_update::Migration),
             Box::new(m20260514_000003_list_activity::Migration),
+            Box::new(m20260802_000001_authless_character_claims::Migration),
+            Box::new(m20260802_000002_user_group_discord_guild::Migration),
         ]
     }
 }
