@@ -58,3 +58,6 @@ When returning the top N items from a collection, first use `select_nth_unstable
 **Learning:** In `ultros-frontend/ultros-app/src/components/live_sale_ticker.rs`, a list of recent sales was fully sorted using `sorted_by_key` before taking the first 8 elements. Because sorting is an `O(N log N)` operation and the number of recent sales can be large, finding the top 8 elements in linear time `O(N)` reduces the time complexity and prevents UI jank on the main thread in WASM.
 
 **Action:** When finding the top N elements in a collection, use `select_nth_unstable_by_key` to partition the elements in linear time, followed by `truncate(N)` and `sort_unstable_by_key` on the remaining K elements.
+## 2024-11-20 - O(N) Top-K Extraction
+**Learning:** In WASM/frontend contexts, running a full `O(N log N)` sort on search results reactively as the user types can cause unnecessary main-thread blocking. Finding the top K elements can be optimized by using `select_nth_unstable_by_key(K)`, which partitions the array in `O(N)` time, followed by truncating the array to K and performing `sort_unstable_by_key` only on those K elements.
+**Action:** When extracting the top N items from a potentially large collection, avoid full sorts in hot reactive loops. Use `.select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only the remaining elements.

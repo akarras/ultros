@@ -87,12 +87,16 @@ pub fn AlertDrawer(
             .filter(|(_, i)| i.item_search_category > 0)
             .filter(|(_, i)| i.name.to_lowercase().contains(&s_lower))
             .collect();
-        matches.sort_by_key(|(_, i)| Reverse(i.level_item));
-        matches
-            .into_iter()
-            .take(50)
-            .map(|(id, item)| (*id, item))
-            .collect()
+
+        // ⚡ Bolt Optimization: Use select_nth_unstable_by_key to avoid O(N log N) full sort
+        // when we only need the top 50 results. This reduces time complexity to O(N).
+        if matches.len() > 50 {
+            matches.select_nth_unstable_by_key(50, |(_, i)| Reverse(i.level_item));
+            matches.truncate(50);
+        }
+        matches.sort_unstable_by_key(|(_, i)| Reverse(i.level_item));
+
+        matches.into_iter().map(|(id, item)| (*id, item)).collect()
     };
 
     let submit = move |_| {
