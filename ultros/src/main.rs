@@ -258,17 +258,16 @@ async fn main() -> Result<()> {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0);
-            sentry::init((
-                dsn,
-                sentry::ClientOptions {
-                    release: sentry::release_name!(),
-                    environment: environment.clone().map(Into::into),
-                    traces_sample_rate,
-                    attach_stacktrace: true,
-                    send_default_pii: false,
-                    ..Default::default()
-                },
-            ))
+            // sentry 0.49 made `ClientOptions` `#[non_exhaustive]` and dropped
+            // `traces_sample_rate` as a public field in favor of a builder
+            // setter, so we can no longer use struct-literal + `..Default`.
+            // The remaining fields are still public and assignable directly.
+            let mut options = sentry::ClientOptions::new().traces_sample_rate(traces_sample_rate);
+            options.release = sentry::release_name!();
+            options.environment = environment.clone().map(Into::into);
+            options.attach_stacktrace = true;
+            options.send_default_pii = false;
+            sentry::init((dsn, options))
         });
 
     // Create the db before we proceed

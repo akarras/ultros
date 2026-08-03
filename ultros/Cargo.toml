@@ -79,15 +79,15 @@ tantivy = "0.26.1"
 rkyv = { version = "0.7.42", features = ["validation", "arrayvec", "size_32"], default-features = false }
 flate2 = "1.1.9"
 url = "2.5.8"
-sentry = { version = "0.48", default-features = false, features = [
+sentry = { version = "0.49", default-features = false, features = [
     "backtrace",
     "contexts",
     "panic",
     "reqwest",
     "rustls",
 ] }
-sentry-tracing = "0.48"
-sentry-tower = { version = "0.48", features = ["http"] }
+sentry-tracing = "0.49"
+sentry-tower = { version = "0.49", features = ["http"] }
 web-push = { workspace = true }
 # `web-push` pulls in `openssl` transitively via `ece`. Pin the `vendored` feature here
 # so cargo compiles OpenSSL from source (via `openssl-src`) instead of linking the
