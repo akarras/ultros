@@ -20,3 +20,28 @@ pub fn escape_for_script_tag(json: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escape_for_script_tag() {
+        let json = r#"{"name": "test", "value": "<script>alert('xss')</script>&amp;\u2028\u2029"}"#;
+        let escaped = escape_for_script_tag(json);
+        assert_eq!(
+            escaped,
+            r#"{"name": "test", "value": "\u003cscript\u003ealert('xss')\u003c/script\u003e\u0026amp;\u2028\u2029"}"#
+        );
+
+        // verify no characters are dropped
+        let s = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$^*()_-+={}[]|:;\"',.?/~`\\";
+        assert_eq!(escape_for_script_tag(s), s);
+
+        let c = "<\n>\n&\n\u{2028}\n\u{2029}";
+        assert_eq!(
+            escape_for_script_tag(c),
+            "\\u003c\n\\u003e\n\\u0026\n\\u2028\n\\u2029"
+        );
+    }
+}
