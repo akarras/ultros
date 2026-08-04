@@ -115,24 +115,21 @@ async fn run_socket_listener(
                         item,
                         world,
                         listings,
-                    })) => match db.update_listings(listings.clone(), item, world).await {
-                        Ok((listings, removed)) => {
-                            let listings = Arc::new(ListingEventData {
+                    // `listings/add` is a DELTA — only the listings that newly
+                    // appeared, median one per event — so it must be applied
+                    // insert-only. It used to go through `update_listings`, which
+                    // deletes every row absent from its input and so truncated the
+                    // world's board down to the delta on every event. Removals
+                    // arrive on `listings/remove` below.
+                    })) => match db.add_listings(listings.clone(), item, world).await {
+                        Ok(added) => {
+                            let added = Arc::new(ListingEventData {
                                 item_id: item.0,
                                 world_id: world.0,
-                                listings,
+                                listings: added,
                             });
-                            let removed = Arc::new(ListingEventData {
-                                item_id: item.0,
-                                world_id: world.0,
-                                listings: removed,
-                            });
-                            match listings_tx.send(EventType::Remove(removed)) {
-                                Ok(o) => info!(slack_remaining = o, "sent removed listings"),
-                                Err(e) => error!(error = ?e, "Error removing listings"),
-                            }
-                            match listings_tx.send(EventType::Add(listings)) {
-                                Ok(o) => info!(remaining_slack = o, "updated listings"),
+                            match listings_tx.send(EventType::Add(added)) {
+                                Ok(o) => info!(remaining_slack = o, "added listings"),
                                 Err(e) => error!(error = ?e, "Error adding listings"),
                             };
                         }
