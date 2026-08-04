@@ -137,6 +137,26 @@ struct ListingsDiff {
     removed: Vec<(active_listing::Model, Option<retainer::Model>)>,
 }
 
+/// Selects the listings from an incremental `listings/add` payload that we don't
+/// already hold for this item/world.
+///
+/// Universalis' `listings/add` is a *delta* — it carries the listings that newly
+/// appeared on the board, not a snapshot of it — so this only ever yields rows to
+/// insert. Matching reuses [`diff_update_listings`]' `added` side so the
+/// "already have it" test is exactly the comparator the full-board path uses,
+/// including its multiset handling: a retainer legitimately holding three
+/// identical listings when we already store two yields exactly one insert.
+///
+/// Universalis' `listingID` would be an exact identity, but `active_listing` has
+/// no column for it, so the key is the same (hq, quantity, price, retainer name)
+/// tuple used everywhere else in this module.
+fn listings_to_add(
+    listings: Vec<ListingView>,
+    existing_items: Vec<(active_listing::Model, Option<retainer::Model>)>,
+) -> Vec<ListingView> {
+    diff_update_listings(listings, existing_items).added
+}
+
 /// Diffs the incoming full listing-board view against the DB's current rows for an
 /// item/world, sorting both sides by the same canonical key before merging so the
 /// merge loop's comparator matches the sort exactly (previously the merge loop
@@ -213,6 +233,120 @@ fn diff_update_listings(
 }
 
 impl UltrosDb {
+    /// Resolves every retainer named in `listings` to a stored row, creating any
+    /// we haven't seen before.
+    ///
+    /// Shared by the full-board and incremental ingest paths so both create
+    /// retainers on exactly the same terms — a listing whose retainer we failed to
+    /// store can't be inserted at all, since `create_listing` needs the id.
+    async fn resolve_retainers(
+        &self,
+        listings: &[ListingView],
+        world_id: WorldId,
+    ) -> Result<HashMap<String, retainer::Model>> {
+        let queried_retainers: HashSet<(String, String, i32)> = listings
+            .iter()
+            .map(|listing| {
+                (
+                    listing.retainer_name.to_string(),
+                    listing.retainer_id.clone().unwrap_or_default(),
+                    listing.retainer_city as i32,
+                )
+            })
+            .collect();
+
+        let mut retainers: HashMap<String, _> = self
+            .get_retainer_ids_from_name(
+                queried_retainers.iter().map(|(name, _, _)| name.as_str()),
+                world_id.0,
+            )
+            .await?
+            .into_iter()
+            .map(|r| (r.name.clone(), r))
+            .collect();
+        // determine missing retainers
+        for (name, id, retainer_city) in queried_retainers {
+            if let Entry::Vacant(e) = retainers.entry(name.clone()) {
+                let retainer = self
+                    .store_retainer(&id, &name, world_id, retainer_city)
+                    .await?;
+                e.insert(retainer);
+            }
+        }
+        Ok(retainers)
+    }
+
+    /// Applies an incremental `listings/add` event: **insert-only**.
+    ///
+    /// Universalis' `listings/add` carries only the listings that newly appeared
+    /// on the board — measured live, the median payload is a *single* listing —
+    /// not a snapshot of the board. Routing it through [`Self::update_listings`],
+    /// which deletes every row absent from its input, therefore truncated each
+    /// world's board down to the delta: a 19-listing board became 1, and Ultros
+    /// held ~31% of the listings that were really on the market.
+    ///
+    /// Disappearing listings arrive separately on `listings/remove` and are
+    /// handled by [`Self::remove_listings`], so nothing here needs to delete.
+    /// [`Self::update_listings`] stays the path for callers that genuinely fetch a
+    /// whole board (the REST catch-up service and the manual refresh route).
+    #[instrument(skip(self, listings), level = "trace")]
+    pub async fn add_listings(
+        &self,
+        listings: Vec<ListingView>,
+        item_id: ItemId,
+        world_id: WorldId,
+    ) -> Result<Vec<(ActiveListing, Retainer)>> {
+        use active_listing::*;
+        let instant = Instant::now();
+        let retainers = self.resolve_retainers(&listings, world_id).await?;
+
+        let existing_items = Entity::find()
+            .filter(
+                Column::WorldId
+                    .eq(world_id.0)
+                    .and(Column::ItemId.eq(item_id.0)),
+            )
+            .find_also_related(retainer::Entity)
+            .all(&self.db)
+            .await?;
+
+        let to_add = listings_to_add(listings, existing_items);
+        let added = futures::future::join_all(to_add.iter().map(|m| {
+            let retainer_id = retainers
+                .get(&m.retainer_name)
+                .expect("Should always have a retainer at this point.")
+                .id;
+            self.create_listing(m, item_id, world_id, Some(retainer_id))
+        }))
+        .await;
+
+        let retainers_by_id: HashMap<i32, &retainer::Model> =
+            retainers.values().map(|r| (r.id, r)).collect();
+        let added: Vec<_> = added
+            .into_iter()
+            .flat_map(|l| {
+                l.ok().map(|l| {
+                    let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
+                        .clone()
+                        .into();
+                    (l.into(), retainer)
+                })
+            })
+            .collect();
+
+        // Stamp the catch-up marker even when every listing in the payload was one
+        // we already held: the event still reflects a real Universalis upload at
+        // this moment, so our board is as current as the stream can make it. The
+        // marker is compared against their upload time, so *not* stamping would
+        // make every uploaded item read as permanently behind and drag the
+        // catch-up sweep into refetching the whole market.
+        self.set_last_updated(world_id, item_id).await?;
+        counter!("ultros_db_inserted_items", "world_id" => world_id.0.to_string())
+            .increment(added.len() as u64);
+        histogram!("ultros_db_add_listings_duration_seconds").record(instant.elapsed());
+        Ok(added)
+    }
+
     pub async fn remove_listings(
         &self,
         remove_listings: Vec<ListingView>,
@@ -420,35 +554,7 @@ impl UltrosDb {
         // Assumes that we are being given a full list of all the listings for the item and world.
         // First, query the db to see what listings it has
         // Then diff against the listings that we have (diff_update_listings sorts both sides)
-        let queried_retainers: HashSet<(String, String, i32)> = listings
-            .iter()
-            .map(|listing| {
-                (
-                    listing.retainer_name.to_string(),
-                    listing.retainer_id.clone().unwrap_or_default(),
-                    listing.retainer_city as i32,
-                )
-            })
-            .collect();
-
-        let mut retainers: HashMap<String, _> = self
-            .get_retainer_ids_from_name(
-                queried_retainers.iter().map(|(name, _, _)| name.as_str()),
-                world_id.0,
-            )
-            .await?
-            .into_iter()
-            .map(|r| (r.name.clone(), r))
-            .collect();
-        // determine missing retainers
-        for (name, id, retainer_city) in queried_retainers {
-            if let Entry::Vacant(e) = retainers.entry(name.clone()) {
-                let retainer = self
-                    .store_retainer(&id, &name, world_id, retainer_city)
-                    .await?;
-                e.insert(retainer);
-            }
-        }
+        let retainers = self.resolve_retainers(&listings, world_id).await?;
         let existing_items = Entity::find()
             .filter(
                 Column::WorldId
@@ -940,6 +1046,112 @@ mod diff_tests {
             diff.removed.iter().map(|(m, _)| m.id).collect::<Vec<_>>()
         );
         assert_eq!(diff.removed[0].0.id, nq.id);
+    }
+
+    /// The bug this module's `add_listings` path exists to fix: a `listings/add`
+    /// delta carrying one listing, applied to a board of 19, used to go through
+    /// `diff_update_listings` — which reports the other 18 as `removed` because it
+    /// assumes its input is a whole board. `update_listings` then deleted them.
+    ///
+    /// This asserts both halves: the old full-board diff really does condemn the
+    /// other 18, and `listings_to_add` returns only the single genuinely-new
+    /// listing — it has no way to express a removal at all.
+    #[test]
+    fn add_delta_inserts_only_the_new_listing_and_never_removes_the_board() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Marywake");
+        // 18 listings already on the board, priced above the newcomer
+        let board: Vec<_> = (0..18)
+            .map(|i| {
+                (
+                    db_listing(100 + i, world_id, retainer.id, 380_000 + i, 1, false),
+                    Some(retainer.clone()),
+                )
+            })
+            .collect();
+        // the websocket delta: one brand-new undercut listing
+        let delta = vec![listing_view(world_id, &retainer.name, 379_996, 1, false)];
+
+        // The old path condemns the whole rest of the board.
+        let old = diff_update_listings(delta.clone(), board.clone());
+        assert_eq!(
+            old.removed.len(),
+            18,
+            "regression guard: the full-board diff is exactly what truncated the board"
+        );
+
+        // The new path can only ever insert.
+        let to_add = listings_to_add(delta, board);
+        assert_eq!(to_add.len(), 1, "only the new listing should be inserted");
+        assert_eq!(to_add[0].price_per_unit, Some(379_996));
+    }
+
+    #[test]
+    fn add_delta_does_not_duplicate_a_listing_we_already_hold() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Marywake");
+        let existing = shuffled(
+            vec![
+                (
+                    db_listing(1, world_id, retainer.id, 379_996, 1, false),
+                    Some(retainer.clone()),
+                ),
+                (
+                    db_listing(2, world_id, retainer.id, 400_000, 2, true),
+                    Some(retainer.clone()),
+                ),
+            ],
+            13,
+        );
+        // Universalis re-sends a listing we already stored.
+        let delta = vec![listing_view(world_id, &retainer.name, 379_996, 1, false)];
+
+        assert!(
+            listings_to_add(delta, existing).is_empty(),
+            "a re-sent listing must not be inserted twice"
+        );
+    }
+
+    #[test]
+    fn add_delta_respects_multiplicity_of_identical_listings() {
+        // A retainer may legitimately hold several identical listings. If we
+        // already store two and the delta says there are three, exactly one is new
+        // — matching by key alone (rather than multiset) would insert none.
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Duplicatemus");
+        let existing = vec![
+            (
+                db_listing(1, world_id, retainer.id, 500, 3, true),
+                Some(retainer.clone()),
+            ),
+            (
+                db_listing(2, world_id, retainer.id, 500, 3, true),
+                Some(retainer.clone()),
+            ),
+        ];
+        let delta = vec![
+            listing_view(world_id, &retainer.name, 500, 3, true),
+            listing_view(world_id, &retainer.name, 500, 3, true),
+            listing_view(world_id, &retainer.name, 500, 3, true),
+        ];
+
+        let to_add = listings_to_add(delta, existing);
+        assert_eq!(to_add.len(), 1, "exactly one of the three is new");
+    }
+
+    #[test]
+    fn add_delta_into_an_empty_board_inserts_everything() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Firstmus");
+        let delta = shuffled(
+            vec![
+                listing_view(world_id, &retainer.name, 100, 1, false),
+                listing_view(world_id, &retainer.name, 200, 1, true),
+                listing_view(world_id, &retainer.name, 300, 2, false),
+            ],
+            7,
+        );
+        assert_eq!(listings_to_add(delta, vec![]).len(), 3);
     }
 
     #[test]
