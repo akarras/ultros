@@ -506,17 +506,32 @@ impl UltrosDb {
         Ok((added, removed))
     }
 
+    /// The cheapest price for every (item, hq, world) currently on the market.
+    ///
+    /// This runs on analyzer boot and on bus-lag recovery, so it wants to be as
+    /// cheap as the shape of the question allows. It used to compute
+    /// `RANK() OVER (PARTITION BY item_id, hq, world_id ORDER BY price_per_unit)`
+    /// over the whole table and then keep only rank 1 — Postgres cannot push that
+    /// filter into the window, so it sorted every row in `active_listing` just to
+    /// discard nearly all of them. `RANK()` also emits ties, so price-matched
+    /// listings came back as duplicate rows.
+    ///
+    /// [`ListingSummary`] is a pure aggregate, so a plain `GROUP BY` answers it
+    /// exactly: one row per group, no global sort, no per-row window state. With
+    /// `idx_active_listing_cheapest` on (item_id, hq, world_id, price_per_unit)
+    /// it can be served by an index-only scan.
     pub async fn cheapest_listings(
         &self,
     ) -> Result<impl Stream<Item = Result<ListingSummary, DbErr>> + '_, DbErr> {
         ListingSummary::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            r#"SELECT ranks.* FROM (SELECT l.item_id, l.hq, l.price_per_unit, l.world_id,
-                RANK() OVER (PARTITION BY l.item_id, l.hq, l.world_id ORDER BY l.price_per_unit ASC) listing_rank
-                FROM active_listing l) ranks
-                WHERE ranks.listing_rank = 1"#,
+            r#"SELECT item_id, hq, world_id, MIN(price_per_unit) AS price_per_unit
+                FROM active_listing
+                GROUP BY item_id, hq, world_id"#,
             vec![],
-        )).stream(&self.db).await
+        ))
+        .stream(&self.db)
+        .await
     }
 }
 
