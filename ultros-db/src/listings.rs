@@ -4,7 +4,8 @@ use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, Statement,
+    ColumnTrait, DbBackend, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QuerySelect,
+    Statement,
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
@@ -504,6 +505,47 @@ impl UltrosDb {
             .increment(removed.len() as u64);
         histogram!("ultros_db_update_listings_duration_seconds").record(instant.elapsed());
         Ok((added, removed))
+    }
+
+    /// Cheapest price per (item, hq, world) for a specific set of items — the
+    /// query behind the analyzer's cheapest-listing refill.
+    ///
+    /// This replaces `get_multiple_listings_for_worlds_hq_sensitive`, which built
+    /// its result with `worlds.flat_map(|w| items.map(|i| ...))` — **one query per
+    /// (world × item) pair**. Refilling 18 items across Aether's 8 worlds meant
+    /// 144 round-trips, and the analyzer issued them per removed listing while
+    /// holding a write lock. One grouped query answers the same question.
+    ///
+    /// Both qualities come back in a single call: [`ListingSummary`] carries `hq`
+    /// and the analyzer keys on it, so there is no reason to split into two
+    /// round-trips the way the hq-sensitive variant did.
+    pub async fn cheapest_listings_for_items(
+        &self,
+        worlds: &[i32],
+        items: &[i32],
+    ) -> Result<Vec<ListingSummary>> {
+        use active_listing::*;
+        if worlds.is_empty() || items.is_empty() {
+            return Ok(vec![]);
+        }
+        let instant = Instant::now();
+        let summaries = Entity::find()
+            .select_only()
+            .column(Column::ItemId)
+            .column(Column::Hq)
+            .column(Column::WorldId)
+            .column_as(Column::PricePerUnit.min(), "price_per_unit")
+            .filter(Column::ItemId.is_in(items.to_vec()))
+            .filter(Column::WorldId.is_in(worlds.to_vec()))
+            .group_by(Column::ItemId)
+            .group_by(Column::Hq)
+            .group_by(Column::WorldId)
+            .into_model::<ListingSummary>()
+            .all(&self.db)
+            .await?;
+        histogram!("ultros_db_cheapest_listings_for_items_duration_seconds")
+            .record(instant.elapsed());
+        Ok(summaries)
     }
 
     pub async fn cheapest_listings(
