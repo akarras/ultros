@@ -61,3 +61,8 @@ When returning the top N items from a collection, first use `select_nth_unstable
 ## 2024-11-20 - O(N) Top-K Extraction
 **Learning:** In WASM/frontend contexts, running a full `O(N log N)` sort on search results reactively as the user types can cause unnecessary main-thread blocking. Finding the top K elements can be optimized by using `select_nth_unstable_by_key(K)`, which partitions the array in `O(N)` time, followed by truncating the array to K and performing `sort_unstable_by_key` only on those K elements.
 **Action:** When extracting the top N items from a potentially large collection, avoid full sorts in hot reactive loops. Use `.select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only the remaining elements.
+## 2024-08-04 - Optimize top N item extraction with select_nth_unstable
+**Learning:**
+In `ultros-db/src/sales.rs` and `ultros/src/discord/ffxiv/analyze.rs`, taking the top N elements of a slice using a full sort (`sort_by_key`/`sort_unstable_by_key` followed by `.truncate()` or `.take()`) takes $O(M \log M)$ time. When returning the top N items from a potentially large collection, avoid full sorts.
+**Action:**
+Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only the remaining $N$ elements to partition the array in $O(M)$ time and do the $O(N \log N)$ sort only on the truncated array. Guard it with `if slice.len() > limit`.

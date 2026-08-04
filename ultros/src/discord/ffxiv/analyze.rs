@@ -66,9 +66,14 @@ pub(crate) async fn profit(
         .get_best_resale(world_id, region_id, resale, &ctx.data().world_cache)
         .await
         .ok_or(anyhow::anyhow!("Unable to get resale results"))?;
-    sales.sort_by_key(|s| std::cmp::Reverse(s.profit));
     let total_results = sales.len();
-    let sales = sales.into_iter().take(15);
+    // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+    if sales.len() > 15 {
+        sales.select_nth_unstable_by_key(15, |s| std::cmp::Reverse(s.profit));
+        sales.truncate(15);
+    }
+    sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.profit));
+    let sales = sales.into_iter();
     ctx.send(poise::CreateReply::default().embed(
         poise::serenity_prelude::CreateEmbed::new()
             .title("Flip Finder")

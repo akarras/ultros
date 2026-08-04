@@ -127,8 +127,14 @@ impl UltrosDb {
         .await;
 
         let mut sales: Vec<_> = all?.into_iter().flat_map(|w| w.into_iter()).collect();
-        sales.sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-        sales.truncate(limit as usize);
+
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        let limit_usize = limit as usize;
+        if sales.len() > limit_usize {
+            sales.select_nth_unstable_by_key(limit_usize, |sale| std::cmp::Reverse(sale.sold_date));
+            sales.truncate(limit_usize);
+        }
+        sales.sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
 
         let buyers = unknown_final_fantasy_character::Entity::find()
             .filter(
@@ -221,8 +227,14 @@ impl UltrosDb {
         )
         .await?;
         let mut sales: Vec<sale_history::Model> = per_world.into_iter().flatten().collect();
-        sales.sort_by_key(|s| std::cmp::Reverse(s.sold_date));
-        sales.truncate(limit as usize);
+
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        let limit_usize = limit as usize;
+        if limit_usize > 0 && sales.len() > limit_usize {
+            sales.select_nth_unstable_by_key(limit_usize, |s| std::cmp::Reverse(s.sold_date));
+            sales.truncate(limit_usize);
+        }
+        sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.sold_date));
         Ok(sales)
     }
 
