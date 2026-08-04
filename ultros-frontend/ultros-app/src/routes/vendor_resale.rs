@@ -126,6 +126,39 @@ fn compute_summary(sale: SaleData) -> SaleSummary {
     }
 }
 
+/// Ratio of a current market listing to the item's own median recent sale
+/// price above which that listing is treated as unachievable.
+///
+/// This page ranks by ROI against the cheapest *listing*, but a listing only
+/// pays out if somebody actually buys it. Gil-trader and troll listings sit
+/// orders of magnitude above what an item really clears for, and because they
+/// inflate ROI the most they sort straight to the top.
+///
+/// Measured against a live Gilgamesh snapshot (10,289 NQ items holding both a
+/// cheapest listing and recent sales): the median listing sits at 0.99x the
+/// item's median recent sale and the 95th percentile at 10.2x, but the 99th is
+/// 433x and the 99.9th is 83,091x — a clearly separate population. 50x leaves
+/// five times normal variation intact while dropping 2.1% of rows, and the
+/// junk actually observed on the page ran 1,000x-150,000x.
+const SUSPICIOUS_PRICE_MULTIPLE: i64 = 50;
+
+/// Whether a row's market price is implausible relative to what the item
+/// actually sells for.
+///
+/// Rows we cannot judge — no recent sales, or a degenerate median — are
+/// *kept*, matching the server-side `ResaleQualityFilter` rule that a row
+/// without enrichment is shown rather than penalized. The page's existing
+/// "Sales (min)" filter is the control for requiring sale history outright.
+fn is_suspicious_market_price(market_price: i32, sale_summary: Option<&SaleSummary>) -> bool {
+    let Some(summary) = sale_summary else {
+        return false;
+    };
+    if summary.num_sold == 0 || summary.median_price <= 0 {
+        return false;
+    }
+    market_price as i64 > summary.median_price as i64 * SUSPICIOUS_PRICE_MULTIPLE
+}
+
 // Add FromStr and ToString implementations for SortMode
 impl FromStr for SortMode {
     type Err = ();
@@ -245,6 +278,11 @@ fn VendorResaleTable(
     let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
     let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
+    // Hidden by default, like the Flip Finder and Trends toggles of the same
+    // name — an unachievable listing is worse than no row at all here, because
+    // it inflates ROI and therefore sorts to the top.
+    let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
+    let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
@@ -307,6 +345,13 @@ fn VendorResaleTable(
                             .unwrap_or(false)
                     })
                     .unwrap_or(true)
+            })
+            .filter(move |data| {
+                show_suspicious_active()
+                    || !is_suspicious_market_price(
+                        data.inner.market_price,
+                        data.inner.sale_summary.as_ref(),
+                    )
             })
             .filter(move |data| {
                 predicted_time()
@@ -448,6 +493,24 @@ fn VendorResaleTable(
                         </button>
                     </ToolbarPills>
                 </ToolbarField>
+                <ToolbarField label=t_string!(i18n, vendor_resale_suspicious_label).to_string()>
+                    <ToolbarPills>
+                        <button
+                            title=t_string!(i18n, vendor_resale_suspicious_help)
+                            aria-pressed=move || if show_suspicious_active() { "false" } else { "true" }
+                            on:click=move |_| set_show_suspicious(None)
+                        >
+                            {t!(i18n, vendor_resale_suspicious_hidden)}
+                        </button>
+                        <button
+                            title=t_string!(i18n, vendor_resale_suspicious_help)
+                            aria-pressed=move || if show_suspicious_active() { "true" } else { "false" }
+                            on:click=move |_| set_show_suspicious(Some(true))
+                        >
+                            {t!(i18n, vendor_resale_suspicious_shown)}
+                        </button>
+                    </ToolbarPills>
+                </ToolbarField>
             </Toolbar>
 
             // Results summary
@@ -519,6 +582,16 @@ fn VendorResaleTable(
                                 </span>
                             }.into_any());
                         }
+                        if show_suspicious_active() {
+                            chips.push(view! {
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
+                                    {t!(i18n, vendor_resale_suspicious_chip)}
+                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_show_suspicious(None)>
+                                        <Icon icon=icondata::MdiClose />
+                                    </button>
+                                </span>
+                            }.into_any());
+                        }
                         if chips.is_empty() {
                             Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, vendor_resale_no_active_filters)}</span> })
                         } else {
@@ -532,6 +605,7 @@ fn VendorResaleTable(
                     set_max_predicted_time(None);
                     set_minimum_sales(None);
                     set_category_filter(None);
+                    set_show_suspicious(None);
                 }>
                     {t!(i18n, clear_all)}
                 </button>
@@ -918,5 +992,108 @@ pub fn VendorResale() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds just the fields `is_suspicious_market_price` reads.
+    fn summary(num_sold: usize, median_price: i32) -> SaleSummary {
+        SaleSummary {
+            item_id: 1,
+            hq: false,
+            num_sold,
+            avg_sale_duration: None,
+            days_since_last_sale: None,
+            max_price: median_price,
+            avg_price: median_price,
+            median_price,
+            min_price: median_price,
+        }
+    }
+
+    /// The eight rows that filled the top of `/vendor-resale/Gilgamesh` on a
+    /// live load, with each item's real median recent sale price. Every one is
+    /// a listing nobody will ever buy, and because ROI is computed off the
+    /// listing they sorted above every genuine opportunity.
+    #[test]
+    fn real_gilgamesh_top_rows_are_all_suspicious() {
+        // (item name, listed market price, median of the item's recent sales
+        // as `compute_summary` computes it from the live API response)
+        let observed = [
+            ("Sweet Rice Cake", 18_999_996, 6_249),
+            ("Copper Wristlets", 150_000_000, 849),
+            ("Hyuran Longboots", 9_999_999, 9_999),
+            ("Steel Jig", 71_428_571, 295),
+            ("Leather Crakows", 20_000_000, 9_000),
+            ("Goatskin Eyepatch", 100_000_000, 11_504),
+            ("Horn Ring", 150_000_000, 12_747),
+        ];
+        for (name, market_price, median) in observed {
+            assert!(
+                is_suspicious_market_price(market_price, Some(&summary(6, median))),
+                "{name}: listing {market_price} vs median sale {median} should be suspicious",
+            );
+        }
+    }
+
+    /// A listing at or near what the item actually clears for is the whole
+    /// point of the page and must survive the filter. 0.99x is the measured
+    /// median listing/sale ratio and 10.2x the 95th percentile.
+    #[test]
+    fn ordinary_listings_are_kept() {
+        for (market_price, median) in [(990, 1_000), (1_000, 1_000), (10_200, 1_000)] {
+            assert!(
+                !is_suspicious_market_price(market_price, Some(&summary(6, median))),
+                "listing {market_price} vs median sale {median} must be kept",
+            );
+        }
+    }
+
+    /// Exactly at the multiple is kept; one gil past it is not.
+    #[test]
+    fn threshold_boundary_is_exclusive() {
+        let median = 1_000;
+        let at = (median as i64 * SUSPICIOUS_PRICE_MULTIPLE) as i32;
+        assert!(!is_suspicious_market_price(at, Some(&summary(6, median))));
+        assert!(is_suspicious_market_price(
+            at + 1,
+            Some(&summary(6, median))
+        ));
+    }
+
+    /// Rows we cannot judge are kept rather than penalized — same rule the
+    /// server-side quality filter uses for rows without ClickHouse coverage.
+    /// Without this, every item lacking recent sales would silently vanish.
+    #[test]
+    fn unjudgeable_rows_are_kept() {
+        assert!(
+            !is_suspicious_market_price(150_000_000, None),
+            "no sale summary at all must not be filtered"
+        );
+        assert!(
+            !is_suspicious_market_price(150_000_000, Some(&summary(0, 0))),
+            "zero recorded sales must not be filtered"
+        );
+        assert!(
+            !is_suspicious_market_price(150_000_000, Some(&summary(6, 0))),
+            "a degenerate zero median must not be filtered"
+        );
+    }
+
+    /// The largest price FFXIV allows against the smallest possible median
+    /// must not overflow the multiplication.
+    #[test]
+    fn extreme_prices_do_not_overflow() {
+        assert!(is_suspicious_market_price(
+            999_999_999,
+            Some(&summary(6, 1))
+        ));
+        assert!(!is_suspicious_market_price(
+            999_999_999,
+            Some(&summary(6, i32::MAX))
+        ));
     }
 }
