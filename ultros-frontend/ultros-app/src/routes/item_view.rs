@@ -1318,8 +1318,12 @@ pub fn ChartWrapper(
 
     // Resolved once per mount rather than continuously: a chart does not
     // need to slide in real time, and re-resolving on every tick would
-    // refetch. Client-only, so no SSR/CSR divergence -- the slicer that
-    // consumes this only renders once `series` (a LocalResource) resolves.
+    // refetch. Computed during SSR too (this is just a component body), but
+    // nothing SSR-rendered ever consumes it: `selected_range` only reaches
+    // `debounced_range` -> a client-only `LocalResource`, and
+    // `selected_domain`, which short-circuits on `available_domain` --
+    // itself derived from a client-only `LocalResource` and additionally
+    // gated behind `<Show when=available_domain.is_some()>`.
     let now = StoredValue::new(chrono::Utc::now().timestamp());
     let selected_range = Signal::derive(move || {
         let from_to = from_param.get().zip(to_param.get());
@@ -1358,12 +1362,20 @@ pub fn ChartWrapper(
     // entirely) — drop back to full range before the next request goes out.
     // Deliberately does *not* track `group`/`hq`: changing those shouldn't
     // discard an in-progress zoom.
-    Effect::new(move |_| {
-        item_id.track();
-        world.track();
-        set_from_param.set(None);
-        set_to_param.set(None);
-        set_range_param.set(None);
+    //
+    // Guarded on an actual change (not just the first run): `Effect::new`
+    // fires unconditionally on mount, and now that these setters write
+    // straight to the URL, an unguarded first run would strip `from`/`to`
+    // out of a freshly-loaded shared link before its first fetch even
+    // finishes.
+    Effect::new(move |prev: Option<(i32, String)>| {
+        let key = (item_id.get(), world.get());
+        if prev.is_some_and(|p| p != key) {
+            set_from_param.set(None);
+            set_to_param.set(None);
+            set_range_param.set(None);
+        }
+        key
     });
     // Debounce so dragging a slicer handle fires one request after the drag
     // settles rather than one per pointer move; the slicer's own handle
