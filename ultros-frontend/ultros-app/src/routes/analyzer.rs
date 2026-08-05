@@ -1,6 +1,7 @@
 use crate::analysis::{
-    DerivedConfidence, SaleSummary, derived_confidence, get_sales_cadence, price_drift_pct,
-    return_on_investment, roi_badge_class, velocity_per_day,
+    DerivedConfidence, SaleSummary, derived_confidence, flip_estimated_sale_price, flip_profit,
+    get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct,
+    return_on_investment, roi_badge_class, sniper_clamp, velocity_per_day,
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -326,24 +327,6 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
         .collect()
 }
 
-/// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
-const SNIPER_FRACTION: f64 = 0.1;
-
-fn median_in_place_i32(sorted: &mut [i32]) -> i32 {
-    if sorted.is_empty() {
-        return 0;
-    }
-    let n = sorted.len();
-    if n % 2 == 1 {
-        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
-        val
-    } else {
-        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
-        let left_max = *left.iter().max().unwrap();
-        ((left_max as i64 + right as i64) / 2) as i32
-    }
-}
-
 fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
@@ -362,16 +345,10 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
         };
     }
 
-    // 1. Raw-median pass for the sniper threshold.
-    let mut raw: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
-    let raw_median = median_in_place_i32(&mut raw);
-    let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
-
-    // 2. Build the clamped vector. If the clamp would remove everything, keep the raw set.
-    let mut clamped: Vec<i32> = raw.iter().copied().filter(|p| *p >= floor).collect();
-    if clamped.is_empty() {
-        clamped = raw;
-    }
+    // 1 & 2. Sniper-clamp: drop sales priced below 10% of the raw median, unless
+    // that would remove everything.
+    let clamped = sniper_clamp(sales.iter().map(|s| s.price_per_unit).collect());
+    let mut clamped = clamped;
     let min_price = clamped.iter().copied().min().unwrap_or(0);
     let max_price = clamped.iter().copied().max().unwrap_or(0);
     let median_price = median_in_place_i32(&mut clamped);
@@ -437,14 +414,6 @@ impl std::fmt::Display for SortMode {
     }
 }
 
-/// Listings whose price is at least this multiple of the row's median sale are treated as troll
-/// listings and ignored when picking the world floor.
-const TROLL_MULTIPLE: i64 = 50;
-
-fn is_troll_listing(price: i32, median: i32) -> bool {
-    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
-}
-
 impl ProfitTable {
     fn new(
         sales: RecentSales,
@@ -493,18 +462,10 @@ impl ProfitTable {
 
                 // Same guard on the local world floor — if it's a troll, ignore it and fall
                 // through to the median as the estimate.
-                let world_floor = world_cheapest.get(&key).and_then(|(price, _)| {
-                    if is_troll_listing(*price, summary.median_price) {
-                        None
-                    } else {
-                        Some(*price)
-                    }
-                });
-
-                let estimated_sale_price = match world_floor {
-                    Some(floor) => summary.median_price.min(floor),
-                    None => summary.median_price,
-                };
+                let estimated_sale_price = flip_estimated_sale_price(
+                    summary.median_price,
+                    world_cheapest.get(&key).map(|(price, _)| *price),
+                );
 
                 Some(ProfitData {
                     estimated_sale_price,
@@ -1387,12 +1348,8 @@ fn AnalyzerTable(
             .0
             .iter()
             .map(|data| {
-                let estimated = if include_tax {
-                    (data.estimated_sale_price as f32 * 0.95) as i32
-                } else {
-                    data.estimated_sale_price
-                };
-                let profit = estimated - data.cheapest_price;
+                let profit =
+                    flip_profit(data.estimated_sale_price, data.cheapest_price, include_tax);
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
                 let profit_per_day = data
                     .sale_summary

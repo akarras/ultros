@@ -372,11 +372,106 @@ pub fn derived_confidence(summary: &SaleSummary) -> DerivedConfidence {
     }
 }
 
+/// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
+const SNIPER_FRACTION: f64 = 0.1;
+
+pub fn median_in_place_i32(sorted: &mut [i32]) -> i32 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let n = sorted.len();
+    if n % 2 == 1 {
+        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
+        val
+    } else {
+        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
+        let left_max = *left.iter().max().unwrap();
+        ((left_max as i64 + right as i64) / 2) as i32
+    }
+}
+
+/// Listings whose price is at least this multiple of the row's median sale are treated as troll
+/// listings and ignored when picking the world floor.
+const TROLL_MULTIPLE: i64 = 50;
+
+pub fn is_troll_listing(price: i32, median: i32) -> bool {
+    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
+}
+
+/// Sniper-clamped price set: drops sales priced below `SNIPER_FRACTION` of the
+/// raw median. If the clamp would remove everything, the raw set is kept.
+/// Shared by the analyzer's `compute_summary` and the item-page flip card.
+pub fn sniper_clamp(prices: Vec<i32>) -> Vec<i32> {
+    if prices.is_empty() {
+        return prices;
+    }
+    let mut raw = prices.clone();
+    let raw_median = median_in_place_i32(&mut raw);
+    let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
+    let clamped: Vec<i32> = prices.iter().copied().filter(|p| *p >= floor).collect();
+    if clamped.is_empty() { prices } else { clamped }
+}
+
+/// Flip estimate shared by the flip-finder table and the item-page flip card:
+/// median of recent sales, capped by the sell world's current floor. A floor
+/// more than `TROLL_MULTIPLE`× the median is a troll listing and is ignored.
+pub fn flip_estimated_sale_price(median_price: i32, world_floor: Option<i32>) -> i32 {
+    match world_floor.filter(|floor| !is_troll_listing(*floor, median_price)) {
+        Some(floor) => median_price.min(floor),
+        None => median_price,
+    }
+}
+
+/// Per-unit flip profit. The 5% market-board tax comes off the sale, not the buy.
+pub fn flip_profit(estimated_sale_price: i32, buy_price: i32, include_tax: bool) -> i32 {
+    let estimated = if include_tax {
+        (estimated_sale_price as f32 * 0.95) as i32
+    } else {
+        estimated_sale_price
+    };
+    estimated - buy_price
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use ultros_api_types::recent_sales::{SaleData, Sales};
+
+    #[test]
+    fn sniper_clamp_drops_prices_below_ten_percent_of_median() {
+        // raw median of [10, 1000, 1100, 1200, 1300] is 1100; floor = 110 → 10 dropped
+        assert_eq!(
+            sniper_clamp(vec![10, 1000, 1100, 1200, 1300]),
+            vec![1000, 1100, 1200, 1300]
+        );
+    }
+
+    #[test]
+    fn sniper_clamp_keeps_raw_set_when_clamp_would_empty_it() {
+        // all equal → floor = 100 * 0.1 = 10, nothing dropped; and empty stays empty
+        assert_eq!(sniper_clamp(vec![100]), vec![100]);
+        assert_eq!(sniper_clamp(Vec::new()), Vec::<i32>::new());
+    }
+
+    #[test]
+    fn flip_estimate_caps_median_by_world_floor() {
+        assert_eq!(flip_estimated_sale_price(1000, Some(800)), 800);
+        assert_eq!(flip_estimated_sale_price(1000, Some(1200)), 1000);
+        assert_eq!(flip_estimated_sale_price(1000, None), 1000);
+    }
+
+    #[test]
+    fn flip_estimate_ignores_troll_floor() {
+        // floor 60_000 vs median 1_000 exceeds TROLL_MULTIPLE (50x) → ignored
+        assert_eq!(flip_estimated_sale_price(1000, Some(60_000)), 1000);
+    }
+
+    #[test]
+    fn flip_profit_applies_five_percent_tax() {
+        assert_eq!(flip_profit(1000, 500, true), 450); // 950 - 500
+        assert_eq!(flip_profit(1000, 500, false), 500);
+    }
 
     #[test]
     fn test_format_duration_short() {
