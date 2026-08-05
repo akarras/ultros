@@ -36,13 +36,11 @@ pub fn item_href(world: &str, item_id: i32, query: &str) -> String {
 }
 
 /// Query param naming the buy world for the item page's flip-verification card.
-#[allow(dead_code)]
 pub const COMPARE_BUY_FROM_PARAM: &str = "compare-buy-from";
 
 /// Item URL that opens the flip-verification card: sell world in the path,
 /// buy world in `?compare-buy-from=`. An unresolvable (empty) buy world
 /// degrades to the plain item link.
-#[allow(dead_code)]
 pub fn compare_item_href(sell_world: &str, item_id: i32, buy_world: &str) -> String {
     if buy_world.is_empty() {
         return item_href(sell_world, item_id, "");

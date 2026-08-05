@@ -2601,9 +2601,10 @@ fn AnalyzerTable(
                             let row_num_sold = data.inner.sale_summary.num_sold;
                             let row_drift = price_drift_pct(&data.inner.prices);
                             let row_confidence = derived_confidence(&data.inner.sale_summary);
-                            let world = worlds
+                            let sell_world = world;
+                            let buy_world = worlds
                                 .lookup_selector(AnySelector::World(data.inner.cheapest_world_id));
-                            let datacenter = world
+                            let buy_datacenter = buy_world
                                 .as_ref()
                                 .and_then(|world| {
                                     let datacenters = worlds.get_datacenters(world);
@@ -2611,13 +2612,13 @@ fn AnalyzerTable(
                                 })
                                 .unwrap_or_default()
                                 .to_string();
-                            let datacenter = Signal::derive(move || datacenter.clone());
-                            let world = world
+                            let buy_datacenter = Signal::derive(move || buy_datacenter.clone());
+                            let buy_world = buy_world
                                 .as_ref()
                                 .map(|r| r.get_name())
                                 .unwrap_or_default()
                                 .to_string();
-                            let world = Signal::derive(move || world.clone());
+                            let buy_world = Signal::derive(move || buy_world.clone());
                             let item_id = data.inner.sale_summary.item_id;
                             let hq = data.inner.sale_summary.hq;
                             let row_key = (item_id, hq);
@@ -2643,7 +2644,10 @@ fn AnalyzerTable(
                                     <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
-                                            href=format!("/item/{}/{item_id}", world())
+                                            href=move || {
+                                                let sell = leptos_router::location::Url::unescape(&sell_world.get());
+                                                crate::routes::item_view_scope::compare_item_href(&sell, item_id, &buy_world())
+                                            }
                                         >
                                             <div class="shrink-0">
                                                 <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
@@ -2749,16 +2753,16 @@ fn AnalyzerTable(
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
                                         <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden lg:block flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
-                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
+                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_world())
                                             })>
                                                 <QueryButton
                                                     key="world"
-                                                    value=world
+                                                    value=buy_world
                                                     class="!text-brand-300 hover:text-brand-200"
                                                     active_classes="!text-neutral-300 hover:text-neutral-200"
                                                     remove_queries=&["datacenter"]
                                                 >
-                                                    {world}
+                                                    {buy_world}
                                                 </QueryButton>
                                             </Tooltip>
                                         </div>
@@ -2766,16 +2770,16 @@ fn AnalyzerTable(
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
                                         <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden xl:block flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
-                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
+                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_datacenter())
                                             })>
                                                 <QueryButton
                                                     key="datacenter"
-                                                    value=datacenter
+                                                    value=buy_datacenter
                                                     class="!text-brand-300 hover:text-brand-200"
                                                     active_classes="!text-neutral-300 hover:text-neutral-200"
                                                     remove_queries=&["world"]
                                                 >
-                                                    {datacenter}
+                                                    {buy_datacenter}
                                                 </QueryButton>
                                             </Tooltip>
                                         </div>
