@@ -92,11 +92,11 @@ fn WorldButton(
     // Only the params this route actually owns are carried forward, so a
     // stale or hostile query key can't be reflected back into a link.
     let search = Signal::derive(move || {
-        query.with(|query| match query.get("exclude-worlds") {
-            Some(worlds) if !worlds.is_empty() => {
-                format!("exclude-worlds={}", Url::escape(&worlds))
-            }
-            _ => String::new(),
+        query.with(|query| {
+            carried_world_switch_query(
+                query.get("exclude-worlds").as_deref(),
+                query.get(COMPARE_BUY_FROM_PARAM).as_deref(),
+            )
         })
     });
     let world_2 = world_name.clone();
@@ -559,6 +559,33 @@ fn format_savings_percent(percent: f64) -> String {
     } else {
         format!("{percent:.1}")
     }
+}
+
+/// Builds the query string a world-switch link carries forward: only the
+/// params this route owns are allowed through, so a stale or hostile query
+/// key can't be reflected back into a link (same allowlist idiom as
+/// `parse_excluded_world_ids`). `compare-buy-from` is included so clicking a
+/// world button doesn't silently dismiss an open flip-verification card —
+/// the spec requires "changing the sell world keeps the comparison alive".
+fn carried_world_switch_query(
+    exclude_worlds: Option<&str>,
+    compare_buy_from: Option<&str>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(worlds) = exclude_worlds
+        && !worlds.is_empty()
+    {
+        parts.push(format!("exclude-worlds={}", Url::escape(worlds)));
+    }
+    if let Some(buy_from) = compare_buy_from
+        && !buy_from.is_empty()
+    {
+        parts.push(format!(
+            "{COMPARE_BUY_FROM_PARAM}={}",
+            Url::escape(buy_from)
+        ));
+    }
+    parts.join("&")
 }
 
 fn parse_excluded_world_ids(raw: Option<&str>) -> HashSet<i32> {
@@ -2207,6 +2234,40 @@ mod tests {
         // Once it is disposed they must fall back rather than panic.
         assert!(with_or(&filtered_listings, true, |listings| listings.is_empty()));
         assert!(get_or_default(&filtered_listings).is_empty());
+    }
+
+    #[test]
+    fn carried_world_switch_query_forwards_exclude_worlds_only() {
+        assert_eq!(
+            carried_world_switch_query(Some("100,200"), None),
+            "exclude-worlds=100%2C200",
+        );
+    }
+
+    #[test]
+    fn carried_world_switch_query_forwards_compare_buy_from_only() {
+        assert_eq!(
+            carried_world_switch_query(None, Some("Jenova")),
+            "compare-buy-from=Jenova",
+        );
+    }
+
+    #[test]
+    fn carried_world_switch_query_forwards_both_params() {
+        assert_eq!(
+            carried_world_switch_query(Some("100,200"), Some("Jenova")),
+            "exclude-worlds=100%2C200&compare-buy-from=Jenova",
+        );
+    }
+
+    #[test]
+    fn carried_world_switch_query_empty_when_neither_present() {
+        assert_eq!(carried_world_switch_query(None, None), "");
+    }
+
+    #[test]
+    fn carried_world_switch_query_ignores_empty_values() {
+        assert_eq!(carried_world_switch_query(Some(""), Some("")), "");
     }
 
     #[test]

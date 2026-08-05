@@ -38,11 +38,16 @@ pub(crate) struct FlipVerdict {
     pub stack_profit: i32,
 }
 
-fn cheapest_buy(buy: &CurrentlyShownItem, hq: bool) -> Option<&ActiveListing> {
+/// Cheapest buy-world listing, optionally restricted to one quality.
+/// `hq = None` picks the overall-cheapest listing across both qualities —
+/// used by the buy cell when no quality produced a [`FlipVerdict`] (e.g. the
+/// buy world only lists HQ while the sell world only sold NQ), so the cell
+/// can still show *something* to buy instead of rendering empty.
+fn cheapest_buy(buy: &CurrentlyShownItem, hq: Option<bool>) -> Option<&ActiveListing> {
     buy.listings
         .iter()
         .map(|(listing, _)| listing)
-        .filter(|listing| listing.hq == hq && listing.price_per_unit > 0)
+        .filter(|listing| hq.is_none_or(|hq| listing.hq == hq) && listing.price_per_unit > 0)
         .min_by_key(|listing| listing.price_per_unit)
 }
 
@@ -66,12 +71,26 @@ fn sell_floor(sell: &CurrentlyShownItem, hq: bool) -> Option<i32> {
         .min()
 }
 
+/// Estimated sale price for one quality on the sell world, or `None` when
+/// there are no recent sales of that quality to base an estimate on. Shares
+/// the median/floor math with [`verdict_for_quality`] but doesn't require a
+/// buy-side listing, so the sell cell can show an honest estimate for the
+/// cheapest buy listing's quality even when that quality never produced a
+/// full [`FlipVerdict`].
+fn sell_estimate_for_quality(sell: &CurrentlyShownItem, hq: bool) -> Option<i32> {
+    let median = sell_median(sell, hq);
+    if median == 0 {
+        return None;
+    }
+    Some(flip_estimated_sale_price(median, sell_floor(sell, hq)))
+}
+
 fn verdict_for_quality(
     buy: &CurrentlyShownItem,
     sell: &CurrentlyShownItem,
     hq: bool,
 ) -> Option<FlipVerdict> {
-    let buy_listing = cheapest_buy(buy, hq)?.clone();
+    let buy_listing = cheapest_buy(buy, Some(hq))?.clone();
     let median = sell_median(sell, hq);
     if median == 0 {
         // No recent sales of this quality on the sell world — no estimate,
@@ -200,6 +219,40 @@ pub(crate) fn FlipRouteCard(
                                     }
                                 };
 
+                                // Shared with both the verdict path and the
+                                // fallback path below: a buy cell renders the
+                                // same markup whether the listing came with a
+                                // full profit verdict or not (finding #2 —
+                                // the buy column must not go empty just
+                                // because no quality produced a verdict).
+                                let render_buy_listing = |listing: &ActiveListing, hq: bool, buy: &CurrentlyShownItem| {
+                                    let freshness_inputs = derive_freshness_inputs(
+                                        &buy.last_updated,
+                                        &buy.sales,
+                                        1,
+                                        chrono::Utc::now().naive_utc(),
+                                    );
+                                    let freshness_verdict = calculate_freshness_verdict(
+                                        freshness_inputs.age,
+                                        freshness_inputs.per_world_sales_per_day,
+                                    );
+                                    view! {
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <div class="font-bold">
+                                                <Gil amount=listing.price_per_unit />
+                                            </div>
+                                            <span>" × "{listing.quantity}</span>
+                                            {quality_chip(hq)}
+                                            <FreshnessBadge
+                                                verdict=freshness_verdict
+                                                age=freshness_inputs.age
+                                                compact=true
+                                            />
+                                        </div>
+                                    }
+                                    .into_any()
+                                };
+
                                 let buy_cell = if buy_error {
                                     view! {
                                         <span class="text-sm text-red-300">
@@ -216,31 +269,14 @@ pub(crate) fn FlipRouteCard(
                                         }
                                         .into_any()
                                     } else if let Some(v) = verdict.as_ref() {
-                                        let freshness_inputs = derive_freshness_inputs(
-                                            &buy.last_updated,
-                                            &buy.sales,
-                                            1,
-                                            chrono::Utc::now().naive_utc(),
-                                        );
-                                        let freshness_verdict = calculate_freshness_verdict(
-                                            freshness_inputs.age,
-                                            freshness_inputs.per_world_sales_per_day,
-                                        );
-                                        view! {
-                                            <div class="flex items-center gap-2 flex-wrap">
-                                                <div class="font-bold">
-                                                    <Gil amount=v.buy_listing.price_per_unit />
-                                                </div>
-                                                <span>" × "{v.buy_listing.quantity}</span>
-                                                {quality_chip(v.hq)}
-                                                <FreshnessBadge
-                                                    verdict=freshness_verdict
-                                                    age=freshness_inputs.age
-                                                    compact=true
-                                                />
-                                            </div>
-                                        }
-                                        .into_any()
+                                        render_buy_listing(&v.buy_listing, v.hq, buy)
+                                    } else if let Some(cheapest) = cheapest_buy(buy, None) {
+                                        // No quality produced a verdict (e.g. the
+                                        // buy world only lists HQ while the sell
+                                        // world only sold NQ) — show the
+                                        // overall-cheapest buy listing anyway
+                                        // rather than an empty cell.
+                                        render_buy_listing(cheapest, cheapest.hq, buy)
                                     } else {
                                         ().into_any()
                                     }
@@ -248,7 +284,7 @@ pub(crate) fn FlipRouteCard(
                                     ().into_any()
                                 };
 
-                                let sell_cell = if let Some(v) = verdict.as_ref() {
+                                let render_sell_estimate = |estimated_sale_price: i32| {
                                     let velocity = sell_data.as_ref().and_then(|sell| {
                                         derive_freshness_inputs(
                                             &sell.last_updated,
@@ -263,7 +299,7 @@ pub(crate) fn FlipRouteCard(
                                             <div class="flex items-center gap-1">
                                                 <span>{t!(i18n, item_compare_est_sale_price)}":"</span>
                                                 <div class="font-bold">
-                                                    <Gil amount=v.estimated_sale_price />
+                                                    <Gil amount=estimated_sale_price />
                                                 </div>
                                             </div>
                                             <span class="text-xs text-[color:var(--color-text-muted)]">
@@ -282,6 +318,22 @@ pub(crate) fn FlipRouteCard(
                                         </div>
                                     }
                                     .into_any()
+                                };
+
+                                let sell_cell = if let Some(v) = verdict.as_ref() {
+                                    render_sell_estimate(v.estimated_sale_price)
+                                } else if let Some(estimate) = buy_data
+                                    .as_ref()
+                                    .and_then(|buy| cheapest_buy(buy, None).map(|listing| listing.hq))
+                                    .zip(sell_data.as_ref())
+                                    .and_then(|(hq, sell)| sell_estimate_for_quality(sell, hq))
+                                {
+                                    // No verdict, but the cheapest buy
+                                    // listing's own quality did sell recently
+                                    // on the sell world — show that estimate
+                                    // instead of claiming there's nothing to
+                                    // go on.
+                                    render_sell_estimate(estimate)
                                 } else {
                                     view! {
                                         <span class="text-sm text-[color:var(--color-text-muted)]">
@@ -483,5 +535,103 @@ mod tests {
         let sell = shown(Vec::new(), vec![sale(1000, false)]);
         let verdict = flip_verdict(&buy, &sell).unwrap();
         assert!(verdict.profit_per_unit < 0);
+    }
+
+    #[test]
+    fn cheapest_buy_none_picks_overall_cheapest_across_qualities() {
+        // HQ listing is cheaper than the NQ one — `hq: None` must not just
+        // default to one quality.
+        let buy = shown(
+            vec![listing(1, 1, 900, 1, false), listing(2, 1, 400, 1, true)],
+            Vec::new(),
+        );
+        let cheapest = cheapest_buy(&buy, None).unwrap();
+        assert_eq!(cheapest.id, 2);
+        assert!(cheapest.hq);
+    }
+
+    #[test]
+    fn sell_estimate_for_quality_none_without_matching_sales() {
+        // Only NQ sales exist; asking for HQ must not fabricate a number.
+        let sell = shown(Vec::new(), vec![sale(1000, false)]);
+        assert!(sell_estimate_for_quality(&sell, true).is_none());
+    }
+
+    #[test]
+    fn sell_estimate_for_quality_some_with_matching_sales() {
+        let sell = shown(Vec::new(), vec![sale(1000, true), sale(1200, true)]);
+        assert!(sell_estimate_for_quality(&sell, true).is_some());
+    }
+
+    // -- resolve_route -------------------------------------------------
+
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+
+    // Region "North-America" -> DC "Aether" -> Worlds "Adamantoise", "Cactuar".
+    fn sample_world_data() -> WorldData {
+        WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".into(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Aether".into(),
+                    region_id: 1,
+                    worlds: vec![
+                        World {
+                            id: 100,
+                            name: "Adamantoise".into(),
+                            datacenter_id: 10,
+                        },
+                        World {
+                            id: 101,
+                            name: "Cactuar".into(),
+                            datacenter_id: 10,
+                        },
+                    ],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn resolve_route_none_for_unknown_buy_world() {
+        let world_data: WorldHelper = sample_world_data().into();
+        assert!(resolve_route(&world_data, Some("Nowhere".to_string()), "Adamantoise").is_none());
+    }
+
+    #[test]
+    fn resolve_route_none_when_buy_and_sell_are_the_same_world() {
+        let world_data: WorldHelper = sample_world_data().into();
+        assert!(
+            resolve_route(&world_data, Some("Adamantoise".to_string()), "Adamantoise").is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_route_none_when_page_world_is_datacenter_scoped() {
+        // The item page itself is viewing a DC (not a single world) — the
+        // compare card requires a concrete sell world to compute against.
+        let world_data: WorldHelper = sample_world_data().into();
+        assert!(resolve_route(&world_data, Some("Cactuar".to_string()), "Aether").is_none());
+    }
+
+    #[test]
+    fn resolve_route_none_when_buy_world_is_datacenter_scoped() {
+        let world_data: WorldHelper = sample_world_data().into();
+        assert!(resolve_route(&world_data, Some("Aether".to_string()), "Adamantoise").is_none());
+    }
+
+    #[test]
+    fn resolve_route_some_with_canonical_names_for_valid_distinct_worlds() {
+        let world_data: WorldHelper = sample_world_data().into();
+        // Lower-cased and unescaped input still resolves to the canonical,
+        // properly-cased world name.
+        let (buy_id, sell_id, buy_name) =
+            resolve_route(&world_data, Some("cactuar".to_string()), "Adamantoise").unwrap();
+        assert_eq!(buy_id, 101);
+        assert_eq!(sell_id, 100);
+        assert_eq!(buy_name, "Cactuar");
     }
 }
