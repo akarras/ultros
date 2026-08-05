@@ -295,7 +295,8 @@ mod tests {
     #[test]
     fn argb8_decodes_as_bgra_storage() {
         // One pixel stored B=1, G=2, R=3, A=4 must come out R=3, G=2, B=1, A=4.
-        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1450, 1, 1, &[1, 2, 3, 4]))).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1450, 1, 1, &[1, 2, 3, 4])))
+            .expect("parse tex");
         let img = decode_tex(&tex).expect("decode");
         assert_eq!(img.dimensions(), (1, 1));
         assert_eq!(img.get_pixel(0, 0).0, [3, 2, 1, 4]);
@@ -305,7 +306,8 @@ mod tests {
     fn dxt1_decodes_a_solid_color_block() {
         // BC1 block: color0=color1=pure red in RGB565, all indices 0 -> 4x4 red.
         let block = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
-        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x3420, 4, 4, &block))).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x3420, 4, 4, &block)))
+            .expect("parse tex");
         let img = decode_tex(&tex).expect("decode");
         assert_eq!(img.dimensions(), (4, 4));
         for pixel in img.pixels() {
@@ -316,14 +318,16 @@ mod tests {
     #[test]
     fn unknown_formats_error_instead_of_corrupting() {
         // L8 (0x1130) is a real format no icon uses; decode must refuse it.
-        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1130, 1, 1, &[0]))).expect("parse tex");
+        let tex =
+            Texture::read(std::io::Cursor::new(tex_bytes(0x1130, 1, 1, &[0]))).expect("parse tex");
         let error = decode_tex(&tex).expect_err("L8 should be rejected");
         assert!(error.to_string().contains("unhandled texture format"));
     }
 
     #[test]
     fn truncated_argb8_data_errors() {
-        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1450, 2, 2, &[0; 4]))).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1450, 2, 2, &[0; 4])))
+            .expect("parse tex");
         assert!(decode_tex(&tex).is_err());
     }
 }
