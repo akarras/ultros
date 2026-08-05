@@ -13,6 +13,7 @@ pub use super::alert_retainer_undercut::Entity as AlertRetainerUndercut;
 pub use super::datacenter::Entity as Datacenter;
 pub use super::discord_user::Entity as DiscordUser;
 pub use super::final_fantasy_character::Entity as FinalFantasyCharacter;
+pub use super::group_invite::Entity as GroupInvite;
 pub use super::list::Entity as List;
 pub use super::list_activity::Entity as ListActivity;
 pub use super::list_invite::Entity as ListInvite;
