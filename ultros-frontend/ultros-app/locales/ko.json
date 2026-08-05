@@ -1294,7 +1294,6 @@
     "analyzer_tooltip_trend": "7일 가격 추세",
     "analyzer_tooltip_sales_per_day": "30일 기준 판매 속도 (일일 판매량)",
     "analyzer_tooltip_volume_30d": "30일간 총 판매량 (판매 횟수)",
-    "analyzer_columns_picker_desktop_only": "데스크톱 전용",
     "analyzer_last_sold_days_ago": "%count%일 전",
     "analyzer_last_sold_hours_ago": "%count%시간 전",
     "analyzer_last_sold_just_now": "방금 전",

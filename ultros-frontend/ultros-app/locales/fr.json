@@ -1294,7 +1294,6 @@
     "analyzer_tooltip_trend": "Tendance des prix sur 7 jours",
     "analyzer_tooltip_sales_per_day": "Vitesse de vente sur 30 jours (ventes par jour)",
     "analyzer_tooltip_volume_30d": "Volume total des ventes sur 30 jours (nombre de ventes)",
-    "analyzer_columns_picker_desktop_only": "sur PC uniquement",
     "analyzer_last_sold_days_ago": "il y a %count%j",
     "analyzer_last_sold_hours_ago": "il y a %count%h",
     "analyzer_last_sold_just_now": "à l'instant",

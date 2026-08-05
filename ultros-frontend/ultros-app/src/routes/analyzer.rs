@@ -814,72 +814,47 @@ fn format_velocity_floor(v: f32) -> String {
     }
 }
 
-/// Rendered width of the optional columns that are *not* in the default set,
-/// in px, bucketed by the breakpoint at which each column actually renders.
+/// Rendered width, in px, of every optional column the user has switched on.
 ///
-/// The grid's base width lives in the stylesheet, which is the only place that
-/// can know which columns a breakpoint hides. What it cannot know is which
-/// optional columns the user switched on, so that part is measured here and
-/// handed over as `--analyzer-extra-cols-{base,md,xl}`. Under-reserving is the
-/// failure that matters: the two scrollports would stop short of the last
-/// column and it would be unreachable.
+/// Every column renders at every viewport width — the table is a horizontal
+/// scrollport, so a narrow screen scrolls to the columns instead of hiding
+/// them. That makes the reservation one number: the stylesheet holds the width
+/// of the four always-on columns and this adds whatever `?cols=` turned on,
+/// handed over as `--analyzer-optional-cols`. Under-reserving is the failure
+/// that matters: the two scrollports would stop short of the last column and it
+/// would be unreachable.
 ///
-/// The bucketing exists for the opposite failure: several opt-in columns are
-/// `hidden md:flex` / `hidden xl:flex`, and reserving their width below the
-/// breakpoint that reveals them gives a phone a horizontal scroll range whose
-/// far end is empty space. Each bucket is only added by the stylesheet's media
-/// query for that breakpoint (see `style/tailwind.css`), which keeps the whole
-/// mechanism CSS-driven — no `matchMedia` read, so SSR and the first client
-/// render stay identical.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct ExtraColumnWidths {
-    /// Columns visible at every viewport width.
-    base: u32,
-    /// Columns hidden below `md` (768px).
-    md: u32,
-    /// Columns hidden below `xl` (1280px).
-    xl: u32,
-}
-
-fn extra_column_widths_px(visible: &std::collections::HashSet<&'static str>) -> ExtraColumnWidths {
-    // Width AND breakpoint here must match the column's header/cell markup
-    // (`w-[..]` + `hidden md:flex` etc.) in the view below.
-    const ALWAYS: &[(&str, u32)] = &[(COL_ROI, 112)];
-    const MD: &[(&str, u32)] = &[
+/// No `matchMedia` read is involved, so SSR and the first client render stay
+/// identical.
+fn optional_column_width_px(visible: &std::collections::HashSet<&'static str>) -> u32 {
+    // Widths here must match the `w-[..]` on the column's header/cell markup
+    // in the view below.
+    const WIDTHS: &[(&str, u32)] = &[
+        (COL_PROFIT_PER_DAY, 112),
+        (COL_VELOCITY, 88),
+        (COL_DRIFT, 88),
+        (COL_CONFIDENCE, 72),
+        (COL_ROI, 112),
+        (COL_WORLD, 112),
+        (COL_DATACENTER, 112),
         (COL_TREND, 100),
         (COL_SALES_PER_DAY, 140),
         (COL_VOLUME_30D, 88),
+        (COL_LAST_SOLD, 112),
     ];
-    const XL: &[(&str, u32)] = &[(COL_DATACENTER, 112)];
-    let sum = |widths: &[(&str, u32)]| {
-        widths
-            .iter()
-            .filter(|(col, _)| visible.contains(col))
-            .map(|(_, w)| w)
-            .sum()
-    };
-    ExtraColumnWidths {
-        base: sum(ALWAYS),
-        md: sum(MD),
-        xl: sum(XL),
-    }
+    WIDTHS
+        .iter()
+        .filter(|(col, _)| visible.contains(col))
+        .map(|(_, w)| w)
+        .sum()
 }
 
 /// The loading skeleton's version of the grid, in DOM order.
 ///
 /// Each entry's class string is the matching cell's class from the row markup
-/// below — same width, same responsive visibility, same alignment — so the
-/// placeholder columns sit exactly where the real ones will. Keep the two in
-/// step: a column added to the row markup but not here makes the table appear
-/// to gain a column when it loads.
-///
-/// Three cells differ from their real counterparts on purpose. World,
-/// datacenter and last-sold are written `hidden lg:block flex` / `hidden
-/// md:block flex` in the row markup — `block` and `flex` on the same element,
-/// where which one wins is down to stylesheet order rather than intent — so
-/// the skeleton spells them `hidden lg:flex` / `hidden md:flex`, which is what
-/// the `items-center` beside them was reaching for. The widths, which are all
-/// the alignment depends on, are identical either way.
+/// below — same width, same alignment — so the placeholder columns sit exactly
+/// where the real ones will. Keep the two in step: a column added to the row
+/// markup but not here makes the table appear to gain a column when it loads.
 fn analyzer_skeleton_columns(
     visible: &std::collections::HashSet<&'static str>,
 ) -> Vec<SkeletonColumn> {
@@ -910,17 +885,17 @@ fn analyzer_skeleton_columns(
         ),
         (
             Some(COL_VELOCITY),
-            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
             Some(COL_DRIFT),
-            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
             Some(COL_CONFIDENCE),
-            "px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center",
+            "px-3 py-2 w-[72px] shrink-0 flex items-center justify-center",
             SkeletonCell::Badge,
         ),
         (
@@ -936,32 +911,32 @@ fn analyzer_skeleton_columns(
         ),
         (
             Some(COL_WORLD),
-            "px-3 py-2 w-28 shrink-0 hidden lg:flex items-center",
+            "px-3 py-2 w-28 shrink-0 flex items-center",
             SkeletonCell::Text,
         ),
         (
             Some(COL_DATACENTER),
-            "px-3 py-2 w-28 shrink-0 hidden xl:flex items-center",
+            "px-3 py-2 w-28 shrink-0 flex items-center",
             SkeletonCell::Text,
         ),
         (
             Some(COL_TREND),
-            "px-3 py-2 w-[100px] shrink-0 hidden md:flex items-center justify-center",
+            "px-3 py-2 w-[100px] shrink-0 flex items-center justify-center",
             SkeletonCell::Spark,
         ),
         (
             Some(COL_SALES_PER_DAY),
-            "px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center",
+            "px-3 py-2 w-[140px] shrink-0 flex items-center justify-center",
             SkeletonCell::Badge,
         ),
         (
             Some(COL_VOLUME_30D),
-            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
             Some(COL_LAST_SOLD),
-            "px-3 py-2 w-28 shrink-0 hidden md:flex items-center",
+            "px-3 py-2 w-28 shrink-0 flex items-center",
             SkeletonCell::Text,
         ),
     ];
@@ -976,14 +951,13 @@ fn analyzer_skeleton_columns(
 ///
 /// Reads `?cols=` the same way the table does, so the skeleton shows the
 /// columns this particular user has switched on rather than a generic set —
-/// and reproduces the container's `--analyzer-extra-cols-*` variables, which
+/// and reproduces the container's `--analyzer-optional-cols` variable, which
 /// is what makes `.analyzer-grid-row` give the placeholder rows the same
 /// min-width as the real ones.
 #[component]
 fn AnalyzerTableSkeleton() -> impl IntoView {
     let (cols_param, _) = query_signal::<String>("cols");
     let visible = parse_visible_cols(cols_param.get_untracked().as_deref());
-    let widths = extra_column_widths_px(&visible);
     view! {
         <TableSkeleton
             columns=analyzer_skeleton_columns(&visible)
@@ -991,38 +965,10 @@ fn AnalyzerTableSkeleton() -> impl IntoView {
             class="analyzer-table border border-[color:var(--color-outline)]"
             row_class="analyzer-grid-row"
             style=format!(
-                "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
-                widths.base,
-                widths.md,
-                widths.xl,
+                "--analyzer-optional-cols: {}px;",
+                optional_column_width_px(&visible),
             )
         />
-    }
-}
-
-/// Tailwind class that hides a column's "desktop only" note in the Columns
-/// picker once the viewport is wide enough to actually render the column.
-/// `None` for columns visible at every width. Must mirror the `hidden
-/// md:flex` / `lg:flex` / `xl:flex` classes on the column's own markup.
-///
-/// Ticking a hidden column on a phone changes nothing on screen, which reads
-/// as a broken checkbox; the note explains it. The gating is pure CSS so SSR
-/// and the first client render agree.
-fn col_hidden_note_class(col: &str) -> Option<&'static str> {
-    match col {
-        c if c == COL_VELOCITY
-            || c == COL_DRIFT
-            || c == COL_CONFIDENCE
-            || c == COL_TREND
-            || c == COL_SALES_PER_DAY
-            || c == COL_VOLUME_30D
-            || c == COL_LAST_SOLD =>
-        {
-            Some("md:hidden")
-        }
-        c if c == COL_WORLD => Some("lg:hidden"),
-        c if c == COL_DATACENTER => Some("xl:hidden"),
-        _ => None,
     }
 }
 
@@ -2561,14 +2507,6 @@ fn AnalyzerTable(
                                                         on:change=on_change
                                                     />
                                                     <span>{label}</span>
-                                                    {col_hidden_note_class(col)
-                                                        .map(|hide_at| view! {
-                                                            <span class=format!(
-                                                                "text-xs text-[color:var(--color-text-muted)] {hide_at}",
-                                                            )>
-                                                                {t!(i18n, analyzer_columns_picker_desktop_only)}
-                                                            </span>
-                                                        })}
                                                 </label>
                                             }
                                         })
@@ -2646,12 +2584,9 @@ fn AnalyzerTable(
             <div
                 class="analyzer-table border border-[color:var(--color-outline)]"
                 style=move || {
-                    let widths = extra_column_widths_px(&visible_cols());
                     format!(
-                        "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
-                        widths.base,
-                        widths.md,
-                        widths.xl,
+                        "--analyzer-optional-cols: {}px;",
+                        optional_column_width_px(&visible_cols()),
                     )
                 }
             >
@@ -2702,17 +2637,17 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_velocity)>
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_velocity)>
                                         {t!(i18n, analyzer_col_velocity)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
                                         {t!(i18n, analyzer_col_drift)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
+                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
                                         {t!(i18n, analyzer_col_confidence)}
                                     </div>
                                 })}
@@ -2730,7 +2665,7 @@ fn AnalyzerTable(
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -2752,7 +2687,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -2774,7 +2709,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
+                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2782,7 +2717,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
+                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
 
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
@@ -2791,7 +2726,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2799,7 +2734,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 hidden md:flex flex-col leading-tight">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-col leading-tight">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2916,7 +2851,7 @@ fn AnalyzerTable(
                                             None => "—".to_string(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums">
                                                 {text}
                                             </div>
                                         }
@@ -2938,7 +2873,7 @@ fn AnalyzerTable(
                                             <div
                                                 role="cell"
                                                 title=title
-                                                class=format!("px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums {class}")
+                                                class=format!("px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums {class}")
                                             >
                                                 {text}
                                             </div>
@@ -2959,7 +2894,7 @@ fn AnalyzerTable(
                                             },
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 flex items-center justify-center">
                                                 <span class=format!("text-xs font-semibold {class}")>{label}</span>
                                             </div>
                                         }
@@ -2975,7 +2910,7 @@ fn AnalyzerTable(
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden lg:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
                                             })>
@@ -2992,7 +2927,7 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden xl:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
                                             })>
@@ -3029,7 +2964,7 @@ fn AnalyzerTable(
                                             view! { <SingleLineSkeleton /> }.into_any()
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[100px] shrink-0 flex items-center justify-center">
                                                 {inner}
                                             </div>
                                         }
@@ -3055,7 +2990,7 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 flex items-center justify-center">
                                                 {inner}
                                             </div>
                                         }
@@ -3068,7 +3003,7 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums">
                                                 {inner}
                                             </div>
                                         }
@@ -3092,7 +3027,7 @@ fn AnalyzerTable(
                                             })
                                             .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
+                                            <div role="cell" class="px-3 py-2 w-28 shrink-0 truncate flex items-center">
                                                 {last}
                                             </div>
                                         }
@@ -4114,82 +4049,43 @@ mod tests {
     }
 
     #[test]
-    fn the_default_column_set_adds_no_extra_width() {
-        // The stylesheet's per-breakpoint baseline already covers these, so
-        // counting them here would reserve the width twice and leave the grid
-        // scrolling into empty space.
-        let defaults: std::collections::HashSet<&'static str> =
-            DEFAULT_VISIBLE_COLS.iter().copied().collect();
+    fn no_optional_columns_reserves_no_extra_width() {
+        // The stylesheet's 30.75rem baseline is exactly the four always-on
+        // columns, so an empty set must add nothing on top of it.
         assert_eq!(
-            extra_column_widths_px(&defaults),
-            ExtraColumnWidths::default()
-        );
-        assert_eq!(
-            extra_column_widths_px(&std::collections::HashSet::new()),
-            ExtraColumnWidths::default()
+            optional_column_width_px(&std::collections::HashSet::new()),
+            0
         );
     }
 
     #[test]
-    fn every_opt_in_column_reserves_width() {
-        // A column that neither the CSS baseline nor this function accounts
-        // for is one the scrollports stop short of — the column renders and
-        // cannot be reached, which is the bug this whole mechanism exists to
-        // prevent.
+    fn every_optional_column_reserves_width() {
+        // A column this function does not account for is one the scrollports
+        // stop short of — it renders and cannot be reached, which is the bug
+        // this whole mechanism exists to prevent.
         for col in ALL_OPTIONAL_COLS {
-            if DEFAULT_VISIBLE_COLS.contains(col) {
-                continue;
-            }
             let set: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
-            let widths = extra_column_widths_px(&set);
             assert!(
-                widths.base + widths.md + widths.xl > 0,
+                optional_column_width_px(&set) > 0,
                 "{col} reserves no width, so the grid would stop short of it"
             );
         }
     }
 
     #[test]
-    fn breakpoint_hidden_columns_reserve_no_width_below_their_breakpoint() {
-        // The other half of the reservation contract: a `hidden md:flex` /
-        // `hidden xl:flex` column must not widen the scroll range of a
-        // viewport that never renders it, or a phone scrolls into blank
-        // space. `base` is the only bucket a phone-width stylesheet applies,
-        // and `md` is the widest bucket applied below `xl`.
-        let md_gated: std::collections::HashSet<&'static str> =
-            [COL_TREND, COL_SALES_PER_DAY, COL_VOLUME_30D]
-                .into_iter()
-                .collect();
-        let widths = extra_column_widths_px(&md_gated);
-        assert_eq!(widths.base, 0);
-        assert!(widths.md > 0);
-        assert_eq!(widths.xl, 0);
-
-        let xl_gated: std::collections::HashSet<&'static str> =
-            [COL_DATACENTER].into_iter().collect();
-        let widths = extra_column_widths_px(&xl_gated);
-        assert_eq!(widths.base, 0);
-        assert_eq!(widths.md, 0);
-        assert!(widths.xl > 0);
-
-        // ROI renders at every width, so its reservation must too.
-        let always: std::collections::HashSet<&'static str> = [COL_ROI].into_iter().collect();
-        assert!(extra_column_widths_px(&always).base > 0);
-    }
-
-    #[test]
-    fn hidden_note_matches_the_width_buckets() {
-        // Every optional column that is breakpoint-hidden gets a "desktop
-        // only" note in the Columns picker; the two always-visible ones must
-        // not, or the note would be a lie.
-        for col in ALL_OPTIONAL_COLS {
-            let note = col_hidden_note_class(col);
-            if *col == COL_PROFIT_PER_DAY || *col == COL_ROI {
-                assert!(note.is_none(), "{col} is always visible");
-            } else {
-                assert!(note.is_some(), "{col} is breakpoint-hidden");
-            }
-        }
+    fn column_reservations_add_up() {
+        // The reservation is a plain sum now that no column is breakpoint
+        // hidden — nothing is bucketed away from a narrow viewport.
+        let all: std::collections::HashSet<&'static str> =
+            ALL_OPTIONAL_COLS.iter().copied().collect();
+        let summed: u32 = ALL_OPTIONAL_COLS
+            .iter()
+            .map(|col| {
+                let one: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
+                optional_column_width_px(&one)
+            })
+            .sum();
+        assert_eq!(optional_column_width_px(&all), summed);
     }
 
     #[test]

@@ -1294,7 +1294,6 @@
     "analyzer_tooltip_trend": "7 天價格趨勢",
     "analyzer_tooltip_sales_per_day": "30 天銷售速度（每日銷量）",
     "analyzer_tooltip_volume_30d": "30 天總銷售量（銷售次數）",
-    "analyzer_columns_picker_desktop_only": "僅限桌面端",
     "analyzer_last_sold_days_ago": "%count%天前",
     "analyzer_last_sold_hours_ago": "%count%小時前",
     "analyzer_last_sold_just_now": "剛剛",

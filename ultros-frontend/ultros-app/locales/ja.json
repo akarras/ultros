@@ -1294,7 +1294,6 @@
     "analyzer_tooltip_trend": "7日間の価格推移",
     "analyzer_tooltip_sales_per_day": "30日間の販売速度（1日あたりの販売数）",
     "analyzer_tooltip_volume_30d": "30日間の合計販売量（販売回数）",
-    "analyzer_columns_picker_desktop_only": "PCのみ",
     "analyzer_last_sold_days_ago": "%count%日前",
     "analyzer_last_sold_hours_ago": "%count%時間前",
     "analyzer_last_sold_just_now": "たった今",
