@@ -19,10 +19,6 @@ pub enum RangePreset {
 
 impl RangePreset {
     /// Display order for the button row.
-    ///
-    /// Currently unused in this module; first wired into chart components in
-    /// Tasks 6–9 of the sale-history-chart-filters plan.
-    #[allow(dead_code)]
     pub const ALL: [RangePreset; 3] = [Self::Week, Self::Month, Self::Year];
 
     /// Window length in seconds. A month is 30 days and a year 365; these
@@ -85,10 +81,6 @@ pub fn resolve_range(
 /// False means the newest sale predates the whole window, so clicking the
 /// button would blank the chart — the button is disabled with a reason
 /// instead.
-///
-/// Currently unused in this module; first wired into chart components in
-/// Tasks 6–9 of the sale-history-chart-filters plan.
-#[allow(dead_code)]
 pub fn preset_has_data(preset: RangePreset, domain_end: i64, now: i64) -> bool {
     domain_end >= now - preset.seconds()
 }

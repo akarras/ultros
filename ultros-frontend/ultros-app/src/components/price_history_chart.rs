@@ -18,6 +18,7 @@ use ultros_charts::theme::Theme;
 use web_sys::PointerEvent;
 use web_sys::wasm_bindgen::JsCast;
 
+use crate::components::chart_query::{RangePreset, preset_has_data};
 use crate::components::chart_toolbar::{ChartToolbar, ChartView};
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
@@ -381,7 +382,14 @@ fn TimelineSlicer(
     #[prop(into)] selected_domain: Signal<Option<(i64, i64)>>,
     #[prop(into)] selected_range: Signal<Option<(i64, i64)>>,
     #[prop(into)] utc_offset_minutes: Signal<i32>,
+    // Converted to a Callback in Task 7 — the window is owned by the route
+    // and backed by the URL, not by this component.
     #[prop(into)] set_selected_range: Callback<Option<(i64, i64)>>,
+    /// The active quick-range preset, read straight off `?range=` so the
+    /// pressed button is exact rather than inferred from the window.
+    #[prop(into)]
+    range_preset: Signal<Option<RangePreset>>,
+    #[prop(into)] set_range_preset: Callback<Option<RangePreset>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let track_ref = NodeRef::<Div>::new();
@@ -489,14 +497,96 @@ fn TimelineSlicer(
                             {range_label}
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        class="shrink-0 rounded-md border border-[color:var(--color-outline)] px-2.5 py-1 text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
-                        disabled=move || selected_range.get().is_none()
-                        on:click=move |_| set_selected_range.run(None)
+                    <div
+                        role="group"
+                        aria-label=move || t_string!(i18n, chart_timeline_label).to_string()
+                        class="inline-flex shrink-0 overflow-hidden rounded-md border border-[color:var(--color-outline)]"
                     >
-                        {t!(i18n, chart_timeline_full_range)}
-                    </button>
+                        {RangePreset::ALL
+                            .into_iter()
+                            .map(|preset| {
+                                let label = move || match preset {
+                                    RangePreset::Week => {
+                                        t_string!(i18n, chart_range_7d).to_string()
+                                    }
+                                    RangePreset::Month => {
+                                        t_string!(i18n, chart_range_1mo).to_string()
+                                    }
+                                    RangePreset::Year => {
+                                        t_string!(i18n, chart_range_1y).to_string()
+                                    }
+                                };
+                                // A window ending before the item's newest
+                                // sale would blank the chart; disable with a
+                                // reason rather than rendering nothing.
+                                let disabled = Signal::derive(move || {
+                                    let now = chrono::Utc::now().timestamp();
+                                    available_domain
+                                        .get()
+                                        .is_some_and(|(_, end)| {
+                                            !preset_has_data(preset, end, now)
+                                        })
+                                });
+                                view! {
+                                    <button
+                                        type="button"
+                                        aria-pressed=move || {
+                                            (range_preset.get() == Some(preset)).to_string()
+                                        }
+                                        prop:disabled=disabled
+                                        title=move || {
+                                            if disabled.get() {
+                                                t_string!(i18n, chart_range_unavailable).to_string()
+                                            } else {
+                                                String::new()
+                                            }
+                                        }
+                                        class=move || {
+                                            let active = range_preset.get() == Some(preset);
+                                            [
+                                                "border-l border-[color:var(--color-outline)] px-2.5 py-1 text-xs transition-colors first:border-l-0 disabled:cursor-not-allowed disabled:opacity-45",
+                                                if active {
+                                                    "bg-brand-600/30 text-brand-100"
+                                                } else {
+                                                    "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                                },
+                                            ]
+                                                .join(" ")
+                                        }
+                                        on:click=move |_| set_range_preset.run(Some(preset))
+                                    >
+                                        {label}
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
+                        <button
+                            type="button"
+                            aria-pressed=move || {
+                                (range_preset.get().is_none() && selected_range.get().is_none())
+                                    .to_string()
+                            }
+                            class=move || {
+                                let active = range_preset.get().is_none()
+                                    && selected_range.get().is_none();
+                                [
+                                    "border-l border-[color:var(--color-outline)] px-2.5 py-1 text-xs transition-colors",
+                                    if active {
+                                        "bg-brand-600/30 text-brand-100"
+                                    } else {
+                                        "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                    },
+                                ]
+                                    .join(" ")
+                            }
+                            on:click=move |_| {
+                                set_range_preset.run(None);
+                                set_selected_range.run(None);
+                            }
+                        >
+                            {move || t_string!(i18n, chart_range_all).to_string()}
+                        </button>
+                    </div>
                 </div>
                 <div
                     node_ref=track_ref
@@ -773,6 +863,8 @@ pub fn PriceHistoryChart(
     #[prop(into)]
     selected_range: Signal<Option<(i64, i64)>>,
     #[prop(into)] on_range_change: Callback<Option<(i64, i64)>>,
+    #[prop(into)] range_preset: Signal<Option<RangePreset>>,
+    #[prop(into)] set_range_preset: Callback<Option<RangePreset>>,
 ) -> impl IntoView {
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
@@ -1298,6 +1390,8 @@ pub fn PriceHistoryChart(
                 selected_range=selected_range
                 utc_offset_minutes=utc_offset
                 set_selected_range=set_selected_range
+                range_preset=range_preset
+                set_range_preset=set_range_preset
             />
             <div
                 role="img"

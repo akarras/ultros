@@ -1348,9 +1348,6 @@ pub fn ChartWrapper(
     });
 
     // Selecting a preset clears the absolute bounds for the same reason.
-    // Currently unused: the quick-range preset buttons that call this land
-    // in Task 8.
-    #[allow(unused_variables)]
     let set_range_preset = Callback::new(move |preset: Option<RangePreset>| {
         set_from_param.set(None);
         set_to_param.set(None);
@@ -1540,6 +1537,8 @@ pub fn ChartWrapper(
                                     set_group=set_group
                                     selected_range=selected_range
                                     on_range_change=set_selected_range
+                                    range_preset=range_param
+                                    set_range_preset=set_range_preset
                                 />
 
                                 {move || {
