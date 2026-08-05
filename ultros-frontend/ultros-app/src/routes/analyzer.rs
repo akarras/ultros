@@ -156,7 +156,10 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    websocket::{FilterPredicate, SocketMessageType, is_analyzer_market_update_relevant},
+    websocket::{
+        EventType, FilterPredicate, ServerClient, SocketMessageType,
+        is_analyzer_market_update_relevant,
+    },
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 use web_sys::wasm_bindgen::JsCast;
@@ -309,6 +312,57 @@ fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
 
 #[derive(Clone, Debug)]
 struct ProfitTable(Vec<Arc<ProfitData>>);
+
+/// Cheap-to-compare handle on a built [`ProfitTable`].
+///
+/// The table is rebuilt from scratch every time the market boards refetch and
+/// holds ~20k rows, so it lives in a `Memo` — and `Memo` needs `PartialEq`.
+/// Comparing the tables element-wise on every realtime tick would cost more
+/// than the rebuild that produced them, and identity is the question actually
+/// being asked (a rebuild always yields a fresh `Arc`), so this compares by
+/// pointer instead.
+#[derive(Clone, Debug)]
+struct ProfitTableHandle(Arc<ProfitTable>);
+
+impl ProfitTableHandle {
+    fn new(table: ProfitTable) -> Self {
+        Self(Arc::new(table))
+    }
+
+    fn rows(&self) -> &[Arc<ProfitData>] {
+        &self.0.0
+    }
+}
+
+impl PartialEq for ProfitTableHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// The market boards as the table sees them.
+#[derive(Clone, Debug, PartialEq)]
+struct MarketState {
+    /// World these boards belong to. Tracked so a world change can drop
+    /// `table` rather than carry it — every other transition keeps it.
+    world: String,
+    /// The built table, held across a refetch.
+    ///
+    /// A leptos resource reports `None` while it is loading, including on a
+    /// refetch of data it already has. Following that to `None` would empty
+    /// the table for the length of every realtime tick, which is the flash
+    /// this is here to avoid; the previous table stays up until the new one
+    /// is ready.
+    table: Option<ProfitTableHandle>,
+    /// At least one board resolved to an error. Only actionable when there is
+    /// no table to fall back on.
+    failed: bool,
+}
+
+/// How long realtime market ticks are coalesced before the affected boards are
+/// refetched. A busy world delivers relevant listing events in bursts, and each
+/// one used to trigger its own round of fetches.
+const MARKET_REFRESH_DEBOUNCE_MS: u32 = 400;
 
 fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
     listings
@@ -987,6 +1041,98 @@ fn available_filters(active: &[&str]) -> Vec<&'static str> {
 /// list, and only one of them may query it.
 const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
 
+/// Which of the analyzer's three market boards a realtime event invalidates.
+///
+/// A listing event names exactly one world, and each board is a different
+/// slice of the market: the sell world's own cheapest listings, the region's,
+/// and the other connected regions'. Refetching all three for every event —
+/// which is what a single shared refresh counter does — costs a full region
+/// board per connected region for a change that can only have moved one of
+/// them.
+///
+/// The flags are not exclusive: a listing on the sell world moves the world
+/// board *and* the region board that contains it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MarketScope {
+    world: bool,
+    region: bool,
+    cross_region: bool,
+}
+
+impl MarketScope {
+    const NONE: Self = Self {
+        world: false,
+        region: false,
+        cross_region: false,
+    };
+    /// Everything. Used for `Stale`, which names no world.
+    const ALL: Self = Self {
+        world: true,
+        region: true,
+        cross_region: true,
+    };
+
+    fn is_empty(self) -> bool {
+        self == Self::NONE
+    }
+
+    fn merge(self, other: Self) -> Self {
+        Self {
+            world: self.world || other.world,
+            region: self.region || other.region,
+            cross_region: self.cross_region || other.cross_region,
+        }
+    }
+}
+
+/// Classify a relevant market event into the boards it invalidates.
+///
+/// Callers are expected to have already run `is_analyzer_market_update_relevant`;
+/// this only decides *what to refetch*, not *whether to*. An event on a world
+/// that resolves to no region at all falls back to [`MarketScope::ALL`] rather
+/// than being dropped — a board that silently stops refreshing is a worse
+/// failure than an extra fetch.
+fn classify_market_update(
+    message: &ServerClient,
+    sell_world_id: i32,
+    region: Option<&str>,
+    worlds: &WorldHelper,
+) -> MarketScope {
+    let event = match message {
+        ServerClient::Listings(event) => event,
+        ServerClient::Stale { .. } => return MarketScope::ALL,
+        _ => return MarketScope::NONE,
+    };
+    let data = match event {
+        EventType::Added(data) | EventType::Removed(data) | EventType::Updated(data) => data,
+    };
+
+    let event_region = worlds
+        .lookup_selector(AnySelector::World(data.world_id))
+        .map(|world| {
+            AnyResult::Region(worlds.get_region(world))
+                .get_name()
+                .to_string()
+        });
+    let (Some(event_region), Some(region)) = (event_region, region) else {
+        return MarketScope::ALL;
+    };
+
+    if event_region != region {
+        return MarketScope {
+            cross_region: true,
+            ..MarketScope::NONE
+        };
+    }
+    // Same region as the sell world. The region board always moves; the world
+    // board only when the event landed on the sell world itself.
+    MarketScope {
+        world: data.world_id == sell_world_id,
+        region: true,
+        cross_region: false,
+    }
+}
+
 /// One sortable column header.
 ///
 /// Clicking an inactive column sorts by it descending; clicking the column
@@ -1056,41 +1202,56 @@ fn SortHeader(
 
 #[component]
 fn AnalyzerTable(
-    sales: RecentSales,
-    global_cheapest_listings: CheapestListings,
-    world_cheapest_listings: CheapestListings,
-    cross_region: Vec<CheapestListings>,
+    /// The built profit table, or `None` while the market boards are still
+    /// loading for the first time.
+    ///
+    /// Reactive rather than the three raw boards it is built from, and that is
+    /// the whole point: a realtime market tick refetches those boards, and
+    /// taking them as plain values meant this component was disposed and
+    /// rebuilt on every tick — throwing away the scroll position, the
+    /// accumulated ClickHouse enrichment (so every visible row re-fetched it),
+    /// the `requested` dedupe set, and the realtime subscription that had just
+    /// delivered the event. As a signal, a tick invalidates
+    /// `filtered_rows` -> `sorted_data` and the `VirtualScroller`'s keyed
+    /// `<For>` diffs only the rows that actually moved.
+    profits: Memo<Option<ProfitTableHandle>>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
-    filter_outliers: bool,
+    /// Outlier-filtering toggle state. Only drives the toggle's own label
+    /// here — the caller applies it when building `profits`.
+    filter_outliers: Signal<bool>,
     /// Current world's region name, if resolvable. Only used to exclude the
     /// current region from the cross-region opt-out list in the Columns
-    /// popover — a plain value like `filter_outliers`, not a reactive prop,
-    /// since this component remounts whenever the caller's region changes.
-    region: Option<String>,
+    /// popover.
+    region: Signal<Option<String>>,
     /// Current state of the cross-region toggle, mirroring `filter_outliers`.
-    cross_region_enabled: bool,
+    cross_region_enabled: Signal<bool>,
     /// The caller's own `query_signal` setters for `?cross=` / `?filter-outliers=`.
     /// Threaded through as props rather than re-derived here so there is a
     /// single `query_signal` per URL key instead of two independent ones
     /// drifting in and out of the router's query-mutation queue.
     set_cross_region_enabled: SignalSetter<Option<bool>>,
     set_filter_outliers: SignalSetter<Option<bool>>,
-    on_market_update: Callback<()>,
-    /// Keeps the name chip mounted (in edit state) between "picked from the
-    /// + Filter menu" and "first committed value" — an empty ?name= URL
-    /// param is not relied on to round-trip. Owned by `AnalyzerWorldView`:
-    /// this component lives inside the Suspense closure and remounts on
-    /// every realtime market tick, so a signal declared here would be
-    /// destroyed mid-keystroke along with the chip being typed into.
-    name_chip_pending: RwSignal<bool>,
-    /// True once client hydration has finished (Effect-set by the caller).
-    /// Also owned by `AnalyzerWorldView` — declared here it would reset to
-    /// false on every market-tick remount, rendering one full unfiltered
-    /// pass per tick whenever `?name=` is active.
-    hydrated: RwSignal<bool>,
+    /// Fired when a realtime event invalidates one or more market boards,
+    /// carrying which ones so the caller can refetch just those.
+    on_market_update: Callback<MarketScope>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    // Keeps the name chip mounted (in edit state) between "picked from the
+    // + Filter menu" and "first committed value" — an empty ?name= URL param
+    // is not relied on to round-trip.
+    //
+    // This and `hydrated` below used to be owned by `AnalyzerWorldView`,
+    // because this component was rebuilt on every realtime market tick and a
+    // signal declared here was destroyed mid-keystroke (and `hydrated` reset
+    // to false, rendering one unfiltered pass per tick under an active
+    // `?name=`). `profits` being reactive is what removed the rebuild, so they
+    // belong here again.
+    let name_chip_pending = RwSignal::new(false);
+    // True once client hydration has finished; gates localized-name matching
+    // (see the name filter below).
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| hydrated.set(true));
     let realtime = use_realtime();
     let realtime_for_market = realtime.clone();
     let rt_status = realtime.clone();
@@ -1102,14 +1263,6 @@ fn AnalyzerTable(
     });
     let rt_update = realtime.clone();
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
-    let profits = ProfitTable::new(
-        sales,
-        global_cheapest_listings,
-        world_cheapest_listings,
-        cross_region,
-        filter_outliers,
-    );
-
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
@@ -1383,8 +1536,15 @@ fn AnalyzerTable(
         // See `FilteredRows::rows_lacking_data`. Counted by the combined
         // drift/confidence/volume closure below.
         let mut rows_lacking_data = 0usize;
+        // No table yet (first load still in flight). An empty result here is
+        // never shown — the caller's `<Transition>` is holding the skeleton
+        // until the boards resolve — but it must not be mistaken for "every
+        // row filtered out" either, so nothing else runs off the back of it.
+        let Some(profits) = profits.get() else {
+            return FilteredRows::default();
+        };
         let mut sorted_data = profits
-            .0
+            .rows()
             .iter()
             .map(|data| {
                 let estimated = if include_tax {
@@ -1654,6 +1814,10 @@ fn AnalyzerTable(
         let filter = world_filter.and(FilterPredicate::Items(item_ids.clone()));
         let worlds = worlds_for_market.clone();
         let subscribed_item_ids = item_ids.clone();
+        // Read untracked: the subscription is keyed on the visible window and
+        // the sell world, and re-subscribing every time the region name is
+        // re-derived would churn the socket for nothing.
+        let event_region = region.get_untracked();
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
             if is_analyzer_market_update_relevant(
                 &message,
@@ -1662,7 +1826,15 @@ fn AnalyzerTable(
                 buy_filter,
                 &worlds,
             ) {
-                on_market_update.run(());
+                let scope = classify_market_update(
+                    &message,
+                    sell_world_id,
+                    event_region.as_deref(),
+                    &worlds,
+                );
+                if !scope.is_empty() {
+                    on_market_update.run(scope);
+                }
             }
         });
         analyzer_market_subscription.set_value(Some(sub));
@@ -2399,7 +2571,7 @@ fn AnalyzerTable(
                                     // the wrapping flex container above.
                                     <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
                                         <Toggle
-                                            checked=Signal::derive(move || cross_region_enabled)
+                                            checked=cross_region_enabled
                                             set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
                                                 val.then_some(true),
                                             ))
@@ -2407,7 +2579,7 @@ fn AnalyzerTable(
                                             unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
                                         />
                                         <Toggle
-                                            checked=Signal::derive(move || filter_outliers)
+                                            checked=filter_outliers
                                             set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
                                                 val.then_some(true),
                                             ))
@@ -2416,13 +2588,12 @@ fn AnalyzerTable(
                                         />
                                         <div
                                             class="flex flex-wrap gap-2"
-                                            class:hidden=move || !cross_region_enabled
+                                            class:hidden=move || !cross_region_enabled.get()
                                         >
                                             {
-                                                let region = region.clone();
                                                 move || {
-                                                    let region = region.clone();
                                                     region
+                                                        .get()
                                                         .map(|region| {
                                                             CONNECTED_REGIONS
                                                                 .iter()
@@ -2949,9 +3120,8 @@ fn AnalyzerTable(
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
-    // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
-    // closure and remounts on every market refetch, which would keep undoing a
-    // filter the user had cleared.
+    // Seeded here rather than in AnalyzerTable so it runs exactly once per
+    // visit, independent of anything the table does with its own state.
     //
     // A bare URL is a first visit with nothing to honor, so it gets a whole
     // view — the user's saved default, or "Realistic flips". Anything else is
@@ -2962,21 +3132,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     if !seed_flip_finder_default_view() {
         seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
     }
-    // Owned here for the same reason as the seed above — AnalyzerTable
-    // remounts on every realtime market tick, and this state must survive
-    // those remounts. `name_chip_pending` keeps a not-yet-committed name
-    // chip alive while the user is still typing into it; `hydrated` is the
-    // one-shot hydration gate for localized-name matching (see the name
-    // filter inside AnalyzerTable), which must not flip back to false and
-    // re-render an unfiltered pass on every tick.
-    let name_chip_pending = RwSignal::new(false);
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
-    let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
+    // One refresh counter per board rather than one for all three. A realtime
+    // listing event moves exactly one world, so refetching the region board of
+    // every connected region for it — which a single shared counter does — is
+    // several megabytes of JSON for a change that touched one row. See
+    // `classify_market_update`.
+    let (world_board_version, set_world_board_version) = signal(0_u64);
+    let (region_board_version, set_region_board_version) = signal(0_u64);
+    let (cross_board_version, set_cross_board_version) = signal(0_u64);
     let sales = ArcResource::new(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
@@ -2988,7 +3153,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         move || {
             (
                 params.with(|p| p.get("world").clone()),
-                market_refresh_version.get(),
+                world_board_version.get(),
             )
         },
         move |(world, refresh_version)| async move {
@@ -3015,7 +3180,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     });
 
     let global_cheapest_listings = ArcResource::new(
-        move || (region(), market_refresh_version.get()),
+        move || (region(), region_board_version.get()),
         move |(region, refresh_version)| async move {
             get_cheapest_listings_live(region?.as_str(), refresh_version).await
         },
@@ -3040,7 +3205,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                 cross_region_enabled(),
                 region(),
                 enabled_regions(),
-                market_refresh_version.get(),
+                cross_board_version.get(),
             )
         },
         move |(enabled, region, enabled_regions, refresh_version)| async move {
@@ -3063,11 +3228,101 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
 
-    let refetch_market_data = Callback::new(move |_| {
-        set_market_refresh_version.update(|version| {
-            *version = version.wrapping_add(1);
+    // Coalesce realtime ticks. A busy world delivers many relevant listing
+    // events per second and each one previously refetched every board
+    // immediately; the scopes accumulate over the window and flush once.
+    // `StoredValue` so claiming a scope never retriggers anything reactive.
+    let pending_scope = StoredValue::new(MarketScope::NONE);
+    let flush_id = StoredValue::new(0u64);
+    let refetch_market_data = Callback::new(move |scope: MarketScope| {
+        pending_scope.update_value(|pending| *pending = pending.merge(scope));
+        let id = flush_id.with_value(|id| id.wrapping_add(1));
+        flush_id.set_value(id);
+        leptos::task::spawn_local(async move {
+            TimeoutFuture::new(MARKET_REFRESH_DEBOUNCE_MS).await;
+            // Superseded by a later tick, or the component was disposed
+            // mid-window (route change) — either way this flush is stale.
+            if flush_id.try_with_value(|current| *current == id) != Some(true) {
+                return;
+            }
+            let Some(scope) = pending_scope.try_update_value(|pending| {
+                let scope = *pending;
+                *pending = MarketScope::NONE;
+                scope
+            }) else {
+                return;
+            };
+            if scope.world {
+                let _ = set_world_board_version.try_update(|v| *v = v.wrapping_add(1));
+            }
+            if scope.region {
+                let _ = set_region_board_version.try_update(|v| *v = v.wrapping_add(1));
+            }
+            if scope.cross_region {
+                let _ = set_cross_board_version.try_update(|v| *v = v.wrapping_add(1));
+            }
         });
     });
+
+    // `ArcResource` is not `Copy`, and the memo below moves the originals in;
+    // the suspense-registration closure in the view needs its own handles.
+    let register_world = world_cheapest_listings.clone();
+    let register_sales = sales.clone();
+    let register_region = global_cheapest_listings.clone();
+    let register_cross = cross_region.clone();
+
+    // The single expensive derivation, and the reason `AnalyzerTable` can now
+    // survive a refetch: the boards are read *here*, so a realtime tick
+    // re-runs only this memo. The table component below is built once and
+    // updated in place.
+    let market = Memo::new(move |prev: Option<&MarketState>| {
+        let world = world.get();
+        // A world change invalidates the previous table outright. Everything
+        // else is allowed to hold it (see `MarketState::table`), but showing
+        // one world's rows under another world's name is never right.
+        let stale = prev
+            .filter(|p| p.world == world)
+            .and_then(|p| p.table.clone());
+        let filter_outliers = filter_outliers().unwrap_or(false);
+        let cross = cross_region
+            .get()
+            .and_then(|r: Result<_, AppError>| r.ok())
+            .unwrap_or_default();
+        let world_board = world_cheapest_listings.get();
+        let sales_board = sales.get();
+        let region_board = global_cheapest_listings.get();
+        let failed = matches!(world_board, Some(Err(_)))
+            || matches!(sales_board, Some(Err(_)))
+            || matches!(region_board, Some(Err(_)));
+        match (world_board, sales_board, region_board) {
+            (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => MarketState {
+                world,
+                table: Some(ProfitTableHandle::new(ProfitTable::new(
+                    s,
+                    g,
+                    w,
+                    cross,
+                    filter_outliers,
+                ))),
+                failed: false,
+            },
+            _ => MarketState {
+                world,
+                table: stale,
+                failed,
+            },
+        }
+    });
+    // Narrow views over `market`. `has_table` is a `bool` memo on purpose: it
+    // is what gates the table's existence, and gating on `market` itself would
+    // rebuild the whole component on every tick — the bug this change fixes.
+    let profits = Memo::new(move |_| market.with(|m| m.table.clone()));
+    let has_table = Memo::new(move |_| market.with(|m| m.table.is_some()));
+    let load_failed = Memo::new(move |_| market.with(|m| m.failed && m.table.is_none()));
+    let worlds = use_context::<LocalWorldData>()
+        .expect("Worlds should always be populated here")
+        .0
+        .unwrap();
 
     view! {
         <div class="main-content p-2 sm:p-6">
@@ -3104,45 +3359,31 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // the table virtualizes against the window, so the page
                     // itself is what scrolls.
                     <div>
-                        <Suspense fallback=AnalyzerTableSkeleton>
+                        // `<Transition>`, not `<Suspense>`: a realtime market
+                        // tick refetches a board, which puts this boundary back
+                        // into a pending state. Suspense answers that by showing
+                        // its fallback, so every tick flashed the skeleton over
+                        // a table the user was reading. Transition keeps the
+                        // children mounted instead and lets `market` above swap
+                        // the rows in underneath.
+                        <Transition fallback=AnalyzerTableSkeleton>
+                            // Registers the boards with this suspense boundary,
+                            // and nothing else. The reads that build the table
+                            // live in the `market` memo, which runs under its
+                            // own owner and so cannot register anything here —
+                            // without this the server would stream the skeleton
+                            // instead of waiting for the data. Renders no DOM.
                             {move || {
-                                let world_cheapest = world_cheapest_listings.get();
-                                let sales = sales.get();
-                                let global_cheapest_listings = global_cheapest_listings.get();
-                                let cross_region = cross_region
-                                    .get()
-                                    .and_then(|r: Result<_, AppError>| r.ok())
-                                    .unwrap_or_default();
-                                let worlds = use_context::<LocalWorldData>()
-                                    .expect("Worlds should always be populated here")
-                                    .0
-                                    .unwrap();
-                                match (world_cheapest, sales, global_cheapest_listings) {
-                                    (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => {
+                                let _ = register_world.get();
+                                let _ = register_sales.get();
+                                let _ = register_region.get();
+                                let _ = register_cross.get();
+                            }}
+                            <Show
+                                when=has_table
+                                fallback=move || {
+                                    if load_failed.get() {
                                         Either::Left(
-
-                                            view! {
-                                                <AnalyzerTable
-                                                    sales=s
-                                                    global_cheapest_listings=g
-                                                    world_cheapest_listings=w
-                                                    cross_region
-                                                    worlds
-                                                    world=world
-                                                    filter_outliers=filter_outliers().unwrap_or(false)
-                                                    region=region().ok()
-                                                    cross_region_enabled=cross_region_enabled().unwrap_or_default()
-                                                    set_cross_region_enabled=set_cross_region_enabled
-                                                    set_filter_outliers=set_filter_outliers
-                                                    on_market_update=refetch_market_data
-                                                    name_chip_pending=name_chip_pending
-                                                    hydrated=hydrated
-                                                />
-                                            },
-                                        )
-                                    }
-                                    _ => {
-                                        Either::Right(
                                             view! {
                                                 <div class="text-xl text-[color:var(--color-text)] text-center p-8
                                                 bg-brand-900/20 rounded-2xl border border-white/10">
@@ -3150,10 +3391,30 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                 </div>
                                             },
                                         )
+                                    } else {
+                                        Either::Right(view! { <AnalyzerTableSkeleton /> })
                                     }
                                 }
-                            }}
-                        </Suspense>
+                            >
+                                <AnalyzerTable
+                                    profits=profits
+                                    // `<Show>` takes a `ChildrenFn`, so this
+                                    // has to stay callable more than once.
+                                    worlds=worlds.clone()
+                                    world=world
+                                    filter_outliers=Signal::derive(move || {
+                                        filter_outliers().unwrap_or(false)
+                                    })
+                                    region=Signal::derive(move || region().ok())
+                                    cross_region_enabled=Signal::derive(move || {
+                                        cross_region_enabled().unwrap_or_default()
+                                    })
+                                    set_cross_region_enabled=set_cross_region_enabled
+                                    set_filter_outliers=set_filter_outliers
+                                    on_market_update=refetch_market_data
+                                />
+                            </Show>
+                        </Transition>
                     </div>
                 </div>
         </div>
@@ -3269,6 +3530,177 @@ mod tests {
             item_id,
             hq,
             sales: prices_and_days.iter().map(|(p, d)| sale(*p, *d)).collect(),
+        }
+    }
+
+    mod market_scope {
+        use super::*;
+        use ultros_api_types::websocket::ListingEventData;
+        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+
+        /// Two regions so a cross-region event has somewhere to come from.
+        /// World 100 is the sell world; 101 shares its region; 200 does not.
+        fn helper() -> WorldHelper {
+            WorldData {
+                regions: vec![
+                    Region {
+                        id: 1,
+                        name: "North-America".into(),
+                        datacenters: vec![Datacenter {
+                            id: 10,
+                            name: "Aether".into(),
+                            region_id: 1,
+                            worlds: vec![
+                                World {
+                                    id: 100,
+                                    name: "Adamantoise".into(),
+                                    datacenter_id: 10,
+                                },
+                                World {
+                                    id: 101,
+                                    name: "Cactuar".into(),
+                                    datacenter_id: 10,
+                                },
+                            ],
+                        }],
+                    },
+                    Region {
+                        id: 2,
+                        name: "Europe".into(),
+                        datacenters: vec![Datacenter {
+                            id: 20,
+                            name: "Chaos".into(),
+                            region_id: 2,
+                            worlds: vec![World {
+                                id: 200,
+                                name: "Cerberus".into(),
+                                datacenter_id: 20,
+                            }],
+                        }],
+                    },
+                ],
+            }
+            .into()
+        }
+
+        fn listing_event(world_id: i32) -> ServerClient {
+            ServerClient::Listings(EventType::Added(ListingEventData {
+                item_id: 42,
+                world_id,
+                listings: vec![],
+            }))
+        }
+
+        const SELL_WORLD: i32 = 100;
+
+        #[test]
+        fn event_on_the_sell_world_moves_the_world_and_region_boards() {
+            // The world board is a slice of the region board, so a listing on
+            // the sell world invalidates both — but never another region's.
+            let scope = classify_market_update(
+                &listing_event(SELL_WORLD),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                scope,
+                MarketScope {
+                    world: true,
+                    region: true,
+                    cross_region: false
+                }
+            );
+        }
+
+        #[test]
+        fn event_elsewhere_in_the_region_leaves_the_world_board_alone() {
+            let scope = classify_market_update(
+                &listing_event(101),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                scope,
+                MarketScope {
+                    world: false,
+                    region: true,
+                    cross_region: false
+                }
+            );
+        }
+
+        #[test]
+        fn event_in_another_region_only_moves_the_cross_region_board() {
+            let scope = classify_market_update(
+                &listing_event(200),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                scope,
+                MarketScope {
+                    world: false,
+                    region: false,
+                    cross_region: true
+                }
+            );
+        }
+
+        #[test]
+        fn stale_refetches_everything() {
+            // `Stale` names no world, so there is nothing to narrow on.
+            let stale = ServerClient::Stale { subscription_id: 1 };
+            assert_eq!(
+                classify_market_update(&stale, SELL_WORLD, Some("North-America"), &helper()),
+                MarketScope::ALL
+            );
+        }
+
+        #[test]
+        fn an_unresolvable_world_refetches_everything() {
+            // Failing open matters more than the saved bytes: a board that
+            // silently stops refreshing shows stale prices indefinitely.
+            assert_eq!(
+                classify_market_update(
+                    &listing_event(9999),
+                    SELL_WORLD,
+                    Some("North-America"),
+                    &helper()
+                ),
+                MarketScope::ALL
+            );
+            assert_eq!(
+                classify_market_update(&listing_event(101), SELL_WORLD, None, &helper()),
+                MarketScope::ALL
+            );
+        }
+
+        #[test]
+        fn merging_a_burst_of_ticks_unions_the_boards() {
+            // What the debounce window accumulates: separate events on the
+            // sell world and on another region must refetch both, not the
+            // last one to arrive.
+            let own = classify_market_update(
+                &listing_event(SELL_WORLD),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            let foreign = classify_market_update(
+                &listing_event(200),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                MarketScope::NONE.merge(own).merge(foreign),
+                MarketScope::ALL
+            );
+            assert!(MarketScope::NONE.is_empty());
+            assert!(!own.is_empty());
         }
     }
 
