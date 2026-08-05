@@ -99,11 +99,28 @@ fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
     (((ts - domain.0) as f64 / span as f64) * 100.0).clamp(0.0, 100.0)
 }
 
-fn format_timeline_ts(ts: i64, utc_offset_minutes: i32) -> String {
+/// Timestamp format for a label describing a window of `span_seconds`.
+///
+/// The old fixed `%m-%d %H:%M` rendered a three-year domain as
+/// `02-21 18:00 - 07-05 18:00`, which reads as a four-month window in the
+/// current year. Each tier carries exactly the precision its span needs, and
+/// none of them omit the year.
+fn timeline_format(span_seconds: i64) -> &'static str {
+    const DAY: i64 = 86_400;
+    if span_seconds >= 2 * 365 * DAY {
+        "%Y-%m"
+    } else if span_seconds >= 30 * DAY {
+        "%Y-%m-%d"
+    } else {
+        "%Y-%m-%d %H:%M"
+    }
+}
+
+fn format_timeline_ts(ts: i64, utc_offset_minutes: i32, span_seconds: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
         .map(|dt| {
             (dt + chrono::TimeDelta::minutes(utc_offset_minutes as i64))
-                .format("%m-%d %H:%M")
+                .format(timeline_format(span_seconds))
                 .to_string()
         })
         .unwrap_or_default()
@@ -310,14 +327,40 @@ mod tests {
 
     #[test]
     fn test_format_timeline_ts() {
-        // 1609459200 is 2021-01-01 00:00:00 UTC
-        assert_eq!(format_timeline_ts(1609459200, 0), "01-01 00:00");
-        // offset of +60 minutes
-        assert_eq!(format_timeline_ts(1609459200, 60), "01-01 01:00");
-        // offset of -120 minutes
-        assert_eq!(format_timeline_ts(1609459200, -120), "12-31 22:00");
-        // different time 2021-07-04 15:30:00 UTC = 1625412600
-        assert_eq!(format_timeline_ts(1625412600, 0), "07-04 15:30");
+        const DAY: i64 = 86_400;
+        // Under 30 days: full precision, including the year. A 7-day drag
+        // into a past year is exactly where the old fixed "%m-%d %H:%M"
+        // misled most.
+        // 1609459200 is 2021-01-01 00:00:00 UTC.
+        assert_eq!(
+            format_timeline_ts(1609459200, 0, 7 * DAY),
+            "2021-01-01 00:00"
+        );
+        assert_eq!(
+            format_timeline_ts(1609459200, 60, 7 * DAY),
+            "2021-01-01 01:00"
+        );
+        assert_eq!(
+            format_timeline_ts(1609459200, -120, 7 * DAY),
+            "2020-12-31 22:00"
+        );
+
+        // 30 days and over: the clock stops carrying information.
+        assert_eq!(format_timeline_ts(1609459200, 0, 60 * DAY), "2021-01-01");
+
+        // Two years and over: the day stops carrying information too. This
+        // is the reported case — a 2023..2026 domain used to render as
+        // "02-21 18:00", which reads as the current year.
+        assert_eq!(format_timeline_ts(1609459200, 0, 1200 * DAY), "2021-01");
+    }
+
+    #[test]
+    fn timeline_format_tiers_switch_at_their_boundaries() {
+        const DAY: i64 = 86_400;
+        assert_eq!(timeline_format(30 * DAY - 1), "%Y-%m-%d %H:%M");
+        assert_eq!(timeline_format(30 * DAY), "%Y-%m-%d");
+        assert_eq!(timeline_format(2 * 365 * DAY - 1), "%Y-%m-%d");
+        assert_eq!(timeline_format(2 * 365 * DAY), "%Y-%m");
     }
 
     #[test]
@@ -385,10 +428,11 @@ fn TimelineSlicer(
             .get()
             .map(|(start, end)| {
                 let offset = utc_offset_minutes.get();
+                let span = end - start;
                 format!(
                     "{} - {}",
-                    format_timeline_ts(start, offset),
-                    format_timeline_ts(end, offset)
+                    format_timeline_ts(start, offset, span),
+                    format_timeline_ts(end, offset, span)
                 )
             })
             .unwrap_or_default()
@@ -438,7 +482,10 @@ fn TimelineSlicer(
                         <div class="text-xs font-semibold uppercase text-[color:var(--color-text-muted)]">
                             {t!(i18n, chart_timeline_label)}
                         </div>
-                        <div class="truncate text-xs tabular-nums text-[color:var(--color-text)]/75">
+                        <div
+                            class="truncate text-xs tabular-nums text-[color:var(--color-text)]/75"
+                            title=range_label
+                        >
                             {range_label}
                         </div>
                     </div>
@@ -1269,9 +1316,10 @@ pub fn PriceHistoryChart(
                         .get()
                         .map(|(start, end)| {
                             let offset = utc_offset.get();
+                            let span = end - start;
                             (
-                                format_timeline_ts(start, offset),
-                                format_timeline_ts(end, offset),
+                                format_timeline_ts(start, offset, span),
+                                format_timeline_ts(end, offset, span),
                             )
                         })
                         .unwrap_or_else(|| {
@@ -1480,6 +1528,7 @@ pub fn PriceHistoryChart(
                                                     let label = format_timeline_ts(
                                                         ts.and_utc().timestamp() + bucket_secs / 2,
                                                         utc_offset.get(),
+                                                        bucket_secs,
                                                     );
                                                     let rows = g
                                                         .cells
