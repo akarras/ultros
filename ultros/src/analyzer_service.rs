@@ -3,7 +3,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     fmt::Display,
     io::{Read, Write},
     sync::{
@@ -24,7 +24,6 @@ use ultros_db::{
     UltrosDb,
     entity::{active_listing, sale_history},
 };
-use universalis::{ItemId, WorldId};
 
 use crate::event::{BusRecv, EventReceivers, handle_bus_recv};
 use crate::trend_candidates::{TrendCandidate, select_trend_candidates};
@@ -278,51 +277,25 @@ impl CheapestListings {
         *entry = cheapest_listing.min(*entry);
     }
 
-    async fn remove_listing(
-        &mut self,
-        listing: &ActiveListing,
-        id: AnySelector,
-        world_cache: &WorldCache,
-        ultros_db: &UltrosDb,
-    ) {
-        // if this was the cheapest listing we need to ask the database for the new cheapest item
-        let key = listing.into();
+    /// Drops `listing` if it is at or below the stored cheapest price, returning
+    /// the key whose price now has to be re-read from the database.
+    ///
+    /// Deliberately synchronous and DB-free. This used to run the refill query
+    /// itself, which meant the caller held a write lock across a Postgres
+    /// round-trip — for the region selector, one lock covering every item in the
+    /// region, held across one query per removed listing. Splitting the decision
+    /// from the refill lets the caller batch the queries and issue them with no
+    /// lock held.
+    fn remove_if_cheapest(&mut self, listing: &ActiveListing) -> Option<ItemKey> {
+        let key = ItemKey::from(listing);
         match self.item_map.entry(key) {
-            Entry::Occupied(entry) => {
-                // only remove a listing if we see a lower price
-                if listing.price_per_unit <= entry.get().price {
-                    entry.remove();
-                    let Some(worlds) = world_cache
-                        .lookup_selector(&id)
-                        .map(|r| world_cache.get_all_worlds_in(&r))
-                        .ok()
-                        .flatten()
-                    else {
-                        // Same outcome as the DB query below failing: the entry
-                        // stays removed and the next listing event for this item
-                        // refills it.
-                        warn!(selector = ?id, "no worlds for selector, skipping cheapest-listing refill");
-                        skipped_event("remove_listing", "unknown_selector");
-                        return;
-                    };
-                    if let Ok(listings) = ultros_db
-                        .get_multiple_listings_for_worlds_hq_sensitive(
-                            worlds.iter().map(|w| WorldId(*w)),
-                            [ItemId(listing.item_id)].into_iter(),
-                            key.hq,
-                            1,
-                        )
-                        .await
-                    {
-                        for db_listing in &listings {
-                            if key == ItemKey::from(db_listing) {
-                                self.add_listing(db_listing);
-                            }
-                        }
-                    }
-                }
+            // Only drop the entry when the removed listing is the one the price
+            // came from; a dearer listing disappearing changes nothing.
+            Entry::Occupied(entry) if listing.price_per_unit <= entry.get().price => {
+                entry.remove();
+                Some(key)
             }
-            Entry::Vacant(_) => {}
+            _ => None,
         }
     }
 }
@@ -1668,6 +1641,12 @@ impl AnalyzerService {
     }
 
     /// remove listings in bulk. can handle multiple item types, but must have only one region.
+    ///
+    /// Every listing touches three levels of the map — its world, each datacenter
+    /// containing that world, and the region — so the work is grouped by selector
+    /// first and each selector is then handled in one pass. Previously each
+    /// (listing, level) pair was handled individually, and each one could issue
+    /// its own refill query while holding that level's write lock.
     async fn remove_listings(
         &self,
         region_id: i32,
@@ -1675,73 +1654,120 @@ impl AnalyzerService {
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
-        // A missing region only costs us the region-level removal — keep going so
-        // the datacenter and world maps still drop the listing. Leaving a sold
-        // listing in place is what makes prices read as stale.
-        if let Some(entry) = self.cheapest_items.get(&AnySelector::Region(region_id)) {
-            let mut entry = entry.write().await;
-            for (listing, _) in listings.listings.iter() {
-                entry
-                    .remove_listing(
-                        listing,
-                        AnySelector::Region(region_id),
-                        world_cache,
-                        ultros_db,
-                    )
-                    .await;
-            }
-        } else {
-            warn!(
-                region_id,
-                "no cheapest-listing entry for region, skipping region-level removal"
-            );
-            skipped_event("remove_listings", "unknown_region");
-        }
+        let mut by_selector: BTreeMap<AnySelector, Vec<&ActiveListing>> = BTreeMap::new();
         for (listing, _) in listings.listings.iter() {
-            let world_result = world_cache.lookup_selector(&AnySelector::World(listing.world_id));
-            if let Ok(w) = world_result {
-                #[allow(clippy::collapsible_if)]
-                if let Some(dcs) = world_cache.get_datacenters(&w) {
-                    for dc in dcs {
-                        if let Some(entry) =
-                            self.cheapest_items.get(&AnySelector::Datacenter(dc.id))
-                        {
-                            entry
-                                .write()
-                                .await
-                                .remove_listing(
-                                    listing,
-                                    AnySelector::Datacenter(dc.id),
-                                    world_cache,
-                                    ultros_db,
-                                )
-                                .await;
-                        }
+            // A missing region only costs us the region-level removal — keep going
+            // so the datacenter and world maps still drop the listing. Leaving a
+            // sold listing in place is what makes prices read as stale.
+            by_selector
+                .entry(AnySelector::Region(region_id))
+                .or_default()
+                .push(listing);
+            by_selector
+                .entry(AnySelector::World(listing.world_id))
+                .or_default()
+                .push(listing);
+            match world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                Ok(world) => {
+                    for dc in world_cache.get_datacenters(&world).unwrap_or_default() {
+                        by_selector
+                            .entry(AnySelector::Datacenter(dc.id))
+                            .or_default()
+                            .push(listing);
                     }
                 }
+                Err(_) => {
+                    warn!(
+                        world_id = listing.world_id,
+                        item_id = listing.item_id,
+                        "unknown world, skipping datacenter-level removal"
+                    );
+                    skipped_event("remove_listings", "unknown_world");
+                }
             }
-            let Some(world) = self
-                .cheapest_items
-                .get(&AnySelector::World(listing.world_id))
-            else {
-                warn!(
-                    world_id = listing.world_id,
-                    item_id = listing.item_id,
-                    "no cheapest-listing entry for world, skipping world-level removal"
-                );
-                skipped_event("remove_listings", "unknown_world");
-                continue;
-            };
-            world
-                .write()
-                .await
-                .remove_listing(
-                    listing,
-                    AnySelector::World(listing.world_id),
-                    world_cache,
-                    ultros_db,
-                )
+        }
+
+        for (selector, listings) in by_selector {
+            self.remove_from_selector(selector, &listings, world_cache, ultros_db)
                 .await;
+        }
+    }
+
+    /// Drops the given listings from one selector's map and refills any price
+    /// they were the source of.
+    ///
+    /// Structured in three phases so that **no lock is ever held across a
+    /// database round-trip**:
+    ///
+    /// 1. under the write lock, purely in memory, work out which keys went stale;
+    /// 2. with the lock released, fetch their real cheapest prices in one query;
+    /// 3. re-acquire and apply.
+    ///
+    /// The old shape held the region's write lock — one lock covering every item
+    /// in the region — across a sequence of queries, one per removed listing, and
+    /// each of those was itself a (world × item) fan-out. An 18-listing removal on
+    /// an 8-world region meant ~144 sequential round-trips under that lock, which
+    /// is what let the consumer fall behind the listings bus.
+    async fn remove_from_selector(
+        &self,
+        selector: AnySelector,
+        listings: &[&ActiveListing],
+        world_cache: &WorldCache,
+        ultros_db: &UltrosDb,
+    ) {
+        let Some(lock) = self.cheapest_items.get(&selector) else {
+            warn!(
+                ?selector,
+                "no cheapest-listing entry for selector, skipping removal"
+            );
+            skipped_event("remove_listings", "unknown_selector");
+            return;
+        };
+
+        // Phase 1: in-memory only. The lock is held for microseconds.
+        let stale: BTreeSet<i32> = {
+            let mut map = lock.write().await;
+            listings
+                .iter()
+                .filter_map(|listing| map.remove_if_cheapest(listing))
+                .map(|key| key.item_id)
+                .collect()
+        };
+        if stale.is_empty() {
+            return;
+        }
+
+        // Phase 2: the refill, with no lock held.
+        let Some(worlds) = world_cache
+            .lookup_selector(&selector)
+            .map(|r| world_cache.get_all_worlds_in(&r))
+            .ok()
+            .flatten()
+        else {
+            // Same outcome as the query failing: the entries stay removed and the
+            // next listing event for those items refills them.
+            warn!(
+                ?selector,
+                "no worlds for selector, skipping cheapest-listing refill"
+            );
+            skipped_event("remove_listing", "unknown_selector");
+            return;
+        };
+        let items: Vec<i32> = stale.into_iter().collect();
+        let refill = match ultros_db.cheapest_listings_for_items(&worlds, &items).await {
+            Ok(refill) => refill,
+            Err(e) => {
+                error!(error = ?e, ?selector, "cheapest-listing refill query failed");
+                skipped_event("remove_listing", "refill_query_failed");
+                return;
+            }
+        };
+
+        // Phase 3: apply. `add_listing` keys on (item, hq), so both qualities from
+        // the one query land on the right entries.
+        let mut map = lock.write().await;
+        for summary in &refill {
+            map.add_listing(summary);
         }
     }
 
@@ -2025,7 +2051,74 @@ mod test {
     use super::{
         SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
     };
+    use ultros_api_types::ActiveListing;
     use ultros_db::listings::ListingSummary;
+
+    fn active_listing(item_id: i32, price: i32, hq: bool) -> ActiveListing {
+        ActiveListing {
+            id: 1,
+            world_id: 54,
+            item_id,
+            retainer_id: 1,
+            price_per_unit: price,
+            quantity: 1,
+            hq,
+            timestamp: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+        }
+    }
+
+    /// `remove_if_cheapest` decides, without touching the database, whether a
+    /// removed listing invalidates the stored price. The caller batches the refill
+    /// for whatever it reports, so this gate has to stay exact: reporting too
+    /// little strands a sold-out price, reporting too much costs a query.
+    #[test]
+    fn remove_if_cheapest_only_reports_keys_whose_price_actually_went_stale() {
+        let mut map = CheapestListings::default();
+        map.add_listing(&active_listing(1, 100, false));
+        map.add_listing(&active_listing(2, 500, false));
+        // Same item, different quality — a distinct key.
+        map.add_listing(&active_listing(1, 900, true));
+
+        // A dearer listing disappearing leaves the stored price alone.
+        assert_eq!(map.remove_if_cheapest(&active_listing(1, 250, false)), None);
+        assert_eq!(
+            map.item_map
+                .get(&ItemKey {
+                    item_id: 1,
+                    hq: false
+                })
+                .unwrap()
+                .price,
+            100
+        );
+
+        // Removing the listing the price came from invalidates that key only.
+        assert_eq!(
+            map.remove_if_cheapest(&active_listing(1, 100, false)),
+            Some(ItemKey {
+                item_id: 1,
+                hq: false
+            })
+        );
+        assert!(!map.item_map.contains_key(&ItemKey {
+            item_id: 1,
+            hq: false
+        }));
+        // The HQ entry for the same item is untouched.
+        assert_eq!(
+            map.item_map
+                .get(&ItemKey {
+                    item_id: 1,
+                    hq: true
+                })
+                .unwrap()
+                .price,
+            900
+        );
+
+        // An item we never stored reports nothing rather than a spurious refill.
+        assert_eq!(map.remove_if_cheapest(&active_listing(99, 1, false)), None);
+    }
 
     /// `add_listing` stores the `min` of the existing and incoming price, so a
     /// stranded low price survives any amount of fresh data merged on top of it.
