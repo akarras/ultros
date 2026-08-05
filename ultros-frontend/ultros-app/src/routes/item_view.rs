@@ -1,4 +1,5 @@
 use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
+use crate::components::chart_query::{RangePreset, resolve_range};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
@@ -1239,7 +1240,13 @@ pub fn ChartWrapper(
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
-    let (hq_only, set_hq_only) = signal(false);
+    // `?hq=true`, absent means off. Only written when true, so the default
+    // never appears in the URL.
+    let (hq_param, set_hq_param) = filter_query_signal::<bool>("hq");
+    let hq_only = Signal::derive(move || hq_param.get().unwrap_or(false));
+    let set_hq_only = SignalSetter::map(move |on: bool| {
+        set_hq_param.set(on.then_some(true));
+    });
 
     // Per-item analyzer stats (ClickHouse-backed). LocalResource = client-
     // only — the badge isn't part of SSR output, so we avoid a hydration
@@ -1284,11 +1291,16 @@ pub fn ChartWrapper(
     let set_group = SignalSetter::map(move |level: GroupLevel| {
         set_group_param.set(Some(level));
     });
-    // Deliberately resets to Price per visit (no persistence) so a shared
+    // `?mode=`, absent means Price. Deriving rather than seeding keeps the
+    // URL clean until the user actually picks a mode, and means a shared
     // link and a fresh visit agree on what the chart shows. Mode switches
-    // never touch `selected_range` or `group` — spec: "switching mode
+    // never touch the time window or grouping -- spec: "switching mode
     // preserves the time window and grouping".
-    let (mode, set_mode) = signal(ChartMode::Price);
+    let (mode_param, set_mode_param) = filter_query_signal::<ChartMode>("mode");
+    let mode = Signal::derive(move || mode_param.get().unwrap_or_default());
+    let set_mode = SignalSetter::map(move |next: ChartMode| {
+        set_mode_param.set(Some(next));
+    });
     let hq = Signal::derive(move || {
         if hq_only.get() {
             HqFilter::Hq
@@ -1296,7 +1308,51 @@ pub fn ChartWrapper(
             HqFilter::Any
         }
     });
-    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
+    // The time window has two URL shapes. A preset click writes `?range=1mo`,
+    // so the link keeps meaning "the last month" indefinitely; a slicer drag
+    // has no relative meaning, so it writes absolute `?from=&to=` epoch
+    // seconds. `resolve_range` applies the precedence.
+    let (range_param, set_range_param) = filter_query_signal::<RangePreset>("range");
+    let (from_param, set_from_param) = filter_query_signal::<i64>("from");
+    let (to_param, set_to_param) = filter_query_signal::<i64>("to");
+
+    // Resolved once per mount rather than continuously: a chart does not
+    // need to slide in real time, and re-resolving on every tick would
+    // refetch. Client-only, so no SSR/CSR divergence -- the slicer that
+    // consumes this only renders once `series` (a LocalResource) resolves.
+    let now = StoredValue::new(chrono::Utc::now().timestamp());
+    let selected_range = Signal::derive(move || {
+        let from_to = from_param.get().zip(to_param.get());
+        resolve_range(range_param.get(), from_to, now.get_value())
+    });
+
+    // A drag commits absolute bounds and clears any preset; "All" clears
+    // everything. Writing all three together keeps the two shapes from
+    // coexisting in one URL.
+    let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
+        set_range_param.set(None);
+        match next {
+            Some((from, to)) => {
+                set_from_param.set(Some(from));
+                set_to_param.set(Some(to));
+            }
+            None => {
+                set_from_param.set(None);
+                set_to_param.set(None);
+            }
+        }
+    });
+
+    // Selecting a preset clears the absolute bounds for the same reason.
+    // Currently unused: the quick-range preset buttons that call this land
+    // in Task 8.
+    #[allow(unused_variables)]
+    let set_range_preset = Callback::new(move |preset: Option<RangePreset>| {
+        set_from_param.set(None);
+        set_to_param.set(None);
+        set_range_param.set(preset);
+    });
+
     // A different item/world makes any absolute-timestamp selection from the
     // previous item meaningless (and possibly outside the new item's data
     // entirely) — drop back to full range before the next request goes out.
@@ -1305,7 +1361,9 @@ pub fn ChartWrapper(
     Effect::new(move |_| {
         item_id.track();
         world.track();
-        set_selected_range.set(None);
+        set_from_param.set(None);
+        set_to_param.set(None);
+        set_range_param.set(None);
     });
     // Debounce so dragging a slicer handle fires one request after the drag
     // settles rather than one per pointer move; the slicer's own handle
@@ -1468,7 +1526,8 @@ pub fn ChartWrapper(
                                     set_mode=set_mode
                                     group=group
                                     set_group=set_group
-                                    on_range_change=Callback::new(move |r| set_selected_range.set(r))
+                                    selected_range=selected_range
+                                    on_range_change=set_selected_range
                                 />
 
                                 {move || {

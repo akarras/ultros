@@ -48,7 +48,7 @@ const CHIP: &str = "inline-flex items-center gap-1.5 rounded-md border border-[c
 #[component]
 pub fn ChartToolbar(
     #[prop(into)] mode: Signal<ChartMode>,
-    set_mode: WriteSignal<ChartMode>,
+    #[prop(into)] set_mode: SignalSetter<ChartMode>,
     #[prop(into)] group_options: Signal<Vec<GroupLevel>>,
     #[prop(into)] group: Signal<GroupLevel>,
     #[prop(into)] set_group: SignalSetter<GroupLevel>,

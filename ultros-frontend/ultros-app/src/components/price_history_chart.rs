@@ -381,7 +381,7 @@ fn TimelineSlicer(
     #[prop(into)] selected_domain: Signal<Option<(i64, i64)>>,
     #[prop(into)] selected_range: Signal<Option<(i64, i64)>>,
     #[prop(into)] utc_offset_minutes: Signal<i32>,
-    set_selected_range: WriteSignal<Option<(i64, i64)>>,
+    #[prop(into)] set_selected_range: Callback<Option<(i64, i64)>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let track_ref = NodeRef::<Div>::new();
@@ -454,7 +454,7 @@ fn TimelineSlicer(
             TimelineDrag::End => normalize_time_range(current.0, ts, domain),
             TimelineDrag::New { anchor_ts } => normalize_time_range(anchor_ts, ts, domain),
         };
-        set_selected_range.set(Some(next));
+        set_selected_range.run(Some(next));
     };
 
     let capture_pointer = move |event: &PointerEvent| {
@@ -493,7 +493,7 @@ fn TimelineSlicer(
                         type="button"
                         class="shrink-0 rounded-md border border-[color:var(--color-outline)] px-2.5 py-1 text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
                         disabled=move || selected_range.get().is_none()
-                        on:click=move |_| set_selected_range.set(None)
+                        on:click=move |_| set_selected_range.run(None)
                     >
                         {t!(i18n, chart_timeline_full_range)}
                     </button>
@@ -517,7 +517,7 @@ fn TimelineSlicer(
                         event.prevent_default();
                         capture_pointer(&event);
                         set_dragging.set(Some(TimelineDrag::New { anchor_ts: ts }));
-                        set_selected_range.set(Some(normalize_time_range(ts, ts, domain)));
+                        set_selected_range.run(Some(normalize_time_range(ts, ts, domain)));
                     }
                     on:pointermove=move |event: PointerEvent| {
                         event.prevent_default();
@@ -763,9 +763,15 @@ pub fn PriceHistoryChart(
     #[prop(into)] density: Signal<Option<PriceDensity>>,
     #[prop(into)] scope_name: Signal<String>,
     #[prop(into)] mode: Signal<ChartMode>,
-    set_mode: WriteSignal<ChartMode>,
+    #[prop(into)] set_mode: SignalSetter<ChartMode>,
     #[prop(into)] group: Signal<GroupLevel>,
     #[prop(into)] set_group: SignalSetter<GroupLevel>,
+    /// The committed time window, owned by the route and backed by the URL.
+    /// The chart renders and requests changes to it but does not own it —
+    /// otherwise a link's window would be overwritten by the local default
+    /// on mount.
+    #[prop(into)]
+    selected_range: Signal<Option<(i64, i64)>>,
     #[prop(into)] on_range_change: Callback<Option<(i64, i64)>>,
 ) -> impl IntoView {
     let local_world_data = use_context::<LocalWorldData>().unwrap();
@@ -786,11 +792,12 @@ pub fn PriceHistoryChart(
     // Lifted so the grid's "+N more" affordance can open the toolbar's
     // world-filter popover.
     let world_filter_open = RwSignal::new(false);
-    // Local truth for the slicer's own rendering (handle positions, drag
-    // state). Every commit is mirrored out via `on_range_change` below so the
-    // caller can debounce it into a refetch (Task 14) — this signal itself
-    // stays undebounced so the handles track the pointer at full rate.
-    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
+    // Every commit goes to the caller, which persists it to the URL and
+    // debounces it into a refetch. Undebounced here so the slicer handles
+    // track the pointer at full rate.
+    let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
+        on_range_change.run(next);
+    });
     // Series the user hid by clicking legend chips. Stored as a sorted Vec so
     // the model memo's PartialEq sees a stable value.
     let hidden_series = RwSignal::new(Vec::<String>::new());
@@ -845,12 +852,8 @@ pub fn PriceHistoryChart(
             .get_untracked()
             .is_some_and(|range| range_is_stale(domain, range, bucket_seconds));
         if stale {
-            set_selected_range.set(None);
+            set_selected_range.run(None);
         }
-    });
-    // Mirror every commit to the caller so it can (debounced) refetch.
-    Effect::new(move |_| {
-        on_range_change.run(selected_range.get());
     });
     let selected_domain = Memo::new(move |_| {
         let domain = available_domain.get()?;

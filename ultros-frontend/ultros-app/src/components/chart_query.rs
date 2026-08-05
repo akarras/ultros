@@ -10,10 +10,6 @@ use std::str::FromStr;
 
 /// A quick-range button. Anchored to *now*, not to the newest data point, so
 /// a shared `?range=7d` link means the same thing to every viewer.
-///
-/// Currently unused in this module; first wired into chart components in
-/// Tasks 6–9 of the sale-history-chart-filters plan.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RangePreset {
     Week,
@@ -31,10 +27,6 @@ impl RangePreset {
 
     /// Window length in seconds. A month is 30 days and a year 365; these
     /// are button labels, not calendar arithmetic.
-    ///
-    /// Currently unused in this module; first wired into chart components in
-    /// Tasks 6–9 of the sale-history-chart-filters plan.
-    #[allow(dead_code)]
     pub fn seconds(self) -> i64 {
         const DAY: i64 = 86_400;
         match self {
@@ -77,10 +69,6 @@ impl FromStr for RangePreset {
 /// `normalize_time_range` clamps the result to the available domain later,
 /// which is what makes `1y` on a six-month-old item show those six months
 /// rather than erroring.
-///
-/// Currently unused in this module; first wired into chart components in
-/// Tasks 6–9 of the sale-history-chart-filters plan.
-#[allow(dead_code)]
 pub fn resolve_range(
     preset: Option<RangePreset>,
     from_to: Option<(i64, i64)>,
