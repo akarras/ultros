@@ -2373,41 +2373,15 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
    rows, so the two scrollports scroll through the same range and the row
    striping covers it.
 
-   The base value tracks the columns each breakpoint actually reveals (several
-   are `hidden md:flex` / `lg:flex`). The `--analyzer-extra-cols-*` variables
-   are set inline by the route and carry the optional columns the user has
-   switched on beyond the default set — the stylesheet cannot know those. They
-   are bucketed by the breakpoint at which the column first renders (`base` =
-   always, `md` = `hidden md:flex` columns, `xl` = `hidden xl:flex` columns) so
-   a viewport only reserves width for columns it actually shows; adding a
-   hidden column's width would extend the scroll range into blank space. */
+   No breakpoint enters into it: every column the user switched on renders at
+   every viewport width, and a narrow screen scrolls to reach them. The 30.75rem
+   here is the four always-on columns (HQ 44px + Item 14rem + Profit 7rem + Buy
+   Price 7rem); `--analyzer-optional-cols` is set inline by the route and carries
+   whatever `?cols=` turned on, which the stylesheet cannot know. */
 .analyzer-table {
-    --analyzer-row-min-width: calc(38rem + var(--analyzer-extra-cols-base, 0px));
-}
-@media (min-width: 768px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(
-            61rem + var(--analyzer-extra-cols-base, 0px) +
-                var(--analyzer-extra-cols-md, 0px)
-        );
-    }
-}
-@media (min-width: 1024px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(
-            68rem + var(--analyzer-extra-cols-base, 0px) +
-                var(--analyzer-extra-cols-md, 0px)
-        );
-    }
-}
-@media (min-width: 1280px) {
-    .analyzer-table {
-        --analyzer-row-min-width: calc(
-            68rem + var(--analyzer-extra-cols-base, 0px) +
-                var(--analyzer-extra-cols-md, 0px) +
-                var(--analyzer-extra-cols-xl, 0px)
-        );
-    }
+    --analyzer-row-min-width: calc(
+        30.75rem + var(--analyzer-optional-cols, 0px)
+    );
 }
 .analyzer-grid-row {
     min-width: var(--analyzer-row-min-width, 0px);

@@ -1294,7 +1294,6 @@
     "analyzer_tooltip_trend": "7-Tage-Preistrend",
     "analyzer_tooltip_sales_per_day": "30-Tage-Verkaufsgeschwindigkeit (Verkäufe pro Tag)",
     "analyzer_tooltip_volume_30d": "30-Tage-Gesamtverkaufsvolumen (Anzahl der Verkäufe)",
-    "analyzer_columns_picker_desktop_only": "nur Desktop",
     "analyzer_last_sold_days_ago": "vor %count% T.",
     "analyzer_last_sold_hours_ago": "vor %count% Std.",
     "analyzer_last_sold_just_now": "gerade eben",
