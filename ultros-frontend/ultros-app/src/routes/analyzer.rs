@@ -24,6 +24,7 @@ use crate::{
         sales_cadence_badge::SalesCadenceBadge,
         saved_views::SavedViewsMenu,
         skeleton::{SingleLineSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton},
+        sort_header::{SortColumn, SortDir, SortHeader},
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
@@ -145,7 +146,6 @@ use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
-    location::Location,
 };
 use std::{
     cmp::Reverse,
@@ -212,30 +212,11 @@ enum SortMode {
     ProfitPerDay,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
-enum SortDir {
-    Asc,
-    #[default]
-    Desc,
-}
-
-impl FromStr for SortDir {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "asc" => Ok(SortDir::Asc),
-            "desc" => Ok(SortDir::Desc),
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for SortDir {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            SortDir::Asc => "asc",
-            SortDir::Desc => "desc",
-        })
+/// Every Flip Finder column reads best-first descending, so the shared
+/// default direction applies unchanged.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::ProfitPerDay
     }
 }
 
@@ -1081,73 +1062,6 @@ fn classify_market_update(
     }
 }
 
-/// One sortable column header.
-///
-/// Clicking an inactive column sorts by it descending; clicking the column
-/// already in effect flips the direction. The arrow reflects the direction
-/// actually applied — the three call sites this replaces each hardcoded a
-/// down arrow, so `?dir=asc` rendered ascending rows under a descending
-/// glyph, and nothing in the UI could reach `?dir=` at all.
-///
-/// `dir` is omitted from the href when it would be the default, so the
-/// common case stays a clean `?sort=…` and bookmarks don't accumulate a
-/// redundant param.
-#[component]
-fn SortHeader(
-    mode: SortMode,
-    #[prop(into)] label: String,
-    sort_mode: Memo<Option<SortMode>>,
-    sort_dir: Memo<Option<SortDir>>,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::ProfitPerDay) == mode);
-    let dir = Signal::derive(move || sort_dir().unwrap_or_default());
-    view! {
-        <a
-            class=move || {
-                if is_active() {
-                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                } else {
-                    "!text-brand-300 hover:text-brand-200"
-                }
-            }
-            aria-current=move || if is_active() { "true" } else { "false" }
-            href=move || {
-                let mut q = query();
-                q.remove("sort");
-                q.remove("dir");
-                q.insert("sort".to_string(), mode.to_string());
-                let next = if is_active() {
-                    match dir() {
-                        SortDir::Desc => SortDir::Asc,
-                        SortDir::Asc => SortDir::Desc,
-                    }
-                } else {
-                    SortDir::Desc
-                };
-                if next != SortDir::default() {
-                    q.insert("dir".to_string(), next.to_string());
-                }
-                format!("{}{}", pathname(), q.to_query_string())
-            }
-        >
-            <div class="flex items-center gap-2">
-                {label}
-                {move || {
-                    is_active()
-                        .then(|| match dir() {
-                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
-                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
-                        })
-                }}
-            </div>
-        </a>
-    }
-    .into_any()
-}
-
 #[component]
 fn AnalyzerTable(
     /// The built profit table, or `None` while the market boards are still
@@ -1707,10 +1621,13 @@ fn AnalyzerTable(
             })
             .collect::<Vec<_>>();
 
+        // Fall back through `SortColumn` rather than a literal, so the rows
+        // are ordered by exactly what the header highlights and arrows.
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         sort_rows(
             &mut sorted_data,
-            sort_mode().unwrap_or(SortMode::ProfitPerDay),
-            sort_dir().unwrap_or_default(),
+            mode,
+            sort_dir().unwrap_or_else(|| mode.default_dir()),
         );
         FilteredRows {
             rows: sorted_data.into_iter().enumerate().collect(),
@@ -4226,49 +4143,16 @@ mod tests {
         }
     }
 
-    /// The header's flip rule, extracted from the href closure so it can be
-    /// pinned without a router. Clicking the column already in effect flips;
-    /// clicking any other column starts descending.
-    fn next_sort_dir(is_active: bool, current: SortDir) -> SortDir {
-        if is_active {
-            match current {
-                SortDir::Desc => SortDir::Asc,
-                SortDir::Asc => SortDir::Desc,
-            }
-        } else {
-            SortDir::Desc
+    #[test]
+    fn every_flip_finder_column_reads_best_first_descending() {
+        // The shared header omits `dir` whenever it matches the column's
+        // default, so every bookmarked `?sort=` on this route means
+        // descending. Giving a column its own default here would silently
+        // flip what those old links resolve to.
+        for mode in [SortMode::Roi, SortMode::Profit, SortMode::ProfitPerDay] {
+            assert_eq!(mode.default_dir(), SortDir::Desc, "{mode}");
         }
-    }
-
-    #[test]
-    fn clicking_the_active_column_flips_direction() {
-        assert_eq!(next_sort_dir(true, SortDir::Desc), SortDir::Asc);
-        assert_eq!(next_sort_dir(true, SortDir::Asc), SortDir::Desc);
-    }
-
-    #[test]
-    fn clicking_a_different_column_starts_descending() {
-        // Arriving at a new column ascending would bury the best rows, which
-        // is the opposite of what every one of these columns is sorted for.
-        assert_eq!(next_sort_dir(false, SortDir::Asc), SortDir::Desc);
-        assert_eq!(next_sort_dir(false, SortDir::Desc), SortDir::Desc);
-    }
-
-    #[test]
-    fn descending_is_the_default_so_it_stays_out_of_the_url() {
-        // The header omits `dir` whenever it equals the default; if that
-        // default ever changed, every bookmarked `?sort=` would silently
-        // flip meaning.
-        assert_eq!(SortDir::default(), SortDir::Desc);
-    }
-
-    #[test]
-    fn sort_dir_round_trips_through_string() {
-        assert_eq!("asc".parse::<SortDir>(), Ok(SortDir::Asc));
-        assert_eq!("desc".parse::<SortDir>(), Ok(SortDir::Desc));
-        assert_eq!(SortDir::Asc.to_string(), "asc");
-        assert_eq!(SortDir::Desc.to_string(), "desc");
-        assert!("sideways".parse::<SortDir>().is_err());
+        assert_eq!(<SortMode as SortColumn>::fallback(), SortMode::ProfitPerDay);
     }
 
     #[test]

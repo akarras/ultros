@@ -5,10 +5,10 @@ use crate::{
     api::get_cheapest_listings,
     components::{
         gil::*,
-        icon::Icon,
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
@@ -18,12 +18,10 @@ use crate::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
 };
-use icondata as i;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_query_map},
-    location::Location,
+    hooks::{query_signal, use_navigate, use_query_map},
 };
 use std::{collections::HashSet, sync::Arc};
 use thousands::Separable;
@@ -282,43 +280,18 @@ impl std::fmt::Display for SortMode {
     }
 }
 
-impl SortMode {
-    /// The direction each column sorts in when first clicked (and when no
-    /// `?dir=` is present). Costs read best-first ascending; the scrip payout
-    /// reads best-first descending.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::CostPerScrip
+    }
+
+    /// Costs read best-first ascending; the scrip payout reads best-first
+    /// descending.
     fn default_dir(self) -> SortDir {
         match self {
             SortMode::CostPerScrip | SortMode::Cost => SortDir::Asc,
             SortMode::ScripAmount => SortDir::Desc,
         }
-    }
-}
-
-/// `?dir=` — sort direction override. Absent means the active mode's
-/// [`SortMode::default_dir`].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum SortDir {
-    Asc,
-    Desc,
-}
-
-impl std::str::FromStr for SortDir {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "asc" => Ok(SortDir::Asc),
-            "desc" => Ok(SortDir::Desc),
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for SortDir {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            SortDir::Asc => "asc",
-            SortDir::Desc => "desc",
-        })
     }
 }
 
@@ -379,71 +352,6 @@ fn rank_scrip_sources(
 
     results.truncate(limit);
     results
-}
-
-/// One sortable column header, after the analyzer's pattern.
-///
-/// Clicking an inactive column sorts by it in that column's default
-/// direction; clicking the active column flips the direction. The arrow
-/// reflects the direction actually applied. `dir` is omitted from the href
-/// when it matches the mode's default so the common case stays a clean
-/// `?sort=…`.
-#[component]
-fn SortHeader(
-    mode: SortMode,
-    #[prop(into)] label: String,
-    sort_mode: Memo<Option<SortMode>>,
-    sort_dir: Memo<Option<SortDir>>,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::CostPerScrip) == mode);
-    let dir = Signal::derive(move || {
-        sort_dir().unwrap_or_else(|| sort_mode().unwrap_or(SortMode::CostPerScrip).default_dir())
-    });
-    view! {
-        <a
-            class=move || {
-                if is_active() {
-                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                } else {
-                    "!text-brand-300 hover:text-brand-200"
-                }
-            }
-            aria-current=move || if is_active() { "true" } else { "false" }
-            href=move || {
-                let mut q = query();
-                q.remove("sort");
-                q.remove("dir");
-                q.insert("sort".to_string(), mode.to_string());
-                let next = if is_active() {
-                    match dir() {
-                        SortDir::Desc => SortDir::Asc,
-                        SortDir::Asc => SortDir::Desc,
-                    }
-                } else {
-                    mode.default_dir()
-                };
-                if next != mode.default_dir() {
-                    q.insert("dir".to_string(), next.to_string());
-                }
-                format!("{}{}", pathname(), q.to_query_string())
-            }
-        >
-            <div class="flex items-center gap-2">
-                {label}
-                {move || {
-                    is_active()
-                        .then(|| match dir() {
-                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
-                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
-                        })
-                }}
-            </div>
-        </a>
-    }
-    .into_any()
 }
 
 #[component]
@@ -587,7 +495,7 @@ fn ScripSourceTable(
             });
         }
 
-        let mode = sort_mode().unwrap_or(SortMode::CostPerScrip);
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
         // Rank the *full* set so the result count below is exact; the render
         // memo applies `ROW_LIMIT`.
