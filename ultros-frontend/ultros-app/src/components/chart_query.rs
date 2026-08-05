@@ -250,6 +250,96 @@ pub fn encode_show(hidden: &[String], series: &[String]) -> Option<String> {
     Some(encoded)
 }
 
+// ── `overlays`: which overlay toggles are on ─────────────────────────────
+
+/// The chart's overlay toggles as one URL param.
+///
+/// A single comma-separated param rather than five booleans: five params
+/// would dominate the query string, and they are read and written together.
+///
+/// Currently unused in this module; first wired into chart components in
+/// Tasks 6–9 of the sale-history-chart-filters plan.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Overlays {
+    pub market_average: bool,
+    pub trend: bool,
+    pub quantity: bool,
+    pub percent_change: bool,
+    pub patches: bool,
+}
+
+impl Default for Overlays {
+    /// Market average and patch bands on; the rest off. Matches the
+    /// component defaults these params replace.
+    fn default() -> Self {
+        Self {
+            market_average: true,
+            trend: false,
+            quantity: false,
+            percent_change: false,
+            patches: true,
+        }
+    }
+}
+
+impl std::fmt::Display for Overlays {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut tokens = Vec::with_capacity(5);
+        if self.market_average {
+            tokens.push("avg");
+        }
+        if self.trend {
+            tokens.push("trend");
+        }
+        if self.quantity {
+            tokens.push("qty");
+        }
+        if self.percent_change {
+            tokens.push("pct");
+        }
+        if self.patches {
+            tokens.push("patches");
+        }
+        // "Everything off" needs a sentinel: an empty value would parse back
+        // as the default set, so it is the one state that could not survive
+        // a round trip.
+        if tokens.is_empty() {
+            f.write_str("none")
+        } else {
+            f.write_str(&tokens.join(","))
+        }
+    }
+}
+
+impl FromStr for Overlays {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut overlays = Self {
+            market_average: false,
+            trend: false,
+            quantity: false,
+            percent_change: false,
+            patches: false,
+        };
+        for token in s.split(',') {
+            match token.trim().to_ascii_lowercase().as_str() {
+                "avg" => overlays.market_average = true,
+                "trend" => overlays.trend = true,
+                "qty" => overlays.quantity = true,
+                "pct" => overlays.percent_change = true,
+                "patches" => overlays.patches = true,
+                // "none", empty, and anything unrecognised: ignored, so a
+                // link from a build with more overlays still applies the
+                // tokens this build understands.
+                _ => {}
+            }
+        }
+        Ok(overlays)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,5 +587,61 @@ mod tests {
             expected.sort();
             assert_eq!(round_tripped, expected, "via {encoded}");
         }
+    }
+
+    #[test]
+    fn overlay_defaults_are_market_average_and_patches() {
+        let overlays = Overlays::default();
+        assert!(overlays.market_average);
+        assert!(overlays.patches);
+        assert!(!overlays.trend);
+        assert!(!overlays.quantity);
+        assert!(!overlays.percent_change);
+    }
+
+    #[test]
+    fn overlays_round_trip() {
+        let overlays = Overlays {
+            market_average: true,
+            trend: true,
+            quantity: false,
+            percent_change: false,
+            patches: true,
+        };
+        assert_eq!(overlays.to_string(), "avg,trend,patches");
+        assert_eq!(overlays.to_string().parse::<Overlays>(), Ok(overlays));
+    }
+
+    // Without a sentinel, "everything off" would encode to an empty value
+    // and parse back as the default set — the one state that cannot survive
+    // a round trip.
+    #[test]
+    fn all_overlays_off_round_trips_via_the_none_sentinel() {
+        let overlays = Overlays {
+            market_average: false,
+            trend: false,
+            quantity: false,
+            percent_change: false,
+            patches: false,
+        };
+        assert_eq!(overlays.to_string(), "none");
+        assert_eq!("none".parse::<Overlays>(), Ok(overlays));
+    }
+
+    // Unknown tokens are ignored rather than rejected, so a link written by
+    // a newer build that gained an overlay still applies the tokens this
+    // build understands instead of falling back to the default set.
+    #[test]
+    fn unknown_overlay_tokens_are_ignored() {
+        let parsed = "avg,newthing".parse::<Overlays>().unwrap();
+        assert!(parsed.market_average);
+        assert!(!parsed.patches);
+    }
+
+    #[test]
+    fn overlay_parsing_is_forgiving() {
+        let parsed = " AVG , trend ".parse::<Overlays>().unwrap();
+        assert!(parsed.market_average);
+        assert!(parsed.trend);
     }
 }
