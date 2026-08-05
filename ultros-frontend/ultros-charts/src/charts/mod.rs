@@ -56,6 +56,34 @@ impl ChartMode {
     }
 }
 
+/// Wire format for the `?mode=` URL param. Lowercase and stable — part of
+/// every shared chart link. Distinct from [`ChartMode::label`], which is a
+/// debug/key identifier.
+impl std::fmt::Display for ChartMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Price => "price",
+            Self::Candles => "candles",
+            Self::Range => "range",
+            Self::Density => "density",
+        })
+    }
+}
+
+impl std::str::FromStr for ChartMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "price" => Ok(Self::Price),
+            "candles" => Ok(Self::Candles),
+            "range" => Ok(Self::Range),
+            "density" => Ok(Self::Density),
+            _ => Err(()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ChartMode;
@@ -71,5 +99,28 @@ mod tests {
         assert_eq!(ChartMode::Candles.series_cap(), Some(1));
         assert_eq!(ChartMode::Range.series_cap(), Some(2));
         assert_eq!(ChartMode::Density.series_cap(), Some(1));
+    }
+
+    #[test]
+    fn chart_mode_wire_format_round_trips() {
+        use std::str::FromStr;
+        for mode in [
+            ChartMode::Price,
+            ChartMode::Candles,
+            ChartMode::Range,
+            ChartMode::Density,
+        ] {
+            assert_eq!(ChartMode::from_str(&mode.to_string()), Ok(mode));
+        }
+        assert_eq!(ChartMode::Price.to_string(), "price");
+        assert_eq!(ChartMode::Density.to_string(), "density");
+    }
+
+    #[test]
+    fn chart_mode_parsing_is_forgiving() {
+        use std::str::FromStr;
+        assert_eq!(ChartMode::from_str("CANDLES"), Ok(ChartMode::Candles));
+        assert_eq!(ChartMode::from_str(" range "), Ok(ChartMode::Range));
+        assert_eq!(ChartMode::from_str("nonsense"), Err(()));
     }
 }
