@@ -1357,8 +1357,11 @@ pub fn ChartWrapper(
     // A different item/world makes any absolute-timestamp selection from the
     // previous item meaningless (and possibly outside the new item's data
     // entirely) — drop back to full range before the next request goes out.
-    // Deliberately does *not* track `group`/`hq`: changing those shouldn't
-    // discard an in-progress zoom.
+    // `range` deliberately survives: a relative preset like `?range=1mo`
+    // means "the last month" and stays just as meaningful on the new
+    // item/world, so clearing it here would silently downgrade a scope
+    // switch into a full-history refetch. Also does *not* track
+    // `group`/`hq`: changing those shouldn't discard an in-progress zoom.
     //
     // Guarded on an actual change (not just the first run): `Effect::new`
     // fires unconditionally on mount, and now that these setters write
@@ -1370,7 +1373,6 @@ pub fn ChartWrapper(
         if prev.is_some_and(|p| p != key) {
             set_from_param.set(None);
             set_to_param.set(None);
-            set_range_param.set(None);
         }
         key
     });

@@ -417,6 +417,27 @@ pub fn build_price_grid(
 mod tests {
     use super::*;
     use crate::test_util::{two_world_series, world_helper};
+    use std::str::FromStr;
+
+    #[test]
+    fn grid_sort_wire_format_round_trips() {
+        for sort in [GridSort::Name, GridSort::Change] {
+            assert_eq!(GridSort::from_str(&sort.to_string()), Ok(sort));
+        }
+        assert_eq!(GridSort::Name.to_string(), "name");
+        assert_eq!(GridSort::Change.to_string(), "change");
+    }
+
+    #[test]
+    fn grid_sort_parsing_is_case_insensitive() {
+        assert_eq!(GridSort::from_str("NAME"), Ok(GridSort::Name));
+        assert_eq!(GridSort::from_str(" Change "), Ok(GridSort::Change));
+    }
+
+    #[test]
+    fn grid_sort_parsing_rejects_unknown_input() {
+        assert_eq!(GridSort::from_str("nonsense"), Err(()));
+    }
 
     #[test]
     fn a_laundered_cell_does_not_flatten_the_shared_domain() {

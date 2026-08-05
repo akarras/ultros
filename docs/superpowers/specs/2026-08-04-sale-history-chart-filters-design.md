@@ -195,13 +195,17 @@ Examples:
 
 #### Two safety rules this syntax requires
 
-**Fail open on an empty resolution.** The series set depends on the group
-level, so a `?show=none,+Gilgamesh` link authored at World grouping carries
-names matching nothing at Region grouping — and `none` plus zero matches is a
-blank chart. An empty chart from a stale link is indistinguishable from a bug.
-Therefore: **if an expression resolves to zero visible series, discard it and
-show everything.** The `all` base has no such hazard (unmatched exclusions are
-inert), which is the second reason ties favour `all`.
+**Fail open on a stale `none` link, but not on a deliberate hide-all.** The
+series set depends on the group level, so a `?show=none,+Gilgamesh` link
+authored at World grouping carries names matching nothing at Region grouping —
+and `none` plus zero matches is a blank chart. An empty chart from a stale
+link is indistinguishable from a bug. Therefore: **a `none` base whose
+include-deltas all miss is discarded and everything is shown instead.** A bare
+`?show=none` with *no* deltas is not stale in that sense — it's an explicit,
+unambiguous "hide everything" and is honoured as written; only a `none` base
+with unmatched deltas is treated as a broken link. The `all` base has no such
+hazard (unmatched exclusions are inert), which is the second reason ties
+favour `all`.
 
 **`+` is safe only because of how leptos_router decodes.** It uses
 `decodeURIComponent` / `percent_decode` (`leptos_router::location::Url::unescape`),

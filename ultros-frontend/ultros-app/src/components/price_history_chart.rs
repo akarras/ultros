@@ -522,7 +522,21 @@ fn TimelineSlicer(
                                 // A window ending before the item's newest
                                 // sale would blank the chart; disable with a
                                 // reason rather than rendering nothing.
+                                //
+                                // `available_domain` is the domain of the
+                                // *currently fetched* window, not the item's
+                                // full history — once an absolute selection
+                                // is active, its `end` is just the requested
+                                // `to` and says nothing about whether newer
+                                // data exists outside it. Only gate on it
+                                // when there's no active selection; with a
+                                // window selected, every preset stays
+                                // clickable (picking one replaces the
+                                // window, which is exactly the point).
                                 let disabled = Signal::derive(move || {
+                                    if selected_range.get().is_some() {
+                                        return false;
+                                    }
                                     let now = chrono::Utc::now().timestamp();
                                     available_domain
                                         .get()
@@ -1150,6 +1164,15 @@ pub fn PriceHistoryChart(
     // URL -> state. Runs whenever the expression or the series set changes,
     // which is what re-resolves a `show` written at a different grouping
     // level.
+    //
+    // Declaration order relative to the state -> URL effect below is
+    // load-bearing: Leptos runs each effect's first execution in the order
+    // it was declared (FIFO), and this one must populate `hidden_series`
+    // from `?show=` before the effect below ever reads it. If the two were
+    // swapped, the state -> URL effect would run first with
+    // `hidden_series == []` against a non-empty `series_names` and write
+    // `show_param` to `None`, wiping a valid `?show=` out of the URL before
+    // it was ever applied.
     Effect::new(move |_| {
         let names = series_names.get();
         let next = show_param
@@ -1170,6 +1193,26 @@ pub fn PriceHistoryChart(
     // dropping them, so `series_names` does not change when something is
     // hidden and the Memo's PartialEq halts propagation; and both effects
     // no-op when the value already matches.
+    //
+    // Must be declared *after* the URL -> state effect above — see its
+    // comment for why the ordering matters.
+    //
+    // `?show=` is only meaningful against the series set of the grouping
+    // level it was written at (e.g. world names vs. region names), so this
+    // effect necessarily re-derives `show_param` from `hidden_series` and
+    // the *current* `series_names` on every relevant change — including a
+    // grouping switch. `encode_show` drops any name outside the current
+    // series set to bound the param length, so if `hidden_series` no longer
+    // maps onto anything in the new grouping (e.g. hiding worlds, then
+    // switching to Region), the re-encode comes back empty and this
+    // effect clears `?show=` rather than keeping a filter that can no
+    // longer be expressed. Switching back to the original grouping does
+    // NOT restore it — the old expression is gone, not just hidden. This
+    // is deliberate, not a bug: changing that behavior is out of scope
+    // here. The same logic means an inert or unparseable `?show=` (e.g.
+    // `?show=garbage`, or a value from a link generated for a different
+    // grouping) is silently normalised out of the URL on load, via the
+    // effect above feeding an empty `hidden_series` back through here.
     Effect::new(move |_| {
         let hidden = hidden_series.get();
         let names = series_names.get_untracked();

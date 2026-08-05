@@ -72,7 +72,12 @@ pub fn resolve_range(
 ) -> Option<(i64, i64)> {
     match preset {
         Some(preset) => Some((now - preset.seconds(), now)),
-        None => from_to,
+        // An inverted pair (e.g. a hand-edited `?from` > `?to`) would make
+        // the server 400, leaving `series`/`available_domain` `None` and
+        // hiding the whole slicer — including the "All" button — so the
+        // user has no way back without editing the URL by hand. Normalise
+        // the order here instead of trusting the query string's order.
+        None => from_to.map(|(a, b)| (a.min(b), a.max(b))),
     }
 }
 
@@ -362,6 +367,14 @@ mod tests {
         assert_eq!(resolve_range(None, None, NOW), None);
     }
 
+    // An inverted `?from` > `?to` pair (e.g. hand-edited) must not 400 the
+    // request — that would blank `available_domain` and hide the whole
+    // slicer, including the "All" button the user needs to recover.
+    #[test]
+    fn an_inverted_absolute_pair_is_normalised() {
+        assert_eq!(resolve_range(None, Some((2, 1)), NOW), Some((1, 2)));
+    }
+
     // The dead-item case: an item whose newest sale predates the whole
     // window would render blank, so the button is disabled instead.
     #[test]
@@ -583,6 +596,44 @@ mod tests {
     // Without a sentinel, "everything off" would encode to an empty value
     // and parse back as the default set — the one state that cannot survive
     // a round trip.
+    // Neither existing round-trip case sets `quantity` or `percent_change`
+    // true, so a `qty`<->`pct` token swap would still pass them. Pin both
+    // tokens explicitly.
+    #[test]
+    fn quantity_and_percent_change_tokens_are_distinct() {
+        let overlays = Overlays {
+            market_average: false,
+            trend: false,
+            quantity: true,
+            percent_change: true,
+            patches: false,
+        };
+        assert_eq!(overlays.to_string(), "qty,pct");
+        assert_eq!(overlays.to_string().parse::<Overlays>(), Ok(overlays));
+
+        let quantity_only = Overlays {
+            market_average: false,
+            trend: false,
+            quantity: true,
+            percent_change: false,
+            patches: false,
+        };
+        let parsed = "qty".parse::<Overlays>().unwrap();
+        assert_eq!(parsed, quantity_only);
+        assert!(!parsed.percent_change);
+
+        let percent_change_only = Overlays {
+            market_average: false,
+            trend: false,
+            quantity: false,
+            percent_change: true,
+            patches: false,
+        };
+        let parsed = "pct".parse::<Overlays>().unwrap();
+        assert_eq!(parsed, percent_change_only);
+        assert!(!parsed.quantity);
+    }
+
     #[test]
     fn all_overlays_off_round_trips_via_the_none_sentinel() {
         let overlays = Overlays {

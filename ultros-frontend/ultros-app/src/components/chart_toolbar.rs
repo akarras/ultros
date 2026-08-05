@@ -535,6 +535,32 @@ pub fn ChartToolbar(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn chart_view_wire_format_round_trips() {
+        for view in [ChartView::Overlay, ChartView::Grid] {
+            assert_eq!(ChartView::from_str(&view.to_string()), Ok(view));
+        }
+        assert_eq!(ChartView::Overlay.to_string(), "overlay");
+        assert_eq!(ChartView::Grid.to_string(), "grid");
+    }
+
+    #[test]
+    fn chart_view_parsing_is_case_insensitive() {
+        assert_eq!(ChartView::from_str("OVERLAY"), Ok(ChartView::Overlay));
+        assert_eq!(ChartView::from_str(" Grid "), Ok(ChartView::Grid));
+    }
+
+    #[test]
+    fn chart_view_parsing_rejects_unknown_input() {
+        assert_eq!(ChartView::from_str("nonsense"), Err(()));
+    }
+}
+
 /// One labelled checkbox row in the overlays popover. Disabled rows keep
 /// their space and carry the reason as a title tooltip — a control that
 /// vanishes reads as a bug.
