@@ -1726,6 +1726,34 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     min-width: 0;
     padding: 1rem;
 }
+
+/* Phone: content runs edge to edge.
+   Two paddings stack on a phone — 1rem from the shell above, plus whatever
+   the route spells on its own `.main-content` (`p-2`, `p-6`, `px-0 sm:px-4`;
+   there are seventeen of them and they do not agree). That cost 48px of a
+   375px screen before a single character of content. Zeroing both here beats
+   editing every route, and keeps the horizontal padding decision in one
+   place.
+
+   Only the horizontal axis: vertical padding still separates the content
+   from the top bar and the fixed mobile nav. Panels keep their own inner
+   padding, so text is not flush against the glass — only the panel edges
+   move out to the screen edge.
+
+   The breakpoint is Tailwind's `sm` complement on purpose: below 640px is
+   exactly where the routes apply their tight mobile padding, so this is
+   "wherever the app already thinks it is on a phone, take it to zero".
+   `!important` is required to beat the utility classes on `.main-content`. */
+@media (max-width: 639.98px) {
+    .app-shell > .app-shell-content {
+        padding-left: 0;
+        padding-right: 0;
+    }
+    .main-content {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+}
 .app-shell > .app-shell-ad-rail {
     display: none;
 }
