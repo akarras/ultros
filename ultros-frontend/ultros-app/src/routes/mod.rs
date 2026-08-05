@@ -10,6 +10,7 @@ pub mod groups;
 pub mod help;
 pub mod history;
 pub mod home_page;
+pub mod item_compare;
 pub mod item_explorer;
 pub mod item_explorer_roles;
 pub mod item_explorer_scope;

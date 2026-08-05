@@ -61,7 +61,7 @@ const MEANINGFUL_CROSS_WORLD_SAVINGS_GIL: i32 = 1_000;
 /// DOM — the tachys `unreachable!()` flood in GlitchTip #6831. The request is
 /// already being torn down whenever this fires, so degrading to `fallback`
 /// costs nothing user-visible and keeps the response whole.
-fn with_or<S, U>(signal: &S, fallback: U, fun: impl FnOnce(&S::Value) -> U) -> U
+pub(crate) fn with_or<S, U>(signal: &S, fallback: U, fun: impl FnOnce(&S::Value) -> U) -> U
 where
     S: With,
 {
@@ -1643,6 +1643,7 @@ fn ListingsContent(
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="overview" class="scroll-mt-16">
+                <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
                 <DecisionHeader listing_resource filtered_listings world />
                 <MarketStatsPanel
                     listing_resource
