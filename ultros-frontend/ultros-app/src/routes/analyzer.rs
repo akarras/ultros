@@ -2818,7 +2818,15 @@ fn AnalyzerTable(
                                                 <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
                                             </div>
                                             {item}
+                                            // Inline confidence, for when the Confidence
+                                            // column is switched off. With the column on
+                                            // the row would otherwise say "Low" twice —
+                                            // once beside the name and once in its own
+                                            // column (#1106).
                                             {move || {
+                                                if visible_cols().contains(COL_CONFIDENCE) {
+                                                    return None;
+                                                }
                                                 let maps = enrichment.get();
                                                 maps.quality_for(&row_key).map(|q| {
                                                     view! {
