@@ -19,7 +19,8 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
-use crate::routes::item_view_scope::item_href;
+use crate::query_defaults::filter_query_signal;
+use crate::routes::item_view_scope::{COMPARE_BUY_FROM_PARAM, item_href};
 use crate::routes::not_found::NotFound;
 use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -33,6 +34,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use ultros_api_types::cheapest_listings::{CheapestListingData, PriceSummary};
 use ultros_api_types::price_series::{HqFilter, SeriesGroup};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world::Datacenter;
@@ -75,38 +77,6 @@ where
     S::Value: Default,
 {
     signal.try_get().unwrap_or_default()
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct SavingsVerdict {
-    cheapest_listing: ActiveListing,
-    current_world_listing: ActiveListing,
-    savings: i32,
-    savings_percent: f64,
-}
-
-impl SavingsVerdict {
-    fn new(cheapest_listing: ActiveListing, current_world_listing: ActiveListing) -> Option<Self> {
-        if cheapest_listing.hq != current_world_listing.hq
-            || cheapest_listing.world_id == current_world_listing.world_id
-            || cheapest_listing.price_per_unit <= 0
-            || current_world_listing.price_per_unit <= 0
-        {
-            return None;
-        }
-
-        let savings = current_world_listing.price_per_unit - cheapest_listing.price_per_unit;
-        if savings < MEANINGFUL_CROSS_WORLD_SAVINGS_GIL {
-            return None;
-        }
-
-        Some(Self {
-            cheapest_listing,
-            current_world_listing: current_world_listing.clone(),
-            savings,
-            savings_percent: (savings as f64 / current_world_listing.price_per_unit as f64) * 100.0,
-        })
-    }
 }
 
 #[component]
@@ -532,38 +502,55 @@ fn cheapest_listing_for_quality(
         .cloned()
 }
 
-fn savings_verdict_for_quality(
-    listings: &ListingRows,
-    current_world_id: i32,
+/// Cross-world savings hint derived from the zone-wide cheapest map.
+///
+/// Replaces the listings-payload `SavingsVerdict`: a world-scoped listings
+/// request only contains that world (world_cache.rs `get_all_worlds_in`),
+/// so the old cross-world comparison could never fire.
+#[derive(Clone, Debug, PartialEq)]
+struct ZoneSavings {
+    cheapest: CheapestListingData,
     hq: bool,
-) -> Option<SavingsVerdict> {
-    let (cheapest_listing, _) = cheapest_listing_for_quality(listings, hq)?;
-    let current_world_listing = listings
-        .iter()
-        .filter(|(listing, _)| listing.hq == hq && listing.world_id == current_world_id)
-        .min_by_key(|(listing, _)| listing.price_per_unit)
-        .map(|(listing, _)| listing.clone())?;
-
-    SavingsVerdict::new(cheapest_listing, current_world_listing)
+    savings: i32,
+    savings_percent: f64,
 }
 
-fn cheapest_savings_verdict(
-    listings: &ListingRows,
+fn zone_savings_for_quality(
+    local_floor: Option<i32>,
+    zone_cheapest: Option<CheapestListingData>,
+    hq: bool,
     current_world_id: i32,
-) -> Option<SavingsVerdict> {
-    [false, true]
-        .into_iter()
-        .filter_map(|hq| savings_verdict_for_quality(listings, current_world_id, hq))
-        .max_by(|left, right| {
-            left.savings
-                .cmp(&right.savings)
-                .then_with(|| {
-                    left.current_world_listing
-                        .price_per_unit
-                        .cmp(&right.current_world_listing.price_per_unit)
-                })
-                .then_with(|| left.cheapest_listing.hq.cmp(&right.cheapest_listing.hq))
-        })
+) -> Option<ZoneSavings> {
+    let local = local_floor?;
+    let cheapest = zone_cheapest?;
+    if cheapest.world_id == current_world_id || cheapest.price <= 0 || local <= 0 {
+        return None;
+    }
+    let savings = local - cheapest.price;
+    if savings < MEANINGFUL_CROSS_WORLD_SAVINGS_GIL {
+        return None;
+    }
+    Some(ZoneSavings {
+        cheapest,
+        hq,
+        savings,
+        savings_percent: (savings as f64 / local as f64) * 100.0,
+    })
+}
+
+fn zone_savings(
+    local_floor_nq: Option<i32>,
+    local_floor_hq: Option<i32>,
+    summary: &PriceSummary,
+    current_world_id: i32,
+) -> Option<ZoneSavings> {
+    [
+        zone_savings_for_quality(local_floor_nq, summary.lq, false, current_world_id),
+        zone_savings_for_quality(local_floor_hq, summary.hq, true, current_world_id),
+    ]
+    .into_iter()
+    .flatten()
+    .max_by_key(|savings| savings.savings)
 }
 
 fn format_savings_percent(percent: f64) -> String {
@@ -586,9 +573,21 @@ fn DecisionHeader(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     #[prop(into)] filtered_listings: Signal<ListingRows>,
     world: Memo<String>,
+    item_id: Memo<i32>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let cheapest_prices = use_context::<CheapestPrices>();
+    let (compare_world, set_compare_world) = filter_query_signal::<String>(COMPARE_BUY_FROM_PARAM);
+
+    // Same idiom as `MarketStatsPanel` (see the long comment above it): the
+    // zone-cheapest resource must read as unavailable during SSR and the
+    // initial hydration render, or the SSR/CSR DOM shapes mismatch and
+    // tachys panics.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
 
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
@@ -610,8 +609,30 @@ fn DecisionHeader(
                                 .as_ref()
                                 .map(|result| result.all_worlds().count())
                                 .unwrap_or(1);
-                            let savings_verdict = current_world_id
-                                .and_then(|world_id| cheapest_savings_verdict(&listings, world_id));
+                            let savings = current_world_id.and_then(|world_id| {
+                                let local_floor = |hq: bool| {
+                                    listings
+                                        .iter()
+                                        .filter(|(listing, _)| {
+                                            listing.hq == hq && listing.world_id == world_id
+                                        })
+                                        .map(|(listing, _)| listing.price_per_unit)
+                                        .min()
+                                };
+                                let summary = if hydrated.get() {
+                                    cheapest_prices.as_ref().and_then(|prices| {
+                                        prices.read_listings.with(|r| {
+                                            let map = r.as_ref().and_then(|r| r.as_ref().ok());
+                                            map.map(|map| map.find_matching_listings(item_id()))
+                                        })
+                                    })
+                                } else {
+                                    None
+                                };
+                                summary.and_then(|summary| {
+                                    zone_savings(local_floor(false), local_floor(true), &summary, world_id)
+                                })
+                            });
                             let recent_sales = &data.sales;
 
                             // Freshness is judged on when Ultros last ingested the
@@ -648,42 +669,68 @@ fn DecisionHeader(
                                             sales_per_day=scope_sales_per_day
                                         />
                                     </div>
-                                    {savings_verdict
-                                        .map(|verdict| {
-                                            let quality_label = if verdict.cheapest_listing.hq {
+                                    {savings
+                                        .and_then(|savings| {
+                                            let buy_world_name = world_data
+                                                .lookup_selector(AnySelector::World(savings.cheapest.world_id))
+                                                .map(|w| w.get_name().to_string())?;
+                                            // Don't advertise the Compare card when it's
+                                            // already open for this world.
+                                            let already_open = compare_world
+                                                .get()
+                                                .map(|raw| Url::unescape(&raw))
+                                                .is_some_and(|current| {
+                                                    current.eq_ignore_ascii_case(&buy_world_name)
+                                                });
+                                            if already_open {
+                                                return None;
+                                            }
+                                            Some((savings, buy_world_name))
+                                        })
+                                        .map(|(savings, buy_world_name)| {
+                                            let quality_label = if savings.hq {
                                                 t_string!(i18n, hq).to_string()
                                             } else {
                                                 t_string!(i18n, nq).to_string()
                                             };
-                                            let percent = format_savings_percent(verdict.savings_percent);
+                                            let percent = format_savings_percent(savings.savings_percent);
+                                            let cheapest_world_id = savings.cheapest.world_id;
+                                            let cheapest_price = savings.cheapest.price;
+                                            let saved_amount = savings.savings;
                                             view! {
-                                                <a
-                                                    href="#listings"
+                                                <button
+                                                    type="button"
                                                     class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 transition-colors hover:border-emerald-300/70"
+                                                    on:click=move |_| {
+                                                        set_compare_world.set(Some(buy_world_name.clone()));
+                                                    }
                                                 >
                                                     <Icon icon=icondata::FaGlobeSolid attr:class="text-sm shrink-0" />
                                                     <span class="font-semibold">
                                                         {t!(i18n, item_view_savings_cheapest_on)}
                                                     </span>
                                                     <span class="inline-flex items-center gap-1">
-                                                        <WorldName id=AnySelector::World(verdict.cheapest_listing.world_id) />
+                                                        <WorldName id=AnySelector::World(cheapest_world_id) />
                                                         <span class="rounded border border-emerald-300/40 px-1 text-[10px] font-bold leading-4 text-emerald-100">
                                                             {quality_label}
                                                         </span>
                                                     </span>
                                                     <span class="text-[color:var(--color-text-muted)]">":"</span>
                                                     <div class="font-bold text-[color:var(--color-text)]">
-                                                        <Gil amount=verdict.cheapest_listing.price_per_unit />
+                                                        <Gil amount=cheapest_price />
                                                     </div>
                                                     <span class="text-[color:var(--color-text-muted)]">"-"</span>
                                                     <span>{t!(i18n, item_view_savings_save)}</span>
                                                     <div class="font-bold text-[color:var(--color-text)]">
-                                                        <Gil amount=verdict.savings />
+                                                        <Gil amount=saved_amount />
                                                     </div>
                                                     <span class="text-[color:var(--color-text-muted)]">
                                                         "("{percent}"%)"
                                                     </span>
-                                                </a>
+                                                    <span class="font-semibold underline">
+                                                        {t!(i18n, item_compare_action)}
+                                                    </span>
+                                                </button>
                                             }
                                             .into_any()
                                         })
@@ -1644,7 +1691,7 @@ fn ListingsContent(
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="overview" class="scroll-mt-16">
                 <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
-                <DecisionHeader listing_resource filtered_listings world />
+                <DecisionHeader listing_resource filtered_listings world item_id />
                 <MarketStatsPanel
                     listing_resource
                     filtered_listings
@@ -2051,74 +2098,60 @@ mod tests {
         assert_eq!(result.0.world_id, 200);
     }
 
-    #[test]
-    fn item_view_savings_verdict_no_listings() {
-        let listings = Vec::new();
-
-        let result = cheapest_savings_verdict(&listings, 100);
-
-        assert!(result.is_none());
+    fn zone_listing(price: i32, world_id: i32) -> CheapestListingData {
+        CheapestListingData { price, world_id }
     }
 
     #[test]
-    fn item_view_savings_verdict_same_world_cheapest() {
-        let listings = vec![listing(1, 100, 5_000, false), listing(2, 200, 6_000, false)];
-
-        let result = cheapest_savings_verdict(&listings, 100);
-
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn item_view_savings_verdict_cross_world_savings() {
-        let listings = vec![listing(1, 100, 5_000, false), listing(2, 200, 3_000, false)];
-
-        let result = cheapest_savings_verdict(&listings, 100).unwrap();
-
-        assert_eq!(result.cheapest_listing.id, 2);
-        assert_eq!(result.cheapest_listing.world_id, 200);
-        assert!(!result.cheapest_listing.hq);
-        assert_eq!(result.current_world_listing.id, 1);
+    fn zone_savings_reports_cheaper_other_world() {
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 200)),
+            hq: None,
+        };
+        let result = zone_savings(Some(5_000), None, &summary, 100).unwrap();
         assert_eq!(result.savings, 2_000);
-        assert_eq!(result.savings_percent, 40.0);
+        assert!(!result.hq);
+        assert_eq!(result.cheapest.world_id, 200);
     }
 
     #[test]
-    fn item_view_savings_verdict_ignores_trivial_savings() {
-        let listings = vec![
-            listing(1, 100, 10_000, false),
-            listing(2, 200, 9_001, false),
-        ];
-
-        let result = cheapest_savings_verdict(&listings, 100);
-
-        assert!(result.is_none());
+    fn zone_savings_none_when_cheapest_is_current_world() {
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 100)),
+            hq: None,
+        };
+        assert!(zone_savings(Some(5_000), None, &summary, 100).is_none());
     }
 
     #[test]
-    fn item_view_savings_verdict_matches_quality() {
-        let listings = vec![
-            listing(1, 100, 10_000, false),
-            listing(2, 200, 9_000, false),
-            listing(3, 100, 50_000, true),
-            listing(4, 200, 20_000, true),
-        ];
+    fn zone_savings_ignores_trivial_savings() {
+        // Below MEANINGFUL_CROSS_WORLD_SAVINGS_GIL (1_000)
+        let summary = PriceSummary {
+            lq: Some(zone_listing(4_500, 200)),
+            hq: None,
+        };
+        assert!(zone_savings(Some(5_000), None, &summary, 100).is_none());
+    }
 
-        let result = cheapest_savings_verdict(&listings, 100).unwrap();
-
-        assert!(result.cheapest_listing.hq);
-        assert_eq!(result.cheapest_listing.id, 4);
-        assert_eq!(result.current_world_listing.id, 3);
+    #[test]
+    fn zone_savings_picks_larger_quality_saving() {
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 200)),  // saves 2_000
+            hq: Some(zone_listing(10_000, 300)), // saves 30_000
+        };
+        let result = zone_savings(Some(5_000), Some(40_000), &summary, 100).unwrap();
+        assert!(result.hq);
         assert_eq!(result.savings, 30_000);
     }
 
     #[test]
-    fn item_view_savings_verdict_requires_current_world_matching_quality() {
-        let listings = vec![listing(1, 100, 10_000, false), listing(2, 200, 2_000, true)];
-
-        let result = savings_verdict_for_quality(&listings, 100, true);
-
-        assert!(result.is_none());
+    fn zone_savings_none_without_local_floor() {
+        // Nothing listed locally to compare against — no claim to make.
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 200)),
+            hq: None,
+        };
+        assert!(zone_savings(None, None, &summary, 100).is_none());
     }
 
     #[test]
