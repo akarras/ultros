@@ -6,6 +6,9 @@
 # per-language sheet patterns from SHEETS (see game-data-pack/src/fetch.rs).
 # `checkout_subdir` places a source inside the assembled ffxiv-datamining tree.
 #
+# `[icons]` records the FFXIV client version (game/ffxivgame.ver) the icon pack
+# was extracted from — icons come from a local game install, not a git source.
+#
 # This header is rewritten by `Manifest::save`; comments added below it are NOT
 # preserved across a --latest run.
 
@@ -29,6 +32,5 @@ url = "https://github.com/thewakingsands/ffxiv-datamining-tc.git"
 sha = "e203c7e46dd80fd2a967e5741b30e3c9fad0c767"
 checkout_subdir = "csv/tc"
 
-[sources.universalis-assets]
-url = "https://github.com/Universalis-FFXIV/universalis-assets.git"
-sha = "1586efa83016a70ab5f2fa2fa3c1d63d7fb55063"
+[icons]
+game_version = "2026.07.16.0001.0000"
