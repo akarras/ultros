@@ -51,7 +51,7 @@ pub fn ChartToolbar(
     set_mode: WriteSignal<ChartMode>,
     #[prop(into)] group_options: Signal<Vec<GroupLevel>>,
     #[prop(into)] group: Signal<GroupLevel>,
-    set_group: WriteSignal<GroupLevel>,
+    #[prop(into)] set_group: SignalSetter<GroupLevel>,
     #[prop(into)] show_market_average: Signal<bool>,
     set_show_market_average: WriteSignal<bool>,
     #[prop(into)] show_trend: Signal<bool>,

@@ -765,7 +765,7 @@ pub fn PriceHistoryChart(
     #[prop(into)] mode: Signal<ChartMode>,
     set_mode: WriteSignal<ChartMode>,
     #[prop(into)] group: Signal<GroupLevel>,
-    set_group: WriteSignal<GroupLevel>,
+    #[prop(into)] set_group: SignalSetter<GroupLevel>,
     #[prop(into)] on_range_change: Callback<Option<(i64, i64)>>,
 ) -> impl IntoView {
     let local_world_data = use_context::<LocalWorldData>().unwrap();
@@ -819,18 +819,6 @@ pub fn PriceHistoryChart(
     let helper_for_options = helper.clone();
     let color_by_options =
         Memo::new(move |_| available_group_levels(&helper_for_options, &scope_name.get()));
-    // If the scope changes underneath an existing selection (e.g. navigating
-    // from a datacenter page to a single-world page) and the current group
-    // no longer makes sense, snap it to the narrowest still-valid option
-    // rather than requesting a grouping the scope can't offer.
-    Effect::new(move |_| {
-        let options = color_by_options.get();
-        if !options.contains(&group.get_untracked())
-            && let Some(first) = options.first()
-        {
-            set_group.set(*first);
-        }
-    });
 
     // Resolved series used for both the model and the slicer's histogram.
     // Falls back to an empty payload while the resource is loading/erroring

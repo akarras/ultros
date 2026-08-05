@@ -19,6 +19,7 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
+use crate::query_defaults::filter_query_signal;
 use crate::routes::item_view_scope::item_href;
 use crate::routes::not_found::NotFound;
 use crate::script_escape::escape_for_script_tag;
@@ -40,7 +41,7 @@ use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer};
 use ultros_charts::charts::ChartMode;
-use ultros_charts::data::grouping::GroupLevel;
+use ultros_charts::data::grouping::{GroupLevel, default_group_level};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
@@ -1237,6 +1238,7 @@ pub fn ChartWrapper(
     world: Memo<String>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let (hq_only, set_hq_only) = signal(false);
 
     // Per-item analyzer stats (ClickHouse-backed). LocalResource = client-
@@ -1255,7 +1257,33 @@ pub fn ChartWrapper(
     // doc comment). `group`/`hq` mirror the chart's own controls so the
     // request always matches what's on screen; `selected_range` is the
     // timeline slicer's committed selection (`None` = full history).
-    let (group, set_group) = signal(GroupLevel::World);
+    // Grouping is a derived read over `?group=`, not a signal: an absent
+    // param means "the broadest level this scope offers", computed at read
+    // time. That gives a region page region lines instead of ~70 world lines
+    // (it used to hardcode World, which is valid at every scope, so the
+    // corrective Effect in the chart never fired).
+    //
+    // Filtering by the scope's available levels means a shared `?group=region`
+    // link opened on a *world* page degrades to World rather than requesting
+    // a grouping the scope cannot serve. Deriving rather than seeding also
+    // means navigating region -> world needs no write and cannot lose a race
+    // with the world picker's mount-time rebuild.
+    let (group_param, set_group_param) = filter_query_signal::<GroupLevel>("group");
+    let group_helper = world_data.clone();
+    let group_default_helper = world_data.clone();
+    let group = Signal::derive(move || {
+        let scope = world.get();
+        group_param
+            .get()
+            .filter(|level| {
+                ultros_charts::data::grouping::available_group_levels(&group_helper, &scope)
+                    .contains(level)
+            })
+            .unwrap_or_else(|| default_group_level(&group_default_helper, &scope))
+    });
+    let set_group = SignalSetter::map(move |level: GroupLevel| {
+        set_group_param.set(Some(level));
+    });
     // Deliberately resets to Price per visit (no persistence) so a shared
     // link and a fresh visit agree on what the chart shows. Mode switches
     // never touch `selected_range` or `group` — spec: "switching mode
