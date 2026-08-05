@@ -1384,7 +1384,7 @@ fn AnalyzerTable(
         // dimming a whole chip.
         const CHIP_FADE_PX: f64 = 24.0;
         let apply_fades = |el: &web_sys::HtmlDivElement| {
-            let left = el.scroll_left() as f64;
+            let left = el.scroll_left();
             // `scroll_width` is an i32 of a value the browser rounds, so the
             // remaining distance can land a fraction off zero at the far end.
             // A 1px deadband keeps the trailing fade from lingering once the
@@ -1413,7 +1413,6 @@ fn AnalyzerTable(
             let Some(el) = chip_row.get() else {
                 return;
             };
-            let el: web_sys::HtmlDivElement = el.into();
             if chip_listeners.with_value(|slot| slot.is_none()) {
                 let on_scroll = {
                     let el = el.clone();
