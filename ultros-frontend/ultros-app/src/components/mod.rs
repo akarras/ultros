@@ -13,6 +13,7 @@ pub mod chart_toolbar;
 pub mod cheapest_price;
 pub mod clipboard;
 pub mod confidence_badge;
+pub mod control_bar;
 pub mod crafter_settings;
 pub mod crafting_cost;
 pub mod datacenter_name;
