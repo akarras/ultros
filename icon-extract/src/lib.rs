@@ -6,12 +6,13 @@
 //! at `ui/icon/<group>/<id>.tex` (40px) with a `_hr1` 2x variant (80px); we
 //! prefer the 2x and fall back to the base.
 //!
-//! `ui/icon` uses five pixel formats in practice — Dxt1 (BC1), Dxt5 (BC3),
-//! Argb8, Rgb5a1 and Rgba4 — and all five are decoded here. An earlier census
-//! reported only Dxt1 and Argb8; it undercounted because it could only inspect
-//! icons that *parsed*, and the entries it skipped were never sampled. A format
-//! outside the five still shows up as a hard error naming the format, never as
-//! a corrupt image.
+//! `ui/icon` uses six pixel formats in practice — BC1, BC3, **BC7**, Bgra8,
+//! Bgr5a1 and Bgra4 — and all are decoded here (BC2/BC4/BC5 too, for the cost
+//! of a line each). An earlier census reported only BC1 and Bgra8; it
+//! undercounted because it could only inspect icons that *parsed*, and BC7 in
+//! particular could not be parsed at all by the ironworks release then in use.
+//! A format outside the handled set is a hard error naming the format, never a
+//! corrupt image.
 //!
 //! Reads distinguish three outcomes, which matters because conflating the last
 //! two is what made a decoder gap look like a stale game client: the icon is
@@ -23,9 +24,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context};
 use image::RgbaImage;
 use ironworks::{
-    ffxiv::FsResource,
     file::tex::{Format, Texture},
-    sqpack::SqPack,
+    sqpack::{Install, SqPack},
     Ironworks,
 };
 
@@ -68,7 +68,7 @@ impl GameInstall {
             .with_context(|| format!("reading {}", ver_path.display()))?
             .trim()
             .to_string();
-        let ironworks = Ironworks::new().with_resource(SqPack::new(FsResource::at(&root)));
+        let ironworks = Ironworks::new().with_resource(SqPack::new(Install::at(&root)));
         Ok(GameInstall { ironworks, version })
     }
 
@@ -197,24 +197,31 @@ pub fn decode_tex(tex: &Texture) -> anyhow::Result<RgbaImage> {
     let (w, h) = (tex.width() as usize, tex.height() as usize);
     let data = tex.data();
     let rgba: Vec<u8> = match tex.format() {
-        Format::Argb8 => {
+        Format::Bgra8Unorm => {
             let mip0 = data
                 .get(..w * h * 4)
-                .with_context(|| format!("Argb8 data too short for {w}x{h}"))?;
+                .with_context(|| format!("Bgra8 data too short for {w}x{h}"))?;
             // Stored B,G,R,A per pixel.
             mip0.chunks_exact(4)
                 .flat_map(|p| [p[2], p[1], p[0], p[3]])
                 .collect()
         }
-        Format::Dxt1 => decode_bc(data, w, h, texture2ddecoder::decode_bc1, "bc1")?,
-        Format::Dxt3 => decode_bc(data, w, h, texture2ddecoder::decode_bc2, "bc2")?,
-        Format::Dxt5 => decode_bc(data, w, h, texture2ddecoder::decode_bc3, "bc3")?,
+        Format::Bc1Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc1, "bc1")?,
+        Format::Bc2Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc2, "bc2")?,
+        Format::Bc3Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc3, "bc3")?,
+        // Bcn2. BC7 is the one that matters: ~9% of ui/icon, and the reason
+        // ironworks 0.4.1 could not read those entries at all — its `Format`
+        // enum predates the whole Bcn2 group, so the read failed before any
+        // decoding was attempted.
+        Format::Bc4Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc4, "bc4")?,
+        Format::Bc5Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc5, "bc5")?,
+        Format::Bc7Unorm => decode_bc(data, w, h, texture2ddecoder::decode_bc7, "bc7")?,
         // 16-bit packed. Despite the ironworks names these are the D3D9
         // orderings — A1R5G5B5 and A4R4G4B4 — so alpha is the high bits and
         // blue the low. Channels are widened by multiplying up rather than
         // shifting, so full-scale input maps to 255 instead of 248/240.
-        Format::Rgb5a1 => {
-            let mip0 = packed16(data, w, h, "Rgb5a1")?;
+        Format::Bgr5a1Unorm => {
+            let mip0 = packed16(data, w, h, "Bgr5a1")?;
             mip0.iter()
                 .flat_map(|&v| {
                     let r = ((v >> 10) & 0x1f) as u32;
@@ -230,8 +237,8 @@ pub fn decode_tex(tex: &Texture) -> anyhow::Result<RgbaImage> {
                 })
                 .collect()
         }
-        Format::Rgba4 => {
-            let mip0 = packed16(data, w, h, "Rgba4")?;
+        Format::Bgra4Unorm => {
+            let mip0 = packed16(data, w, h, "Bgra4")?;
             mip0.iter()
                 .flat_map(|&v| {
                     let r = ((v >> 8) & 0xf) as u8;
@@ -288,7 +295,7 @@ mod tests {
     #[test]
     fn argb8_decodes_as_bgra_storage() {
         // One pixel stored B=1, G=2, R=3, A=4 must come out R=3, G=2, B=1, A=4.
-        let tex = Texture::read(tex_bytes(0x1450, 1, 1, &[1, 2, 3, 4])).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1450, 1, 1, &[1, 2, 3, 4]))).expect("parse tex");
         let img = decode_tex(&tex).expect("decode");
         assert_eq!(img.dimensions(), (1, 1));
         assert_eq!(img.get_pixel(0, 0).0, [3, 2, 1, 4]);
@@ -298,7 +305,7 @@ mod tests {
     fn dxt1_decodes_a_solid_color_block() {
         // BC1 block: color0=color1=pure red in RGB565, all indices 0 -> 4x4 red.
         let block = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
-        let tex = Texture::read(tex_bytes(0x3420, 4, 4, &block)).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x3420, 4, 4, &block))).expect("parse tex");
         let img = decode_tex(&tex).expect("decode");
         assert_eq!(img.dimensions(), (4, 4));
         for pixel in img.pixels() {
@@ -309,14 +316,14 @@ mod tests {
     #[test]
     fn unknown_formats_error_instead_of_corrupting() {
         // L8 (0x1130) is a real format no icon uses; decode must refuse it.
-        let tex = Texture::read(tex_bytes(0x1130, 1, 1, &[0])).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1130, 1, 1, &[0]))).expect("parse tex");
         let error = decode_tex(&tex).expect_err("L8 should be rejected");
         assert!(error.to_string().contains("unhandled texture format"));
     }
 
     #[test]
     fn truncated_argb8_data_errors() {
-        let tex = Texture::read(tex_bytes(0x1450, 2, 2, &[0; 4])).expect("parse tex");
+        let tex = Texture::read(std::io::Cursor::new(tex_bytes(0x1450, 2, 2, &[0; 4]))).expect("parse tex");
         assert!(decode_tex(&tex).is_err());
     }
 }

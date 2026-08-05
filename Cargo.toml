@@ -123,6 +123,7 @@ dashmap = "6.1"
 web-push = { version = "0.11.0", default-features = false }
 
 [patch.crates-io]
+ironworks = { git = "https://github.com/ackwell/ironworks", rev = "3d5db8ff" }
 #leptos = { path = "../leptos/leptos" }
 # leptos_reactive = { git = "https://github.com/leptos-rs/leptos.git" }
 #leptos_reactive = {path = "../leptos/leptos_reactive"}
