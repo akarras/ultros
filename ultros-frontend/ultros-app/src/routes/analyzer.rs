@@ -159,7 +159,9 @@ use ultros_api_types::{
     websocket::{FilterPredicate, SocketMessageType, is_analyzer_market_update_relevant},
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
+#[cfg(feature = "hydrate")]
 use web_sys::wasm_bindgen::JsCast;
+#[cfg(feature = "hydrate")]
 use web_sys::wasm_bindgen::closure::Closure;
 use xiv_gen::ItemId;
 
@@ -1294,44 +1296,56 @@ fn AnalyzerTable(
     // way to reach them.
     let header_scroll = NodeRef::<leptos::html::Div>::new();
     let list_scroll = NodeRef::<leptos::html::Div>::new();
-    // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
-    // firing after the component is disposed.
-    let hscroll_listeners =
-        StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
-    on_cleanup(move || {
-        hscroll_listeners.update_value(|listeners| {
-            for (el, cb) in listeners.drain(..) {
-                let _ =
-                    el.remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
-            }
-        });
-    });
-    Effect::new(move |_| {
-        // Re-runs when the refs are populated; the guard keeps a second run
-        // from double-registering.
-        let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
-            return;
-        };
-        if hscroll_listeners.with_value(|l| !l.is_empty()) {
-            return;
-        }
-        // Mirroring writes `scrollLeft` on the other element, which fires its
-        // scroll event in turn; the equality check is what keeps that from
-        // ping-ponging.
-        let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
-            Closure::wrap(Box::new(move || {
-                let x = from.scroll_left();
-                if to.scroll_left() != x {
-                    to.set_scroll_left(x);
+    // Client-only: gated out of the SSR build entirely. A `LocalStorage`
+    // StoredValue created during SSR is a `SendWrapper` living on one tokio
+    // worker thread, but the Suspense rendering this component re-runs (and
+    // eventually disposes) across `.await` points, so the `on_cleanup` below
+    // can fire on a *different* worker thread — a guaranteed SendWrapper
+    // panic that aborts the response stream mid-body and leaves the client
+    // hydrating a truncated document (no `__INCOMPLETE_CHUNKS` bootstrap).
+    #[cfg(feature = "hydrate")]
+    {
+        // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
+        // firing after the component is disposed.
+        let hscroll_listeners =
+            StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
+        on_cleanup(move || {
+            hscroll_listeners.update_value(|listeners| {
+                for (el, cb) in listeners.drain(..) {
+                    let _ = el
+                        .remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
                 }
-            }) as Box<dyn FnMut()>)
-        };
-        let head_cb = mirror(head.clone(), body.clone());
-        let body_cb = mirror(body.clone(), head.clone());
-        let _ = head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
-        let _ = body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
-        hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
-    });
+            });
+        });
+        Effect::new(move |_| {
+            // Re-runs when the refs are populated; the guard keeps a second run
+            // from double-registering.
+            let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
+                return;
+            };
+            if hscroll_listeners.with_value(|l| !l.is_empty()) {
+                return;
+            }
+            // Mirroring writes `scrollLeft` on the other element, which fires its
+            // scroll event in turn; the equality check is what keeps that from
+            // ping-ponging.
+            let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
+                Closure::wrap(Box::new(move || {
+                    let x = from.scroll_left();
+                    if to.scroll_left() != x {
+                        to.set_scroll_left(x);
+                    }
+                }) as Box<dyn FnMut()>)
+            };
+            let head_cb = mirror(head.clone(), body.clone());
+            let body_cb = mirror(body.clone(), head.clone());
+            let _ =
+                head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
+            let _ =
+                body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
+            hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
+        });
+    }
 
     let clear_all_filters = move || {
         set_minimum_profit(None);
