@@ -6,10 +6,17 @@
 //! at `ui/icon/<group>/<id>.tex` (40px) with a `_hr1` 2x variant (80px); we
 //! prefer the 2x and fall back to the base.
 //!
-//! A 7.55-era census of every icon referenced by the Item sheet found exactly
-//! two pixel formats in use — Dxt1 (BC1) and Argb8 — so those are the only
-//! decoders implemented. A new format shows up as a hard error naming the
-//! format, not as a corrupt image.
+//! `ui/icon` uses five pixel formats in practice — Dxt1 (BC1), Dxt5 (BC3),
+//! Argb8, Rgb5a1 and Rgba4 — and all five are decoded here. An earlier census
+//! reported only Dxt1 and Argb8; it undercounted because it could only inspect
+//! icons that *parsed*, and the entries it skipped were never sampled. A format
+//! outside the five still shows up as a hard error naming the format, never as
+//! a corrupt image.
+//!
+//! Reads distinguish three outcomes, which matters because conflating the last
+//! two is what made a decoder gap look like a stale game client: the icon is
+//! present and decodable, genuinely absent from the install, or **present but
+//! unreadable**. See [`IconRead`].
 
 use std::path::{Path, PathBuf};
 
@@ -65,26 +72,70 @@ impl GameInstall {
         Ok(GameInstall { ironworks, version })
     }
 
+    /// The underlying reader, for diagnostics that need to inspect raw
+    /// textures (see `examples/probe.rs`).
+    pub fn ironworks(&self) -> &Ironworks {
+        &self.ironworks
+    }
+
     /// Read and decode icon `icon_id`, preferring the 2x `_hr1` variant.
-    /// `Ok(None)` means the install yields no usable icon at either resolution
-    /// — including the rare entry whose SqPack record doesn't parse (a handful
-    /// of ids index a `.tex` that ironworks cannot read; treat them like the
-    /// absent ones and let the caller's missing-count guard catch anything
-    /// systemic). Decode errors on a successfully *read* texture still fail
-    /// loudly: an unknown pixel format must never degrade into a blank icon.
-    pub fn icon(&self, icon_id: i32) -> anyhow::Result<Option<RgbaImage>> {
+    ///
+    /// Never collapses "absent" into "unreadable". A `.tex` that is indexed but
+    /// fails to parse is a *defect* — either a stale ironworks or a genuinely
+    /// new container shape — and reporting it as merely missing is what
+    /// previously disguised ~11% of `ui/icon` as content the client did not
+    /// have. Decode errors on a successfully read texture still fail loudly:
+    /// an unknown pixel format must never degrade into a blank icon.
+    pub fn icon(&self, icon_id: i32) -> anyhow::Result<IconRead> {
+        let mut failure: Option<(String, ironworks::Error)> = None;
         for hr in [true, false] {
             let path = icon_sqpack_path(icon_id, hr);
             match self.ironworks.file::<Texture>(&path) {
                 Ok(tex) => {
-                    return decode_tex(&tex)
-                        .with_context(|| format!("decoding {path}"))
-                        .map(Some);
+                    let image = decode_tex(&tex).with_context(|| format!("decoding {path}"))?;
+                    return Ok(IconRead::Image(image));
                 }
-                Err(_) => continue,
+                // Genuinely not in the install — try the other resolution.
+                Err(ironworks::Error::NotFound(_)) => continue,
+                // Indexed but unparseable. Keep the first such error: the
+                // `_hr1` one is the more informative of the pair.
+                Err(e) => {
+                    if failure.is_none() {
+                        failure = Some((path, e));
+                    }
+                }
             }
         }
-        Ok(None)
+        Ok(match failure {
+            Some((path, e)) => IconRead::Unreadable {
+                path,
+                reason: e.to_string(),
+            },
+            None => IconRead::Absent,
+        })
+    }
+}
+
+/// Outcome of reading one icon out of the install.
+#[derive(Debug)]
+pub enum IconRead {
+    /// Decoded successfully.
+    Image(RgbaImage),
+    /// Neither the `_hr1` nor the base `.tex` is indexed. Expected: the Item
+    /// sheet references icon ids the client legitimately does not ship.
+    Absent,
+    /// The `.tex` *is* indexed but could not be read. Never expected — surface
+    /// it rather than counting it as absent.
+    Unreadable { path: String, reason: String },
+}
+
+impl IconRead {
+    /// The decoded image, if there is one.
+    pub fn image(self) -> Option<RgbaImage> {
+        match self {
+            IconRead::Image(image) => Some(image),
+            _ => None,
+        }
     }
 }
 
@@ -105,6 +156,42 @@ fn find_install() -> Option<PathBuf> {
         .find(|path| path.join("game").join("sqpack").is_dir())
 }
 
+/// A texture2ddecoder block decoder: compressed bytes and dimensions in,
+/// ARGB words out.
+type BlockDecoder = fn(&[u8], usize, usize, &mut [u32]) -> Result<(), &'static str>;
+
+/// Run one of texture2ddecoder's block decoders and swizzle its output to
+/// RGBA8. They all share this shape and all emit ARGB words, i.e. B,G,R,A
+/// bytes on a little-endian host.
+fn decode_bc(
+    data: &[u8],
+    w: usize,
+    h: usize,
+    decode: BlockDecoder,
+    name: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let mut pixels = vec![0u32; w * h];
+    decode(data, w, h, &mut pixels).map_err(|e| anyhow!("{name} decode failed: {e}"))?;
+    Ok(pixels
+        .iter()
+        .flat_map(|px| {
+            let [b, g, r, a] = px.to_le_bytes();
+            [r, g, b, a]
+        })
+        .collect())
+}
+
+/// Mip 0 of a 16-bit-per-pixel texture, as little-endian `u16`s.
+fn packed16(data: &[u8], w: usize, h: usize, name: &str) -> anyhow::Result<Vec<u16>> {
+    let mip0 = data
+        .get(..w * h * 2)
+        .with_context(|| format!("{name} data too short for {w}x{h}"))?;
+    Ok(mip0
+        .chunks_exact(2)
+        .map(|p| u16::from_le_bytes([p[0], p[1]]))
+        .collect())
+}
+
 /// Decode mip 0 of `tex` to RGBA8.
 pub fn decode_tex(tex: &Texture) -> anyhow::Result<RgbaImage> {
     let (w, h) = (tex.width() as usize, tex.height() as usize);
@@ -119,16 +206,40 @@ pub fn decode_tex(tex: &Texture) -> anyhow::Result<RgbaImage> {
                 .flat_map(|p| [p[2], p[1], p[0], p[3]])
                 .collect()
         }
-        Format::Dxt1 => {
-            let mut pixels = vec![0u32; w * h];
-            texture2ddecoder::decode_bc1(data, w, h, &mut pixels)
-                .map_err(|e| anyhow!("bc1 decode failed: {e}"))?;
-            // texture2ddecoder emits ARGB words, i.e. B,G,R,A bytes on LE.
-            pixels
-                .iter()
-                .flat_map(|px| {
-                    let [b, g, r, a] = px.to_le_bytes();
-                    [r, g, b, a]
+        Format::Dxt1 => decode_bc(data, w, h, texture2ddecoder::decode_bc1, "bc1")?,
+        Format::Dxt3 => decode_bc(data, w, h, texture2ddecoder::decode_bc2, "bc2")?,
+        Format::Dxt5 => decode_bc(data, w, h, texture2ddecoder::decode_bc3, "bc3")?,
+        // 16-bit packed. Despite the ironworks names these are the D3D9
+        // orderings — A1R5G5B5 and A4R4G4B4 — so alpha is the high bits and
+        // blue the low. Channels are widened by multiplying up rather than
+        // shifting, so full-scale input maps to 255 instead of 248/240.
+        Format::Rgb5a1 => {
+            let mip0 = packed16(data, w, h, "Rgb5a1")?;
+            mip0.iter()
+                .flat_map(|&v| {
+                    let r = ((v >> 10) & 0x1f) as u32;
+                    let g = ((v >> 5) & 0x1f) as u32;
+                    let b = (v & 0x1f) as u32;
+                    let a = (v >> 15) & 0x1;
+                    [
+                        (r * 255 / 31) as u8,
+                        (g * 255 / 31) as u8,
+                        (b * 255 / 31) as u8,
+                        if a == 1 { 255 } else { 0 },
+                    ]
+                })
+                .collect()
+        }
+        Format::Rgba4 => {
+            let mip0 = packed16(data, w, h, "Rgba4")?;
+            mip0.iter()
+                .flat_map(|&v| {
+                    let r = ((v >> 8) & 0xf) as u8;
+                    let g = ((v >> 4) & 0xf) as u8;
+                    let b = (v & 0xf) as u8;
+                    let a = ((v >> 12) & 0xf) as u8;
+                    // 0x0..0xf -> 0x00..0xff exactly.
+                    [r * 17, g * 17, b * 17, a * 17]
                 })
                 .collect()
         }

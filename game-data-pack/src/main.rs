@@ -112,11 +112,31 @@ fn run() -> anyhow::Result<()> {
     let install = icon_extract::GameInstall::discover(args.game_path.as_deref())?;
     println!("\nextracting icons from FFXIV {}", install.version);
     let extracted = extract_icons(&install, &output.en_named_items)?;
+    // An indexed-but-unreadable icon is never acceptable: the file is right
+    // there and this toolchain cannot read it. Silently counting these as
+    // absent is what made a decoder gap look like a stale game client, so they
+    // stop the run outright rather than quietly shrinking the pack.
+    if !extracted.unreadable.is_empty() {
+        let sample = extracted
+            .unreadable
+            .iter()
+            .take(5)
+            .map(|(item, why)| format!("\n  item {item}: {why}"))
+            .collect::<String>();
+        bail!(
+            "{} of {} named items have an icon that IS indexed in the install but could not be \
+             read.{sample}\nThese are present in the game files — a stale client cannot explain \
+             them. Usually a stale `ironworks` that does not know a newer SqPack file kind. Not \
+             writing a pack that drops them.",
+            extracted.unreadable.len(),
+            output.en_named_items.len(),
+        );
+    }
     if extraction_looks_broken(extracted.missing.len(), &output.en_named_items) {
         bail!(
-            "{} of {} named items have an icon id whose .tex is unreadable — that is not a \
-             stale-client tail, the extraction itself is broken (wrong --game-path, or a client \
-             format ironworks cannot read). Not writing a gutted icon pack.",
+            "{} of {} named items reference an icon id the install does not index — too many to \
+             be a stale-client tail, so the extraction itself is broken (wrong --game-path). Not \
+             writing a gutted icon pack.",
             extracted.missing.len(),
             output.en_named_items.len(),
         );
@@ -125,6 +145,7 @@ fn run() -> anyhow::Result<()> {
         icons,
         item_to_icon,
         missing,
+        unreadable: _,
         iconless,
     } = extracted;
 
@@ -159,8 +180,15 @@ struct Extraction {
     icons: Vec<(i32, image::RgbaImage)>,
     /// `(item id, icon id)` for every item whose icon is in `icons`.
     item_to_icon: Vec<(i32, i32)>,
-    /// Item ids whose non-zero icon id has no readable `.tex` in the install.
+    /// Item ids whose non-zero icon id is genuinely not indexed in the install.
     missing: Vec<i32>,
+    /// Item ids whose icon *is* indexed but could not be read, with the reason.
+    /// Distinct from `missing` on purpose: absent icons are a normal
+    /// consequence of CSVs running ahead of the client, whereas an unreadable
+    /// one is always a defect in this toolchain (stale ironworks, new container
+    /// shape). Folding the two together previously disguised a decoder gap as a
+    /// stale game client.
+    unreadable: Vec<(i32, String)>,
     /// Named items with `Icon == 0` — iconless by data, not by staleness.
     iconless: usize,
 }
@@ -170,11 +198,21 @@ fn extract_icons(
     install: &icon_extract::GameInstall,
     named_items: &[(i32, i32)],
 ) -> anyhow::Result<Extraction> {
-    let mut decoded: std::collections::HashMap<i32, bool> = std::collections::HashMap::new();
+    use icon_extract::IconRead;
+    /// What a previously-seen icon id turned out to be, so each id is only
+    /// read once however many items share it.
+    #[derive(Clone)]
+    enum Seen {
+        Readable,
+        Absent,
+        Unreadable(String),
+    }
+    let mut decoded: std::collections::HashMap<i32, Seen> = std::collections::HashMap::new();
     let mut extraction = Extraction {
         icons: Vec::new(),
         item_to_icon: Vec::with_capacity(named_items.len()),
         missing: Vec::new(),
+        unreadable: Vec::new(),
         iconless: 0,
     };
     for &(item_id, icon_id) in named_items {
@@ -182,21 +220,26 @@ fn extract_icons(
             extraction.iconless += 1;
             continue;
         }
-        let readable = match decoded.entry(icon_id) {
-            std::collections::hash_map::Entry::Occupied(seen) => *seen.get(),
+        let seen = match decoded.entry(icon_id) {
+            std::collections::hash_map::Entry::Occupied(seen) => seen.get().clone(),
             std::collections::hash_map::Entry::Vacant(vacant) => {
-                let image = install.icon(icon_id)?;
-                let readable = image.is_some();
-                if let Some(image) = image {
-                    extraction.icons.push((icon_id, image));
-                }
-                *vacant.insert(readable)
+                let seen = match install.icon(icon_id)? {
+                    IconRead::Image(image) => {
+                        extraction.icons.push((icon_id, image));
+                        Seen::Readable
+                    }
+                    IconRead::Absent => Seen::Absent,
+                    IconRead::Unreadable { path, reason } => {
+                        Seen::Unreadable(format!("{path}: {reason}"))
+                    }
+                };
+                vacant.insert(seen).clone()
             }
         };
-        if readable {
-            extraction.item_to_icon.push((item_id, icon_id));
-        } else {
-            extraction.missing.push(item_id);
+        match seen {
+            Seen::Readable => extraction.item_to_icon.push((item_id, icon_id)),
+            Seen::Absent => extraction.missing.push(item_id),
+            Seen::Unreadable(why) => extraction.unreadable.push((item_id, why)),
         }
     }
     Ok(extraction)
