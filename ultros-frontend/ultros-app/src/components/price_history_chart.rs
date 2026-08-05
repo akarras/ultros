@@ -901,46 +901,20 @@ pub fn PriceHistoryChart(
     let view = Signal::derive(move || view_param.get().unwrap_or_default());
     let set_view = SignalSetter::map(move |next: ChartView| set_view_param.set(Some(next)));
 
-    // `grid_sort`/`grid_per_cell_scale` are plain `RwSignal`s (not the
-    // `SignalSetter::map` pattern used above) and synced to the URL with
-    // guarded effects, matching `hidden_series` below: both are only ever
-    // read and written from inside the grid's deeply-nested, early-return-
-    // heavy `{move || ...}` view closure, where a `SignalSetter::map`
-    // setter captured across the nested `on:change` closures does not type
-    // check as `FnMut` even though it is `Copy` -- `RwSignal` set calls, as
-    // used everywhere else in that same closure (`hover_index`,
-    // `world_filter_open`), do not hit the same issue.
     let (sort_param, set_sort_param) = filter_query_signal::<GridSort>("sort");
-    let grid_sort = RwSignal::new(GridSort::Name);
-    Effect::new(move |_| {
-        let next = sort_param.get().unwrap_or(GridSort::Name);
-        if grid_sort.get_untracked() != next {
-            grid_sort.set(next);
-        }
-    });
-    Effect::new(move |_| {
-        let current = grid_sort.get();
-        let next = (current != GridSort::Name).then_some(current);
-        if sort_param.get_untracked() != next {
-            set_sort_param.set(next);
-        }
-    });
+    let grid_sort = Signal::derive(move || sort_param.get().unwrap_or(GridSort::Name));
+    // Type ascribed: `SignalSetter::map`'s `S` storage parameter is not
+    // pinned by its argument, and unlike `set_view` this setter is never
+    // passed to a component prop (which would otherwise pin `S` for us) --
+    // left unannotated, `S` is ambiguous between `LocalStorage` and
+    // `SyncStorage` (E0283).
+    let set_grid_sort: SignalSetter<GridSort> =
+        SignalSetter::map(move |next: GridSort| set_sort_param.set(Some(next)));
 
     let (cellscale_param, set_cellscale_param) = filter_query_signal::<bool>("cellscale");
-    let grid_per_cell_scale = RwSignal::new(false);
-    Effect::new(move |_| {
-        let next = cellscale_param.get().unwrap_or(false);
-        if grid_per_cell_scale.get_untracked() != next {
-            grid_per_cell_scale.set(next);
-        }
-    });
-    Effect::new(move |_| {
-        let current = grid_per_cell_scale.get();
-        let next = current.then_some(true);
-        if cellscale_param.get_untracked() != next {
-            set_cellscale_param.set(next);
-        }
-    });
+    let grid_per_cell_scale = Signal::derive(move || cellscale_param.get().unwrap_or(false));
+    let set_grid_per_cell_scale: SignalSetter<bool> =
+        SignalSetter::map(move |on: bool| set_cellscale_param.set(on.then_some(true)));
 
     // Lifted so the grid's "+N more" affordance can open the toolbar's
     // world-filter popover.
@@ -955,6 +929,13 @@ pub fn PriceHistoryChart(
     // resolved against these: an expression naming series that don't exist at
     // this grouping level is stale, and `parse_show` fails it open rather
     // than blanking the chart.
+    //
+    // Series the user hid, by name. Stored as a sorted Vec so the model
+    // memo's PartialEq sees a stable value, and so the `?show=` sync
+    // effect's `!=` comparison below is order-independent in practice: it
+    // relies on `parse_show` returning names in model order, which is
+    // alphabetical (`price_history.rs` sorts `resolved` by name) -- the same
+    // order the legend and filter popover already sort into.
     let (show_param, set_show_param) = filter_query_signal::<String>("show");
     let hidden_series = RwSignal::new(Vec::<String>::new());
 
@@ -1599,7 +1580,7 @@ pub fn PriceHistoryChart(
                                     <select
                                         class="rounded-md border border-[color:var(--color-outline)] bg-transparent px-2 py-1"
                                         on:change=move |event| {
-                                            grid_sort
+                                            set_grid_sort
                                                 .set(
                                                     if event_target_value(&event) == "change" {
                                                         GridSort::Change
@@ -1622,7 +1603,7 @@ pub fn PriceHistoryChart(
                                             class="accent-violet-500"
                                             prop:checked=grid_per_cell_scale
                                             on:change=move |event| {
-                                                grid_per_cell_scale.set(event_target_checked(&event))
+                                                set_grid_per_cell_scale.set(event_target_checked(&event))
                                             }
                                         />
                                         {t_string!(i18n, chart_scale_per_cell).to_string()}
