@@ -29,9 +29,11 @@ Options:
   --pinned                 Build from the SHAs in data/manifest.toml (default)
   --latest                 Resolve each source's latest SHA, rewrite the
                            manifest, then build
-  --offline-source <path>  Build from an already-populated ultros checkout
-                           instead of fetching anything
-  --skip-icons             Skip the icon pack (and the universalis-assets fetch)
+  --offline-source <path>  Build the CSV packs from an already-populated ultros
+                           checkout instead of fetching anything
+  --skip-icons             Skip the icon pack (no FFXIV install needed)
+  --game-path <path>       FFXIV install root to extract icons from (default:
+                           search the standard install locations)
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -45,6 +47,7 @@ struct Args {
     pins: Pins,
     offline_source: Option<PathBuf>,
     skip_icons: bool,
+    game_path: Option<PathBuf>,
 }
 
 fn main() {
@@ -68,23 +71,23 @@ fn run() -> anyhow::Result<()> {
         .context("locating the repo root")?;
     let data_dir = repo_root.join("data");
 
+    let manifest_path = data_dir.join("manifest.toml");
     let layout = match &args.offline_source {
         Some(checkout) => {
             println!("building from {} (no fetching)", checkout.display());
-            Layout::offline(checkout, args.skip_icons)
+            Layout::offline(checkout)
         }
         None => {
-            let manifest_path = data_dir.join("manifest.toml");
             let mut manifest = Manifest::load(&manifest_path)?;
             let cache_root = repo_root.join(".game-data-cache");
             if args.pins == Pins::Latest {
                 std::fs::create_dir_all(&cache_root)
                     .with_context(|| format!("creating cache root {}", cache_root.display()))?;
-                update_pins(&mut manifest, &cache_root, args.skip_icons)?;
+                update_pins(&mut manifest, &cache_root)?;
                 manifest.save(&manifest_path)?;
                 println!("updated {}", manifest_path.display());
             }
-            fetch::fetch_all(&cache_root, &manifest, args.skip_icons)?
+            fetch::fetch_all(&cache_root, &manifest)?
         }
     };
 
@@ -101,35 +104,116 @@ fn run() -> anyhow::Result<()> {
         );
     }
 
-    match &layout.icons {
-        None => println!("\nicons skipped"),
-        Some(icon_dir) => {
-            let out_path = data_dir.join("icons").join("images.tar.zst");
-            let stats = icons::build_pack(icon_dir, &out_path)?;
-            println!("\nicons -> {}", out_path.display());
-            println!(
-                "  {} source PNGs, {} entries, {:.2}MB tar -> {:.2}MB zst",
-                stats.source_pngs,
-                stats.entries,
-                mib(stats.tar_bytes),
-                mib(stats.packed_bytes),
-            );
-            report_missing_icons(icon_dir, &output.en_named_item_ids)?;
-        }
+    if args.skip_icons {
+        println!("\nicons skipped");
+        return Ok(());
     }
+
+    let install = icon_extract::GameInstall::discover(args.game_path.as_deref())?;
+    println!("\nextracting icons from FFXIV {}", install.version);
+    let extracted = extract_icons(&install, &output.en_named_items)?;
+    if extraction_looks_broken(extracted.missing.len(), &output.en_named_items) {
+        bail!(
+            "{} of {} named items have an icon id whose .tex is unreadable — that is not a \
+             stale-client tail, the extraction itself is broken (wrong --game-path, or a client \
+             format ironworks cannot read). Not writing a gutted icon pack.",
+            extracted.missing.len(),
+            output.en_named_items.len(),
+        );
+    }
+    let Extraction {
+        icons,
+        item_to_icon,
+        missing,
+        iconless,
+    } = extracted;
+
+    let out_path = data_dir.join("icons").join("images.tar.zst");
+    let stats = icons::build_pack(icons, &item_to_icon, &out_path)?;
+    println!("icons -> {}", out_path.display());
+    println!(
+        "  {} unique icons for {} items, {} entries, {:.2}MB tar -> {:.2}MB zst",
+        stats.unique_icons,
+        stats.mapped_items,
+        stats.entries,
+        mib(stats.tar_bytes),
+        mib(stats.packed_bytes),
+    );
+    println!("  {iconless} named items have Icon = 0 (permanently iconless rows)");
+    report_missing_icons(&missing, output.en_named_items.len());
+
+    // Record which client the icons came out of. An offline CSV build has no
+    // loaded manifest, but it still regenerated the icon pack, so update the
+    // provenance there too.
+    let mut manifest = Manifest::load(&manifest_path)?;
+    manifest.icons = Some(manifest::IconPack {
+        game_version: install.version.clone(),
+    });
+    manifest.save(&manifest_path)?;
 
     Ok(())
 }
 
-/// Rewrites every pinned SHA to whatever the upstream branch points at now.
-fn update_pins(manifest: &mut Manifest, run_dir: &Path, skip_icons: bool) -> anyhow::Result<()> {
-    for (name, source) in manifest.sources.iter_mut() {
-        if skip_icons && name == fetch::ICONS_SOURCE {
-            // Bumping this pin without regenerating the icon pack would make the
-            // manifest claim data/icons was built from a SHA it never saw.
-            println!("{name}: pin left at {} (--skip-icons)", source.sha);
+struct Extraction {
+    /// `(icon id, image)` for every distinct icon that decoded.
+    icons: Vec<(i32, image::RgbaImage)>,
+    /// `(item id, icon id)` for every item whose icon is in `icons`.
+    item_to_icon: Vec<(i32, i32)>,
+    /// Item ids whose non-zero icon id has no readable `.tex` in the install.
+    missing: Vec<i32>,
+    /// Named items with `Icon == 0` — iconless by data, not by staleness.
+    iconless: usize,
+}
+
+/// Decodes every distinct icon id the named items reference.
+fn extract_icons(
+    install: &icon_extract::GameInstall,
+    named_items: &[(i32, i32)],
+) -> anyhow::Result<Extraction> {
+    let mut decoded: std::collections::HashMap<i32, bool> = std::collections::HashMap::new();
+    let mut extraction = Extraction {
+        icons: Vec::new(),
+        item_to_icon: Vec::with_capacity(named_items.len()),
+        missing: Vec::new(),
+        iconless: 0,
+    };
+    for &(item_id, icon_id) in named_items {
+        if icon_id == 0 {
+            extraction.iconless += 1;
             continue;
         }
+        let readable = match decoded.entry(icon_id) {
+            std::collections::hash_map::Entry::Occupied(seen) => *seen.get(),
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                let image = install.icon(icon_id)?;
+                let readable = image.is_some();
+                if let Some(image) = image {
+                    extraction.icons.push((icon_id, image));
+                }
+                *vacant.insert(readable)
+            }
+        };
+        if readable {
+            extraction.item_to_icon.push((item_id, icon_id));
+        } else {
+            extraction.missing.push(item_id);
+        }
+    }
+    Ok(extraction)
+}
+
+/// True when so many icon-bearing items came back unreadable that the problem
+/// has to be systemic rather than a stale-client tail. A client one patch
+/// behind the pinned CSVs measures ~1-3% missing; a wrong install path or an
+/// unparseable client format measures near 100%.
+fn extraction_looks_broken(missing: usize, named_items: &[(i32, i32)]) -> bool {
+    let with_icons = named_items.iter().filter(|(_, icon)| *icon != 0).count();
+    missing * 10 > with_icons
+}
+
+/// Rewrites every pinned SHA to whatever the upstream branch points at now.
+fn update_pins(manifest: &mut Manifest, run_dir: &Path) -> anyhow::Result<()> {
+    for (name, source) in manifest.sources.iter_mut() {
         let latest = fetch::latest_sha(run_dir, source)?;
         if latest == source.sha {
             println!("{name}: {} (unchanged)", source.sha);
@@ -141,26 +225,24 @@ fn update_pins(manifest: &mut Manifest, run_dir: &Path, skip_icons: bool) -> any
     Ok(())
 }
 
-/// Reports named items the upstream icon repo has no PNG for; these render as a
-/// blank icon.
+/// Reports named items whose icon could not be extracted; these render as the
+/// fallback image.
 ///
-/// The absolute count is inherently large — measured on 7.55 the icon repo ships
-/// 17,209 files against 50,773 named items, so ~33.5k named items legitimately
-/// have no icon of their own. What is actionable is (a) how the count moves
-/// between runs and (b) the preview, which shows the *highest* ids because a new
-/// game version appends its items at the top of the id range. Previewing the low
-/// end would just reprint the same permanently-iconless legacy rows every run.
-fn report_missing_icons(icon_dir: &Path, named_item_ids: &[i32]) -> anyhow::Result<()> {
-    let missing = icons::missing_icon_ids(icon_dir, named_item_ids)?;
+/// Extraction reads the game files directly, so unlike the old universalis
+/// pipeline the count should be near zero. A large count almost always means
+/// the install is behind the pinned CSVs — patch the game and re-run. The
+/// preview shows the *highest* ids because a new game version appends its items
+/// at the top of the id range.
+fn report_missing_icons(missing: &[i32], named_items: usize) {
     if missing.is_empty() {
-        println!("  every named item has an upstream icon");
-        return Ok(());
+        println!("  every named item has an icon");
+        return;
     }
-    let preview = newest_missing(&missing, 20);
+    let preview = newest_missing(missing, 20);
     println!(
-        "  {} of {} named items have no upstream icon; highest ids: {}{}",
+        "  {} of {named_items} named items have no icon in the install \
+         (client older than the pinned CSVs?); highest ids: {}{}",
         missing.len(),
-        named_item_ids.len(),
         preview
             .iter()
             .map(i32::to_string)
@@ -172,7 +254,6 @@ fn report_missing_icons(icon_dir: &Path, named_item_ids: &[i32]) -> anyhow::Resu
             ""
         },
     );
-    Ok(())
 }
 
 /// The `limit` highest ids from an ascending list, highest first.
@@ -185,6 +266,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
         pins: Pins::Pinned,
         offline_source: None,
         skip_icons: false,
+        game_path: None,
     };
     let mut argv = argv.into_iter();
     while let Some(arg) = argv.next() {
@@ -198,6 +280,13 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
                     bail!("--offline-source needs a path, got the flag {path:?}");
                 }
                 args.offline_source = Some(PathBuf::from(path));
+            }
+            "--game-path" => {
+                let path = argv.next().context("--game-path needs a path")?;
+                if path.starts_with("--") {
+                    bail!("--game-path needs a path, got the flag {path:?}");
+                }
+                args.game_path = Some(PathBuf::from(path));
             }
             "--help" | "-h" => {
                 println!("{USAGE}");
@@ -252,6 +341,27 @@ mod arg_tests {
     #[test]
     fn offline_source_does_not_swallow_the_next_flag() {
         assert!(parse(&["--offline-source", "--skip-icons"]).is_err());
+    }
+
+    #[test]
+    fn broken_extraction_is_a_ratio_of_icon_bearing_items() {
+        // 3 items carry icons; 1 missing (33%) is broken, while iconless rows
+        // never count toward the denominator.
+        let named = [(1, 100), (2, 0), (3, 101), (4, 102)];
+        assert!(extraction_looks_broken(1, &named));
+        assert!(!extraction_looks_broken(0, &named));
+        // A stale-client tail (~3%) stays under the 10% tripwire.
+        let many: Vec<(i32, i32)> = (0..1000).map(|i| (i, 100 + i)).collect();
+        assert!(!extraction_looks_broken(30, &many));
+        assert!(extraction_looks_broken(101, &many));
+    }
+
+    #[test]
+    fn game_path_takes_a_path_argument() {
+        let args = parse(&["--game-path", "D:/ffxiv"]).expect("should parse");
+        assert_eq!(args.game_path, Some(PathBuf::from("D:/ffxiv")));
+        assert!(parse(&["--game-path"]).is_err());
+        assert!(parse(&["--game-path", "--skip-icons"]).is_err());
     }
 
     #[test]

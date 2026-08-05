@@ -17,6 +17,7 @@ members = [
     "dumb-csv",
     "field-iterator",
     "game-data-pack",
+    "icon-extract",
 ]
 resolver = "2"
 
