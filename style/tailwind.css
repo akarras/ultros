@@ -2346,8 +2346,33 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     flex: 1;
     /* The bar is height-locked, so a reserved scrollbar gutter would eat
        into the chips themselves. Scrolling still works via trackpad,
-       shift+wheel and focus. */
+       shift+wheel, touch and focus. */
     scrollbar-width: none;
+
+    /* ...which leaves nothing on screen to say the strip scrolls at all. At
+       375px with eight filters set, the chips run 1002px inside a 237px
+       viewport and the five past the fold are simply invisible (#1057). These
+       two variables drive an edge fade; analyzer.rs sets them from the row's
+       own scroll geometry, so the fade appears on the side that has more
+       chips and nowhere else. Both default to 0, which collapses each
+       gradient stop pair onto the same position — a zero-width fade, i.e. no
+       visual change at all when everything fits. */
+    --chip-fade-start: 0px;
+    --chip-fade-end: 0px;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--chip-fade-start),
+        #000 calc(100% - var(--chip-fade-end)),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--chip-fade-start),
+        #000 calc(100% - var(--chip-fade-end)),
+        transparent 100%
+    );
 }
 .filter-chip-row::-webkit-scrollbar {
     display: none;
