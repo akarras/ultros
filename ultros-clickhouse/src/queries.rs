@@ -8,6 +8,7 @@
 
 use clickhouse::Row;
 use serde::Deserialize;
+use ultros_api_types::item_stats::ItemStatsVariant;
 use ultros_api_types::price_series::{HqFilter, SeriesGroup};
 use ultros_api_types::trends::ConfidenceBand;
 
@@ -524,6 +525,128 @@ pub async fn deep_scan_batch(
     Ok(rows)
 }
 
+/// Fold per-world deep scans into one variant per quality (NQ then HQ).
+///
+/// `item_stats_window` is keyed by world, so a datacenter- or region-scoped
+/// request fans out to one row per member world and has to be folded back
+/// into the single figure the item view shows. Counts add. The price and
+/// suspicion figures are weighted means so that a world with four sales can't
+/// drag the number as hard as one with four thousand:
+///
+/// - `vwap`/`p50` are weighted by `cleaned_sample_size`, the sample they were
+///   each computed over. A weighted mean of per-world medians is *not* the
+///   true median of the combined sample — the rollup doesn't keep the raw
+///   distribution, so this is an approximation, and a deliberately
+///   sample-weighted one rather than a flat average across worlds.
+/// - `launder_suspicion` is a share of *all* samples, so it weights by
+///   `sample_size` (its own denominator) rather than the cleaned count.
+/// - `confidence_band` is a stored per-world judgement that can't be
+///   recomputed here, so the scope reports the band of the world contributing
+///   the most cleaned samples, tie-broken on world id so the answer is stable
+///   across queries rather than dependent on ClickHouse's row order.
+///
+/// A single-world scope returns that row's values verbatim, so world-scoped
+/// requests are unaffected by any of the above.
+pub fn aggregate_item_stats_variants(scans: &[DeepScan]) -> Vec<ItemStatsVariant> {
+    // NQ before HQ, so the response order doesn't depend on ClickHouse's.
+    [0u8, 1u8]
+        .into_iter()
+        .filter_map(|hq| {
+            let group: Vec<&DeepScan> = scans.iter().filter(|s| s.hq == hq).collect();
+            match group.as_slice() {
+                [] => None,
+                [only] => Some(variant_of(only)),
+                many => Some(fold_variants(many)),
+            }
+        })
+        .collect()
+}
+
+/// One scan straight across to the wire type, no arithmetic.
+fn variant_of(s: &DeepScan) -> ItemStatsVariant {
+    ItemStatsVariant {
+        hq: s.hq != 0,
+        sample_size_30d: s.sample_size,
+        cleaned_sample_size_30d: s.cleaned_sample_size,
+        vwap_30d: s.vwap,
+        p50_30d: s.p50,
+        confidence_band: s.confidence_band(),
+        launder_suspicion: s.launder_suspicion_pct,
+    }
+}
+
+/// Fold two or more same-quality scans. See [`aggregate_item_stats_variants`]
+/// for why each field combines the way it does.
+fn fold_variants(group: &[&DeepScan]) -> ItemStatsVariant {
+    let cleaned: Vec<u64> = group.iter().map(|s| s.cleaned_sample_size as u64).collect();
+    let raw: Vec<u64> = group.iter().map(|s| s.sample_size as u64).collect();
+
+    // The band's source world: most cleaned samples wins, lowest world id
+    // breaks a tie. `max_by_key` keeps the *last* maximum, so ordering the
+    // key by (samples, Reverse(world_id)) makes the lowest id win a tie.
+    let band_source = group
+        .iter()
+        .max_by_key(|s| (s.cleaned_sample_size, std::cmp::Reverse(s.world_id)))
+        .expect("fold_variants is only called with a non-empty group");
+
+    ItemStatsVariant {
+        hq: group[0].hq != 0,
+        sample_size_30d: sum_saturating(&raw),
+        cleaned_sample_size_30d: sum_saturating(&cleaned),
+        vwap_30d: weighted_mean_u32(&group.iter().map(|s| s.vwap).collect::<Vec<_>>(), &cleaned),
+        p50_30d: weighted_mean_u32(&group.iter().map(|s| s.p50).collect::<Vec<_>>(), &cleaned),
+        confidence_band: band_source.confidence_band(),
+        launder_suspicion: weighted_mean_f32(
+            &group
+                .iter()
+                .map(|s| s.launder_suspicion_pct)
+                .collect::<Vec<_>>(),
+            &raw,
+        ),
+    }
+}
+
+fn sum_saturating(values: &[u64]) -> u32 {
+    values.iter().sum::<u64>().min(u32::MAX as u64) as u32
+}
+
+/// Weighted mean, falling back to a flat mean when every weight is zero (a
+/// world whose whole sample was filtered out still has a price to report).
+fn weighted_mean_u32(values: &[u32], weights: &[u64]) -> u32 {
+    let total: u128 = weights.iter().map(|w| *w as u128).sum();
+    if total == 0 {
+        if values.is_empty() {
+            return 0;
+        }
+        let sum: u128 = values.iter().map(|v| *v as u128).sum();
+        return (sum / values.len() as u128) as u32;
+    }
+    let numerator: u128 = values
+        .iter()
+        .zip(weights)
+        .map(|(v, w)| *v as u128 * *w as u128)
+        .sum();
+    (numerator / total) as u32
+}
+
+/// As [`weighted_mean_u32`], in f64 to keep the running sum honest before
+/// narrowing back to the f32 the wire type uses.
+fn weighted_mean_f32(values: &[f32], weights: &[u64]) -> f32 {
+    let total: f64 = weights.iter().map(|w| *w as f64).sum();
+    if total == 0.0 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        return (values.iter().map(|v| *v as f64).sum::<f64>() / values.len() as f64) as f32;
+    }
+    let numerator: f64 = values
+        .iter()
+        .zip(weights)
+        .map(|(v, w)| *v as f64 * *w as f64)
+        .sum();
+    (numerator / total) as f32
+}
+
 /// Single-item convenience wrapper.
 pub async fn deep_scan_one(
     ch: &ClickHouseClient,
@@ -986,6 +1109,149 @@ mod tests {
         // 350 -> 25, 500 -> 50, span = 150, midpoint = 425
         // pct = 25 + (75/150)*25 = 25 + 12.5 = 37.5 → rounds to 38
         assert_eq!(d.price_percentile(425), 38);
+    }
+
+    /// A scan for one world, with the fields the aggregation actually reads
+    /// set explicitly so each test reads as its own scenario.
+    fn scan(world_id: i32, hq: u8, sample: u32, cleaned: u32, vwap: u32, band: &str) -> DeepScan {
+        DeepScan {
+            world_id,
+            hq,
+            sample_size: sample,
+            cleaned_sample_size: cleaned,
+            vwap,
+            p50: vwap,
+            confidence_band_raw: band.to_string(),
+            ..fixture()
+        }
+    }
+
+    #[test]
+    fn single_world_scope_passes_the_row_through_verbatim() {
+        // World-scoped requests must be untouched by the region aggregation.
+        let only = fixture();
+        let variants = aggregate_item_stats_variants(std::slice::from_ref(&only));
+        assert_eq!(variants.len(), 1);
+        let v = &variants[0];
+        assert_eq!(v.sample_size_30d, only.sample_size);
+        assert_eq!(v.cleaned_sample_size_30d, only.cleaned_sample_size);
+        assert_eq!(v.vwap_30d, only.vwap);
+        assert_eq!(v.p50_30d, only.p50);
+        assert_eq!(v.confidence_band, only.confidence_band());
+        assert_eq!(v.launder_suspicion, only.launder_suspicion_pct);
+    }
+
+    #[test]
+    fn region_scope_sums_sample_counts_across_worlds() {
+        // The badge's headline number: a region's sample size is every
+        // member world's, not one world's.
+        let scans = [
+            scan(40, 0, 100, 90, 500, "high"),
+            scan(41, 0, 250, 200, 500, "high"),
+            scan(42, 0, 30, 10, 500, "low"),
+        ];
+        let variants = aggregate_item_stats_variants(&scans);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].sample_size_30d, 380);
+        assert_eq!(variants[0].cleaned_sample_size_30d, 300);
+    }
+
+    #[test]
+    fn region_scope_keeps_both_qualities_nq_first() {
+        let scans = [
+            scan(41, 1, 10, 10, 900, "medium"),
+            scan(40, 0, 100, 90, 500, "high"),
+            scan(41, 0, 100, 90, 500, "high"),
+        ];
+        let variants = aggregate_item_stats_variants(&scans);
+        assert_eq!(variants.len(), 2);
+        assert!(
+            !variants[0].hq,
+            "NQ should come first regardless of row order"
+        );
+        assert!(variants[1].hq);
+        // The lone HQ row is a single-scan group, so it passes through.
+        assert_eq!(variants[1].vwap_30d, 900);
+    }
+
+    #[test]
+    fn price_is_weighted_by_sample_not_flat_averaged_across_worlds() {
+        // A 10-sale world at 1000 gil shouldn't move the number as much as a
+        // 990-sale world at 100 gil. Flat mean would say 550.
+        let scans = [
+            scan(40, 0, 990, 990, 100, "high"),
+            scan(41, 0, 10, 10, 1000, "low"),
+        ];
+        let variants = aggregate_item_stats_variants(&scans);
+        // (100*990 + 1000*10) / 1000 = 109
+        assert_eq!(variants[0].vwap_30d, 109);
+        assert_eq!(variants[0].p50_30d, 109);
+    }
+
+    #[test]
+    fn launder_suspicion_weights_by_total_samples() {
+        // It's a share of all samples, so its weight is sample_size.
+        let mut a = scan(40, 0, 900, 800, 500, "high");
+        a.launder_suspicion_pct = 0.0;
+        let mut b = scan(41, 0, 100, 90, 500, "low");
+        b.launder_suspicion_pct = 1.0;
+        let variants = aggregate_item_stats_variants(&[a, b]);
+        // (0.0*900 + 1.0*100) / 1000 = 0.1
+        assert!(
+            (variants[0].launder_suspicion - 0.1).abs() < 1e-6,
+            "got {}",
+            variants[0].launder_suspicion
+        );
+    }
+
+    #[test]
+    fn band_comes_from_the_world_with_the_most_cleaned_samples() {
+        let scans = [
+            scan(40, 0, 20, 10, 500, "low"),
+            scan(41, 0, 900, 800, 500, "high"),
+        ];
+        let variants = aggregate_item_stats_variants(&scans);
+        assert_eq!(variants[0].confidence_band, ConfidenceBand::High);
+    }
+
+    #[test]
+    fn band_tie_breaks_on_world_id_so_row_order_cannot_change_it() {
+        // Same cleaned count on both worlds: the answer must not depend on
+        // which order ClickHouse happened to return the rows in.
+        let low_first = [
+            scan(40, 0, 100, 90, 500, "high"),
+            scan(41, 0, 100, 90, 500, "low"),
+        ];
+        let high_first = [
+            scan(41, 0, 100, 90, 500, "low"),
+            scan(40, 0, 100, 90, 500, "high"),
+        ];
+        assert_eq!(
+            aggregate_item_stats_variants(&low_first)[0].confidence_band,
+            aggregate_item_stats_variants(&high_first)[0].confidence_band,
+        );
+        // Lowest world id wins the tie.
+        assert_eq!(
+            aggregate_item_stats_variants(&low_first)[0].confidence_band,
+            ConfidenceBand::High,
+        );
+    }
+
+    #[test]
+    fn all_samples_filtered_out_falls_back_to_a_flat_price_mean() {
+        // Every weight zero would divide by zero; fall back rather than 0.
+        let scans = [
+            scan(40, 0, 5, 0, 100, "unusable"),
+            scan(41, 0, 5, 0, 300, "unusable"),
+        ];
+        let variants = aggregate_item_stats_variants(&scans);
+        assert_eq!(variants[0].cleaned_sample_size_30d, 0);
+        assert_eq!(variants[0].vwap_30d, 200);
+    }
+
+    #[test]
+    fn no_rows_yields_no_variants() {
+        assert!(aggregate_item_stats_variants(&[]).is_empty());
     }
 
     #[test]

@@ -60,10 +60,19 @@ pub fn ListSubscribeDrawer(
             ));
             return;
         }
-        let trigger = if mode.get() == "list_updates" {
+        let list_updates = mode.get() == "list_updates";
+        let trigger = if list_updates {
             AlertTrigger::ListUpdate { list_id }
         } else {
             AlertTrigger::ListItemThreshold { list_id }
+        };
+        // Resolved before the request, not after: dismissing the drawer
+        // disposes `mode`, and reading a disposed signal panics — the same
+        // crash the search box hit in #6874.
+        let success_message = if list_updates {
+            t_string!(i18n, list_update_subscribe_success_toast).to_string()
+        } else {
+            t_string!(i18n, list_subscribe_success_toast).to_string()
         };
         let req = CreateAlertRequest {
             trigger,
@@ -91,11 +100,7 @@ pub fn ListSubscribeDrawer(
             match result {
                 Ok(_) => {
                     if let Some(t) = toasts {
-                        t.success(if mode.get() == "list_updates" {
-                            t_string!(i18n, list_update_subscribe_success_toast)
-                        } else {
-                            t_string!(i18n, list_subscribe_success_toast)
-                        });
+                        t.success(success_message);
                     }
                     set_visible.set(false);
                 }
