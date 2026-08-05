@@ -18,10 +18,13 @@ use ultros_charts::theme::Theme;
 use web_sys::PointerEvent;
 use web_sys::wasm_bindgen::JsCast;
 
-use crate::components::chart_query::{RangePreset, preset_has_data};
+use crate::components::chart_query::{
+    Overlays, RangePreset, encode_show, parse_show, preset_has_data,
+};
 use crate::components::chart_toolbar::{ChartToolbar, ChartView};
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
+use crate::query_defaults::filter_query_signal;
 
 fn px(v: f32) -> String {
     format!("{v:.1}")
@@ -869,18 +872,76 @@ pub fn PriceHistoryChart(
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
     let i18n = use_i18n();
-    let (show_market_average, set_show_market_average) = signal(true);
-    let (show_trend, set_show_trend) = signal(false);
-    let (show_quantity, set_show_quantity) = signal(false);
-    // Patch milestone bands (spec 4): on by default — under 30 days the LOD
-    // tier empties the mark set anyway, so narrow zooms stay clean.
-    let (show_patches, set_show_patches) = signal(true);
-    // Overlay vs small-multiples grid. Owned here (not item_view): nothing
-    // about the view gates a fetch — grid cells re-divide the same payload.
-    let (view, set_view) = signal(ChartView::Overlay);
-    let (percent_change, set_percent_change) = signal(false);
-    let (grid_per_cell_scale, set_grid_per_cell_scale) = signal(false);
-    let (grid_sort, set_grid_sort) = signal(GridSort::Name);
+    // Presentation params are read here rather than passed down: the chart
+    // owns them, and threading five more through the route would take this
+    // component past twenty props. Nothing is seeded, so a Suspense remount
+    // is harmless -- reads and writes are idempotent against the URL.
+    let (overlays_param, set_overlays_param) = filter_query_signal::<Overlays>("overlays");
+    let overlays = Signal::derive(move || overlays_param.get().unwrap_or_default());
+    let update_overlays = move |f: fn(&mut Overlays, bool), on: bool| {
+        let mut next = overlays.get_untracked();
+        f(&mut next, on);
+        set_overlays_param.set(Some(next));
+    };
+
+    let show_market_average = Signal::derive(move || overlays.get().market_average);
+    let set_show_market_average =
+        SignalSetter::map(move |on| update_overlays(|o, v| o.market_average = v, on));
+    let show_trend = Signal::derive(move || overlays.get().trend);
+    let set_show_trend = SignalSetter::map(move |on| update_overlays(|o, v| o.trend = v, on));
+    let show_quantity = Signal::derive(move || overlays.get().quantity);
+    let set_show_quantity = SignalSetter::map(move |on| update_overlays(|o, v| o.quantity = v, on));
+    let percent_change = Signal::derive(move || overlays.get().percent_change);
+    let set_percent_change =
+        SignalSetter::map(move |on| update_overlays(|o, v| o.percent_change = v, on));
+    let show_patches = Signal::derive(move || overlays.get().patches);
+    let set_show_patches = SignalSetter::map(move |on| update_overlays(|o, v| o.patches = v, on));
+
+    let (view_param, set_view_param) = filter_query_signal::<ChartView>("view");
+    let view = Signal::derive(move || view_param.get().unwrap_or_default());
+    let set_view = SignalSetter::map(move |next: ChartView| set_view_param.set(Some(next)));
+
+    // `grid_sort`/`grid_per_cell_scale` are plain `RwSignal`s (not the
+    // `SignalSetter::map` pattern used above) and synced to the URL with
+    // guarded effects, matching `hidden_series` below: both are only ever
+    // read and written from inside the grid's deeply-nested, early-return-
+    // heavy `{move || ...}` view closure, where a `SignalSetter::map`
+    // setter captured across the nested `on:change` closures does not type
+    // check as `FnMut` even though it is `Copy` -- `RwSignal` set calls, as
+    // used everywhere else in that same closure (`hover_index`,
+    // `world_filter_open`), do not hit the same issue.
+    let (sort_param, set_sort_param) = filter_query_signal::<GridSort>("sort");
+    let grid_sort = RwSignal::new(GridSort::Name);
+    Effect::new(move |_| {
+        let next = sort_param.get().unwrap_or(GridSort::Name);
+        if grid_sort.get_untracked() != next {
+            grid_sort.set(next);
+        }
+    });
+    Effect::new(move |_| {
+        let current = grid_sort.get();
+        let next = (current != GridSort::Name).then_some(current);
+        if sort_param.get_untracked() != next {
+            set_sort_param.set(next);
+        }
+    });
+
+    let (cellscale_param, set_cellscale_param) = filter_query_signal::<bool>("cellscale");
+    let grid_per_cell_scale = RwSignal::new(false);
+    Effect::new(move |_| {
+        let next = cellscale_param.get().unwrap_or(false);
+        if grid_per_cell_scale.get_untracked() != next {
+            grid_per_cell_scale.set(next);
+        }
+    });
+    Effect::new(move |_| {
+        let current = grid_per_cell_scale.get();
+        let next = current.then_some(true);
+        if cellscale_param.get_untracked() != next {
+            set_cellscale_param.set(next);
+        }
+    });
+
     // Lifted so the grid's "+N more" affordance can open the toolbar's
     // world-filter popover.
     let world_filter_open = RwSignal::new(false);
@@ -890,8 +951,11 @@ pub fn PriceHistoryChart(
     let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
         on_range_change.run(next);
     });
-    // Series the user hid by clicking legend chips. Stored as a sorted Vec so
-    // the model memo's PartialEq sees a stable value.
+    // The series names currently on the chart, in model order. `show` is
+    // resolved against these: an expression naming series that don't exist at
+    // this grouping level is stale, and `parse_show` fails it open rather
+    // than blanking the chart.
+    let (show_param, set_show_param) = filter_query_signal::<String>("show");
     let hidden_series = RwSignal::new(Vec::<String>::new());
 
     // Viewer timezone for axis/tooltip LABELS only. SSR and the first client
@@ -1096,6 +1160,45 @@ pub fn PriceHistoryChart(
                 theme: Theme::site(),
             },
         )
+    });
+
+    let series_names = Memo::new(move |_| {
+        model.with(|m| m.series.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
+    });
+
+    // URL -> state. Runs whenever the expression or the series set changes,
+    // which is what re-resolves a `show` written at a different grouping
+    // level.
+    Effect::new(move |_| {
+        let names = series_names.get();
+        let next = show_param
+            .get()
+            .map(|expr| parse_show(&expr, &names))
+            .unwrap_or_default();
+        if hidden_series.get_untracked() != next {
+            hidden_series.set(next);
+        }
+    });
+
+    // State -> URL. Guarded on inequality so this and the effect above
+    // cannot drive each other in a loop.
+    //
+    // The apparent cycle (hidden_series -> model -> series_names -> effect ->
+    // hidden_series) is broken by two things: `build_price_history_chart`
+    // keeps hidden series in `m.series` with `hidden: true` rather than
+    // dropping them, so `series_names` does not change when something is
+    // hidden and the Memo's PartialEq halts propagation; and both effects
+    // no-op when the value already matches.
+    Effect::new(move |_| {
+        let hidden = hidden_series.get();
+        let names = series_names.get_untracked();
+        if names.is_empty() {
+            return;
+        }
+        let next = encode_show(&hidden, &names);
+        if show_param.get_untracked() != next {
+            set_show_param.set(next);
+        }
     });
 
     // Series names of the current grouping level, grouped for the filter
@@ -1496,7 +1599,7 @@ pub fn PriceHistoryChart(
                                     <select
                                         class="rounded-md border border-[color:var(--color-outline)] bg-transparent px-2 py-1"
                                         on:change=move |event| {
-                                            set_grid_sort
+                                            grid_sort
                                                 .set(
                                                     if event_target_value(&event) == "change" {
                                                         GridSort::Change
@@ -1519,7 +1622,7 @@ pub fn PriceHistoryChart(
                                             class="accent-violet-500"
                                             prop:checked=grid_per_cell_scale
                                             on:change=move |event| {
-                                                set_grid_per_cell_scale.set(event_target_checked(&event))
+                                                grid_per_cell_scale.set(event_target_checked(&event))
                                             }
                                         />
                                         {t_string!(i18n, chart_scale_per_cell).to_string()}

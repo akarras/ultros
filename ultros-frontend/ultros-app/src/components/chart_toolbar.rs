@@ -26,6 +26,28 @@ pub enum ChartView {
     Grid,
 }
 
+/// Wire format for the `?view=` URL param.
+impl std::fmt::Display for ChartView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Overlay => "overlay",
+            Self::Grid => "grid",
+        })
+    }
+}
+
+impl std::str::FromStr for ChartView {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "overlay" => Ok(Self::Overlay),
+            "grid" => Ok(Self::Grid),
+            _ => Err(()),
+        }
+    }
+}
+
 fn mode_icon(mode: ChartMode) -> icondata_core::Icon {
     match mode {
         ChartMode::Price => i::TbChartLineOutline,
@@ -53,11 +75,11 @@ pub fn ChartToolbar(
     #[prop(into)] group: Signal<GroupLevel>,
     #[prop(into)] set_group: SignalSetter<GroupLevel>,
     #[prop(into)] show_market_average: Signal<bool>,
-    set_show_market_average: WriteSignal<bool>,
+    #[prop(into)] set_show_market_average: SignalSetter<bool>,
     #[prop(into)] show_trend: Signal<bool>,
-    set_show_trend: WriteSignal<bool>,
+    #[prop(into)] set_show_trend: SignalSetter<bool>,
     #[prop(into)] show_quantity: Signal<bool>,
-    set_show_quantity: WriteSignal<bool>,
+    #[prop(into)] set_show_quantity: SignalSetter<bool>,
     /// Density mode has no quantity lane; the toggle stays visible but
     /// disabled with a reason (spec: disabled, never hidden).
     #[prop(into)]
@@ -66,9 +88,9 @@ pub fn ChartToolbar(
     /// under 30 days via the LOD tier, so no disabled state is needed here.
     #[prop(into)]
     show_patches: Signal<bool>,
-    set_show_patches: WriteSignal<bool>,
+    #[prop(into)] set_show_patches: SignalSetter<bool>,
     #[prop(into)] view: Signal<ChartView>,
-    set_view: WriteSignal<ChartView>,
+    #[prop(into)] set_view: SignalSetter<ChartView>,
     /// Grid is per-series; density's payload is scope-wide, so grid
     /// disables with a reason in density mode.
     #[prop(into)]
@@ -84,7 +106,7 @@ pub fn ChartToolbar(
     /// affordance can open the filter too.
     filter_open: RwSignal<bool>,
     #[prop(into)] percent_change: Signal<bool>,
-    set_percent_change: WriteSignal<bool>,
+    #[prop(into)] set_percent_change: SignalSetter<bool>,
     /// `% change` applies to overlay Price view only.
     #[prop(into)]
     percent_disabled: Signal<bool>,
@@ -520,7 +542,7 @@ pub fn ChartToolbar(
 fn OverlayRow(
     #[prop(into)] label: Signal<String>,
     #[prop(into)] checked: Signal<bool>,
-    set_checked: WriteSignal<bool>,
+    #[prop(into)] set_checked: SignalSetter<bool>,
     #[prop(into)] disabled: Signal<bool>,
     #[prop(into)] disabled_reason: Signal<String>,
 ) -> impl IntoView {

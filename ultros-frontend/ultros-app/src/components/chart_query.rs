@@ -114,10 +114,6 @@ enum ShowBase {
 /// Unknown names are ignored rather than rejected: the series set depends on
 /// the grouping level, so a perfectly valid link can name series that don't
 /// exist at the current level.
-///
-/// Currently unused in this module; first wired into chart components in
-/// Tasks 6–9 of the sale-history-chart-filters plan.
-#[allow(dead_code)]
 pub fn parse_show(expr: &str, series: &[String]) -> Vec<String> {
     let tokens: Vec<&str> = expr
         .split(',')
@@ -190,10 +186,6 @@ pub fn parse_show(expr: &str, series: &[String]) -> Vec<String> {
 ///
 /// Hidden names outside the current series set are dropped — otherwise the
 /// expression would accumulate stale names as the user switches grouping.
-///
-/// Currently unused in this module; first wired into chart components in
-/// Tasks 6–9 of the sale-history-chart-filters plan.
-#[allow(dead_code)]
 pub fn encode_show(hidden: &[String], series: &[String]) -> Option<String> {
     let is_hidden = |name: &String| hidden.iter().any(|entry| entry.eq_ignore_ascii_case(name));
 
@@ -236,10 +228,6 @@ pub fn encode_show(hidden: &[String], series: &[String]) -> Option<String> {
 ///
 /// A single comma-separated param rather than five booleans: five params
 /// would dominate the query string, and they are read and written together.
-///
-/// Currently unused in this module; first wired into chart components in
-/// Tasks 6–9 of the sale-history-chart-filters plan.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Overlays {
     pub market_average: bool,

@@ -31,6 +31,28 @@ pub enum GridSort {
     Change,
 }
 
+/// Wire format for the `?sort=` URL param.
+impl std::fmt::Display for GridSort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Name => "name",
+            Self::Change => "change",
+        })
+    }
+}
+
+impl std::str::FromStr for GridSort {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "name" => Ok(Self::Name),
+            "change" => Ok(Self::Change),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GridOptions {
     /// Logical cell size; the HTML layer scales via viewBox.
