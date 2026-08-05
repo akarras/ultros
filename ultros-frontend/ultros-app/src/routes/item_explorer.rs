@@ -10,6 +10,7 @@ use crate::components::job_set_card::JobSetCard;
 use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
+use crate::components::sort_header::{SortColumn, SortDir, SortHeader};
 use crate::components::toggle::Toggle;
 use crate::components::world_name::WorldName;
 use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*};
@@ -23,8 +24,7 @@ use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_router::components::A;
 use leptos_router::components::Outlet;
-use leptos_router::hooks::{query_signal, use_location, use_params_map};
-use leptos_router::location::Location;
+use leptos_router::hooks::{query_signal, use_params_map};
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use ultros_api_types::world_helper::AnySelector;
@@ -545,106 +545,42 @@ impl Display for ItemSortOption {
     }
 }
 
-#[derive(PartialEq, PartialOrd, Copy, Clone)]
-enum SortDirection {
-    Asc,
-    Desc,
-}
-
-impl FromStr for SortDirection {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "asc" => SortDirection::Asc,
-            "dsc" => SortDirection::Desc,
-            _ => return Err(()),
-        })
+/// The Item Explorer's list is item-level-descending until the visitor says
+/// otherwise; every column here reads best-first descending, so the shared
+/// default direction applies unchanged.
+impl SortColumn for ItemSortOption {
+    fn fallback() -> Self {
+        ItemSortOption::ItemLevel
     }
 }
 
-impl Display for SortDirection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let val = match self {
-            SortDirection::Asc => "asc",
-            SortDirection::Desc => "desc",
-        };
-        f.write_str(val)
-    }
-}
+/// Re-sorting has to return to page 1: page 7 of a different ordering is a
+/// different set of items, and an out-of-range page is what
+/// `?page=35&sort=ilvl` deep-links used to hydrate-crash on.
+const RESET_ON_SORT: &[&str] = &["page"];
 
-/// Sortable column header for the results list. Clicking sets `sort` to
-/// `value` and resets the page; clicking the already-active column
-/// toggles between descending (the default — `dir` removed) and
-/// ascending. Href construction mirrors `QueryButton` so all other query
-/// params (`world`, `per_page`, ...) survive.
-#[component]
-fn SortHeader(
-    /// value written to the `sort` query key
-    value: &'static str,
-    /// active when no `sort` param is present
-    #[prop(optional)]
-    default: bool,
-    children: Children,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let is_active = Signal::derive(move || {
-        query.with(|q| {
-            let current = q.get_str("sort");
-            current == Some(value) || (default && current.is_none())
-        })
-    });
-    let is_asc = Signal::derive(move || query.with(|q| q.get_str("dir") == Some("asc")));
-    let href = move || {
-        let mut query = query();
-        query.remove("page");
-        query.remove("sort");
-        query.insert("sort".to_string(), value.to_string());
-        let flip_to_asc = is_active.get() && !is_asc.get();
-        query.remove("dir");
-        if flip_to_asc {
-            query.insert("dir".to_string(), "asc".to_string());
-        }
-        format!("{}{}", pathname(), query.to_query_string())
-    };
-    view! {
-        <div
-            role="columnheader"
-            aria-sort=move || {
-                if is_active() {
-                    if is_asc() { "ascending" } else { "descending" }
-                } else {
-                    "none"
-                }
-            }
-        >
-            <a
-                href=href
-                class="flex items-center gap-1 hover:text-brand-300 transition-colors"
-            >
-                {children()}
-                <span class="w-3 inline-block">
-                    {move || {
-                        if is_active() {
-                            if is_asc() { "↑" } else { "↓" }
-                        } else {
-                            ""
-                        }
-                    }}
-                </span>
-            </a>
-        </div>
+/// `aria-sort` for a header cell. The shared [`SortHeader`] renders the link;
+/// the cell around it is what carries `role="columnheader"`, so the ARIA
+/// state has to be computed out here.
+fn column_aria_sort(
+    mode: ItemSortOption,
+    sort: Memo<Option<ItemSortOption>>,
+    dir: Memo<Option<SortDir>>,
+) -> &'static str {
+    if sort.get().unwrap_or_else(ItemSortOption::fallback) != mode {
+        return "none";
     }
-    .into_any()
+    match dir.get().unwrap_or_else(|| mode.default_dir()) {
+        SortDir::Asc => "ascending",
+        SortDir::Desc => "descending",
+    }
 }
 
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
     let i18n = use_i18n();
     let (page, _set_page) = query_signal::<i32>("page");
-    let (direction, _set_direction) = query_signal::<SortDirection>("dir");
+    let (direction, _set_direction) = query_signal::<SortDir>("dir");
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
@@ -688,8 +624,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     });
 
     let sorted_items = Memo::new(move |_| {
-        let direction = direction().unwrap_or(SortDirection::Desc);
-        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
+        let item_property = sort().unwrap_or_else(ItemSortOption::fallback);
+        let direction = direction().unwrap_or_else(|| item_property.default_dir());
         let price_map = if hydrated.get() {
             listings_resource.get().and_then(|r| r.ok())
         } else {
@@ -710,8 +646,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             })
             .sorted_by(|a, b| {
                 let ((_, item_a), (_, item_b)) = match direction {
-                    SortDirection::Asc => (a, b),
-                    SortDirection::Desc => (b, a),
+                    SortDir::Asc => (a, b),
+                    SortDir::Desc => (b, a),
                 };
                 match item_property {
                     ItemSortOption::ItemLevel => item_a.level_item.cmp(&item_b.level_item),
@@ -860,10 +796,45 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     }
                 >
                     <div role="columnheader"></div>
-                    <SortHeader value="name">{t!(i18n, item_explorer_name)}</SortHeader>
-                    <SortHeader value="ilvl" default=true>{t!(i18n, item_explorer_ilvl)}</SortHeader>
+                    <div
+                        role="columnheader"
+                        aria-sort=move || column_aria_sort(ItemSortOption::Name, sort, direction)
+                    >
+                        <SortHeader
+                            mode=ItemSortOption::Name
+                            label=t_string!(i18n, item_explorer_name).to_string()
+                            sort_mode=sort
+                            sort_dir=direction
+                            reset_keys=RESET_ON_SORT
+                        />
+                    </div>
+                    <div
+                        role="columnheader"
+                        aria-sort=move || {
+                            column_aria_sort(ItemSortOption::ItemLevel, sort, direction)
+                        }
+                    >
+                        <SortHeader
+                            mode=ItemSortOption::ItemLevel
+                            label=t_string!(i18n, item_explorer_ilvl).to_string()
+                            sort_mode=sort
+                            sort_dir=direction
+                            reset_keys=RESET_ON_SORT
+                        />
+                    </div>
                     <div role="columnheader">{t!(i18n, item_explorer_col_equip_level)}</div>
-                    <SortHeader value="price">{t!(i18n, nq)}</SortHeader>
+                    <div
+                        role="columnheader"
+                        aria-sort=move || column_aria_sort(ItemSortOption::Price, sort, direction)
+                    >
+                        <SortHeader
+                            mode=ItemSortOption::Price
+                            label=t_string!(i18n, nq).to_string()
+                            sort_mode=sort
+                            sort_dir=direction
+                            reset_keys=RESET_ON_SORT
+                        />
+                    </div>
                     <div role="columnheader">{t!(i18n, hq)}</div>
                     <div role="columnheader" class="hidden xl:block">
                         {t!(i18n, item_explorer_vendor)}

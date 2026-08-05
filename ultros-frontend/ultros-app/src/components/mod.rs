@@ -70,6 +70,7 @@ pub mod select;
 pub mod side_nav;
 pub mod skeleton;
 pub mod small_item_display;
+pub mod sort_header;
 pub mod sparkline;
 pub mod stats_display;
 pub mod theme_picker;

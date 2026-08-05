@@ -9,9 +9,9 @@ use crate::{
         icon::Icon,
         item_icon::*,
         meta::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills},
         virtual_scroller::*,
@@ -182,6 +182,14 @@ impl std::fmt::Display for SortMode {
     }
 }
 
+/// Both columns read best-first descending — the biggest margin, the biggest
+/// return — so the shared default direction applies unchanged.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Roi
+    }
+}
+
 impl VendorProfitTable {
     fn new(sales: RecentSales, world_cheapest_listings: CheapestListings) -> Self {
         let data = tracked_data();
@@ -269,6 +277,7 @@ fn VendorResaleTable(
 
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     // Seeded to 1d by VendorWorldView so a first-time visitor isn't shown items
@@ -367,9 +376,18 @@ fn VendorResaleTable(
             })
             .collect::<Vec<_>>();
 
-        match sort_mode().unwrap_or(SortMode::Roi) {
-            SortMode::Roi => sorted_data.sort_by_key(|data| Reverse(data.return_on_investment)),
-            SortMode::Profit => sorted_data.sort_by_key(|data| Reverse(data.profit)),
+        // `?dir=` used to be ignored here while the header hardcoded a
+        // descending arrow, so the one direction the table could produce was
+        // also the only one it claimed. The shared header can now reach `asc`.
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        let key = |data: &CalculatedVendorProfitData| match mode {
+            SortMode::Roi => data.return_on_investment,
+            SortMode::Profit => data.profit,
+        };
+        match dir {
+            SortDir::Desc => sorted_data.sort_by_key(|data| Reverse(key(data))),
+            SortDir::Asc => sorted_data.sort_by_key(key),
         }
         sorted_data
             .into_iter()
@@ -628,37 +646,20 @@ fn VendorResaleTable(
                                     {t!(i18n, vendor_resale_item)}
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    <QueryButton
-                                        class="!text-brand-300 hover:text-brand-200"
-                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                        key="sort"
-                                        value="profit"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            {t!(i18n, vendor_resale_profit)}
-                                            {move || {
-                                                (sort_mode() == Some(SortMode::Profit))
-                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                            }}
-                                        </div>
-                                    </QueryButton>
+                                    <SortHeader
+                                        mode=SortMode::Profit
+                                        label=t_string!(i18n, vendor_resale_profit).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    <QueryButton
-                                        class="!text-brand-300 hover:text-brand-200"
-                                        active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                        key="sort"
-                                        value="roi"
-                                        default=true
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            {t!(i18n, vendor_resale_roi)}
-                                            {move || {
-                                                (sort_mode() == Some(SortMode::Roi))
-                                                    .then(|| view! { <Icon icon=i::BiSortDownRegular /> })
-                                            }}
-                                        </div>
-                                    </QueryButton>
+                                    <SortHeader
+                                        mode=SortMode::Roi
+                                        label=t_string!(i18n, vendor_resale_roi).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
                                     {t!(i18n, vendor_resale_vendor_price)}
