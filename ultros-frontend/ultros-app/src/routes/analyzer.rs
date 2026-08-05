@@ -1360,6 +1360,95 @@ fn AnalyzerTable(
         });
     }
 
+    // --- Filter chip strip: edge fades ---------------------------------------
+    // The strip scrolls but shows no scrollbar (the bar is height-locked, so a
+    // gutter would eat the chips), which left nothing on screen to say there
+    // were more filters off to the right — at 375px with eight filters set the
+    // chips run ~1000px inside a ~240px viewport. `--chip-fade-{start,end}`
+    // drive a mask declared in the stylesheet; both are 0 unless there is
+    // actually something to scroll to on that side.
+    let chip_row = NodeRef::<leptos::html::Div>::new();
+    #[cfg(feature = "hydrate")]
+    {
+        let chip_listeners = StoredValue::new_local(
+            None::<(
+                web_sys::HtmlDivElement,
+                Closure<dyn FnMut()>,
+                Closure<dyn FnMut()>,
+            )>,
+        );
+        on_cleanup(move || {
+            chip_listeners.update_value(|slot| {
+                if let Some((el, scroll_cb, resize_cb)) = slot.take() {
+                    let _ = el.remove_event_listener_with_callback(
+                        "scroll",
+                        scroll_cb.as_ref().unchecked_ref(),
+                    );
+                    if let Some(win) = web_sys::window() {
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            resize_cb.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            });
+        });
+        // Widest fade we ever draw. Enough to read as "this continues" without
+        // dimming a whole chip.
+        const CHIP_FADE_PX: f64 = 24.0;
+        let apply_fades = |el: &web_sys::HtmlDivElement| {
+            let left = el.scroll_left();
+            // `scroll_width` is an i32 of a value the browser rounds, so the
+            // remaining distance can land a fraction off zero at the far end.
+            // A 1px deadband keeps the trailing fade from lingering once the
+            // strip is scrolled all the way over.
+            let right = (el.scroll_width() as f64 - el.client_width() as f64 - left).max(0.0);
+            let px = |amount: f64| format!("{}px", amount.clamp(0.0, CHIP_FADE_PX).round());
+            // Fully qualified: tachys' `ElementExt::style` is in scope via the
+            // leptos prelude and matches `HtmlDivElement` directly, so it wins
+            // method resolution over the inherent `HtmlElement::style` that
+            // needs a deref step. Bare `el.style()` picks the wrong one.
+            let style = web_sys::HtmlElement::style(el);
+            let _ = style.set_property(
+                "--chip-fade-start",
+                &px(if left > 1.0 { CHIP_FADE_PX } else { 0.0 }),
+            );
+            let _ = style.set_property(
+                "--chip-fade-end",
+                &px(if right > 1.0 { CHIP_FADE_PX } else { 0.0 }),
+            );
+        };
+        Effect::new(move |_| {
+            // Tracked so the fades are re-derived when a chip is added or
+            // removed: that changes `scrollWidth` without firing either
+            // listener below.
+            let _ = active_filters();
+            let Some(el) = chip_row.get() else {
+                return;
+            };
+            if chip_listeners.with_value(|slot| slot.is_none()) {
+                let on_scroll = {
+                    let el = el.clone();
+                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
+                };
+                let on_resize = {
+                    let el = el.clone();
+                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
+                };
+                let _ = el
+                    .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref());
+                if let Some(win) = web_sys::window() {
+                    let _ = win.add_event_listener_with_callback(
+                        "resize",
+                        on_resize.as_ref().unchecked_ref(),
+                    );
+                }
+                chip_listeners.set_value(Some((el.clone(), on_scroll, on_resize)));
+            }
+            apply_fades(&el);
+        });
+    }
+
     let clear_all_filters = move || {
         set_minimum_profit(None);
         set_minimum_profit_per_day(None);
@@ -1907,7 +1996,7 @@ fn AnalyzerTable(
                 // Row 2 — the filters themselves. One chip per active filter,
                 // and nothing at all for the ones that are not in use.
                 <div class="h-8 flex items-center gap-2 min-w-0">
-                    <div class="filter-chip-row">
+                    <div class="filter-chip-row" node_ref=chip_row>
                         {move || {
                             active_filters()
                                 .is_empty()
