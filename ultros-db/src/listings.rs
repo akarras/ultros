@@ -31,13 +31,18 @@ pub type ListingsWithRetainers = Vec<(active_listing::Model, Option<retainer::Mo
 struct ListingData(active_listing::Model, retainer::Model);
 
 /// Sort/compare key for `active_listing::Model`/`retainer::Model` pairs used by
-/// `listings_to_remove`: world, retainer name, price, quantity, hq.
+/// `listings_to_remove`: retainer name, price, quantity, hq.
+///
+/// Deliberately **not** keyed on world. `remove_listings` queries the DB for a
+/// single world before diffing, so every row here already shares that world and
+/// including it would only add a field for the two sides to disagree about —
+/// which is exactly what happened: the key used to lead with world id, and since
+/// the websocket never populates it on the incoming side, no DB row ever matched.
 fn remove_diff_key_model<'a>(
     listing: &active_listing::Model,
     retainer_name: &'a str,
-) -> (u16, &'a str, i32, i32, bool) {
+) -> (&'a str, i32, i32, bool) {
     (
-        listing.world_id as u16,
         retainer_name,
         listing.price_per_unit,
         listing.quantity,
@@ -45,14 +50,21 @@ fn remove_diff_key_model<'a>(
     )
 }
 
-/// Same key, computed from the incoming websocket view. `None` price/quantity
-/// must resolve exactly like the insert path (`create_listing` in lib.rs stores
-/// `price_per_unit.unwrap_or(total)` and `quantity.unwrap_or(1)`), otherwise a
-/// listing that arrived with a `None` field could never be matched for removal
-/// and would linger as a phantom row.
-fn remove_diff_key_view(listing: &ListingView) -> (u16, &str, i32, i32, bool) {
+/// Same key, computed from the incoming websocket view.
+///
+/// Every `Option` here must resolve exactly like the insert path (`create_listing`
+/// in lib.rs stores `price_per_unit.unwrap_or(total)` and `quantity.unwrap_or(1)`),
+/// otherwise a listing that arrived with a `None` field could never be matched for
+/// removal and would linger as a phantom row.
+///
+/// This is why world id is gone rather than defaulted: Universalis' websocket
+/// sends `worldID: null` on every listing in both `listings/add` and
+/// `listings/remove` (the world is carried once, on the event envelope). So
+/// `world_id.unwrap_or_default()` was always `0` while the DB side held the real
+/// world, the tuples could never compare `Equal`, `PartialDiffIterator` never
+/// yielded `Same`, and `remove_listings` deleted nothing at all.
+fn remove_diff_key_view(listing: &ListingView) -> (&str, i32, i32, bool) {
     (
-        listing.world_id.unwrap_or_default(),
         listing.retainer_name.as_str(),
         listing.price_per_unit.unwrap_or(listing.total) as i32,
         listing.quantity.unwrap_or(1) as i32,
@@ -1209,6 +1221,77 @@ mod diff_tests {
             7,
         );
         assert_eq!(listings_to_add(delta, vec![]).len(), 3);
+    }
+
+    /// Universalis' websocket sends `worldID: null` on every listing — the world
+    /// is carried once on the event envelope, not per listing. Measured live:
+    /// 570/570 `listings/remove` and 773/773 `listings/add` payload entries had a
+    /// null `worldID`.
+    ///
+    /// The remove key used to lead with `world_id.unwrap_or_default()`, so the
+    /// incoming side was always world `0` while the DB side held the real world.
+    /// The tuples could never compare `Equal`, `PartialDiffIterator` never yielded
+    /// `Same`, and `remove_listings` deleted nothing at all — retainers that
+    /// repriced accumulated a row per price forever.
+    ///
+    /// Every other test in this module builds views with `world_id: Some(..)`,
+    /// which production never does, so they all passed straight through the bug.
+    /// This one uses `None` on purpose.
+    #[test]
+    fn remove_listings_matches_views_with_no_world_id_like_the_websocket_sends() {
+        let world_id = 63;
+        let retainer = retainer_model(1, world_id, "Luicy");
+        // A retainer repriced this item: the old row should go, the new one stay.
+        let old_price = db_listing(1, world_id, retainer.id, 24_999, 1, false);
+        let new_price = db_listing(2, world_id, retainer.id, 96_998, 1, false);
+        let db_rows = vec![
+            (old_price.clone(), retainer.clone()),
+            (new_price.clone(), retainer.clone()),
+        ];
+
+        // The websocket's remove payload, exactly as it arrives: no world id.
+        let mut view = listing_view(world_id, &retainer.name, 24_999, 1, false);
+        view.world_id = None;
+
+        let removed = listings_to_remove(db_rows, vec![view]);
+        assert_eq!(
+            removed.len(),
+            1,
+            "a remove view with no world id must still match the stored row"
+        );
+        assert_eq!(removed[0].id, old_price.id);
+    }
+
+    /// The same reprice, but with several items in flight, to confirm the key
+    /// still discriminates once world is no longer part of it.
+    #[test]
+    fn remove_listings_without_world_id_still_discriminates_between_listings() {
+        let world_id = 63;
+        let luicy = retainer_model(1, world_id, "Luicy");
+        let other = retainer_model(2, world_id, "Someoneelse");
+        let target = db_listing(1, world_id, luicy.id, 147_901, 1, false);
+        let db_rows = vec![
+            (target.clone(), luicy.clone()),
+            // same price, different retainer
+            (db_listing(2, world_id, other.id, 147_901, 1, false), other),
+            // same retainer, different price
+            (
+                db_listing(3, world_id, luicy.id, 147_879, 1, false),
+                luicy.clone(),
+            ),
+            // same retainer and price, but HQ
+            (
+                db_listing(4, world_id, luicy.id, 147_901, 1, true),
+                luicy.clone(),
+            ),
+        ];
+
+        let mut view = listing_view(world_id, &luicy.name, 147_901, 1, false);
+        view.world_id = None;
+
+        let removed = listings_to_remove(db_rows, vec![view]);
+        assert_eq!(removed.len(), 1, "exactly one row matches");
+        assert_eq!(removed[0].id, target.id);
     }
 
     #[test]
