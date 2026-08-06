@@ -929,28 +929,89 @@ fn analyzer_skeleton_columns(
         .collect()
 }
 
-/// The Flip Finder's loading state: the results grid, drawn empty.
+/// The control bar, drawn empty.
+///
+/// The bar is rendered by `AnalyzerTable`, so it only exists once the
+/// resources resolve; without a placeholder the loading state was the grid
+/// alone and the bar dropped 76px of chrome onto the page when the data
+/// landed, shoving the whole table down (#1110).
+///
+/// Every class here is copied from
+/// [`ControlBar`](crate::components::control_bar::ControlBar) — the height
+/// lock, the two 32px rows, the sticky positioning — so the swap is a content
+/// change and never a layout change. Keep the two in step: this is a
+/// hand-mirrored copy, and a change to the bar's outer shape has to be made
+/// here too.
+///
+/// The four row-1 placeholders match what `AnalyzerTable` actually puts there
+/// after the summary: `RealtimeStatus`, `SavedViewsMenu`, Columns, Clear all.
+#[component]
+fn AnalyzerControlBarSkeleton() -> impl IntoView {
+    // Button-shaped placeholder, sized like `.sticky-bar-button` with a label.
+    let button = || view! { <div class="skeleton-block h-6 w-16 rounded-md"></div> };
+    view! {
+        <div
+            class="skeleton-shimmer sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1"
+            aria-hidden="true"
+        >
+            // Row 1 — count on the left, controls on the right. The count is
+            // `flex-1` in the real row, which is what pins the controls right.
+            <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
+                <div class="flex-1 min-w-0 flex items-center">
+                    <div class="skeleton-block h-3 w-24 rounded"></div>
+                </div>
+                {button()}
+                {button()}
+                {button()}
+                {button()}
+            </div>
+            // Row 2 — the chip strip. Three chips is a plausible resting
+            // state, and these widths sum to exactly the strip's inner width
+            // at 375px (287px measured), so the placeholder never fades at the
+            // edge implying a scroll the real row may not have.
+            <div class="h-8 flex items-center gap-2 min-w-0">
+                <div class="filter-chip-row">
+                    <div class="skeleton-block h-6 w-24 rounded-lg shrink-0"></div>
+                    <div class="skeleton-block h-6 w-16 rounded-lg shrink-0"></div>
+                    <div class="skeleton-block h-6 w-20 rounded-lg shrink-0"></div>
+                </div>
+                {button()}
+            </div>
+        </div>
+    }
+}
+
+/// The Flip Finder's loading state: the control bar and results grid, drawn
+/// empty.
 ///
 /// Reads `?cols=` the same way the table does, so the skeleton shows the
 /// columns this particular user has switched on rather than a generic set —
 /// and reproduces the container's `--tool-optional-cols` variable, which
 /// is what makes `.tool-grid-row` give the placeholder rows the same
 /// min-width as the real ones.
+///
+/// The outer `flex flex-col gap-4` is `AnalyzerTable`'s own root. It is
+/// repeated here rather than hoisted around the `<Suspense>` because the
+/// spacing between bar and table has to survive the swap, and the fallback is
+/// the only thing standing in for both.
 #[component]
 fn AnalyzerTableSkeleton() -> impl IntoView {
     let (cols_param, _) = query_signal::<String>("cols");
     let visible = parse_visible_cols(cols_param.get_untracked().as_deref());
     view! {
-        <TableSkeleton
-            columns=analyzer_skeleton_columns(&visible)
-            rows=14
-            class="tool-table border border-[color:var(--color-outline)]"
-            row_class="tool-grid-row"
-            style=format!(
-                "--tool-optional-cols: {}px;",
-                optional_column_width_px(&visible),
-            )
-        />
+        <div class="flex flex-col gap-4">
+            <AnalyzerControlBarSkeleton />
+            <TableSkeleton
+                columns=analyzer_skeleton_columns(&visible)
+                rows=14
+                class="tool-table border border-[color:var(--color-outline)]"
+                row_class="tool-grid-row"
+                style=format!(
+                    "--tool-optional-cols: {}px;",
+                    optional_column_width_px(&visible),
+                )
+            />
+        </div>
     }
 }
 
