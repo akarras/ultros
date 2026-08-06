@@ -811,6 +811,88 @@ where
     deserialize(&json)
 }
 
+/// Headers that must not be copied from the inbound browser request onto the
+/// outbound internal API request.
+///
+/// The SSR path re-issues each API call against `HOSTNAME`, which in production
+/// is the *public* origin, so the request travels back out through the CDN.
+/// Copying the inbound `host` header onto a request aimed at a different URL
+/// makes the CDN reject it: a `Host` that does not match the edge certificate
+/// answers `403 Forbidden`, and on a pooled TLS connection (the client below
+/// sets a 60s keepalive, so connections are reused) a `Host` that disagrees
+/// with the connection's SNI answers `421 Misdirected Request`. Both statuses
+/// were live in production against `/api/v1/cheapest/North-America` — the
+/// failure is silent to the visitor, because a failed resource still renders,
+/// just with no data in it, so it only ever showed up as GlitchTip issue 2209
+/// ("Error doing leptos fetch") and as breadcrumbs on unrelated events.
+///
+/// The rest fall into three groups:
+/// - hop-by-hop headers, which are per-connection and must never be forwarded
+///   (RFC 9110 §7.6.1);
+/// - body-framing headers, which would describe a body we are not resending;
+/// - CDN/proxy trust headers, which the edge re-derives for the new request and
+///   must not receive secondhand from a client.
+///
+/// This is deliberately a denylist: the inbound `cookie` carries the visitor's
+/// session and `accept-language` carries their locale, and an allowlist would
+/// silently break auth or i18n the first time a new header started mattering.
+#[cfg(feature = "ssr")]
+const NON_FORWARDABLE_HEADERS: &[&str] = &[
+    // Routing: the whole reason this function exists.
+    "host",
+    // Hop-by-hop (RFC 9110 §7.6.1).
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    // Body framing — these requests carry no body.
+    "content-length",
+    "content-type",
+    // reqwest negotiates (and decodes) its own encodings; forwarding the
+    // browser's list can hand back a body reqwest will not decode.
+    "accept-encoding",
+    // Re-derived by the edge for the outbound request.
+    "cf-connecting-ip",
+    "cf-ipcountry",
+    "cf-ray",
+    "cf-visitor",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+];
+
+/// Copy the inbound request's headers into a header map suitable for the
+/// outbound internal API call, dropping everything in [`NON_FORWARDABLE_HEADERS`].
+///
+/// `HeaderMap`'s iterator yields `None` for the name of a repeated header's
+/// second and subsequent values, so the name is carried forward and the value
+/// appended — otherwise every multi-valued header would be truncated to its
+/// first value.
+#[cfg(feature = "ssr")]
+fn forwardable_headers(headers: axum::http::HeaderMap) -> reqwest::header::HeaderMap {
+    let mut new_map = reqwest::header::HeaderMap::new();
+    let mut current: Option<reqwest::header::HeaderName> = None;
+    for (name, value) in headers.into_iter() {
+        if let Some(name) = name {
+            current = reqwest::header::HeaderName::from_lowercase(name.as_str().as_bytes())
+                .ok()
+                .filter(|name| !NON_FORWARDABLE_HEADERS.contains(&name.as_str()));
+        }
+        let Some(name) = current.clone() else {
+            continue;
+        };
+        if let Ok(value) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
+            new_map.append(name, value);
+        }
+    }
+    new_map
+}
+
 #[cfg(feature = "ssr")]
 #[instrument(skip())]
 pub(crate) async fn delete_api<T>(path: &str) -> AppResult<T>
@@ -836,18 +918,10 @@ where
     let hostname =
         std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
-    // headers.remove("Accept-Encoding");
-    // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
-    let mut new_map = reqwest::header::HeaderMap::new();
-    for (name, value) in headers.into_iter().filter_map(|(name, value)| {
-        Some((
-            reqwest::header::HeaderName::from_lowercase(name?.as_str().as_bytes()).ok()?,
-            reqwest::header::HeaderValue::from_bytes(value.as_bytes()).ok()?,
-        ))
-    }) {
-        new_map.insert(name, value);
-    }
-    let request = client.delete(&path).headers(new_map).build()?;
+    let request = client
+        .delete(&path)
+        .headers(forwardable_headers(headers))
+        .build()?;
     let response = client
         .execute(request)
         .await
@@ -922,17 +996,10 @@ where
     let hostname =
         std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let path = format!("{hostname}{path}");
-    // this is only necessary because reqwest isn't updated to http 1.0- and I'm being lazy
-    let mut new_map = reqwest::header::HeaderMap::new();
-    for (name, value) in headers.into_iter().filter_map(|(name, value)| {
-        Some((
-            reqwest::header::HeaderName::from_lowercase(name?.as_str().as_bytes()).ok()?,
-            reqwest::header::HeaderValue::from_bytes(value.as_bytes()).ok()?,
-        ))
-    }) {
-        new_map.insert(name, value);
-    }
-    let request = client.get(&path).headers(new_map).build()?;
+    let request = client
+        .get(&path)
+        .headers(forwardable_headers(headers))
+        .build()?;
     let response = client
         .execute(request)
         .await
@@ -1159,5 +1226,145 @@ mod ssr_response_tests {
             "changing the status must not change what callers observe"
         );
         assert_eq!(fixed_401, AppError::ApiError(ApiError::NotAuthenticated));
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod ssr_header_tests {
+    use super::forwardable_headers;
+    use axum::http::HeaderMap;
+    use axum::http::header::{HeaderName, HeaderValue};
+
+    fn inbound(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.append(
+                HeaderName::from_lowercase(name.as_bytes()).unwrap(),
+                HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        map
+    }
+
+    /// The bug this module exists for. The SSR path re-issues every API call
+    /// against `HOSTNAME` (the public origin in production), so copying the
+    /// inbound `host` verbatim aims a request at one URL while telling the CDN
+    /// it is for another. Reproduced against production: a request to
+    /// `https://ultros.app/api/v1/cheapest/North-America` carrying
+    /// `Host: boxbox` answers `403 Forbidden` from the edge, byte-for-byte the
+    /// body seen in the GlitchTip breadcrumbs; on a reused TLS connection the
+    /// same mismatch answers `421 Misdirected Request`.
+    #[test]
+    fn host_is_never_forwarded() {
+        let out = forwardable_headers(inbound(&[("host", "boxbox"), ("cookie", "session=abc123")]));
+        assert!(
+            !out.contains_key("host"),
+            "the inbound host would misroute the outbound call: {out:?}"
+        );
+    }
+
+    /// The session cookie is the entire reason the inbound headers are
+    /// forwarded at all — dropping it would log every SSR render out.
+    #[test]
+    fn auth_and_locale_headers_survive() {
+        let out = forwardable_headers(inbound(&[
+            ("host", "boxbox"),
+            ("cookie", "session=abc123"),
+            ("accept-language", "de-DE,de;q=0.9"),
+            ("user-agent", "Mozilla/5.0"),
+        ]));
+        assert_eq!(out.get("cookie").unwrap(), "session=abc123");
+        assert_eq!(out.get("accept-language").unwrap(), "de-DE,de;q=0.9");
+        assert_eq!(out.get("user-agent").unwrap(), "Mozilla/5.0");
+    }
+
+    /// Hop-by-hop headers are per-connection (RFC 9110 §7.6.1) and describe the
+    /// browser's connection to the edge, not ours to the API. `accept-encoding`
+    /// is dropped so reqwest negotiates an encoding it can actually decode —
+    /// there was a commented-out `headers.remove("Accept-Encoding")` sitting in
+    /// this file, which is the same problem noticed and never finished.
+    #[test]
+    fn hop_by_hop_and_framing_headers_are_dropped() {
+        let out = forwardable_headers(inbound(&[
+            ("connection", "keep-alive"),
+            ("keep-alive", "timeout=5"),
+            ("transfer-encoding", "chunked"),
+            ("upgrade", "websocket"),
+            ("te", "trailers"),
+            ("content-length", "42"),
+            ("accept-encoding", "gzip, br, zstd"),
+            ("cookie", "session=abc123"),
+        ]));
+        for dropped in [
+            "connection",
+            "keep-alive",
+            "transfer-encoding",
+            "upgrade",
+            "te",
+            "content-length",
+            "accept-encoding",
+        ] {
+            assert!(
+                !out.contains_key(dropped),
+                "{dropped} must not be forwarded"
+            );
+        }
+        assert_eq!(out.get("cookie").unwrap(), "session=abc123");
+    }
+
+    /// A client must not be able to hand the edge its own provenance headers on
+    /// a request the edge is meant to attribute to us.
+    #[test]
+    fn proxy_trust_headers_are_dropped() {
+        let out = forwardable_headers(inbound(&[
+            ("cf-connecting-ip", "1.2.3.4"),
+            ("x-forwarded-for", "1.2.3.4"),
+            ("x-forwarded-host", "evil.example"),
+            ("x-real-ip", "1.2.3.4"),
+            ("accept", "application/json"),
+        ]));
+        for dropped in [
+            "cf-connecting-ip",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-real-ip",
+        ] {
+            assert!(
+                !out.contains_key(dropped),
+                "{dropped} must not be forwarded"
+            );
+        }
+        assert_eq!(out.get("accept").unwrap(), "application/json");
+    }
+
+    /// `HeaderMap`'s iterator reports `None` for the name of a repeated header's
+    /// second and later values. The previous loop used `name?` inside a
+    /// `filter_map`, so it silently discarded them and kept only the first.
+    #[test]
+    fn repeated_header_values_are_all_forwarded() {
+        let out = forwardable_headers(inbound(&[
+            ("accept-language", "de-DE"),
+            ("accept-language", "en-US"),
+        ]));
+        let values: Vec<_> = out.get_all("accept-language").iter().collect();
+        assert_eq!(values, vec!["de-DE", "en-US"]);
+    }
+
+    /// The continuation values of a *dropped* repeated header must be dropped
+    /// too, rather than latching onto whichever name was forwarded last.
+    #[test]
+    fn continuation_values_of_a_dropped_header_are_also_dropped() {
+        let out = forwardable_headers(inbound(&[
+            ("cookie", "session=abc123"),
+            ("x-forwarded-for", "1.2.3.4"),
+            ("x-forwarded-for", "5.6.7.8"),
+        ]));
+        assert!(!out.contains_key("x-forwarded-for"));
+        let cookies: Vec<_> = out.get_all("cookie").iter().collect();
+        assert_eq!(
+            cookies,
+            vec!["session=abc123"],
+            "leaked into cookie: {out:?}"
+        );
     }
 }
