@@ -1,6 +1,6 @@
 use crate::analysis::{
     DerivedConfidence, SaleSummary, derived_confidence, get_sales_cadence, price_drift_pct,
-    return_on_investment, roi_badge_class, velocity_per_day,
+    profit_per_day, return_on_investment, roi_badge_class, velocity_per_day,
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -1563,15 +1563,7 @@ fn AnalyzerTable(
                 };
                 let profit = estimated - data.cheapest_price;
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
-                let profit_per_day = data
-                    .sale_summary
-                    .avg_sale_duration
-                    .map(|d| {
-                        let days = d.num_seconds() as f32 / 86400.0;
-                        let days = days.max(1.0);
-                        (profit as f32 / days) as i32
-                    })
-                    .unwrap_or(0);
+                let profit_per_day = profit_per_day(profit, &data.sale_summary);
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
