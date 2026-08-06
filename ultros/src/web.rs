@@ -561,7 +561,7 @@ pub(crate) async fn build_price_series(
             .await
             .map_err(|e| {
                 tracing::warn!(error = ?e, item_id, "price_series CH query failed");
-                anyhow::anyhow!("ClickHouse price_series query failed: {e}")
+                crate::web::error::ClickHouseQueryError::new("price_series", e)
             })?;
 
             if rows.len() <= MAX_BUCKETS {
@@ -618,7 +618,7 @@ pub(crate) async fn build_price_series(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, item_id, "price_series raw_sales CH query failed");
-            anyhow::anyhow!("ClickHouse raw_sales query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("raw_sales", e)
         })?;
         Some(
             sales
@@ -900,7 +900,7 @@ async fn price_density(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
-            anyhow::anyhow!("ClickHouse price_min_max query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("price_min_max", e)
         })?;
 
     let payload = match extent {
@@ -930,7 +930,7 @@ async fn price_density(
             .await
             .map_err(|e| {
                 tracing::warn!(error = ?e, item_id, "price_density CH query failed");
-                anyhow::anyhow!("ClickHouse price_density query failed: {e}")
+                crate::web::error::ClickHouseQueryError::new("price_density", e)
             })?;
             ultros_api_types::price_density::PriceDensity {
                 bucket_seconds,
