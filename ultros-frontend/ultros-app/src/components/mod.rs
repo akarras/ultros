@@ -28,6 +28,7 @@ pub mod grouped_nav_accordion;
 pub mod history_panel;
 pub mod hover_card;
 pub mod icon;
+pub(crate) mod invite_link;
 pub mod item_icon;
 pub mod item_tooltip;
 pub mod job_set_card;

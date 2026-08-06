@@ -15,6 +15,7 @@ pub mod alert_retainer_undercut;
 pub mod datacenter;
 pub mod discord_user;
 pub mod final_fantasy_character;
+pub mod group_invite;
 pub mod list;
 pub mod list_activity;
 pub mod list_invite;

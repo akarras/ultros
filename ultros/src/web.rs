@@ -46,7 +46,8 @@ use ultros_api_types::price_series::{
 };
 use ultros_api_types::retainer::RetainerListings;
 use ultros_api_types::user::group::{
-    CreateGroup, CreateGroupFromGuild, DiscordManageableGuild, UserGroup, UserGroupMember,
+    CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild, GroupInvite,
+    UserGroup, UserGroupMember,
 };
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
@@ -1993,6 +1994,45 @@ pub(crate) async fn remove_group_member(
     Ok(Json(()))
 }
 
+pub(crate) async fn get_group_invites(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<GroupInvite>>, ApiError> {
+    let invites = db.get_group_invites(id, user.id as i64).await?;
+    Ok(Json(invites.into_iter().map(GroupInvite::from).collect()))
+}
+
+pub(crate) async fn create_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(CreateGroupInvite { max_uses }): Json<CreateGroupInvite>,
+) -> Result<Json<GroupInvite>, ApiError> {
+    let invite = db.create_group_invite(id, user.id as i64, max_uses).await?;
+    Ok(Json(GroupInvite::from(invite)))
+}
+
+/// Redeem an invite and return the group joined, so the client can navigate
+/// straight to it. Redeeming an invite you've already used is a success.
+pub(crate) async fn use_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<i32>, ApiError> {
+    let group_id = db.use_group_invite(id, user.id as i64).await?;
+    Ok(Json(group_id))
+}
+
+pub(crate) async fn delete_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_group_invite(id, user.id as i64).await?;
+    Ok(Json(()))
+}
+
 // --- List sharing ---
 
 pub(crate) async fn get_list_shares(
@@ -2417,6 +2457,16 @@ pub(crate) async fn start_web(
             "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/group/{id}/invites", get(get_group_invites))
+        .route(
+            "/api/v1/group/{id}/invite/create",
+            post(create_group_invite),
+        )
+        // Kept off the `/api/v1/group/{id}/...` prefix: the invite id is a
+        // string where that prefix takes an i32, and a sibling path can't hold
+        // both without the router treating one as a malformed group id.
+        .route("/api/v1/group-invite/{id}/use", post(use_group_invite))
+        .route("/api/v1/group-invite/{id}", delete(delete_group_invite))
         .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
