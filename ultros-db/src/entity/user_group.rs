@@ -30,6 +30,8 @@ pub enum Relation {
     UserGroupMember,
     #[sea_orm(has_many = "super::list_shared_group::Entity")]
     ListSharedGroup,
+    #[sea_orm(has_many = "super::group_invite::Entity")]
+    GroupInvite,
 }
 
 impl Related<super::discord_user::Entity> for Entity {
@@ -47,6 +49,12 @@ impl Related<super::user_group_member::Entity> for Entity {
 impl Related<super::list_shared_group::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ListSharedGroup.def()
+    }
+}
+
+impl Related<super::group_invite::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::GroupInvite.def()
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::analysis::{
     DerivedConfidence, SaleSummary, derived_confidence, get_sales_cadence, price_drift_pct,
-    return_on_investment, roi_badge_class, velocity_per_day,
+    profit_per_day, return_on_investment, roi_badge_class, velocity_per_day,
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -13,8 +13,10 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
-        dismissable::use_dismissable,
-        filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
+        control_bar::{
+            ColumnOption, ControlBar, ControlBarPopovers, FilterOption, STICKY_BAR_HEIGHT,
+        },
+        filter_chip::FilterChip,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -141,7 +143,6 @@ fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> 
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
-use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
@@ -801,7 +802,7 @@ fn format_velocity_floor(v: f32) -> String {
 /// scrollport, so a narrow screen scrolls to the columns instead of hiding
 /// them. That makes the reservation one number: the stylesheet holds the width
 /// of the four always-on columns and this adds whatever `?cols=` turned on,
-/// handed over as `--analyzer-optional-cols`. Under-reserving is the failure
+/// handed over as `--tool-optional-cols`. Under-reserving is the failure
 /// that matters: the two scrollports would stop short of the last column and it
 /// would be unreachable.
 ///
@@ -930,14 +931,20 @@ fn analyzer_skeleton_columns(
 
 /// The control bar, drawn empty.
 ///
-/// The bar is part of `AnalyzerTable`, so it only exists once the resources
-/// resolve; without a placeholder the loading state was the grid alone and the
-/// bar dropped 76px of chrome onto the page when the data landed, shoving the
-/// whole table down (#1110).
+/// The bar is rendered by `AnalyzerTable`, so it only exists once the
+/// resources resolve; without a placeholder the loading state was the grid
+/// alone and the bar dropped 76px of chrome onto the page when the data
+/// landed, shoving the whole table down (#1110).
 ///
-/// Every class here is copied from the real bar in `AnalyzerTable` — the
-/// height lock, the two 32px rows, the sticky positioning — so the swap is a
-/// content change and never a layout change. Keep the two in step.
+/// Every class here is copied from
+/// [`ControlBar`](crate::components::control_bar::ControlBar) — the height
+/// lock, the two 32px rows, the sticky positioning — so the swap is a content
+/// change and never a layout change. Keep the two in step: this is a
+/// hand-mirrored copy, and a change to the bar's outer shape has to be made
+/// here too.
+///
+/// The four row-1 placeholders match what `AnalyzerTable` actually puts there
+/// after the summary: `RealtimeStatus`, `SavedViewsMenu`, Columns, Clear all.
 #[component]
 fn AnalyzerControlBarSkeleton() -> impl IntoView {
     // Button-shaped placeholder, sized like `.sticky-bar-button` with a label.
@@ -979,8 +986,8 @@ fn AnalyzerControlBarSkeleton() -> impl IntoView {
 ///
 /// Reads `?cols=` the same way the table does, so the skeleton shows the
 /// columns this particular user has switched on rather than a generic set —
-/// and reproduces the container's `--analyzer-optional-cols` variable, which
-/// is what makes `.analyzer-grid-row` give the placeholder rows the same
+/// and reproduces the container's `--tool-optional-cols` variable, which
+/// is what makes `.tool-grid-row` give the placeholder rows the same
 /// min-width as the real ones.
 ///
 /// The outer `flex flex-col gap-4` is `AnalyzerTable`'s own root. It is
@@ -997,10 +1004,10 @@ fn AnalyzerTableSkeleton() -> impl IntoView {
             <TableSkeleton
                 columns=analyzer_skeleton_columns(&visible)
                 rows=14
-                class="analyzer-table border border-[color:var(--color-outline)]"
-                row_class="analyzer-grid-row"
+                class="tool-table border border-[color:var(--color-outline)]"
+                row_class="tool-grid-row"
                 style=format!(
-                    "--analyzer-optional-cols: {}px;",
+                    "--tool-optional-cols: {}px;",
                     optional_column_width_px(&visible),
                 )
             />
@@ -1221,17 +1228,6 @@ fn AnalyzerTable(
     let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
-    let show_columns_picker = RwSignal::new(false);
-    let show_filter_menu = RwSignal::new(false);
-    // Route change, click outside, Escape. Both popovers and both trigger
-    // buttons live inside the sticky bar, so one container covers both;
-    // the triggers keep their own mutual exclusivity.
-    let sticky_bar_ref = NodeRef::<leptos::html::Div>::new();
-    use_dismissable(sticky_bar_ref, move || {
-        show_columns_picker.set(false);
-        show_filter_menu.set(false);
-    });
-
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
@@ -1329,6 +1325,62 @@ fn AnalyzerTable(
         }
     };
 
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        available_filters(&active_filters())
+            .into_iter()
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let col_label = move |col: &str| -> String {
+        match col {
+            c if c == COL_PROFIT_PER_DAY => {
+                t_string!(i18n, analyzer_col_profit_per_day).to_string()
+            }
+            c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
+            c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
+            c if c == COL_CONFIDENCE => t_string!(i18n, analyzer_col_confidence).to_string(),
+            c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
+            c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
+            c if c == COL_DATACENTER => t_string!(i18n, analyzer_col_datacenter).to_string(),
+            c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
+            c if c == COL_SALES_PER_DAY => t_string!(i18n, analyzer_col_sales_per_day).to_string(),
+            c if c == COL_VOLUME_30D => t_string!(i18n, analyzer_col_volume_30d).to_string(),
+            c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // Columns the picker offers, in table order.
+    let column_options = Memo::new(move |_| {
+        ALL_OPTIONAL_COLS
+            .iter()
+            .map(|col| ColumnOption {
+                id: col,
+                label: col_label(col),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // Held here because the category picker lives in the `+ Filter` menu and
+    // commits on `change` — it has to close the menu it sits in.
+    let popovers = ControlBarPopovers::new();
+
+    let toggle_column = Callback::new(move |col: &'static str| {
+        let mut set = visible_cols.get_untracked();
+        if set.contains(col) {
+            set.remove(col);
+        } else {
+            set.insert(col);
+        }
+        set_cols_param.set(Some(serialize_visible_cols(&set)));
+    });
+
     // Adding a filter seeds it with `default_filter_value` so the chip has
     // something to show; the user edits it in place from there.
     let add_filter = move |id: &str| {
@@ -1415,6 +1467,95 @@ fn AnalyzerTable(
         });
     }
 
+    // --- Filter chip strip: edge fades ---------------------------------------
+    // The strip scrolls but shows no scrollbar (the bar is height-locked, so a
+    // gutter would eat the chips), which left nothing on screen to say there
+    // were more filters off to the right — at 375px with eight filters set the
+    // chips run ~1000px inside a ~240px viewport. `--chip-fade-{start,end}`
+    // drive a mask declared in the stylesheet; both are 0 unless there is
+    // actually something to scroll to on that side.
+    let chip_row = NodeRef::<leptos::html::Div>::new();
+    #[cfg(feature = "hydrate")]
+    {
+        let chip_listeners = StoredValue::new_local(
+            None::<(
+                web_sys::HtmlDivElement,
+                Closure<dyn FnMut()>,
+                Closure<dyn FnMut()>,
+            )>,
+        );
+        on_cleanup(move || {
+            chip_listeners.update_value(|slot| {
+                if let Some((el, scroll_cb, resize_cb)) = slot.take() {
+                    let _ = el.remove_event_listener_with_callback(
+                        "scroll",
+                        scroll_cb.as_ref().unchecked_ref(),
+                    );
+                    if let Some(win) = web_sys::window() {
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            resize_cb.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            });
+        });
+        // Widest fade we ever draw. Enough to read as "this continues" without
+        // dimming a whole chip.
+        const CHIP_FADE_PX: f64 = 24.0;
+        let apply_fades = |el: &web_sys::HtmlDivElement| {
+            let left = el.scroll_left();
+            // `scroll_width` is an i32 of a value the browser rounds, so the
+            // remaining distance can land a fraction off zero at the far end.
+            // A 1px deadband keeps the trailing fade from lingering once the
+            // strip is scrolled all the way over.
+            let right = (el.scroll_width() as f64 - el.client_width() as f64 - left).max(0.0);
+            let px = |amount: f64| format!("{}px", amount.clamp(0.0, CHIP_FADE_PX).round());
+            // Fully qualified: tachys' `ElementExt::style` is in scope via the
+            // leptos prelude and matches `HtmlDivElement` directly, so it wins
+            // method resolution over the inherent `HtmlElement::style` that
+            // needs a deref step. Bare `el.style()` picks the wrong one.
+            let style = web_sys::HtmlElement::style(el);
+            let _ = style.set_property(
+                "--chip-fade-start",
+                &px(if left > 1.0 { CHIP_FADE_PX } else { 0.0 }),
+            );
+            let _ = style.set_property(
+                "--chip-fade-end",
+                &px(if right > 1.0 { CHIP_FADE_PX } else { 0.0 }),
+            );
+        };
+        Effect::new(move |_| {
+            // Tracked so the fades are re-derived when a chip is added or
+            // removed: that changes `scrollWidth` without firing either
+            // listener below.
+            let _ = active_filters();
+            let Some(el) = chip_row.get() else {
+                return;
+            };
+            if chip_listeners.with_value(|slot| slot.is_none()) {
+                let on_scroll = {
+                    let el = el.clone();
+                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
+                };
+                let on_resize = {
+                    let el = el.clone();
+                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
+                };
+                let _ = el
+                    .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref());
+                if let Some(win) = web_sys::window() {
+                    let _ = win.add_event_listener_with_callback(
+                        "resize",
+                        on_resize.as_ref().unchecked_ref(),
+                    );
+                }
+                chip_listeners.set_value(Some((el.clone(), on_scroll, on_resize)));
+            }
+            apply_fades(&el);
+        });
+    }
+
     let clear_all_filters = move || {
         set_minimum_profit(None);
         set_minimum_profit_per_day(None);
@@ -1483,15 +1624,7 @@ fn AnalyzerTable(
                 };
                 let profit = estimated - data.cheapest_price;
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
-                let profit_per_day = data
-                    .sale_summary
-                    .avg_sale_duration
-                    .map(|d| {
-                        let days = d.num_seconds() as f32 / 86400.0;
-                        let days = days.max(1.0);
-                        (profit as f32 / days) as i32
-                    })
-                    .unwrap_or(0);
+                let profit_per_day = profit_per_day(profit, &data.sale_summary);
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
@@ -1866,37 +1999,10 @@ fn AnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-4">
-            // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
-            // header sticks directly beneath it at that offset, so a bar that
-            // grew with its content would cover its own column headers.
-            <div
-                class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1"
-                node_ref=sticky_bar_ref
-            >
-                // Row 1 — result count and view-level controls.
-                //
-                // The row cannot wrap (the bar is height-locked) and cannot
-                // scroll (it holds the popovers, and `html` is `overflow-x:
-                // hidden`), so it has to *fit*, at every width and in every
-                // locale. It did not: every control is a `.sticky-bar-button`
-                // — `flex: 0 0 auto` — so the row could only grow, and at
-                // 375px it ran ~210px past the viewport with the last button
-                // stranded off-screen (#1055).
-                //
-                // Three things keep it inside now, in the order they give up
-                // space: the count group is `flex-1` and truncates first;
-                // labels are hidden below `md` and ellipsize above it
-                // (`.sticky-bar-button-shrink`); icons never shrink. A
-                // breakpoint alone would not do — the side nav takes 240px at
-                // `lg`, so the row is no wider at 1024px than at 768px.
-                //
-                // Anything added here needs to be able to yield too.
-                <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
-                    // The one item allowed to give up space. `overflow-hidden`
-                    // is safe on this wrapper specifically: it holds two spans
-                    // and nothing sticky or absolutely positioned, so it does
-                    // not become a scrollport for anything that matters.
-                    <div class="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+            <ControlBar
+                chip_row=chip_row
+                summary=move || {
+                    view! {
                         <span class="text-sm text-[color:var(--brand-fg)] font-semibold truncate min-w-0">
                             {move || {
                                 t_string!(i18n, analyzer_rows_count)
@@ -1924,56 +2030,141 @@ fn AnalyzerTable(
                                     }
                                 })
                         }}
-                    </div>
-                    // Live-market indicator, carried over from the realtime work on
-                    // main. It sat in the results-summary panel this bar replaced.
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                        compact=true
-                    />
-                    <SavedViewsMenu current_world=world />
-                    <button
-                        class="sticky-bar-button sticky-bar-button-shrink"
-                        aria-label=t_string!(i18n, analyzer_columns_button)
-                        aria-expanded=move || show_columns_picker.get().to_string()
-                        on:click=move |_| {
-                            show_filter_menu.set(false);
-                            show_columns_picker.update(|v| *v = !*v);
-                        }
-                    >
-                        <Icon icon=i::FaTableColumnsSolid />
-                        <span class="hidden md:inline sticky-bar-button-label">
-                            {t!(i18n, analyzer_columns_button)}
-                        </span>
-                    </button>
-                    <button
-                        class="sticky-bar-button sticky-bar-button-shrink"
-                        aria-label=t_string!(i18n, aria_clear_all_filters)
-                        on:click=move |_| clear_all_filters()
-                    >
-                        <Icon icon=icondata::MdiFilterRemove />
-                        <span class="hidden md:inline sticky-bar-button-label">
-                            {t!(i18n, analyzer_clear_all)}
-                        </span>
-                    </button>
-                </div>
-
-                // Row 2 — the filters themselves. One chip per active filter,
-                // and nothing at all for the ones that are not in use.
-                <div class="h-8 flex items-center gap-2 min-w-0">
-                    <div class="filter-chip-row">
-                        {move || {
-                            active_filters()
-                                .is_empty()
-                                .then(|| {
-                                    view! {
-                                        <span class="text-sm text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                            {t!(i18n, analyzer_no_active_filters)}
-                                        </span>
+                    }
+                }
+                actions=move || {
+                    view! {
+                        // Live-market indicator, carried over from the realtime
+                        // work on main. It sat in the results-summary panel this
+                        // bar replaced.
+                        <RealtimeStatus status=realtime_status last_update=last_update compact=true />
+                        <SavedViewsMenu current_world=world />
+                    }
+                }
+                columns=column_options
+                visible_columns=visible_cols
+                on_toggle_column=toggle_column
+                on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
+                columns_extra=move || {
+                    view! {
+                        // Cross-region + outlier filtering, formerly the controls
+                        // panel above the table. `w-full` forces its own row inside
+                        // the wrapping flex container above.
+                        <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
+                            <Toggle
+                                checked=cross_region_enabled
+                                set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
+                                    val.then_some(true),
+                                ))
+                                checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
+                                unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
+                            />
+                            <Toggle
+                                checked=filter_outliers
+                                set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
+                                    val.then_some(true),
+                                ))
+                                checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
+                                unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
+                            />
+                            <div
+                                class="flex flex-wrap gap-2"
+                                class:hidden=move || !cross_region_enabled.get()
+                            >
+                                {
+                                    move || {
+                                        region
+                                            .get()
+                                            .map(|region| {
+                                                CONNECTED_REGIONS
+                                                    .iter()
+                                                    .filter(move |r| **r != region.as_str())
+                                                    .map(|region_name| {
+                                                        let (enabled, set_enabled) = query_signal::<
+                                                            bool,
+                                                        >(region_name.to_string());
+                                                        view! {
+                                                            <Toggle
+                                                                checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                                set_checked=SignalSetter::map(move |checked: bool| {
+                                                                    set_enabled(Some(checked));
+                                                                })
+                                                                checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
+                                                                unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
+                                                            />
+                                                        }
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            })
                                     }
-                                })
-                        }}
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+                available_filters=filter_options
+                on_add_filter=Callback::new(move |id: &'static str| add_filter(id))
+                filter_menu_extra=move || {
+                    view! {
+                        // Category is chosen from a list rather than typed, so its
+                        // chip is read-only and this is where it is picked. Hidden
+                        // once a category is set: leaving it up would echo the chip,
+                        // which is the duplication this bar deletes.
+                        {move || category_filter().is_none().then(|| view! {
+                            <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
+                                <span class="text-[color:var(--color-text-muted)]">
+                                    {t!(i18n, analyzer_filter_category_label)}
+                                </span>
+                                <select
+                                    class="input input-sm"
+                                    on:change=move |ev| {
+                                        let val = event_target_value(&ev);
+                                        if let Ok(id) = val.parse::<i32>() {
+                                            set_category_filter(Some(id));
+                                        } else {
+                                            set_category_filter(None);
+                                        }
+                                        popovers.filter_menu.set(false);
+                                    }
+                                    prop:value=move || {
+                                        category_filter().map(|c| c.to_string()).unwrap_or_default()
+                                    }
+                                >
+                                    <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                                    {
+                                        let mut categories = tracked_data()
+                                            .item_search_categorys
+                                            .iter()
+                                            .filter(|(_, cat)| !cat.name.is_empty())
+                                            .map(|(id, cat)| (id.0, cat.name.clone()))
+                                            .collect::<Vec<_>>();
+                                        categories.sort_by(|a, b| a.1.cmp(&b.1));
+                                        categories
+                                            .into_iter()
+                                            .map(|(id, name)| {
+                                                view! {
+                                                    <option
+                                                        value=id.to_string()
+                                                        selected=move || category_filter() == Some(id)
+                                                    >
+                                                        {name}
+                                                    </option>
+                                                }
+                                            })
+                                            .collect_view()
+                                    }
+                                </select>
+                            </label>
+                        })}
+                    }
+                }
+                on_clear_all=Callback::new(move |_| clear_all_filters())
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, analyzer_no_active_filters).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+                popovers=popovers
+            >
                         {move || {
                             minimum_profit()
                                 .map(|_| {
@@ -2317,247 +2508,17 @@ fn AnalyzerTable(
                                     }
                                 })
                         }}
-                    </div>
-                    <button
-                        class="sticky-bar-button"
-                        aria-expanded=move || show_filter_menu.get().to_string()
-                        on:click=move |_| {
-                            show_columns_picker.set(false);
-                            show_filter_menu.update(|v| *v = !*v);
-                        }
-                    >
-                        <Icon icon=i::FaFilterSolid />
-                        {t!(i18n, analyzer_add_filter)}
-                    </button>
-                </div>
-
-                // `+ Filter` menu. Unset filters live here, so the bar's height
-                // tracks the filters in use rather than the filters that exist.
-                {move || {
-                    show_filter_menu
-                        .get()
-                        .then(|| {
-                            view! {
-                                <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
-                                    {move || {
-                                        available_filters(&active_filters())
-                                            .into_iter()
-                                            .map(|id| {
-                                                let label = filter_label(id);
-                                                view! {
-                                                    <button
-                                                        class="text-left px-2 py-1 rounded-sm text-[color:var(--color-text)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]"
-                                                        on:click=move |_| {
-                                                            add_filter(id);
-                                                            show_filter_menu.set(false);
-                                                        }
-                                                    >
-                                                        {label}
-                                                    </button>
-                                                }
-                                            })
-                                            .collect_view()
-                                    }}
-                                    // Category is chosen from a list rather than
-                                    // typed, so its chip is read-only and this is
-                                    // where it is picked. Hidden once a category
-                                    // is set: leaving it up would echo the chip,
-                                    // which is the duplication this bar deletes.
-                                    {move || category_filter().is_none().then(|| view! {
-                                    <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
-                                        <span class="text-[color:var(--color-text-muted)]">
-                                            {t!(i18n, analyzer_filter_category_label)}
-                                        </span>
-                                        <select
-                                            class="input input-sm"
-                                            on:change=move |ev| {
-                                                let val = event_target_value(&ev);
-                                                if let Ok(id) = val.parse::<i32>() {
-                                                    set_category_filter(Some(id));
-                                                } else {
-                                                    set_category_filter(None);
-                                                }
-                                                show_filter_menu.set(false);
-                                            }
-                                            prop:value=move || {
-                                                category_filter().map(|c| c.to_string()).unwrap_or_default()
-                                            }
-                                        >
-                                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                                            {
-                                                let mut categories = tracked_data()
-                                                    .item_search_categorys
-                                                    .iter()
-                                                    .filter(|(_, cat)| !cat.name.is_empty())
-                                                    .map(|(id, cat)| (id.0, cat.name.clone()))
-                                                    .collect::<Vec<_>>();
-                                                categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                                categories
-                                                    .into_iter()
-                                                    .map(|(id, name)| {
-                                                        view! {
-                                                            <option
-                                                                value=id.to_string()
-                                                                selected=move || category_filter() == Some(id)
-                                                            >
-                                                                {name}
-                                                            </option>
-                                                        }
-                                                    })
-                                                    .collect_view()
-                                            }
-                                        </select>
-                                    </label>
-                                    })}
-                                </div>
-                            }
-                        })
-                }}
-
-                // Columns picker (URL-persisted via ?cols=). A popover rather
-                // than a panel so opening it cannot change the bar's height.
-                {move || {
-                    show_columns_picker
-                        .get()
-                        .then(|| {
-                            let make_toggle = move |col: &'static str| {
-                                move |_| {
-                                    let mut set = visible_cols.get_untracked();
-                                    if set.contains(col) {
-                                        set.remove(col);
-                                    } else {
-                                        set.insert(col);
-                                    }
-                                    set_cols_param.set(Some(serialize_visible_cols(&set)));
-                                }
-                            };
-                            let col_label = move |col: &'static str| -> String {
-                                match col {
-                                    c if c == COL_PROFIT_PER_DAY => {
-                                        t_string!(i18n, analyzer_col_profit_per_day).to_string()
-                                    }
-                                    c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
-                                    c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
-                                    c if c == COL_CONFIDENCE => {
-                                        t_string!(i18n, analyzer_col_confidence).to_string()
-                                    }
-                                    c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
-                                    c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
-                                    c if c == COL_DATACENTER => {
-                                        t_string!(i18n, analyzer_col_datacenter).to_string()
-                                    }
-                                    c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
-                                    c if c == COL_SALES_PER_DAY => {
-                                        t_string!(i18n, analyzer_col_sales_per_day).to_string()
-                                    }
-                                    c if c == COL_VOLUME_30D => {
-                                        t_string!(i18n, analyzer_col_volume_30d).to_string()
-                                    }
-                                    c if c == COL_LAST_SOLD => {
-                                        t_string!(i18n, analyzer_col_last_sold).to_string()
-                                    }
-                                    _ => String::new(),
-                                }
-                            };
-                            view! {
-                                <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                                    <span class="font-semibold text-[color:var(--brand-fg)]">
-                                        {t!(i18n, analyzer_columns_picker_label)}
-                                    </span>
-                                    {ALL_OPTIONAL_COLS
-                                        .iter()
-                                        .map(|col| {
-                                            let col = *col;
-                                            let label = col_label(col);
-                                            let on_change = make_toggle(col);
-                                            view! {
-                                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                                                    <input
-                                                        type="checkbox"
-                                                        class="accent-brand-300"
-                                                        prop:checked=move || visible_cols().contains(col)
-                                                        on:change=on_change
-                                                    />
-                                                    <span>{label}</span>
-                                                </label>
-                                            }
-                                        })
-                                        .collect_view()}
-                                    <button
-                                        class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                                        on:click=move |_| set_cols_param.set(None)
-                                    >
-                                        {t!(i18n, analyzer_columns_picker_reset)}
-                                    </button>
-
-                                    // Cross-region + outlier-filtering, formerly the controls
-                                    // panel above the table. `w-full` forces its own row inside
-                                    // the wrapping flex container above.
-                                    <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
-                                        <Toggle
-                                            checked=cross_region_enabled
-                                            set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                                val.then_some(true),
-                                            ))
-                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
-                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
-                                        />
-                                        <Toggle
-                                            checked=filter_outliers
-                                            set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
-                                                val.then_some(true),
-                                            ))
-                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
-                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
-                                        />
-                                        <div
-                                            class="flex flex-wrap gap-2"
-                                            class:hidden=move || !cross_region_enabled.get()
-                                        >
-                                            {
-                                                move || {
-                                                    region
-                                                        .get()
-                                                        .map(|region| {
-                                                            CONNECTED_REGIONS
-                                                                .iter()
-                                                                .filter(move |r| **r != region.as_str())
-                                                                .map(|region_name| {
-                                                                    let (enabled, set_enabled) = query_signal::<
-                                                                        bool,
-                                                                    >(region_name.to_string());
-                                                                    view! {
-                                                                        <Toggle
-                                                                            checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                                            set_checked=SignalSetter::map(move |checked: bool| {
-                                                                                set_enabled(Some(checked));
-                                                                            })
-                                                                            checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
-                                                                            unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
-                                                                        />
-                                                                    }
-                                                                })
-                                                                .collect::<Vec<_>>()
-                                                        })
-                                                }
-                                            }
-                                        </div>
-                                    </div>
-                                </div>
-                            }
-                        })
-                }}
-            </div>
+            </ControlBar>
 
             // Results table. Deliberately no `overflow` on this wrapper: in
             // window mode an overflow on any ancestor of the sticky table
             // header re-parents its scrollport away from the viewport, which
             // silently defeats `sticky_offset`.
             <div
-                class="analyzer-table border border-[color:var(--color-outline)]"
+                class="tool-table border border-[color:var(--color-outline)]"
                 style=move || {
                     format!(
-                        "--analyzer-optional-cols: {}px;",
+                        "--tool-optional-cols: {}px;",
                         optional_column_width_px(&visible_cols()),
                     )
                 }
@@ -2568,7 +2529,7 @@ fn AnalyzerTable(
                         row_height=40.0
                         overscan=8
                         // The header row's own height. The rendered element is
-                        // up to ~15px taller, because `.analyzer-hscroll`
+                        // up to ~15px taller, because `.tool-hscroll`
                         // reserves a horizontal scrollbar, but that height
                         // depends on the platform's scrollbar and on whether
                         // the grid currently overflows — neither of which is
@@ -2580,10 +2541,10 @@ fn AnalyzerTable(
                         variable_height=false
                         visible_range=visible_range
                         list_ref=list_scroll
-                        row_min_width="var(--analyzer-row-min-width, 0px)"
+                        row_min_width="var(--tool-row-min-width, 0px)"
                         header=view! {
-                            <div class="analyzer-hscroll" node_ref=header_scroll>
-                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                            <div class="tool-hscroll" node_ref=header_scroll>
+                            <div class="tool-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
@@ -2762,9 +2723,9 @@ fn AnalyzerTable(
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
                             let classes = if (index % 2) == 0 {
-                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+                                "tool-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                             } else {
-                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+                                "tool-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
                             view! {
                                 <div class=classes role="row-group">
@@ -2784,7 +2745,15 @@ fn AnalyzerTable(
                                                 <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
                                             </div>
                                             {item}
+                                            // Inline confidence, for when the Confidence
+                                            // column is switched off. With the column on
+                                            // the row would otherwise say "Low" twice —
+                                            // once beside the name and once in its own
+                                            // column (#1106).
                                             {move || {
+                                                if visible_cols().contains(COL_CONFIDENCE) {
+                                                    return None;
+                                                }
                                                 let maps = enrichment.get();
                                                 maps.quality_for(&row_key).map(|q| {
                                                     view! {

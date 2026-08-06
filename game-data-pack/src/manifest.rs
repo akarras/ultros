@@ -16,6 +16,9 @@ pub const HEADER: &str = "\
 # per-language sheet patterns from SHEETS (see game-data-pack/src/fetch.rs).
 # `checkout_subdir` places a source inside the assembled ffxiv-datamining tree.
 #
+# `[icons]` records the FFXIV client version (game/ffxivgame.ver) the icon pack
+# was extracted from — icons come from a local game install, not a git source.
+#
 # This header is rewritten by `Manifest::save`; comments added below it are NOT
 # preserved across a --latest run.
 ";
@@ -25,6 +28,18 @@ pub const HEADER: &str = "\
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub sources: BTreeMap<String, Source>,
+    /// Provenance of `data/icons`, absent until an icon pack has been built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icons: Option<IconPack>,
+}
+
+/// Where `data/icons/images.tar.zst` came from: a local FFXIV install at a
+/// specific client version, read by `icon-extract`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IconPack {
+    /// Contents of `game/ffxivgame.ver`, e.g. `2026.07.16.0001.0000`.
+    pub game_version: String,
 }
 
 /// A single pinned upstream source (a git repo at a specific commit).
@@ -68,9 +83,28 @@ mod tests {
     }
 
     #[test]
-    fn load_reads_five_sources() {
+    fn load_reads_the_four_csv_sources() {
         let manifest = Manifest::load(&manifest_path()).expect("manifest should load");
-        assert_eq!(manifest.sources.len(), 5);
+        assert_eq!(manifest.sources.len(), 4);
+        assert!(
+            !manifest.sources.contains_key("universalis-assets"),
+            "icons come from the local game install now, not a git source"
+        );
+    }
+
+    #[test]
+    fn icon_provenance_round_trips() {
+        let mut manifest = Manifest::load(&manifest_path()).expect("manifest should load");
+        manifest.icons = Some(IconPack {
+            game_version: "2026.07.16.0001.0000".to_string(),
+        });
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("manifest.toml");
+        manifest.save(&path).expect("manifest should save");
+
+        let reloaded = Manifest::load(&path).expect("manifest should reload");
+        assert_eq!(manifest, reloaded);
     }
 
     #[test]

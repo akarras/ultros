@@ -117,6 +117,44 @@ The project is built using:
 
     *Note: On first boot, the app will apply database migrations and fetch game data (worlds, regions) from Universalis. A restart may be required after this initial fetch.*
 
+### Updating Game Data
+
+FFXIV data (item/recipe tables and item icons) ships as pre-generated packs under `data/`,
+tracked with Git LFS and embedded at compile time — day-to-day development never fetches or
+generates anything. When a game patch lands, the packs are regenerated with:
+
+```bash
+cargo run --release -p game-data-pack -- --latest
+```
+
+`--latest` bumps the pins in `data/manifest.toml` to the newest upstream data and rebuilds;
+`--pinned` (the default) rebuilds reproducibly from the recorded pins. Commit the changed
+packs and manifest together.
+
+The two halves of the data come from different places:
+
+*   **CSV packs** (`data/xiv-db/*.rkyv`) are built from the community
+    [`ffxiv-datamining`](https://github.com/xivapi/ffxiv-datamining) CSV repos (all seven
+    languages), fetched as sparse checkouts at the SHAs pinned in the manifest. This works on
+    any machine with network access.
+*   **The icon pack** (`data/icons/images.tar.zst`) is extracted directly from a **local FFXIV
+    install**'s SqPack files (via the `icon-extract` crate) — no crawling, no assets repo. The
+    generator auto-discovers the install in the standard Windows locations (SquareEnix default,
+    Steam, Program Files (x86)); if yours lives elsewhere (another drive, XIVLauncher on
+    Linux/Steam Deck), point at the directory that contains `game/`:
+
+    ```bash
+    cargo run --release -p game-data-pack -- --latest --game-path "D:/Games/FINAL FANTASY XIV Online"
+    ```
+
+    **Patch the game first.** The run reports how many named items have no icon in the install —
+    a triple-digit count means your client is older than the pinned CSVs and the newest items'
+    icons would be missing from the pack. The client version the icons came from is recorded
+    under `[icons]` in `data/manifest.toml`.
+
+    No FFXIV install on the machine? `--skip-icons` rebuilds only the CSV packs and leaves the
+    committed icon pack untouched.
+
 ### Environment Variables
 
 | Variable | Description | Default / Example |
@@ -144,6 +182,9 @@ This repository contains several crates that make up the Ultros ecosystem:
 *   **`universalis`**: A wrapper for the Universalis API (HTTP & WebSocket).
 *   **`xiv-gen`**: Generates Rust structs from FFXIV game data (sourced from `ffxiv-datamining`).
 *   **`xiv-gen-db`**: Statically embeds compressed game data for fast access.
+*   **`game-data-pack`**: Regenerates the LFS-tracked data packs under `data/` (see
+    [Updating Game Data](#updating-game-data)).
+*   **`icon-extract`**: Reads item icons out of a local FFXIV install's SqPack files.
 *   **`migration`**: Database migration tool.
 
 See [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md) for the full contributor workflow (CI checks, services overview, and environment gotchas).

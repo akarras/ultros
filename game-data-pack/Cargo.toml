@@ -25,6 +25,8 @@ tar = "0.4"
 image = { workspace = true, features = ["webp", "png"] }
 webp = "0.3"
 rayon = "1"
+# Reads the item icons straight out of a local FFXIV install.
+icon-extract = { path = "../icon-extract" }
 
 [dev-dependencies]
 tempfile = "3"

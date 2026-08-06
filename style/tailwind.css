@@ -2374,8 +2374,33 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     flex: 1;
     /* The bar is height-locked, so a reserved scrollbar gutter would eat
        into the chips themselves. Scrolling still works via trackpad,
-       shift+wheel and focus. */
+       shift+wheel, touch and focus. */
     scrollbar-width: none;
+
+    /* ...which leaves nothing on screen to say the strip scrolls at all. At
+       375px with eight filters set, the chips run 1002px inside a 237px
+       viewport and the five past the fold are simply invisible (#1057). These
+       two variables drive an edge fade; analyzer.rs sets them from the row's
+       own scroll geometry, so the fade appears on the side that has more
+       chips and nowhere else. Both default to 0, which collapses each
+       gradient stop pair onto the same position — a zero-width fade, i.e. no
+       visual change at all when everything fits. */
+    --chip-fade-start: 0px;
+    --chip-fade-end: 0px;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--chip-fade-start),
+        #000 calc(100% - var(--chip-fade-end)),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--chip-fade-start),
+        #000 calc(100% - var(--chip-fade-end)),
+        transparent 100%
+    );
 }
 .filter-chip-row::-webkit-scrollbar {
     display: none;
@@ -2389,7 +2414,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
    `auto`), and since it never scrolls vertically the header would never
    stick. So the header and the row area are two *sibling* scrollports of
    equal width whose scrollLeft is synchronized in analyzer.rs. */
-.analyzer-hscroll {
+.tool-hscroll {
     overflow-x: auto;
     overflow-y: hidden;
     /* Rows scroll underneath the sticky header, so it cannot be
@@ -2404,15 +2429,13 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
    No breakpoint enters into it: every column the user switched on renders at
    every viewport width, and a narrow screen scrolls to reach them. The 30.75rem
    here is the four always-on columns (HQ 44px + Item 14rem + Profit 7rem + Buy
-   Price 7rem); `--analyzer-optional-cols` is set inline by the route and carries
+   Price 7rem); `--tool-optional-cols` is set inline by the route and carries
    whatever `?cols=` turned on, which the stylesheet cannot know. */
-.analyzer-table {
-    --analyzer-row-min-width: calc(
-        30.75rem + var(--analyzer-optional-cols, 0px)
-    );
+.tool-table {
+    --tool-row-min-width: calc(30.75rem + var(--tool-optional-cols, 0px));
 }
-.analyzer-grid-row {
-    min-width: var(--analyzer-row-min-width, 0px);
+.tool-grid-row {
+    min-width: var(--tool-row-min-width, 0px);
 }
 
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the

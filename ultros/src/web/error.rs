@@ -27,6 +27,49 @@ use crate::{analyzer_service::AnalyzerError, event};
 
 use crate::character_claim::ClaimError;
 
+/// A ClickHouse call that failed, tagged with which query it was and why it
+/// failed.
+///
+/// Exists so ClickHouse failures stop falling into [`AnyhowError`]'s
+/// `"Generic error {0}"` catch-all. Two things were wrong with going through
+/// `anyhow`: the typed error was flattened to a string at the call site, and the
+/// string it was flattened into carried ClickHouse's live memory figures, which
+/// differ on every occurrence.
+///
+/// `query` is a `&'static str` and `kind` is a small enum precisely so
+/// [`Display`](std::fmt::Display) stays low-cardinality: `query × kind` is a
+/// handful of possible messages, each one alertable. Per-occurrence detail lives
+/// on `source`, which callers log as a structured field.
+///
+/// Note the `Display` here *does* include `source`, volatile figures and all —
+/// deliberately. It renders into the `error` **field**, which is not part of the
+/// grouping key, so an operator still sees "would use 5.44 GiB, maximum: 5.40
+/// GiB" on the issue. Only [`report_title`], which builds the grouping key,
+/// leaves it out.
+///
+/// [`AnyhowError`]: WebError::AnyhowError
+#[derive(Debug, Error)]
+#[error("ClickHouse {query} query failed ({kind}): {source}")]
+pub struct ClickHouseQueryError {
+    /// Which query failed — the function name in `ultros_clickhouse::queries`.
+    pub query: &'static str,
+    pub kind: ultros_clickhouse::ClickHouseErrorKind,
+    #[source]
+    pub source: ultros_clickhouse::ClickHouseError,
+}
+
+impl ClickHouseQueryError {
+    /// Classify `source` and tag it with the query that produced it.
+    pub fn new(query: &'static str, source: ultros_clickhouse::ClickHouseError) -> Self {
+        let kind = source.kind();
+        Self {
+            query,
+            kind,
+            source,
+        }
+    }
+}
+
 /// Generates an `Error`-deriving enum with the variants shared between `ApiError` and `WebError`.
 /// The shared variants and their `#[from]` / `#[error]` attributes are kept in one place so the
 /// two enums can't drift. Caller passes in any enum-specific variants between braces.
@@ -46,6 +89,11 @@ macro_rules! define_error_enum {
             ),
             #[error("Generic error {0}")]
             AnyhowError(#[from] anyhow::Error),
+            // Kept ahead of the `anyhow` catch-all on purpose: a ClickHouse
+            // failure that reaches `AnyhowError` loses its type and, with it,
+            // any hope of being alerted on specifically.
+            #[error(transparent)]
+            ClickHouse(#[from] ClickHouseQueryError),
             #[error("Parse int failed {0}")]
             ParseIntError(#[from] ParseIntError),
             #[error("{0}")]
@@ -185,6 +233,19 @@ impl RetainerStatus for StatusCode {
     }
 }
 
+/// [`report_title`]'s counterpart for [`ApiError`]. Kept as two small functions
+/// rather than a trait: the enums are macro-generated and only share variants,
+/// not a common type, and two three-line matches read better than the generic
+/// machinery needed to unify them.
+fn api_report_title(error: &ApiError) -> std::borrow::Cow<'static, str> {
+    match error {
+        ApiError::ClickHouse(e) => {
+            std::borrow::Cow::Owned(format!("ClickHouse {} query failed ({})", e.query, e.kind))
+        }
+        _ => std::borrow::Cow::Borrowed("Generic API error"),
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         if let ApiError::DiscordTokenInvalid(mut cookies) = self {
@@ -205,7 +266,13 @@ impl IntoResponse for ApiError {
         }
         let status = self.as_status_code();
         if status.is_server_error() {
-            error!(error = ?self, "Generic API error");
+            // Same grouping rule as `WebError` — see `report_title`. The API
+            // routes are where the ClickHouse-backed endpoints live
+            // (item_stats, movers, resale_quality, market_heat), so collapsing
+            // them all under "Generic API error" is what made a ClickHouse
+            // outage indistinguishable from any other 500.
+            let title = api_report_title(&self);
+            error!(error = ?self, "{title}");
         }
         (
             status,
@@ -227,6 +294,26 @@ define_error_enum!(WebError {
     #[error("Bad request")]
     BadRequest,
 });
+
+/// The title error reporting groups this error under.
+///
+/// `tracing`'s *message* is the grouping key — structured fields are not — so a
+/// constant message collapses every 5xx into a single undifferentiated issue.
+/// That is what `"Returning web error"` did: a ClickHouse outage and an OAuth
+/// failure landed in the same bucket, so neither could be alerted on. Naming the
+/// failure class here splits them, while `query × kind` keeps the number of
+/// distinct titles small enough that each accumulates a count instead of
+/// splintering.
+///
+/// Everything else keeps the original title so existing issues stay continuous.
+fn report_title(error: &WebError) -> std::borrow::Cow<'static, str> {
+    match error {
+        WebError::ClickHouse(e) => {
+            std::borrow::Cow::Owned(format!("ClickHouse {} query failed ({})", e.query, e.kind))
+        }
+        _ => std::borrow::Cow::Borrowed("Returning web error"),
+    }
+}
 
 impl WebError {
     fn as_status_code(&self) -> StatusCode {
@@ -264,10 +351,15 @@ impl IntoResponse for WebError {
             format!("{self}")
         };
 
+        // `error = %self` is a *field*, not the message, so it never affects
+        // grouping — which is why the per-occurrence detail (ClickHouse's live
+        // memory figures, the failing item id) can safely ride along here while
+        // the title stays stable.
+        let title = report_title(&self);
         if status.is_server_error() && !is_transient_warmup {
-            tracing::error!(error = %self, %status, "Returning web error");
+            tracing::error!(error = %self, %status, "{title}");
         } else {
-            tracing::debug!(error = %self, %status, "Returning web error");
+            tracing::debug!(error = %self, %status, "{title}");
         }
         (status, message).into_response()
     }

@@ -65,7 +65,7 @@ pub(crate) async fn get_movers(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, world_id, "top_movers CH query failed");
-            anyhow::anyhow!("ClickHouse top_movers query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("top_movers", e)
         })?;
 
     // For each mover, fetch the 24h sparkline so the response is one
@@ -148,7 +148,7 @@ pub(crate) async fn post_sparklines(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, world_id, "sparklines_batch CH query failed");
-            anyhow::anyhow!("ClickHouse sparklines query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("sparklines", e)
         })?;
 
     let series: Vec<SparklineSeries> = rows
