@@ -1,6 +1,7 @@
 use crate::analysis::{
-    DerivedConfidence, SaleSummary, derived_confidence, get_sales_cadence, price_drift_pct,
-    profit_per_day, return_on_investment, roi_badge_class, velocity_per_day,
+    DerivedConfidence, SaleSummary, derived_confidence, flip_estimated_sale_price, flip_profit,
+    get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct, profit_per_day,
+    return_on_investment, roi_badge_class, sniper_clamp, velocity_per_day,
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -364,24 +365,6 @@ fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)>
         .collect()
 }
 
-/// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
-const SNIPER_FRACTION: f64 = 0.1;
-
-fn median_in_place_i32(sorted: &mut [i32]) -> i32 {
-    if sorted.is_empty() {
-        return 0;
-    }
-    let n = sorted.len();
-    if n % 2 == 1 {
-        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
-        val
-    } else {
-        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
-        let left_max = *left.iter().max().unwrap();
-        ((left_max as i64 + right as i64) / 2) as i32
-    }
-}
-
 fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
     let now = Utc::now().naive_utc();
     let SaleData { item_id, hq, sales } = sale;
@@ -400,16 +383,10 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
         };
     }
 
-    // 1. Raw-median pass for the sniper threshold.
-    let mut raw: Vec<i32> = sales.iter().map(|s| s.price_per_unit).collect();
-    let raw_median = median_in_place_i32(&mut raw);
-    let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
-
-    // 2. Build the clamped vector. If the clamp would remove everything, keep the raw set.
-    let mut clamped: Vec<i32> = raw.iter().copied().filter(|p| *p >= floor).collect();
-    if clamped.is_empty() {
-        clamped = raw;
-    }
+    // 1 & 2. Sniper-clamp: drop sales priced below 10% of the raw median, unless
+    // that would remove everything.
+    let clamped = sniper_clamp(sales.iter().map(|s| s.price_per_unit).collect());
+    let mut clamped = clamped;
     let min_price = clamped.iter().copied().min().unwrap_or(0);
     let max_price = clamped.iter().copied().max().unwrap_or(0);
     let median_price = median_in_place_i32(&mut clamped);
@@ -475,14 +452,6 @@ impl std::fmt::Display for SortMode {
     }
 }
 
-/// Listings whose price is at least this multiple of the row's median sale are treated as troll
-/// listings and ignored when picking the world floor.
-const TROLL_MULTIPLE: i64 = 50;
-
-fn is_troll_listing(price: i32, median: i32) -> bool {
-    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
-}
-
 impl ProfitTable {
     fn new(
         sales: RecentSales,
@@ -531,18 +500,10 @@ impl ProfitTable {
 
                 // Same guard on the local world floor — if it's a troll, ignore it and fall
                 // through to the median as the estimate.
-                let world_floor = world_cheapest.get(&key).and_then(|(price, _)| {
-                    if is_troll_listing(*price, summary.median_price) {
-                        None
-                    } else {
-                        Some(*price)
-                    }
-                });
-
-                let estimated_sale_price = match world_floor {
-                    Some(floor) => summary.median_price.min(floor),
-                    None => summary.median_price,
-                };
+                let estimated_sale_price = flip_estimated_sale_price(
+                    summary.median_price,
+                    world_cheapest.get(&key).map(|(price, _)| *price),
+                );
 
                 Some(ProfitData {
                     estimated_sale_price,
@@ -1617,12 +1578,8 @@ fn AnalyzerTable(
             .rows()
             .iter()
             .map(|data| {
-                let estimated = if include_tax {
-                    (data.estimated_sale_price as f32 * 0.95) as i32
-                } else {
-                    data.estimated_sale_price
-                };
-                let profit = estimated - data.cheapest_price;
+                let profit =
+                    flip_profit(data.estimated_sale_price, data.cheapest_price, include_tax);
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
                 let profit_per_day = profit_per_day(profit, &data.sale_summary);
                 CalculatedProfitData {
@@ -2697,9 +2654,10 @@ fn AnalyzerTable(
                             let row_num_sold = data.inner.sale_summary.num_sold;
                             let row_drift = price_drift_pct(&data.inner.prices);
                             let row_confidence = derived_confidence(&data.inner.sale_summary);
-                            let world = worlds
+                            let sell_world = world;
+                            let buy_world = worlds
                                 .lookup_selector(AnySelector::World(data.inner.cheapest_world_id));
-                            let datacenter = world
+                            let buy_datacenter = buy_world
                                 .as_ref()
                                 .and_then(|world| {
                                     let datacenters = worlds.get_datacenters(world);
@@ -2707,13 +2665,13 @@ fn AnalyzerTable(
                                 })
                                 .unwrap_or_default()
                                 .to_string();
-                            let datacenter = Signal::derive(move || datacenter.clone());
-                            let world = world
+                            let buy_datacenter = Signal::derive(move || buy_datacenter.clone());
+                            let buy_world = buy_world
                                 .as_ref()
                                 .map(|r| r.get_name())
                                 .unwrap_or_default()
                                 .to_string();
-                            let world = Signal::derive(move || world.clone());
+                            let buy_world = Signal::derive(move || buy_world.clone());
                             let item_id = data.inner.sale_summary.item_id;
                             let hq = data.inner.sale_summary.hq;
                             let row_key = (item_id, hq);
@@ -2739,7 +2697,10 @@ fn AnalyzerTable(
                                     <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
-                                            href=format!("/item/{}/{item_id}", world())
+                                            href=move || {
+                                                let sell = leptos_router::location::Url::unescape(&sell_world.get());
+                                                crate::routes::item_view_scope::compare_item_href(&sell, item_id, &buy_world())
+                                            }
                                         >
                                             <div class="shrink-0">
                                                 <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
@@ -2853,16 +2814,16 @@ fn AnalyzerTable(
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
                                         <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
-                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &world())
+                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_world())
                                             })>
                                                 <QueryButton
                                                     key="world"
-                                                    value=world
+                                                    value=buy_world
                                                     class="!text-brand-300 hover:text-brand-200"
                                                     active_classes="!text-neutral-300 hover:text-neutral-200"
                                                     remove_queries=&["datacenter"]
                                                 >
-                                                    {world}
+                                                    {buy_world}
                                                 </QueryButton>
                                             </Tooltip>
                                         </div>
@@ -2870,16 +2831,16 @@ fn AnalyzerTable(
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
                                         <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
-                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &datacenter())
+                                                t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_datacenter())
                                             })>
                                                 <QueryButton
                                                     key="datacenter"
-                                                    value=datacenter
+                                                    value=buy_datacenter
                                                     class="!text-brand-300 hover:text-brand-200"
                                                     active_classes="!text-neutral-300 hover:text-neutral-200"
                                                     remove_queries=&["world"]
                                                 >
-                                                    {datacenter}
+                                                    {buy_datacenter}
                                                 </QueryButton>
                                             </Tooltip>
                                         </div>

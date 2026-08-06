@@ -78,7 +78,7 @@ impl<'de> Deserialize<'de> for CheapestListingMapKey {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]
 pub struct CheapestListingData {
     pub price: i32,
     pub world_id: i32,
