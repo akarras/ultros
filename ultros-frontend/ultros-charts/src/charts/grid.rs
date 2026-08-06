@@ -31,6 +31,28 @@ pub enum GridSort {
     Change,
 }
 
+/// Wire format for the `?sort=` URL param.
+impl std::fmt::Display for GridSort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Name => "name",
+            Self::Change => "change",
+        })
+    }
+}
+
+impl std::str::FromStr for GridSort {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "name" => Ok(Self::Name),
+            "change" => Ok(Self::Change),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GridOptions {
     /// Logical cell size; the HTML layer scales via viewBox.
@@ -395,6 +417,27 @@ pub fn build_price_grid(
 mod tests {
     use super::*;
     use crate::test_util::{two_world_series, world_helper};
+    use std::str::FromStr;
+
+    #[test]
+    fn grid_sort_wire_format_round_trips() {
+        for sort in [GridSort::Name, GridSort::Change] {
+            assert_eq!(GridSort::from_str(&sort.to_string()), Ok(sort));
+        }
+        assert_eq!(GridSort::Name.to_string(), "name");
+        assert_eq!(GridSort::Change.to_string(), "change");
+    }
+
+    #[test]
+    fn grid_sort_parsing_is_case_insensitive() {
+        assert_eq!(GridSort::from_str("NAME"), Ok(GridSort::Name));
+        assert_eq!(GridSort::from_str(" Change "), Ok(GridSort::Change));
+    }
+
+    #[test]
+    fn grid_sort_parsing_rejects_unknown_input() {
+        assert_eq!(GridSort::from_str("nonsense"), Err(()));
+    }
 
     #[test]
     fn a_laundered_cell_does_not_flatten_the_shared_domain() {

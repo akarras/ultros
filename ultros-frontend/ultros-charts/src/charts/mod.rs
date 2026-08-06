@@ -114,6 +114,8 @@ mod tests {
         }
         assert_eq!(ChartMode::Price.to_string(), "price");
         assert_eq!(ChartMode::Density.to_string(), "density");
+        assert_eq!(ChartMode::Candles.to_string(), "candles");
+        assert_eq!(ChartMode::Range.to_string(), "range");
     }
 
     #[test]
