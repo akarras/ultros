@@ -1,9 +1,11 @@
 use leptos::prelude::*;
 use std::hash::Hash;
 use std::{cell::RefCell, rc::Rc};
+#[cfg(feature = "hydrate")]
+use web_sys::ResizeObserver;
 use web_sys::wasm_bindgen::JsCast;
 use web_sys::wasm_bindgen::closure::Closure;
-use web_sys::{HtmlDivElement, ResizeObserver, window};
+use web_sys::{HtmlDivElement, window};
 
 struct Fenwick {
     n: usize,
@@ -21,6 +23,9 @@ impl Fenwick {
         self.bit.clear();
         self.bit.resize(n + 1, 0.0);
     }
+    // Only called from the hydrate-gated ResizeObserver effect; the SSR
+    // build never measures rows, so the tree is only ever read there.
+    #[cfg_attr(not(feature = "hydrate"), allow(dead_code))]
     fn add(&mut self, mut idx: usize, delta: f64) {
         // fenwick tree is 1-based internally
         idx += 1;
@@ -231,6 +236,14 @@ where
     // Window-scroll mode: the container no longer scrolls, so its `on:scroll`
     // handler is inert. Drive `scroll_offset` and `window_height` from the
     // page instead.
+    //
+    // Client-only: the `LocalStorage` StoredValue below must never exist in
+    // the SSR build — Suspense re-runs/disposes the owner across `.await`
+    // points on the multithreaded runtime, so its cleanup (or drop) can land
+    // on a different worker thread than the one that created the SendWrapper,
+    // which panics and truncates the response stream (see analyzer.rs's
+    // scroll-sync block for the full story).
+    #[cfg(feature = "hydrate")]
     if is_window {
         let sticky_offset = match source {
             ScrollSource::Window { sticky_offset } => sticky_offset,
@@ -623,9 +636,14 @@ where
 
                             move |(idx, child)| {
                                 let row = NodeRef::<leptos::html::Div>::new();
-                                let height_deltas = height_deltas;
-                                let fenwick = fenwick;
+                                // Client-only for the same SendWrapper-on-SSR
+                                // reason as the window-scroll block above.
+                                #[cfg(not(feature = "hydrate"))]
+                                let _ = idx;
+                                #[cfg(feature = "hydrate")]
                                 if variable_height {
+                                    let height_deltas = height_deltas;
+                                    let fenwick = fenwick;
                                     let resize_observer = StoredValue::new_local(
                                         None::<(ResizeObserver, Closure<dyn FnMut()>)>,
                                     );

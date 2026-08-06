@@ -18,9 +18,13 @@ use ultros_charts::theme::Theme;
 use web_sys::PointerEvent;
 use web_sys::wasm_bindgen::JsCast;
 
+use crate::components::chart_query::{
+    Overlays, RangePreset, encode_show, parse_show, preset_has_data,
+};
 use crate::components::chart_toolbar::{ChartToolbar, ChartView};
 use crate::global_state::LocalWorldData;
 use crate::i18n::{t, t_string, use_i18n};
+use crate::query_defaults::filter_query_signal;
 
 fn px(v: f32) -> String {
     format!("{v:.1}")
@@ -99,11 +103,28 @@ fn percent_for_ts(ts: i64, domain: (i64, i64)) -> f64 {
     (((ts - domain.0) as f64 / span as f64) * 100.0).clamp(0.0, 100.0)
 }
 
-fn format_timeline_ts(ts: i64, utc_offset_minutes: i32) -> String {
+/// Timestamp format for a label describing a window of `span_seconds`.
+///
+/// The old fixed `%m-%d %H:%M` rendered a three-year domain as
+/// `02-21 18:00 - 07-05 18:00`, which reads as a four-month window in the
+/// current year. Each tier carries exactly the precision its span needs, and
+/// none of them omit the year.
+fn timeline_format(span_seconds: i64) -> &'static str {
+    const DAY: i64 = 86_400;
+    if span_seconds >= 2 * 365 * DAY {
+        "%Y-%m"
+    } else if span_seconds >= 30 * DAY {
+        "%Y-%m-%d"
+    } else {
+        "%Y-%m-%d %H:%M"
+    }
+}
+
+fn format_timeline_ts(ts: i64, utc_offset_minutes: i32, span_seconds: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
         .map(|dt| {
             (dt + chrono::TimeDelta::minutes(utc_offset_minutes as i64))
-                .format("%m-%d %H:%M")
+                .format(timeline_format(span_seconds))
                 .to_string()
         })
         .unwrap_or_default()
@@ -310,14 +331,40 @@ mod tests {
 
     #[test]
     fn test_format_timeline_ts() {
-        // 1609459200 is 2021-01-01 00:00:00 UTC
-        assert_eq!(format_timeline_ts(1609459200, 0), "01-01 00:00");
-        // offset of +60 minutes
-        assert_eq!(format_timeline_ts(1609459200, 60), "01-01 01:00");
-        // offset of -120 minutes
-        assert_eq!(format_timeline_ts(1609459200, -120), "12-31 22:00");
-        // different time 2021-07-04 15:30:00 UTC = 1625412600
-        assert_eq!(format_timeline_ts(1625412600, 0), "07-04 15:30");
+        const DAY: i64 = 86_400;
+        // Under 30 days: full precision, including the year. A 7-day drag
+        // into a past year is exactly where the old fixed "%m-%d %H:%M"
+        // misled most.
+        // 1609459200 is 2021-01-01 00:00:00 UTC.
+        assert_eq!(
+            format_timeline_ts(1609459200, 0, 7 * DAY),
+            "2021-01-01 00:00"
+        );
+        assert_eq!(
+            format_timeline_ts(1609459200, 60, 7 * DAY),
+            "2021-01-01 01:00"
+        );
+        assert_eq!(
+            format_timeline_ts(1609459200, -120, 7 * DAY),
+            "2020-12-31 22:00"
+        );
+
+        // 30 days and over: the clock stops carrying information.
+        assert_eq!(format_timeline_ts(1609459200, 0, 60 * DAY), "2021-01-01");
+
+        // Two years and over: the day stops carrying information too. This
+        // is the reported case — a 2023..2026 domain used to render as
+        // "02-21 18:00", which reads as the current year.
+        assert_eq!(format_timeline_ts(1609459200, 0, 1200 * DAY), "2021-01");
+    }
+
+    #[test]
+    fn timeline_format_tiers_switch_at_their_boundaries() {
+        const DAY: i64 = 86_400;
+        assert_eq!(timeline_format(30 * DAY - 1), "%Y-%m-%d %H:%M");
+        assert_eq!(timeline_format(30 * DAY), "%Y-%m-%d");
+        assert_eq!(timeline_format(2 * 365 * DAY - 1), "%Y-%m-%d");
+        assert_eq!(timeline_format(2 * 365 * DAY), "%Y-%m");
     }
 
     #[test]
@@ -338,7 +385,14 @@ fn TimelineSlicer(
     #[prop(into)] selected_domain: Signal<Option<(i64, i64)>>,
     #[prop(into)] selected_range: Signal<Option<(i64, i64)>>,
     #[prop(into)] utc_offset_minutes: Signal<i32>,
-    set_selected_range: WriteSignal<Option<(i64, i64)>>,
+    // Converted to a Callback in Task 7 — the window is owned by the route
+    // and backed by the URL, not by this component.
+    #[prop(into)] set_selected_range: Callback<Option<(i64, i64)>>,
+    /// The active quick-range preset, read straight off `?range=` so the
+    /// pressed button is exact rather than inferred from the window.
+    #[prop(into)]
+    range_preset: Signal<Option<RangePreset>>,
+    #[prop(into)] set_range_preset: Callback<Option<RangePreset>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let track_ref = NodeRef::<Div>::new();
@@ -385,10 +439,11 @@ fn TimelineSlicer(
             .get()
             .map(|(start, end)| {
                 let offset = utc_offset_minutes.get();
+                let span = end - start;
                 format!(
                     "{} - {}",
-                    format_timeline_ts(start, offset),
-                    format_timeline_ts(end, offset)
+                    format_timeline_ts(start, offset, span),
+                    format_timeline_ts(end, offset, span)
                 )
             })
             .unwrap_or_default()
@@ -410,7 +465,7 @@ fn TimelineSlicer(
             TimelineDrag::End => normalize_time_range(current.0, ts, domain),
             TimelineDrag::New { anchor_ts } => normalize_time_range(anchor_ts, ts, domain),
         };
-        set_selected_range.set(Some(next));
+        set_selected_range.run(Some(next));
     };
 
     let capture_pointer = move |event: &PointerEvent| {
@@ -438,18 +493,117 @@ fn TimelineSlicer(
                         <div class="text-xs font-semibold uppercase text-[color:var(--color-text-muted)]">
                             {t!(i18n, chart_timeline_label)}
                         </div>
-                        <div class="truncate text-xs tabular-nums text-[color:var(--color-text)]/75">
+                        <div
+                            class="truncate text-xs tabular-nums text-[color:var(--color-text)]/75"
+                            title=range_label
+                        >
                             {range_label}
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        class="shrink-0 rounded-md border border-[color:var(--color-outline)] px-2.5 py-1 text-xs text-[color:var(--color-text-muted)] transition-colors hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-45"
-                        disabled=move || selected_range.get().is_none()
-                        on:click=move |_| set_selected_range.set(None)
+                    <div
+                        role="group"
+                        aria-label=move || t_string!(i18n, chart_timeline_label).to_string()
+                        class="inline-flex shrink-0 overflow-hidden rounded-md border border-[color:var(--color-outline)]"
                     >
-                        {t!(i18n, chart_timeline_full_range)}
-                    </button>
+                        {RangePreset::ALL
+                            .into_iter()
+                            .map(|preset| {
+                                let label = move || match preset {
+                                    RangePreset::Week => {
+                                        t_string!(i18n, chart_range_7d).to_string()
+                                    }
+                                    RangePreset::Month => {
+                                        t_string!(i18n, chart_range_1mo).to_string()
+                                    }
+                                    RangePreset::Year => {
+                                        t_string!(i18n, chart_range_1y).to_string()
+                                    }
+                                };
+                                // A window ending before the item's newest
+                                // sale would blank the chart; disable with a
+                                // reason rather than rendering nothing.
+                                //
+                                // `available_domain` is the domain of the
+                                // *currently fetched* window, not the item's
+                                // full history — once an absolute selection
+                                // is active, its `end` is just the requested
+                                // `to` and says nothing about whether newer
+                                // data exists outside it. Only gate on it
+                                // when there's no active selection; with a
+                                // window selected, every preset stays
+                                // clickable (picking one replaces the
+                                // window, which is exactly the point).
+                                let disabled = Signal::derive(move || {
+                                    if selected_range.get().is_some() {
+                                        return false;
+                                    }
+                                    let now = chrono::Utc::now().timestamp();
+                                    available_domain
+                                        .get()
+                                        .is_some_and(|(_, end)| {
+                                            !preset_has_data(preset, end, now)
+                                        })
+                                });
+                                view! {
+                                    <button
+                                        type="button"
+                                        aria-pressed=move || {
+                                            (range_preset.get() == Some(preset)).to_string()
+                                        }
+                                        prop:disabled=disabled
+                                        title=move || {
+                                            if disabled.get() {
+                                                t_string!(i18n, chart_range_unavailable).to_string()
+                                            } else {
+                                                String::new()
+                                            }
+                                        }
+                                        class=move || {
+                                            let active = range_preset.get() == Some(preset);
+                                            [
+                                                "border-l border-[color:var(--color-outline)] px-2.5 py-1 text-xs transition-colors first:border-l-0 disabled:cursor-not-allowed disabled:opacity-45",
+                                                if active {
+                                                    "bg-brand-600/30 text-brand-100"
+                                                } else {
+                                                    "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                                },
+                                            ]
+                                                .join(" ")
+                                        }
+                                        on:click=move |_| set_range_preset.run(Some(preset))
+                                    >
+                                        {label}
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
+                        <button
+                            type="button"
+                            aria-pressed=move || {
+                                (range_preset.get().is_none() && selected_range.get().is_none())
+                                    .to_string()
+                            }
+                            class=move || {
+                                let active = range_preset.get().is_none()
+                                    && selected_range.get().is_none();
+                                [
+                                    "border-l border-[color:var(--color-outline)] px-2.5 py-1 text-xs transition-colors",
+                                    if active {
+                                        "bg-brand-600/30 text-brand-100"
+                                    } else {
+                                        "bg-[color:color-mix(in_srgb,_var(--color-text)_4%,_transparent)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+                                    },
+                                ]
+                                    .join(" ")
+                            }
+                            on:click=move |_| {
+                                set_range_preset.run(None);
+                                set_selected_range.run(None);
+                            }
+                        >
+                            {move || t_string!(i18n, chart_range_all).to_string()}
+                        </button>
+                    </div>
                 </div>
                 <div
                     node_ref=track_ref
@@ -470,7 +624,7 @@ fn TimelineSlicer(
                         event.prevent_default();
                         capture_pointer(&event);
                         set_dragging.set(Some(TimelineDrag::New { anchor_ts: ts }));
-                        set_selected_range.set(Some(normalize_time_range(ts, ts, domain)));
+                        set_selected_range.run(Some(normalize_time_range(ts, ts, domain)));
                     }
                     on:pointermove=move |event: PointerEvent| {
                         event.prevent_default();
@@ -716,36 +870,87 @@ pub fn PriceHistoryChart(
     #[prop(into)] density: Signal<Option<PriceDensity>>,
     #[prop(into)] scope_name: Signal<String>,
     #[prop(into)] mode: Signal<ChartMode>,
-    set_mode: WriteSignal<ChartMode>,
+    #[prop(into)] set_mode: SignalSetter<ChartMode>,
     #[prop(into)] group: Signal<GroupLevel>,
-    set_group: WriteSignal<GroupLevel>,
+    #[prop(into)] set_group: SignalSetter<GroupLevel>,
+    /// The committed time window, owned by the route and backed by the URL.
+    /// The chart renders and requests changes to it but does not own it —
+    /// otherwise a link's window would be overwritten by the local default
+    /// on mount.
+    #[prop(into)]
+    selected_range: Signal<Option<(i64, i64)>>,
     #[prop(into)] on_range_change: Callback<Option<(i64, i64)>>,
+    #[prop(into)] range_preset: Signal<Option<RangePreset>>,
+    #[prop(into)] set_range_preset: Callback<Option<RangePreset>>,
 ) -> impl IntoView {
     let local_world_data = use_context::<LocalWorldData>().unwrap();
     let helper = local_world_data.0.unwrap();
     let i18n = use_i18n();
-    let (show_market_average, set_show_market_average) = signal(true);
-    let (show_trend, set_show_trend) = signal(false);
-    let (show_quantity, set_show_quantity) = signal(false);
-    // Patch milestone bands (spec 4): on by default — under 30 days the LOD
-    // tier empties the mark set anyway, so narrow zooms stay clean.
-    let (show_patches, set_show_patches) = signal(true);
-    // Overlay vs small-multiples grid. Owned here (not item_view): nothing
-    // about the view gates a fetch — grid cells re-divide the same payload.
-    let (view, set_view) = signal(ChartView::Overlay);
-    let (percent_change, set_percent_change) = signal(false);
-    let (grid_per_cell_scale, set_grid_per_cell_scale) = signal(false);
-    let (grid_sort, set_grid_sort) = signal(GridSort::Name);
+    // Presentation params are read here rather than passed down: the chart
+    // owns them, and threading five more through the route would take this
+    // component past twenty props. Nothing is seeded, so a Suspense remount
+    // is harmless -- reads and writes are idempotent against the URL.
+    let (overlays_param, set_overlays_param) = filter_query_signal::<Overlays>("overlays");
+    let overlays = Signal::derive(move || overlays_param.get().unwrap_or_default());
+    let update_overlays = move |f: fn(&mut Overlays, bool), on: bool| {
+        let mut next = overlays.get_untracked();
+        f(&mut next, on);
+        set_overlays_param.set(Some(next));
+    };
+
+    let show_market_average = Signal::derive(move || overlays.get().market_average);
+    let set_show_market_average =
+        SignalSetter::map(move |on| update_overlays(|o, v| o.market_average = v, on));
+    let show_trend = Signal::derive(move || overlays.get().trend);
+    let set_show_trend = SignalSetter::map(move |on| update_overlays(|o, v| o.trend = v, on));
+    let show_quantity = Signal::derive(move || overlays.get().quantity);
+    let set_show_quantity = SignalSetter::map(move |on| update_overlays(|o, v| o.quantity = v, on));
+    let percent_change = Signal::derive(move || overlays.get().percent_change);
+    let set_percent_change =
+        SignalSetter::map(move |on| update_overlays(|o, v| o.percent_change = v, on));
+    let show_patches = Signal::derive(move || overlays.get().patches);
+    let set_show_patches = SignalSetter::map(move |on| update_overlays(|o, v| o.patches = v, on));
+
+    let (view_param, set_view_param) = filter_query_signal::<ChartView>("view");
+    let view = Signal::derive(move || view_param.get().unwrap_or_default());
+    let set_view = SignalSetter::map(move |next: ChartView| set_view_param.set(Some(next)));
+
+    let (sort_param, set_sort_param) = filter_query_signal::<GridSort>("sort");
+    let grid_sort = Signal::derive(move || sort_param.get().unwrap_or(GridSort::Name));
+    // Type ascribed: `SignalSetter::map`'s `S` storage parameter is not
+    // pinned by its argument, and unlike `set_view` this setter is never
+    // passed to a component prop (which would otherwise pin `S` for us) --
+    // left unannotated, `S` is ambiguous between `LocalStorage` and
+    // `SyncStorage` (E0283).
+    let set_grid_sort: SignalSetter<GridSort> =
+        SignalSetter::map(move |next: GridSort| set_sort_param.set(Some(next)));
+
+    let (cellscale_param, set_cellscale_param) = filter_query_signal::<bool>("cellscale");
+    let grid_per_cell_scale = Signal::derive(move || cellscale_param.get().unwrap_or(false));
+    let set_grid_per_cell_scale: SignalSetter<bool> =
+        SignalSetter::map(move |on: bool| set_cellscale_param.set(on.then_some(true)));
+
     // Lifted so the grid's "+N more" affordance can open the toolbar's
     // world-filter popover.
     let world_filter_open = RwSignal::new(false);
-    // Local truth for the slicer's own rendering (handle positions, drag
-    // state). Every commit is mirrored out via `on_range_change` below so the
-    // caller can debounce it into a refetch (Task 14) — this signal itself
-    // stays undebounced so the handles track the pointer at full rate.
-    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
-    // Series the user hid by clicking legend chips. Stored as a sorted Vec so
-    // the model memo's PartialEq sees a stable value.
+    // Every commit goes to the caller, which persists it to the URL and
+    // debounces it into a refetch. Undebounced here so the slicer handles
+    // track the pointer at full rate.
+    let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
+        on_range_change.run(next);
+    });
+    // The series names currently on the chart, in model order. `show` is
+    // resolved against these: an expression naming series that don't exist at
+    // this grouping level is stale, and `parse_show` fails it open rather
+    // than blanking the chart.
+    //
+    // Series the user hid, by name. Stored as a sorted Vec so the model
+    // memo's PartialEq sees a stable value, and so the `?show=` sync
+    // effect's `!=` comparison below is order-independent in practice: it
+    // relies on `parse_show` returning names in model order, which is
+    // alphabetical (`price_history.rs` sorts `resolved` by name) -- the same
+    // order the legend and filter popover already sort into.
+    let (show_param, set_show_param) = filter_query_signal::<String>("show");
     let hidden_series = RwSignal::new(Vec::<String>::new());
 
     // Viewer timezone for axis/tooltip LABELS only. SSR and the first client
@@ -772,18 +977,6 @@ pub fn PriceHistoryChart(
     let helper_for_options = helper.clone();
     let color_by_options =
         Memo::new(move |_| available_group_levels(&helper_for_options, &scope_name.get()));
-    // If the scope changes underneath an existing selection (e.g. navigating
-    // from a datacenter page to a single-world page) and the current group
-    // no longer makes sense, snap it to the narrowest still-valid option
-    // rather than requesting a grouping the scope can't offer.
-    Effect::new(move |_| {
-        let options = color_by_options.get();
-        if !options.contains(&group.get_untracked())
-            && let Some(first) = options.first()
-        {
-            set_group.set(*first);
-        }
-    });
 
     // Resolved series used for both the model and the slicer's histogram.
     // Falls back to an empty payload while the resource is loading/erroring
@@ -810,12 +1003,8 @@ pub fn PriceHistoryChart(
             .get_untracked()
             .is_some_and(|range| range_is_stale(domain, range, bucket_seconds));
         if stale {
-            set_selected_range.set(None);
+            set_selected_range.run(None);
         }
-    });
-    // Mirror every commit to the caller so it can (debounced) refetch.
-    Effect::new(move |_| {
-        on_range_change.run(selected_range.get());
     });
     let selected_domain = Memo::new(move |_| {
         let domain = available_domain.get()?;
@@ -966,6 +1155,74 @@ pub fn PriceHistoryChart(
                 theme: Theme::site(),
             },
         )
+    });
+
+    let series_names = Memo::new(move |_| {
+        model.with(|m| m.series.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
+    });
+
+    // URL -> state. Runs whenever the expression or the series set changes,
+    // which is what re-resolves a `show` written at a different grouping
+    // level.
+    //
+    // Declaration order relative to the state -> URL effect below is
+    // load-bearing: Leptos runs each effect's first execution in the order
+    // it was declared (FIFO), and this one must populate `hidden_series`
+    // from `?show=` before the effect below ever reads it. If the two were
+    // swapped, the state -> URL effect would run first with
+    // `hidden_series == []` against a non-empty `series_names` and write
+    // `show_param` to `None`, wiping a valid `?show=` out of the URL before
+    // it was ever applied.
+    Effect::new(move |_| {
+        let names = series_names.get();
+        let next = show_param
+            .get()
+            .map(|expr| parse_show(&expr, &names))
+            .unwrap_or_default();
+        if hidden_series.get_untracked() != next {
+            hidden_series.set(next);
+        }
+    });
+
+    // State -> URL. Guarded on inequality so this and the effect above
+    // cannot drive each other in a loop.
+    //
+    // The apparent cycle (hidden_series -> model -> series_names -> effect ->
+    // hidden_series) is broken by two things: `build_price_history_chart`
+    // keeps hidden series in `m.series` with `hidden: true` rather than
+    // dropping them, so `series_names` does not change when something is
+    // hidden and the Memo's PartialEq halts propagation; and both effects
+    // no-op when the value already matches.
+    //
+    // Must be declared *after* the URL -> state effect above — see its
+    // comment for why the ordering matters.
+    //
+    // `?show=` is only meaningful against the series set of the grouping
+    // level it was written at (e.g. world names vs. region names), so this
+    // effect necessarily re-derives `show_param` from `hidden_series` and
+    // the *current* `series_names` on every relevant change — including a
+    // grouping switch. `encode_show` drops any name outside the current
+    // series set to bound the param length, so if `hidden_series` no longer
+    // maps onto anything in the new grouping (e.g. hiding worlds, then
+    // switching to Region), the re-encode comes back empty and this
+    // effect clears `?show=` rather than keeping a filter that can no
+    // longer be expressed. Switching back to the original grouping does
+    // NOT restore it — the old expression is gone, not just hidden. This
+    // is deliberate, not a bug: changing that behavior is out of scope
+    // here. The same logic means an inert or unparseable `?show=` (e.g.
+    // `?show=garbage`, or a value from a link generated for a different
+    // grouping) is silently normalised out of the URL on load, via the
+    // effect above feeding an empty `hidden_series` back through here.
+    Effect::new(move |_| {
+        let hidden = hidden_series.get();
+        let names = series_names.get_untracked();
+        if names.is_empty() {
+            return;
+        }
+        let next = encode_show(&hidden, &names);
+        if show_param.get_untracked() != next {
+            set_show_param.set(next);
+        }
     });
 
     // Series names of the current grouping level, grouped for the filter
@@ -1260,6 +1517,8 @@ pub fn PriceHistoryChart(
                 selected_range=selected_range
                 utc_offset_minutes=utc_offset
                 set_selected_range=set_selected_range
+                range_preset=range_preset
+                set_range_preset=set_range_preset
             />
             <div
                 role="img"
@@ -1269,9 +1528,10 @@ pub fn PriceHistoryChart(
                         .get()
                         .map(|(start, end)| {
                             let offset = utc_offset.get();
+                            let span = end - start;
                             (
-                                format_timeline_ts(start, offset),
-                                format_timeline_ts(end, offset),
+                                format_timeline_ts(start, offset, span),
+                                format_timeline_ts(end, offset, span),
                             )
                         })
                         .unwrap_or_else(|| {
@@ -1480,6 +1740,7 @@ pub fn PriceHistoryChart(
                                                     let label = format_timeline_ts(
                                                         ts.and_utc().timestamp() + bucket_secs / 2,
                                                         utc_offset.get(),
+                                                        bucket_secs,
                                                     );
                                                     let rows = g
                                                         .cells

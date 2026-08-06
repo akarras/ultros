@@ -54,14 +54,21 @@ impl<T> EventType<Arc<T>> {
 /// and drives each chunk through `buffer_unordered(50)`, and every item emits
 /// *two* listing events (Add + Remove). So a single chunk can put ~200 events on
 /// the bus as fast as Postgres finishes writing, while the analyzer's listings
-/// loop drains them one at a time — and its `remove_listing` path does a DB
-/// round-trip per removed listing. The old value of 100 was smaller than one
+/// loop drains them one at a time. The original value of 100 was smaller than one
 /// chunk's burst, i.e. guaranteed to lag during any full sweep.
 ///
-/// 1024 gives ~5 chunks of headroom. Slots hold `Arc<ListingEventData>`, and a
-/// typical event carries only a handful of listings (~1-2 KiB), so the ring
-/// costs single-digit MiB even when completely full.
-const LISTINGS_BUS_SIZE: usize = 1024;
+/// 1024 still wasn't enough: `ultros_analyzer_bus_lagged_total` recorded ~99k
+/// dropped listing events in a week, in bursts. Dropped events are not merely
+/// delayed — a lost `listings/remove` strands a cheapest price that no later
+/// event can correct — so headroom is worth real memory here.
+///
+/// 8192 is ~40 chunks. Slots hold `Arc<ListingEventData>`, so the ring costs one
+/// pointer per slot plus the events still referenced by it; a typical event
+/// carries a handful of listings (~1-2 KiB), keeping a full ring in the tens of
+/// MiB. Buffer size is a mitigation, not a fix — a consumer that is persistently
+/// slower than the producer lags at any size, which is why the refill path no
+/// longer holds a lock across its database round-trips.
+const LISTINGS_BUS_SIZE: usize = 8192;
 
 /// Ring size for the sale-history bus.
 ///

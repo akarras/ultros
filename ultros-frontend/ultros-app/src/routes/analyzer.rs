@@ -1,6 +1,6 @@
 use crate::analysis::{
     DerivedConfidence, SaleSummary, derived_confidence, flip_estimated_sale_price, flip_profit,
-    get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct,
+    get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct, profit_per_day,
     return_on_investment, roi_badge_class, sniper_clamp, velocity_per_day,
 };
 use crate::global_state::xiv_data::tracked_data;
@@ -14,8 +14,10 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
-        dismissable::use_dismissable,
-        filter_chip::{FilterChip, STICKY_BAR_HEIGHT},
+        control_bar::{
+            ColumnOption, ControlBar, ControlBarPopovers, FilterOption, STICKY_BAR_HEIGHT,
+        },
+        filter_chip::FilterChip,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -25,6 +27,7 @@ use crate::{
         sales_cadence_badge::SalesCadenceBadge,
         saved_views::SavedViewsMenu,
         skeleton::{SingleLineSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton},
+        sort_header::{SortColumn, SortDir, SortHeader},
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
@@ -141,12 +144,10 @@ fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> 
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;
 use humantime::parse_duration;
-use icondata as i;
 use leptos::{either::Either, prelude::*, reactive::wrappers::write::SignalSetter};
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
-    location::Location,
 };
 use std::{
     cmp::Reverse,
@@ -157,10 +158,15 @@ use std::{
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
-    websocket::{FilterPredicate, SocketMessageType, is_analyzer_market_update_relevant},
+    websocket::{
+        EventType, FilterPredicate, ServerClient, SocketMessageType,
+        is_analyzer_market_update_relevant,
+    },
     world_helper::{AnyResult, AnySelector, WorldHelper},
 };
+#[cfg(feature = "hydrate")]
 use web_sys::wasm_bindgen::JsCast;
+#[cfg(feature = "hydrate")]
 use web_sys::wasm_bindgen::closure::Closure;
 use xiv_gen::ItemId;
 
@@ -208,30 +214,11 @@ enum SortMode {
     ProfitPerDay,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
-enum SortDir {
-    Asc,
-    #[default]
-    Desc,
-}
-
-impl FromStr for SortDir {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "asc" => Ok(SortDir::Asc),
-            "desc" => Ok(SortDir::Desc),
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for SortDir {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            SortDir::Asc => "asc",
-            SortDir::Desc => "desc",
-        })
+/// Every Flip Finder column reads best-first descending, so the shared
+/// default direction applies unchanged.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::ProfitPerDay
     }
 }
 
@@ -310,6 +297,57 @@ fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
 
 #[derive(Clone, Debug)]
 struct ProfitTable(Vec<Arc<ProfitData>>);
+
+/// Cheap-to-compare handle on a built [`ProfitTable`].
+///
+/// The table is rebuilt from scratch every time the market boards refetch and
+/// holds ~20k rows, so it lives in a `Memo` — and `Memo` needs `PartialEq`.
+/// Comparing the tables element-wise on every realtime tick would cost more
+/// than the rebuild that produced them, and identity is the question actually
+/// being asked (a rebuild always yields a fresh `Arc`), so this compares by
+/// pointer instead.
+#[derive(Clone, Debug)]
+struct ProfitTableHandle(Arc<ProfitTable>);
+
+impl ProfitTableHandle {
+    fn new(table: ProfitTable) -> Self {
+        Self(Arc::new(table))
+    }
+
+    fn rows(&self) -> &[Arc<ProfitData>] {
+        &self.0.0
+    }
+}
+
+impl PartialEq for ProfitTableHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// The market boards as the table sees them.
+#[derive(Clone, Debug, PartialEq)]
+struct MarketState {
+    /// World these boards belong to. Tracked so a world change can drop
+    /// `table` rather than carry it — every other transition keeps it.
+    world: String,
+    /// The built table, held across a refetch.
+    ///
+    /// A leptos resource reports `None` while it is loading, including on a
+    /// refetch of data it already has. Following that to `None` would empty
+    /// the table for the length of every realtime tick, which is the flash
+    /// this is here to avoid; the previous table stays up until the new one
+    /// is ready.
+    table: Option<ProfitTableHandle>,
+    /// At least one board resolved to an error. Only actionable when there is
+    /// no table to fall back on.
+    failed: bool,
+}
+
+/// How long realtime market ticks are coalesced before the affected boards are
+/// refetched. A busy world delivers relevant listing events in bursts, and each
+/// one used to trigger its own round of fetches.
+const MARKET_REFRESH_DEBOUNCE_MS: u32 = 400;
 
 fn listings_to_map(listings: CheapestListings) -> HashMap<ProfitKey, (i32, i32)> {
     listings
@@ -719,72 +757,47 @@ fn format_velocity_floor(v: f32) -> String {
     }
 }
 
-/// Rendered width of the optional columns that are *not* in the default set,
-/// in px, bucketed by the breakpoint at which each column actually renders.
+/// Rendered width, in px, of every optional column the user has switched on.
 ///
-/// The grid's base width lives in the stylesheet, which is the only place that
-/// can know which columns a breakpoint hides. What it cannot know is which
-/// optional columns the user switched on, so that part is measured here and
-/// handed over as `--analyzer-extra-cols-{base,md,xl}`. Under-reserving is the
-/// failure that matters: the two scrollports would stop short of the last
-/// column and it would be unreachable.
+/// Every column renders at every viewport width — the table is a horizontal
+/// scrollport, so a narrow screen scrolls to the columns instead of hiding
+/// them. That makes the reservation one number: the stylesheet holds the width
+/// of the four always-on columns and this adds whatever `?cols=` turned on,
+/// handed over as `--tool-optional-cols`. Under-reserving is the failure
+/// that matters: the two scrollports would stop short of the last column and it
+/// would be unreachable.
 ///
-/// The bucketing exists for the opposite failure: several opt-in columns are
-/// `hidden md:flex` / `hidden xl:flex`, and reserving their width below the
-/// breakpoint that reveals them gives a phone a horizontal scroll range whose
-/// far end is empty space. Each bucket is only added by the stylesheet's media
-/// query for that breakpoint (see `style/tailwind.css`), which keeps the whole
-/// mechanism CSS-driven — no `matchMedia` read, so SSR and the first client
-/// render stay identical.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct ExtraColumnWidths {
-    /// Columns visible at every viewport width.
-    base: u32,
-    /// Columns hidden below `md` (768px).
-    md: u32,
-    /// Columns hidden below `xl` (1280px).
-    xl: u32,
-}
-
-fn extra_column_widths_px(visible: &std::collections::HashSet<&'static str>) -> ExtraColumnWidths {
-    // Width AND breakpoint here must match the column's header/cell markup
-    // (`w-[..]` + `hidden md:flex` etc.) in the view below.
-    const ALWAYS: &[(&str, u32)] = &[(COL_ROI, 112)];
-    const MD: &[(&str, u32)] = &[
+/// No `matchMedia` read is involved, so SSR and the first client render stay
+/// identical.
+fn optional_column_width_px(visible: &std::collections::HashSet<&'static str>) -> u32 {
+    // Widths here must match the `w-[..]` on the column's header/cell markup
+    // in the view below.
+    const WIDTHS: &[(&str, u32)] = &[
+        (COL_PROFIT_PER_DAY, 112),
+        (COL_VELOCITY, 88),
+        (COL_DRIFT, 88),
+        (COL_CONFIDENCE, 72),
+        (COL_ROI, 112),
+        (COL_WORLD, 112),
+        (COL_DATACENTER, 112),
         (COL_TREND, 100),
         (COL_SALES_PER_DAY, 140),
         (COL_VOLUME_30D, 88),
+        (COL_LAST_SOLD, 112),
     ];
-    const XL: &[(&str, u32)] = &[(COL_DATACENTER, 112)];
-    let sum = |widths: &[(&str, u32)]| {
-        widths
-            .iter()
-            .filter(|(col, _)| visible.contains(col))
-            .map(|(_, w)| w)
-            .sum()
-    };
-    ExtraColumnWidths {
-        base: sum(ALWAYS),
-        md: sum(MD),
-        xl: sum(XL),
-    }
+    WIDTHS
+        .iter()
+        .filter(|(col, _)| visible.contains(col))
+        .map(|(_, w)| w)
+        .sum()
 }
 
 /// The loading skeleton's version of the grid, in DOM order.
 ///
 /// Each entry's class string is the matching cell's class from the row markup
-/// below — same width, same responsive visibility, same alignment — so the
-/// placeholder columns sit exactly where the real ones will. Keep the two in
-/// step: a column added to the row markup but not here makes the table appear
-/// to gain a column when it loads.
-///
-/// Three cells differ from their real counterparts on purpose. World,
-/// datacenter and last-sold are written `hidden lg:block flex` / `hidden
-/// md:block flex` in the row markup — `block` and `flex` on the same element,
-/// where which one wins is down to stylesheet order rather than intent — so
-/// the skeleton spells them `hidden lg:flex` / `hidden md:flex`, which is what
-/// the `items-center` beside them was reaching for. The widths, which are all
-/// the alignment depends on, are identical either way.
+/// below — same width, same alignment — so the placeholder columns sit exactly
+/// where the real ones will. Keep the two in step: a column added to the row
+/// markup but not here makes the table appear to gain a column when it loads.
 fn analyzer_skeleton_columns(
     visible: &std::collections::HashSet<&'static str>,
 ) -> Vec<SkeletonColumn> {
@@ -815,17 +828,17 @@ fn analyzer_skeleton_columns(
         ),
         (
             Some(COL_VELOCITY),
-            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
             Some(COL_DRIFT),
-            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
             Some(COL_CONFIDENCE),
-            "px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center",
+            "px-3 py-2 w-[72px] shrink-0 flex items-center justify-center",
             SkeletonCell::Badge,
         ),
         (
@@ -841,32 +854,32 @@ fn analyzer_skeleton_columns(
         ),
         (
             Some(COL_WORLD),
-            "px-3 py-2 w-28 shrink-0 hidden lg:flex items-center",
+            "px-3 py-2 w-28 shrink-0 flex items-center",
             SkeletonCell::Text,
         ),
         (
             Some(COL_DATACENTER),
-            "px-3 py-2 w-28 shrink-0 hidden xl:flex items-center",
+            "px-3 py-2 w-28 shrink-0 flex items-center",
             SkeletonCell::Text,
         ),
         (
             Some(COL_TREND),
-            "px-3 py-2 w-[100px] shrink-0 hidden md:flex items-center justify-center",
+            "px-3 py-2 w-[100px] shrink-0 flex items-center justify-center",
             SkeletonCell::Spark,
         ),
         (
             Some(COL_SALES_PER_DAY),
-            "px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center",
+            "px-3 py-2 w-[140px] shrink-0 flex items-center justify-center",
             SkeletonCell::Badge,
         ),
         (
             Some(COL_VOLUME_30D),
-            "px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end",
+            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
             Some(COL_LAST_SOLD),
-            "px-3 py-2 w-28 shrink-0 hidden md:flex items-center",
+            "px-3 py-2 w-28 shrink-0 flex items-center",
             SkeletonCell::Text,
         ),
     ];
@@ -881,53 +894,24 @@ fn analyzer_skeleton_columns(
 ///
 /// Reads `?cols=` the same way the table does, so the skeleton shows the
 /// columns this particular user has switched on rather than a generic set —
-/// and reproduces the container's `--analyzer-extra-cols-*` variables, which
-/// is what makes `.analyzer-grid-row` give the placeholder rows the same
+/// and reproduces the container's `--tool-optional-cols` variable, which
+/// is what makes `.tool-grid-row` give the placeholder rows the same
 /// min-width as the real ones.
 #[component]
 fn AnalyzerTableSkeleton() -> impl IntoView {
     let (cols_param, _) = query_signal::<String>("cols");
     let visible = parse_visible_cols(cols_param.get_untracked().as_deref());
-    let widths = extra_column_widths_px(&visible);
     view! {
         <TableSkeleton
             columns=analyzer_skeleton_columns(&visible)
             rows=14
-            class="analyzer-table border border-[color:var(--color-outline)]"
-            row_class="analyzer-grid-row"
+            class="tool-table border border-[color:var(--color-outline)]"
+            row_class="tool-grid-row"
             style=format!(
-                "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
-                widths.base,
-                widths.md,
-                widths.xl,
+                "--tool-optional-cols: {}px;",
+                optional_column_width_px(&visible),
             )
         />
-    }
-}
-
-/// Tailwind class that hides a column's "desktop only" note in the Columns
-/// picker once the viewport is wide enough to actually render the column.
-/// `None` for columns visible at every width. Must mirror the `hidden
-/// md:flex` / `lg:flex` / `xl:flex` classes on the column's own markup.
-///
-/// Ticking a hidden column on a phone changes nothing on screen, which reads
-/// as a broken checkbox; the note explains it. The gating is pure CSS so SSR
-/// and the first client render agree.
-fn col_hidden_note_class(col: &str) -> Option<&'static str> {
-    match col {
-        c if c == COL_VELOCITY
-            || c == COL_DRIFT
-            || c == COL_CONFIDENCE
-            || c == COL_TREND
-            || c == COL_SALES_PER_DAY
-            || c == COL_VOLUME_30D
-            || c == COL_LAST_SOLD =>
-        {
-            Some("md:hidden")
-        }
-        c if c == COL_WORLD => Some("lg:hidden"),
-        c if c == COL_DATACENTER => Some("xl:hidden"),
-        _ => None,
     }
 }
 
@@ -948,110 +932,150 @@ fn available_filters(active: &[&str]) -> Vec<&'static str> {
 /// list, and only one of them may query it.
 const CONNECTED_REGIONS: &[&str] = &["Europe", "Japan", "North-America", "Oceania"];
 
-/// One sortable column header.
+/// Which of the analyzer's three market boards a realtime event invalidates.
 ///
-/// Clicking an inactive column sorts by it descending; clicking the column
-/// already in effect flips the direction. The arrow reflects the direction
-/// actually applied — the three call sites this replaces each hardcoded a
-/// down arrow, so `?dir=asc` rendered ascending rows under a descending
-/// glyph, and nothing in the UI could reach `?dir=` at all.
+/// A listing event names exactly one world, and each board is a different
+/// slice of the market: the sell world's own cheapest listings, the region's,
+/// and the other connected regions'. Refetching all three for every event —
+/// which is what a single shared refresh counter does — costs a full region
+/// board per connected region for a change that can only have moved one of
+/// them.
 ///
-/// `dir` is omitted from the href when it would be the default, so the
-/// common case stays a clean `?sort=…` and bookmarks don't accumulate a
-/// redundant param.
-#[component]
-fn SortHeader(
-    mode: SortMode,
-    #[prop(into)] label: String,
-    sort_mode: Memo<Option<SortMode>>,
-    sort_dir: Memo<Option<SortDir>>,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::ProfitPerDay) == mode);
-    let dir = Signal::derive(move || sort_dir().unwrap_or_default());
-    view! {
-        <a
-            class=move || {
-                if is_active() {
-                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                } else {
-                    "!text-brand-300 hover:text-brand-200"
-                }
-            }
-            aria-current=move || if is_active() { "true" } else { "false" }
-            href=move || {
-                let mut q = query();
-                q.remove("sort");
-                q.remove("dir");
-                q.insert("sort".to_string(), mode.to_string());
-                let next = if is_active() {
-                    match dir() {
-                        SortDir::Desc => SortDir::Asc,
-                        SortDir::Asc => SortDir::Desc,
-                    }
-                } else {
-                    SortDir::Desc
-                };
-                if next != SortDir::default() {
-                    q.insert("dir".to_string(), next.to_string());
-                }
-                format!("{}{}", pathname(), q.to_query_string())
-            }
-        >
-            <div class="flex items-center gap-2">
-                {label}
-                {move || {
-                    is_active()
-                        .then(|| match dir() {
-                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
-                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
-                        })
-                }}
-            </div>
-        </a>
+/// The flags are not exclusive: a listing on the sell world moves the world
+/// board *and* the region board that contains it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MarketScope {
+    world: bool,
+    region: bool,
+    cross_region: bool,
+}
+
+impl MarketScope {
+    const NONE: Self = Self {
+        world: false,
+        region: false,
+        cross_region: false,
+    };
+    /// Everything. Used for `Stale`, which names no world.
+    const ALL: Self = Self {
+        world: true,
+        region: true,
+        cross_region: true,
+    };
+
+    fn is_empty(self) -> bool {
+        self == Self::NONE
     }
-    .into_any()
+
+    fn merge(self, other: Self) -> Self {
+        Self {
+            world: self.world || other.world,
+            region: self.region || other.region,
+            cross_region: self.cross_region || other.cross_region,
+        }
+    }
+}
+
+/// Classify a relevant market event into the boards it invalidates.
+///
+/// Callers are expected to have already run `is_analyzer_market_update_relevant`;
+/// this only decides *what to refetch*, not *whether to*. An event on a world
+/// that resolves to no region at all falls back to [`MarketScope::ALL`] rather
+/// than being dropped — a board that silently stops refreshing is a worse
+/// failure than an extra fetch.
+fn classify_market_update(
+    message: &ServerClient,
+    sell_world_id: i32,
+    region: Option<&str>,
+    worlds: &WorldHelper,
+) -> MarketScope {
+    let event = match message {
+        ServerClient::Listings(event) => event,
+        ServerClient::Stale { .. } => return MarketScope::ALL,
+        _ => return MarketScope::NONE,
+    };
+    let data = match event {
+        EventType::Added(data) | EventType::Removed(data) | EventType::Updated(data) => data,
+    };
+
+    let event_region = worlds
+        .lookup_selector(AnySelector::World(data.world_id))
+        .map(|world| {
+            AnyResult::Region(worlds.get_region(world))
+                .get_name()
+                .to_string()
+        });
+    let (Some(event_region), Some(region)) = (event_region, region) else {
+        return MarketScope::ALL;
+    };
+
+    if event_region != region {
+        return MarketScope {
+            cross_region: true,
+            ..MarketScope::NONE
+        };
+    }
+    // Same region as the sell world. The region board always moves; the world
+    // board only when the event landed on the sell world itself.
+    MarketScope {
+        world: data.world_id == sell_world_id,
+        region: true,
+        cross_region: false,
+    }
 }
 
 #[component]
 fn AnalyzerTable(
-    sales: RecentSales,
-    global_cheapest_listings: CheapestListings,
-    world_cheapest_listings: CheapestListings,
-    cross_region: Vec<CheapestListings>,
+    /// The built profit table, or `None` while the market boards are still
+    /// loading for the first time.
+    ///
+    /// Reactive rather than the three raw boards it is built from, and that is
+    /// the whole point: a realtime market tick refetches those boards, and
+    /// taking them as plain values meant this component was disposed and
+    /// rebuilt on every tick — throwing away the scroll position, the
+    /// accumulated ClickHouse enrichment (so every visible row re-fetched it),
+    /// the `requested` dedupe set, and the realtime subscription that had just
+    /// delivered the event. As a signal, a tick invalidates
+    /// `filtered_rows` -> `sorted_data` and the `VirtualScroller`'s keyed
+    /// `<For>` diffs only the rows that actually moved.
+    profits: Memo<Option<ProfitTableHandle>>,
     worlds: Arc<WorldHelper>,
     world: Signal<String>,
-    filter_outliers: bool,
+    /// Outlier-filtering toggle state. Only drives the toggle's own label
+    /// here — the caller applies it when building `profits`.
+    filter_outliers: Signal<bool>,
     /// Current world's region name, if resolvable. Only used to exclude the
     /// current region from the cross-region opt-out list in the Columns
-    /// popover — a plain value like `filter_outliers`, not a reactive prop,
-    /// since this component remounts whenever the caller's region changes.
-    region: Option<String>,
+    /// popover.
+    region: Signal<Option<String>>,
     /// Current state of the cross-region toggle, mirroring `filter_outliers`.
-    cross_region_enabled: bool,
+    cross_region_enabled: Signal<bool>,
     /// The caller's own `query_signal` setters for `?cross=` / `?filter-outliers=`.
     /// Threaded through as props rather than re-derived here so there is a
     /// single `query_signal` per URL key instead of two independent ones
     /// drifting in and out of the router's query-mutation queue.
     set_cross_region_enabled: SignalSetter<Option<bool>>,
     set_filter_outliers: SignalSetter<Option<bool>>,
-    on_market_update: Callback<()>,
-    /// Keeps the name chip mounted (in edit state) between "picked from the
-    /// + Filter menu" and "first committed value" — an empty ?name= URL
-    /// param is not relied on to round-trip. Owned by `AnalyzerWorldView`:
-    /// this component lives inside the Suspense closure and remounts on
-    /// every realtime market tick, so a signal declared here would be
-    /// destroyed mid-keystroke along with the chip being typed into.
-    name_chip_pending: RwSignal<bool>,
-    /// True once client hydration has finished (Effect-set by the caller).
-    /// Also owned by `AnalyzerWorldView` — declared here it would reset to
-    /// false on every market-tick remount, rendering one full unfiltered
-    /// pass per tick whenever `?name=` is active.
-    hydrated: RwSignal<bool>,
+    /// Fired when a realtime event invalidates one or more market boards,
+    /// carrying which ones so the caller can refetch just those.
+    on_market_update: Callback<MarketScope>,
 ) -> impl IntoView {
     let i18n = use_i18n();
+    // Keeps the name chip mounted (in edit state) between "picked from the
+    // + Filter menu" and "first committed value" — an empty ?name= URL param
+    // is not relied on to round-trip.
+    //
+    // This and `hydrated` below used to be owned by `AnalyzerWorldView`,
+    // because this component was rebuilt on every realtime market tick and a
+    // signal declared here was destroyed mid-keystroke (and `hydrated` reset
+    // to false, rendering one unfiltered pass per tick under an active
+    // `?name=`). `profits` being reactive is what removed the rebuild, so they
+    // belong here again.
+    let name_chip_pending = RwSignal::new(false);
+    // True once client hydration has finished; gates localized-name matching
+    // (see the name filter below).
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| hydrated.set(true));
     let realtime = use_realtime();
     let realtime_for_market = realtime.clone();
     let rt_status = realtime.clone();
@@ -1063,14 +1087,6 @@ fn AnalyzerTable(
     });
     let rt_update = realtime.clone();
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
-    let profits = ProfitTable::new(
-        sales,
-        global_cheapest_listings,
-        world_cheapest_listings,
-        cross_region,
-        filter_outliers,
-    );
-
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
@@ -1112,17 +1128,6 @@ fn AnalyzerTable(
     let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
-    let show_columns_picker = RwSignal::new(false);
-    let show_filter_menu = RwSignal::new(false);
-    // Route change, click outside, Escape. Both popovers and both trigger
-    // buttons live inside the sticky bar, so one container covers both;
-    // the triggers keep their own mutual exclusivity.
-    let sticky_bar_ref = NodeRef::<leptos::html::Div>::new();
-    use_dismissable(sticky_bar_ref, move || {
-        show_columns_picker.set(false);
-        show_filter_menu.set(false);
-    });
-
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
@@ -1220,6 +1225,62 @@ fn AnalyzerTable(
         }
     };
 
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        available_filters(&active_filters())
+            .into_iter()
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let col_label = move |col: &str| -> String {
+        match col {
+            c if c == COL_PROFIT_PER_DAY => {
+                t_string!(i18n, analyzer_col_profit_per_day).to_string()
+            }
+            c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
+            c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
+            c if c == COL_CONFIDENCE => t_string!(i18n, analyzer_col_confidence).to_string(),
+            c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
+            c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
+            c if c == COL_DATACENTER => t_string!(i18n, analyzer_col_datacenter).to_string(),
+            c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
+            c if c == COL_SALES_PER_DAY => t_string!(i18n, analyzer_col_sales_per_day).to_string(),
+            c if c == COL_VOLUME_30D => t_string!(i18n, analyzer_col_volume_30d).to_string(),
+            c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // Columns the picker offers, in table order.
+    let column_options = Memo::new(move |_| {
+        ALL_OPTIONAL_COLS
+            .iter()
+            .map(|col| ColumnOption {
+                id: col,
+                label: col_label(col),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // Held here because the category picker lives in the `+ Filter` menu and
+    // commits on `change` — it has to close the menu it sits in.
+    let popovers = ControlBarPopovers::new();
+
+    let toggle_column = Callback::new(move |col: &'static str| {
+        let mut set = visible_cols.get_untracked();
+        if set.contains(col) {
+            set.remove(col);
+        } else {
+            set.insert(col);
+        }
+        set_cols_param.set(Some(serialize_visible_cols(&set)));
+    });
+
     // Adding a filter seeds it with `default_filter_value` so the chip has
     // something to show; the user edits it in place from there.
     let add_filter = move |id: &str| {
@@ -1255,44 +1316,145 @@ fn AnalyzerTable(
     // way to reach them.
     let header_scroll = NodeRef::<leptos::html::Div>::new();
     let list_scroll = NodeRef::<leptos::html::Div>::new();
-    // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
-    // firing after the component is disposed.
-    let hscroll_listeners =
-        StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
-    on_cleanup(move || {
-        hscroll_listeners.update_value(|listeners| {
-            for (el, cb) in listeners.drain(..) {
-                let _ =
-                    el.remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
-            }
-        });
-    });
-    Effect::new(move |_| {
-        // Re-runs when the refs are populated; the guard keeps a second run
-        // from double-registering.
-        let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
-            return;
-        };
-        if hscroll_listeners.with_value(|l| !l.is_empty()) {
-            return;
-        }
-        // Mirroring writes `scrollLeft` on the other element, which fires its
-        // scroll event in turn; the equality check is what keeps that from
-        // ping-ponging.
-        let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
-            Closure::wrap(Box::new(move || {
-                let x = from.scroll_left();
-                if to.scroll_left() != x {
-                    to.set_scroll_left(x);
+    // Client-only: gated out of the SSR build entirely. A `LocalStorage`
+    // StoredValue created during SSR is a `SendWrapper` living on one tokio
+    // worker thread, but the Suspense rendering this component re-runs (and
+    // eventually disposes) across `.await` points, so the `on_cleanup` below
+    // can fire on a *different* worker thread — a guaranteed SendWrapper
+    // panic that aborts the response stream mid-body and leaves the client
+    // hydrating a truncated document (no `__INCOMPLETE_CHUNKS` bootstrap).
+    #[cfg(feature = "hydrate")]
+    {
+        // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
+        // firing after the component is disposed.
+        let hscroll_listeners =
+            StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
+        on_cleanup(move || {
+            hscroll_listeners.update_value(|listeners| {
+                for (el, cb) in listeners.drain(..) {
+                    let _ = el
+                        .remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
                 }
-            }) as Box<dyn FnMut()>)
+            });
+        });
+        Effect::new(move |_| {
+            // Re-runs when the refs are populated; the guard keeps a second run
+            // from double-registering.
+            let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
+                return;
+            };
+            if hscroll_listeners.with_value(|l| !l.is_empty()) {
+                return;
+            }
+            // Mirroring writes `scrollLeft` on the other element, which fires its
+            // scroll event in turn; the equality check is what keeps that from
+            // ping-ponging.
+            let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
+                Closure::wrap(Box::new(move || {
+                    let x = from.scroll_left();
+                    if to.scroll_left() != x {
+                        to.set_scroll_left(x);
+                    }
+                }) as Box<dyn FnMut()>)
+            };
+            let head_cb = mirror(head.clone(), body.clone());
+            let body_cb = mirror(body.clone(), head.clone());
+            let _ =
+                head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
+            let _ =
+                body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
+            hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
+        });
+    }
+
+    // --- Filter chip strip: edge fades ---------------------------------------
+    // The strip scrolls but shows no scrollbar (the bar is height-locked, so a
+    // gutter would eat the chips), which left nothing on screen to say there
+    // were more filters off to the right — at 375px with eight filters set the
+    // chips run ~1000px inside a ~240px viewport. `--chip-fade-{start,end}`
+    // drive a mask declared in the stylesheet; both are 0 unless there is
+    // actually something to scroll to on that side.
+    let chip_row = NodeRef::<leptos::html::Div>::new();
+    #[cfg(feature = "hydrate")]
+    {
+        let chip_listeners = StoredValue::new_local(
+            None::<(
+                web_sys::HtmlDivElement,
+                Closure<dyn FnMut()>,
+                Closure<dyn FnMut()>,
+            )>,
+        );
+        on_cleanup(move || {
+            chip_listeners.update_value(|slot| {
+                if let Some((el, scroll_cb, resize_cb)) = slot.take() {
+                    let _ = el.remove_event_listener_with_callback(
+                        "scroll",
+                        scroll_cb.as_ref().unchecked_ref(),
+                    );
+                    if let Some(win) = web_sys::window() {
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            resize_cb.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            });
+        });
+        // Widest fade we ever draw. Enough to read as "this continues" without
+        // dimming a whole chip.
+        const CHIP_FADE_PX: f64 = 24.0;
+        let apply_fades = |el: &web_sys::HtmlDivElement| {
+            let left = el.scroll_left();
+            // `scroll_width` is an i32 of a value the browser rounds, so the
+            // remaining distance can land a fraction off zero at the far end.
+            // A 1px deadband keeps the trailing fade from lingering once the
+            // strip is scrolled all the way over.
+            let right = (el.scroll_width() as f64 - el.client_width() as f64 - left).max(0.0);
+            let px = |amount: f64| format!("{}px", amount.clamp(0.0, CHIP_FADE_PX).round());
+            // Fully qualified: tachys' `ElementExt::style` is in scope via the
+            // leptos prelude and matches `HtmlDivElement` directly, so it wins
+            // method resolution over the inherent `HtmlElement::style` that
+            // needs a deref step. Bare `el.style()` picks the wrong one.
+            let style = web_sys::HtmlElement::style(el);
+            let _ = style.set_property(
+                "--chip-fade-start",
+                &px(if left > 1.0 { CHIP_FADE_PX } else { 0.0 }),
+            );
+            let _ = style.set_property(
+                "--chip-fade-end",
+                &px(if right > 1.0 { CHIP_FADE_PX } else { 0.0 }),
+            );
         };
-        let head_cb = mirror(head.clone(), body.clone());
-        let body_cb = mirror(body.clone(), head.clone());
-        let _ = head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
-        let _ = body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
-        hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
-    });
+        Effect::new(move |_| {
+            // Tracked so the fades are re-derived when a chip is added or
+            // removed: that changes `scrollWidth` without firing either
+            // listener below.
+            let _ = active_filters();
+            let Some(el) = chip_row.get() else {
+                return;
+            };
+            if chip_listeners.with_value(|slot| slot.is_none()) {
+                let on_scroll = {
+                    let el = el.clone();
+                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
+                };
+                let on_resize = {
+                    let el = el.clone();
+                    Closure::wrap(Box::new(move || apply_fades(&el)) as Box<dyn FnMut()>)
+                };
+                let _ = el
+                    .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref());
+                if let Some(win) = web_sys::window() {
+                    let _ = win.add_event_listener_with_callback(
+                        "resize",
+                        on_resize.as_ref().unchecked_ref(),
+                    );
+                }
+                chip_listeners.set_value(Some((el.clone(), on_scroll, on_resize)));
+            }
+            apply_fades(&el);
+        });
+    }
 
     let clear_all_filters = move || {
         set_minimum_profit(None);
@@ -1344,22 +1506,21 @@ fn AnalyzerTable(
         // See `FilteredRows::rows_lacking_data`. Counted by the combined
         // drift/confidence/volume closure below.
         let mut rows_lacking_data = 0usize;
+        // No table yet (first load still in flight). An empty result here is
+        // never shown — the caller's `<Transition>` is holding the skeleton
+        // until the boards resolve — but it must not be mistaken for "every
+        // row filtered out" either, so nothing else runs off the back of it.
+        let Some(profits) = profits.get() else {
+            return FilteredRows::default();
+        };
         let mut sorted_data = profits
-            .0
+            .rows()
             .iter()
             .map(|data| {
                 let profit =
                     flip_profit(data.estimated_sale_price, data.cheapest_price, include_tax);
                 let return_on_investment = return_on_investment(profit, data.cheapest_price);
-                let profit_per_day = data
-                    .sale_summary
-                    .avg_sale_duration
-                    .map(|d| {
-                        let days = d.num_seconds() as f32 / 86400.0;
-                        let days = days.max(1.0);
-                        (profit as f32 / days) as i32
-                    })
-                    .unwrap_or(0);
+                let profit_per_day = profit_per_day(profit, &data.sale_summary);
                 CalculatedProfitData {
                     inner: data.clone(),
                     profit,
@@ -1544,10 +1705,13 @@ fn AnalyzerTable(
             })
             .collect::<Vec<_>>();
 
+        // Fall back through `SortColumn` rather than a literal, so the rows
+        // are ordered by exactly what the header highlights and arrows.
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         sort_rows(
             &mut sorted_data,
-            sort_mode().unwrap_or(SortMode::ProfitPerDay),
-            sort_dir().unwrap_or_default(),
+            mode,
+            sort_dir().unwrap_or_else(|| mode.default_dir()),
         );
         FilteredRows {
             rows: sorted_data.into_iter().enumerate().collect(),
@@ -1611,6 +1775,10 @@ fn AnalyzerTable(
         let filter = world_filter.and(FilterPredicate::Items(item_ids.clone()));
         let worlds = worlds_for_market.clone();
         let subscribed_item_ids = item_ids.clone();
+        // Read untracked: the subscription is keyed on the visible window and
+        // the sell world, and re-subscribing every time the region name is
+        // re-derived would churn the socket for nothing.
+        let event_region = region.get_untracked();
         let sub = realtime.subscribe_market(filter, SocketMessageType::Listings, move |message| {
             if is_analyzer_market_update_relevant(
                 &message,
@@ -1619,7 +1787,15 @@ fn AnalyzerTable(
                 buy_filter,
                 &worlds,
             ) {
-                on_market_update.run(());
+                let scope = classify_market_update(
+                    &message,
+                    sell_world_id,
+                    event_region.as_deref(),
+                    &worlds,
+                );
+                if !scope.is_empty() {
+                    on_market_update.run(scope);
+                }
             }
         });
         analyzer_market_subscription.set_value(Some(sub));
@@ -1719,37 +1895,10 @@ fn AnalyzerTable(
 
     view! {
         <div class="flex flex-col gap-4">
-            // Sticky control bar. Fixed at STICKY_BAR_HEIGHT (76px): the table
-            // header sticks directly beneath it at that offset, so a bar that
-            // grew with its content would cover its own column headers.
-            <div
-                class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1"
-                node_ref=sticky_bar_ref
-            >
-                // Row 1 — result count and view-level controls.
-                //
-                // The row cannot wrap (the bar is height-locked) and cannot
-                // scroll (it holds the popovers, and `html` is `overflow-x:
-                // hidden`), so it has to *fit*, at every width and in every
-                // locale. It did not: every control is a `.sticky-bar-button`
-                // — `flex: 0 0 auto` — so the row could only grow, and at
-                // 375px it ran ~210px past the viewport with the last button
-                // stranded off-screen (#1055).
-                //
-                // Three things keep it inside now, in the order they give up
-                // space: the count group is `flex-1` and truncates first;
-                // labels are hidden below `md` and ellipsize above it
-                // (`.sticky-bar-button-shrink`); icons never shrink. A
-                // breakpoint alone would not do — the side nav takes 240px at
-                // `lg`, so the row is no wider at 1024px than at 768px.
-                //
-                // Anything added here needs to be able to yield too.
-                <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
-                    // The one item allowed to give up space. `overflow-hidden`
-                    // is safe on this wrapper specifically: it holds two spans
-                    // and nothing sticky or absolutely positioned, so it does
-                    // not become a scrollport for anything that matters.
-                    <div class="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+            <ControlBar
+                chip_row=chip_row
+                summary=move || {
+                    view! {
                         <span class="text-sm text-[color:var(--brand-fg)] font-semibold truncate min-w-0">
                             {move || {
                                 t_string!(i18n, analyzer_rows_count)
@@ -1777,56 +1926,141 @@ fn AnalyzerTable(
                                     }
                                 })
                         }}
-                    </div>
-                    // Live-market indicator, carried over from the realtime work on
-                    // main. It sat in the results-summary panel this bar replaced.
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                        compact=true
-                    />
-                    <SavedViewsMenu current_world=world />
-                    <button
-                        class="sticky-bar-button sticky-bar-button-shrink"
-                        aria-label=t_string!(i18n, analyzer_columns_button)
-                        aria-expanded=move || show_columns_picker.get().to_string()
-                        on:click=move |_| {
-                            show_filter_menu.set(false);
-                            show_columns_picker.update(|v| *v = !*v);
-                        }
-                    >
-                        <Icon icon=i::FaTableColumnsSolid />
-                        <span class="hidden md:inline sticky-bar-button-label">
-                            {t!(i18n, analyzer_columns_button)}
-                        </span>
-                    </button>
-                    <button
-                        class="sticky-bar-button sticky-bar-button-shrink"
-                        aria-label=t_string!(i18n, aria_clear_all_filters)
-                        on:click=move |_| clear_all_filters()
-                    >
-                        <Icon icon=icondata::MdiFilterRemove />
-                        <span class="hidden md:inline sticky-bar-button-label">
-                            {t!(i18n, analyzer_clear_all)}
-                        </span>
-                    </button>
-                </div>
-
-                // Row 2 — the filters themselves. One chip per active filter,
-                // and nothing at all for the ones that are not in use.
-                <div class="h-8 flex items-center gap-2 min-w-0">
-                    <div class="filter-chip-row">
-                        {move || {
-                            active_filters()
-                                .is_empty()
-                                .then(|| {
-                                    view! {
-                                        <span class="text-sm text-[color:var(--color-text-muted)] whitespace-nowrap">
-                                            {t!(i18n, analyzer_no_active_filters)}
-                                        </span>
+                    }
+                }
+                actions=move || {
+                    view! {
+                        // Live-market indicator, carried over from the realtime
+                        // work on main. It sat in the results-summary panel this
+                        // bar replaced.
+                        <RealtimeStatus status=realtime_status last_update=last_update compact=true />
+                        <SavedViewsMenu current_world=world />
+                    }
+                }
+                columns=column_options
+                visible_columns=visible_cols
+                on_toggle_column=toggle_column
+                on_reset_columns=Callback::new(move |_| set_cols_param.set(None))
+                columns_extra=move || {
+                    view! {
+                        // Cross-region + outlier filtering, formerly the controls
+                        // panel above the table. `w-full` forces its own row inside
+                        // the wrapping flex container above.
+                        <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
+                            <Toggle
+                                checked=cross_region_enabled
+                                set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
+                                    val.then_some(true),
+                                ))
+                                checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
+                                unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
+                            />
+                            <Toggle
+                                checked=filter_outliers
+                                set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
+                                    val.then_some(true),
+                                ))
+                                checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
+                                unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
+                            />
+                            <div
+                                class="flex flex-wrap gap-2"
+                                class:hidden=move || !cross_region_enabled.get()
+                            >
+                                {
+                                    move || {
+                                        region
+                                            .get()
+                                            .map(|region| {
+                                                CONNECTED_REGIONS
+                                                    .iter()
+                                                    .filter(move |r| **r != region.as_str())
+                                                    .map(|region_name| {
+                                                        let (enabled, set_enabled) = query_signal::<
+                                                            bool,
+                                                        >(region_name.to_string());
+                                                        view! {
+                                                            <Toggle
+                                                                checked=Signal::derive(move || enabled().unwrap_or(true))
+                                                                set_checked=SignalSetter::map(move |checked: bool| {
+                                                                    set_enabled(Some(checked));
+                                                                })
+                                                                checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
+                                                                unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
+                                                            />
+                                                        }
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            })
                                     }
-                                })
-                        }}
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+                available_filters=filter_options
+                on_add_filter=Callback::new(move |id: &'static str| add_filter(id))
+                filter_menu_extra=move || {
+                    view! {
+                        // Category is chosen from a list rather than typed, so its
+                        // chip is read-only and this is where it is picked. Hidden
+                        // once a category is set: leaving it up would echo the chip,
+                        // which is the duplication this bar deletes.
+                        {move || category_filter().is_none().then(|| view! {
+                            <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
+                                <span class="text-[color:var(--color-text-muted)]">
+                                    {t!(i18n, analyzer_filter_category_label)}
+                                </span>
+                                <select
+                                    class="input input-sm"
+                                    on:change=move |ev| {
+                                        let val = event_target_value(&ev);
+                                        if let Ok(id) = val.parse::<i32>() {
+                                            set_category_filter(Some(id));
+                                        } else {
+                                            set_category_filter(None);
+                                        }
+                                        popovers.filter_menu.set(false);
+                                    }
+                                    prop:value=move || {
+                                        category_filter().map(|c| c.to_string()).unwrap_or_default()
+                                    }
+                                >
+                                    <option value="">{t!(i18n, analyzer_all_categories)}</option>
+                                    {
+                                        let mut categories = tracked_data()
+                                            .item_search_categorys
+                                            .iter()
+                                            .filter(|(_, cat)| !cat.name.is_empty())
+                                            .map(|(id, cat)| (id.0, cat.name.clone()))
+                                            .collect::<Vec<_>>();
+                                        categories.sort_by(|a, b| a.1.cmp(&b.1));
+                                        categories
+                                            .into_iter()
+                                            .map(|(id, name)| {
+                                                view! {
+                                                    <option
+                                                        value=id.to_string()
+                                                        selected=move || category_filter() == Some(id)
+                                                    >
+                                                        {name}
+                                                    </option>
+                                                }
+                                            })
+                                            .collect_view()
+                                    }
+                                </select>
+                            </label>
+                        })}
+                    }
+                }
+                on_clear_all=Callback::new(move |_| clear_all_filters())
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, analyzer_no_active_filters).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+                popovers=popovers
+            >
                         {move || {
                             minimum_profit()
                                 .map(|_| {
@@ -2170,260 +2404,18 @@ fn AnalyzerTable(
                                     }
                                 })
                         }}
-                    </div>
-                    <button
-                        class="sticky-bar-button"
-                        aria-expanded=move || show_filter_menu.get().to_string()
-                        on:click=move |_| {
-                            show_columns_picker.set(false);
-                            show_filter_menu.update(|v| *v = !*v);
-                        }
-                    >
-                        <Icon icon=i::FaFilterSolid />
-                        {t!(i18n, analyzer_add_filter)}
-                    </button>
-                </div>
-
-                // `+ Filter` menu. Unset filters live here, so the bar's height
-                // tracks the filters in use rather than the filters that exist.
-                {move || {
-                    show_filter_menu
-                        .get()
-                        .then(|| {
-                            view! {
-                                <div class="sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm">
-                                    {move || {
-                                        available_filters(&active_filters())
-                                            .into_iter()
-                                            .map(|id| {
-                                                let label = filter_label(id);
-                                                view! {
-                                                    <button
-                                                        class="text-left px-2 py-1 rounded-sm text-[color:var(--color-text)] hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]"
-                                                        on:click=move |_| {
-                                                            add_filter(id);
-                                                            show_filter_menu.set(false);
-                                                        }
-                                                    >
-                                                        {label}
-                                                    </button>
-                                                }
-                                            })
-                                            .collect_view()
-                                    }}
-                                    // Category is chosen from a list rather than
-                                    // typed, so its chip is read-only and this is
-                                    // where it is picked. Hidden once a category
-                                    // is set: leaving it up would echo the chip,
-                                    // which is the duplication this bar deletes.
-                                    {move || category_filter().is_none().then(|| view! {
-                                    <label class="flex flex-col gap-1 pt-1 border-t border-[color:var(--color-outline)]">
-                                        <span class="text-[color:var(--color-text-muted)]">
-                                            {t!(i18n, analyzer_filter_category_label)}
-                                        </span>
-                                        <select
-                                            class="input input-sm"
-                                            on:change=move |ev| {
-                                                let val = event_target_value(&ev);
-                                                if let Ok(id) = val.parse::<i32>() {
-                                                    set_category_filter(Some(id));
-                                                } else {
-                                                    set_category_filter(None);
-                                                }
-                                                show_filter_menu.set(false);
-                                            }
-                                            prop:value=move || {
-                                                category_filter().map(|c| c.to_string()).unwrap_or_default()
-                                            }
-                                        >
-                                            <option value="">{t!(i18n, analyzer_all_categories)}</option>
-                                            {
-                                                let mut categories = tracked_data()
-                                                    .item_search_categorys
-                                                    .iter()
-                                                    .filter(|(_, cat)| !cat.name.is_empty())
-                                                    .map(|(id, cat)| (id.0, cat.name.clone()))
-                                                    .collect::<Vec<_>>();
-                                                categories.sort_by(|a, b| a.1.cmp(&b.1));
-                                                categories
-                                                    .into_iter()
-                                                    .map(|(id, name)| {
-                                                        view! {
-                                                            <option
-                                                                value=id.to_string()
-                                                                selected=move || category_filter() == Some(id)
-                                                            >
-                                                                {name}
-                                                            </option>
-                                                        }
-                                                    })
-                                                    .collect_view()
-                                            }
-                                        </select>
-                                    </label>
-                                    })}
-                                </div>
-                            }
-                        })
-                }}
-
-                // Columns picker (URL-persisted via ?cols=). A popover rather
-                // than a panel so opening it cannot change the bar's height.
-                {move || {
-                    show_columns_picker
-                        .get()
-                        .then(|| {
-                            let make_toggle = move |col: &'static str| {
-                                move |_| {
-                                    let mut set = visible_cols.get_untracked();
-                                    if set.contains(col) {
-                                        set.remove(col);
-                                    } else {
-                                        set.insert(col);
-                                    }
-                                    set_cols_param.set(Some(serialize_visible_cols(&set)));
-                                }
-                            };
-                            let col_label = move |col: &'static str| -> String {
-                                match col {
-                                    c if c == COL_PROFIT_PER_DAY => {
-                                        t_string!(i18n, analyzer_col_profit_per_day).to_string()
-                                    }
-                                    c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
-                                    c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
-                                    c if c == COL_CONFIDENCE => {
-                                        t_string!(i18n, analyzer_col_confidence).to_string()
-                                    }
-                                    c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
-                                    c if c == COL_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
-                                    c if c == COL_DATACENTER => {
-                                        t_string!(i18n, analyzer_col_datacenter).to_string()
-                                    }
-                                    c if c == COL_TREND => t_string!(i18n, analyzer_col_spark).to_string(),
-                                    c if c == COL_SALES_PER_DAY => {
-                                        t_string!(i18n, analyzer_col_sales_per_day).to_string()
-                                    }
-                                    c if c == COL_VOLUME_30D => {
-                                        t_string!(i18n, analyzer_col_volume_30d).to_string()
-                                    }
-                                    c if c == COL_LAST_SOLD => {
-                                        t_string!(i18n, analyzer_col_last_sold).to_string()
-                                    }
-                                    _ => String::new(),
-                                }
-                            };
-                            view! {
-                                <div class="sticky-bar-popover p-3 w-[min(92vw,32rem)] flex flex-row flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                                    <span class="font-semibold text-[color:var(--brand-fg)]">
-                                        {t!(i18n, analyzer_columns_picker_label)}
-                                    </span>
-                                    {ALL_OPTIONAL_COLS
-                                        .iter()
-                                        .map(|col| {
-                                            let col = *col;
-                                            let label = col_label(col);
-                                            let on_change = make_toggle(col);
-                                            view! {
-                                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                                                    <input
-                                                        type="checkbox"
-                                                        class="accent-brand-300"
-                                                        prop:checked=move || visible_cols().contains(col)
-                                                        on:change=on_change
-                                                    />
-                                                    <span>{label}</span>
-                                                    {col_hidden_note_class(col)
-                                                        .map(|hide_at| view! {
-                                                            <span class=format!(
-                                                                "text-xs text-[color:var(--color-text-muted)] {hide_at}",
-                                                            )>
-                                                                {t!(i18n, analyzer_columns_picker_desktop_only)}
-                                                            </span>
-                                                        })}
-                                                </label>
-                                            }
-                                        })
-                                        .collect_view()}
-                                    <button
-                                        class="ml-auto text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                                        on:click=move |_| set_cols_param.set(None)
-                                    >
-                                        {t!(i18n, analyzer_columns_picker_reset)}
-                                    </button>
-
-                                    // Cross-region + outlier-filtering, formerly the controls
-                                    // panel above the table. `w-full` forces its own row inside
-                                    // the wrapping flex container above.
-                                    <div class="w-full flex flex-col gap-2 pt-2 mt-1 border-t border-[color:var(--color-outline)]">
-                                        <Toggle
-                                            checked=Signal::derive(move || cross_region_enabled)
-                                            set_checked=SignalSetter::map(move |val: bool| set_cross_region_enabled(
-                                                val.then_some(true),
-                                            ))
-                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_enabled).to_string())
-                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_cross_region_disabled).to_string())
-                                        />
-                                        <Toggle
-                                            checked=Signal::derive(move || filter_outliers)
-                                            set_checked=SignalSetter::map(move |val: bool| set_filter_outliers(
-                                                val.then_some(true),
-                                            ))
-                                            checked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_enabled).to_string())
-                                            unchecked_label=Oco::Owned(t_string!(i18n, analyzer_filter_outliers_disabled).to_string())
-                                        />
-                                        <div
-                                            class="flex flex-wrap gap-2"
-                                            class:hidden=move || !cross_region_enabled
-                                        >
-                                            {
-                                                let region = region.clone();
-                                                move || {
-                                                    let region = region.clone();
-                                                    region
-                                                        .map(|region| {
-                                                            CONNECTED_REGIONS
-                                                                .iter()
-                                                                .filter(move |r| **r != region.as_str())
-                                                                .map(|region_name| {
-                                                                    let (enabled, set_enabled) = query_signal::<
-                                                                        bool,
-                                                                    >(region_name.to_string());
-                                                                    view! {
-                                                                        <Toggle
-                                                                            checked=Signal::derive(move || enabled().unwrap_or(true))
-                                                                            set_checked=SignalSetter::map(move |checked: bool| {
-                                                                                set_enabled(Some(checked));
-                                                                            })
-                                                                            checked_label=t_string!(i18n, analyzer_region_enabled).to_string().replace("%region%", region_name)
-                                                                            unchecked_label=t_string!(i18n, analyzer_region_disabled).to_string().replace("%region%", region_name)
-                                                                        />
-                                                                    }
-                                                                })
-                                                                .collect::<Vec<_>>()
-                                                        })
-                                                }
-                                            }
-                                        </div>
-                                    </div>
-                                </div>
-                            }
-                        })
-                }}
-            </div>
+            </ControlBar>
 
             // Results table. Deliberately no `overflow` on this wrapper: in
             // window mode an overflow on any ancestor of the sticky table
             // header re-parents its scrollport away from the viewport, which
             // silently defeats `sticky_offset`.
             <div
-                class="analyzer-table border border-[color:var(--color-outline)]"
+                class="tool-table border border-[color:var(--color-outline)]"
                 style=move || {
-                    let widths = extra_column_widths_px(&visible_cols());
                     format!(
-                        "--analyzer-extra-cols-base: {}px; --analyzer-extra-cols-md: {}px; --analyzer-extra-cols-xl: {}px;",
-                        widths.base,
-                        widths.md,
-                        widths.xl,
+                        "--tool-optional-cols: {}px;",
+                        optional_column_width_px(&visible_cols()),
                     )
                 }
             >
@@ -2433,7 +2425,7 @@ fn AnalyzerTable(
                         row_height=40.0
                         overscan=8
                         // The header row's own height. The rendered element is
-                        // up to ~15px taller, because `.analyzer-hscroll`
+                        // up to ~15px taller, because `.tool-hscroll`
                         // reserves a horizontal scrollbar, but that height
                         // depends on the platform's scrollbar and on whether
                         // the grid currently overflows — neither of which is
@@ -2445,10 +2437,10 @@ fn AnalyzerTable(
                         variable_height=false
                         visible_range=visible_range
                         list_ref=list_scroll
-                        row_min_width="var(--analyzer-row-min-width, 0px)"
+                        row_min_width="var(--tool-row-min-width, 0px)"
                         header=view! {
-                            <div class="analyzer-hscroll" node_ref=header_scroll>
-                            <div class="analyzer-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
+                            <div class="tool-hscroll" node_ref=header_scroll>
+                            <div class="tool-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
                                 <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
                                 </div>
@@ -2474,17 +2466,17 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_velocity)>
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_velocity)>
                                         {t!(i18n, analyzer_col_velocity)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
                                         {t!(i18n, analyzer_col_drift)}
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 hidden md:flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
+                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
                                         {t!(i18n, analyzer_col_confidence)}
                                     </div>
                                 })}
@@ -2502,7 +2494,7 @@ fn AnalyzerTable(
                                     {t!(i18n, analyzer_col_buy_price)}
                                 </div>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden lg:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -2524,7 +2516,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2 hidden xl:flex">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -2546,7 +2538,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
+                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2554,7 +2546,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 hidden md:flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
+                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
 
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
@@ -2563,7 +2555,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 hidden md:flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
+                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2571,7 +2563,7 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 hidden md:flex flex-col leading-tight">
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-col leading-tight">
                                         <span>{t!(i18n, analyzer_col_last_sold)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
@@ -2628,9 +2620,9 @@ fn AnalyzerTable(
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
                             let classes = if (index % 2) == 0 {
-                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+                                "tool-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
                             } else {
-                                "analyzer-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+                                "tool-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
                             };
                             view! {
                                 <div class=classes role="row-group">
@@ -2653,7 +2645,15 @@ fn AnalyzerTable(
                                                 <ItemIcon item_id icon_size=IconSize::Small loading=icon_loading />
                                             </div>
                                             {item}
+                                            // Inline confidence, for when the Confidence
+                                            // column is switched off. With the column on
+                                            // the row would otherwise say "Low" twice —
+                                            // once beside the name and once in its own
+                                            // column (#1106).
                                             {move || {
+                                                if visible_cols().contains(COL_CONFIDENCE) {
+                                                    return None;
+                                                }
                                                 let maps = enrichment.get();
                                                 maps.quality_for(&row_key).map(|q| {
                                                     view! {
@@ -2692,7 +2692,7 @@ fn AnalyzerTable(
                                             None => "—".to_string(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums">
                                                 {text}
                                             </div>
                                         }
@@ -2714,7 +2714,7 @@ fn AnalyzerTable(
                                             <div
                                                 role="cell"
                                                 title=title
-                                                class=format!("px-3 py-2 w-[88px] shrink-0 hidden md:flex items-center justify-end font-mono tabular-nums {class}")
+                                                class=format!("px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums {class}")
                                             >
                                                 {text}
                                             </div>
@@ -2735,7 +2735,7 @@ fn AnalyzerTable(
                                             },
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 flex items-center justify-center">
                                                 <span class=format!("text-xs font-semibold {class}")>{label}</span>
                                             </div>
                                         }
@@ -2751,7 +2751,7 @@ fn AnalyzerTable(
                                         <Gil amount=data.inner.cheapest_price />
                                     </div>
                                     {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden lg:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_world())
                                             })>
@@ -2768,7 +2768,7 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 hidden xl:block flex items-center">
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_datacenter())
                                             })>
@@ -2805,7 +2805,7 @@ fn AnalyzerTable(
                                             view! { <SingleLineSkeleton /> }.into_any()
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[100px] hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[100px] shrink-0 flex items-center justify-center">
                                                 {inner}
                                             </div>
                                         }
@@ -2831,7 +2831,7 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 hidden md:flex items-center justify-center">
+                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 flex items-center justify-center">
                                                 {inner}
                                             </div>
                                         }
@@ -2844,7 +2844,7 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] hidden md:flex items-center justify-end font-mono tabular-nums">
+                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums">
                                                 {inner}
                                             </div>
                                         }
@@ -2868,7 +2868,7 @@ fn AnalyzerTable(
                                             })
                                             .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-28 truncate hidden md:block flex items-center">
+                                            <div role="cell" class="px-3 py-2 w-28 shrink-0 truncate flex items-center">
                                                 {last}
                                             </div>
                                         }
@@ -2910,9 +2910,8 @@ fn AnalyzerTable(
 #[component]
 pub fn AnalyzerWorldView() -> impl IntoView {
     let i18n = use_i18n();
-    // Seeded here rather than in AnalyzerTable: that lives inside the Suspense
-    // closure and remounts on every market refetch, which would keep undoing a
-    // filter the user had cleared.
+    // Seeded here rather than in AnalyzerTable so it runs exactly once per
+    // visit, independent of anything the table does with its own state.
     //
     // A bare URL is a first visit with nothing to honor, so it gets a whole
     // view — the user's saved default, or "Realistic flips". Anything else is
@@ -2923,21 +2922,16 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     if !seed_flip_finder_default_view() {
         seed_query_default("next-sale", DEFAULT_MAX_SALE_TIME.to_string());
     }
-    // Owned here for the same reason as the seed above — AnalyzerTable
-    // remounts on every realtime market tick, and this state must survive
-    // those remounts. `name_chip_pending` keeps a not-yet-committed name
-    // chip alive while the user is still typing into it; `hydrated` is the
-    // one-shot hydration gate for localized-name matching (see the name
-    // filter inside AnalyzerTable), which must not flip back to false and
-    // re-render an unfiltered pass on every tick.
-    let name_chip_pending = RwSignal::new(false);
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
     let params = use_params_map();
     let world = Signal::derive(move || params.with(|p| p.get("world").clone()).unwrap_or_default());
-    let (market_refresh_version, set_market_refresh_version) = signal(0_u64);
+    // One refresh counter per board rather than one for all three. A realtime
+    // listing event moves exactly one world, so refetching the region board of
+    // every connected region for it — which a single shared counter does — is
+    // several megabytes of JSON for a change that touched one row. See
+    // `classify_market_update`.
+    let (world_board_version, set_world_board_version) = signal(0_u64);
+    let (region_board_version, set_region_board_version) = signal(0_u64);
+    let (cross_board_version, set_cross_board_version) = signal(0_u64);
     let sales = ArcResource::new(
         move || params.with(|p| p.get("world").clone()),
         move |world| async move {
@@ -2949,7 +2943,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         move || {
             (
                 params.with(|p| p.get("world").clone()),
-                market_refresh_version.get(),
+                world_board_version.get(),
             )
         },
         move |(world, refresh_version)| async move {
@@ -2976,7 +2970,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     });
 
     let global_cheapest_listings = ArcResource::new(
-        move || (region(), market_refresh_version.get()),
+        move || (region(), region_board_version.get()),
         move |(region, refresh_version)| async move {
             get_cheapest_listings_live(region?.as_str(), refresh_version).await
         },
@@ -3001,7 +2995,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                 cross_region_enabled(),
                 region(),
                 enabled_regions(),
-                market_refresh_version.get(),
+                cross_board_version.get(),
             )
         },
         move |(enabled, region, enabled_regions, refresh_version)| async move {
@@ -3024,11 +3018,101 @@ pub fn AnalyzerWorldView() -> impl IntoView {
         },
     );
 
-    let refetch_market_data = Callback::new(move |_| {
-        set_market_refresh_version.update(|version| {
-            *version = version.wrapping_add(1);
+    // Coalesce realtime ticks. A busy world delivers many relevant listing
+    // events per second and each one previously refetched every board
+    // immediately; the scopes accumulate over the window and flush once.
+    // `StoredValue` so claiming a scope never retriggers anything reactive.
+    let pending_scope = StoredValue::new(MarketScope::NONE);
+    let flush_id = StoredValue::new(0u64);
+    let refetch_market_data = Callback::new(move |scope: MarketScope| {
+        pending_scope.update_value(|pending| *pending = pending.merge(scope));
+        let id = flush_id.with_value(|id| id.wrapping_add(1));
+        flush_id.set_value(id);
+        leptos::task::spawn_local(async move {
+            TimeoutFuture::new(MARKET_REFRESH_DEBOUNCE_MS).await;
+            // Superseded by a later tick, or the component was disposed
+            // mid-window (route change) — either way this flush is stale.
+            if flush_id.try_with_value(|current| *current == id) != Some(true) {
+                return;
+            }
+            let Some(scope) = pending_scope.try_update_value(|pending| {
+                let scope = *pending;
+                *pending = MarketScope::NONE;
+                scope
+            }) else {
+                return;
+            };
+            if scope.world {
+                let _ = set_world_board_version.try_update(|v| *v = v.wrapping_add(1));
+            }
+            if scope.region {
+                let _ = set_region_board_version.try_update(|v| *v = v.wrapping_add(1));
+            }
+            if scope.cross_region {
+                let _ = set_cross_board_version.try_update(|v| *v = v.wrapping_add(1));
+            }
         });
     });
+
+    // `ArcResource` is not `Copy`, and the memo below moves the originals in;
+    // the suspense-registration closure in the view needs its own handles.
+    let register_world = world_cheapest_listings.clone();
+    let register_sales = sales.clone();
+    let register_region = global_cheapest_listings.clone();
+    let register_cross = cross_region.clone();
+
+    // The single expensive derivation, and the reason `AnalyzerTable` can now
+    // survive a refetch: the boards are read *here*, so a realtime tick
+    // re-runs only this memo. The table component below is built once and
+    // updated in place.
+    let market = Memo::new(move |prev: Option<&MarketState>| {
+        let world = world.get();
+        // A world change invalidates the previous table outright. Everything
+        // else is allowed to hold it (see `MarketState::table`), but showing
+        // one world's rows under another world's name is never right.
+        let stale = prev
+            .filter(|p| p.world == world)
+            .and_then(|p| p.table.clone());
+        let filter_outliers = filter_outliers().unwrap_or(false);
+        let cross = cross_region
+            .get()
+            .and_then(|r: Result<_, AppError>| r.ok())
+            .unwrap_or_default();
+        let world_board = world_cheapest_listings.get();
+        let sales_board = sales.get();
+        let region_board = global_cheapest_listings.get();
+        let failed = matches!(world_board, Some(Err(_)))
+            || matches!(sales_board, Some(Err(_)))
+            || matches!(region_board, Some(Err(_)));
+        match (world_board, sales_board, region_board) {
+            (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => MarketState {
+                world,
+                table: Some(ProfitTableHandle::new(ProfitTable::new(
+                    s,
+                    g,
+                    w,
+                    cross,
+                    filter_outliers,
+                ))),
+                failed: false,
+            },
+            _ => MarketState {
+                world,
+                table: stale,
+                failed,
+            },
+        }
+    });
+    // Narrow views over `market`. `has_table` is a `bool` memo on purpose: it
+    // is what gates the table's existence, and gating on `market` itself would
+    // rebuild the whole component on every tick — the bug this change fixes.
+    let profits = Memo::new(move |_| market.with(|m| m.table.clone()));
+    let has_table = Memo::new(move |_| market.with(|m| m.table.is_some()));
+    let load_failed = Memo::new(move |_| market.with(|m| m.failed && m.table.is_none()));
+    let worlds = use_context::<LocalWorldData>()
+        .expect("Worlds should always be populated here")
+        .0
+        .unwrap();
 
     view! {
         <div class="main-content p-2 sm:p-6">
@@ -3065,45 +3149,31 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // the table virtualizes against the window, so the page
                     // itself is what scrolls.
                     <div>
-                        <Suspense fallback=AnalyzerTableSkeleton>
+                        // `<Transition>`, not `<Suspense>`: a realtime market
+                        // tick refetches a board, which puts this boundary back
+                        // into a pending state. Suspense answers that by showing
+                        // its fallback, so every tick flashed the skeleton over
+                        // a table the user was reading. Transition keeps the
+                        // children mounted instead and lets `market` above swap
+                        // the rows in underneath.
+                        <Transition fallback=AnalyzerTableSkeleton>
+                            // Registers the boards with this suspense boundary,
+                            // and nothing else. The reads that build the table
+                            // live in the `market` memo, which runs under its
+                            // own owner and so cannot register anything here —
+                            // without this the server would stream the skeleton
+                            // instead of waiting for the data. Renders no DOM.
                             {move || {
-                                let world_cheapest = world_cheapest_listings.get();
-                                let sales = sales.get();
-                                let global_cheapest_listings = global_cheapest_listings.get();
-                                let cross_region = cross_region
-                                    .get()
-                                    .and_then(|r: Result<_, AppError>| r.ok())
-                                    .unwrap_or_default();
-                                let worlds = use_context::<LocalWorldData>()
-                                    .expect("Worlds should always be populated here")
-                                    .0
-                                    .unwrap();
-                                match (world_cheapest, sales, global_cheapest_listings) {
-                                    (Some(Ok(w)), Some(Ok(s)), Some(Ok(g))) => {
+                                let _ = register_world.get();
+                                let _ = register_sales.get();
+                                let _ = register_region.get();
+                                let _ = register_cross.get();
+                            }}
+                            <Show
+                                when=has_table
+                                fallback=move || {
+                                    if load_failed.get() {
                                         Either::Left(
-
-                                            view! {
-                                                <AnalyzerTable
-                                                    sales=s
-                                                    global_cheapest_listings=g
-                                                    world_cheapest_listings=w
-                                                    cross_region
-                                                    worlds
-                                                    world=world
-                                                    filter_outliers=filter_outliers().unwrap_or(false)
-                                                    region=region().ok()
-                                                    cross_region_enabled=cross_region_enabled().unwrap_or_default()
-                                                    set_cross_region_enabled=set_cross_region_enabled
-                                                    set_filter_outliers=set_filter_outliers
-                                                    on_market_update=refetch_market_data
-                                                    name_chip_pending=name_chip_pending
-                                                    hydrated=hydrated
-                                                />
-                                            },
-                                        )
-                                    }
-                                    _ => {
-                                        Either::Right(
                                             view! {
                                                 <div class="text-xl text-[color:var(--color-text)] text-center p-8
                                                 bg-brand-900/20 rounded-2xl border border-white/10">
@@ -3111,10 +3181,30 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                                                 </div>
                                             },
                                         )
+                                    } else {
+                                        Either::Right(view! { <AnalyzerTableSkeleton /> })
                                     }
                                 }
-                            }}
-                        </Suspense>
+                            >
+                                <AnalyzerTable
+                                    profits=profits
+                                    // `<Show>` takes a `ChildrenFn`, so this
+                                    // has to stay callable more than once.
+                                    worlds=worlds.clone()
+                                    world=world
+                                    filter_outliers=Signal::derive(move || {
+                                        filter_outliers().unwrap_or(false)
+                                    })
+                                    region=Signal::derive(move || region().ok())
+                                    cross_region_enabled=Signal::derive(move || {
+                                        cross_region_enabled().unwrap_or_default()
+                                    })
+                                    set_cross_region_enabled=set_cross_region_enabled
+                                    set_filter_outliers=set_filter_outliers
+                                    on_market_update=refetch_market_data
+                                />
+                            </Show>
+                        </Transition>
                     </div>
                 </div>
         </div>
@@ -3230,6 +3320,177 @@ mod tests {
             item_id,
             hq,
             sales: prices_and_days.iter().map(|(p, d)| sale(*p, *d)).collect(),
+        }
+    }
+
+    mod market_scope {
+        use super::*;
+        use ultros_api_types::websocket::ListingEventData;
+        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+
+        /// Two regions so a cross-region event has somewhere to come from.
+        /// World 100 is the sell world; 101 shares its region; 200 does not.
+        fn helper() -> WorldHelper {
+            WorldData {
+                regions: vec![
+                    Region {
+                        id: 1,
+                        name: "North-America".into(),
+                        datacenters: vec![Datacenter {
+                            id: 10,
+                            name: "Aether".into(),
+                            region_id: 1,
+                            worlds: vec![
+                                World {
+                                    id: 100,
+                                    name: "Adamantoise".into(),
+                                    datacenter_id: 10,
+                                },
+                                World {
+                                    id: 101,
+                                    name: "Cactuar".into(),
+                                    datacenter_id: 10,
+                                },
+                            ],
+                        }],
+                    },
+                    Region {
+                        id: 2,
+                        name: "Europe".into(),
+                        datacenters: vec![Datacenter {
+                            id: 20,
+                            name: "Chaos".into(),
+                            region_id: 2,
+                            worlds: vec![World {
+                                id: 200,
+                                name: "Cerberus".into(),
+                                datacenter_id: 20,
+                            }],
+                        }],
+                    },
+                ],
+            }
+            .into()
+        }
+
+        fn listing_event(world_id: i32) -> ServerClient {
+            ServerClient::Listings(EventType::Added(ListingEventData {
+                item_id: 42,
+                world_id,
+                listings: vec![],
+            }))
+        }
+
+        const SELL_WORLD: i32 = 100;
+
+        #[test]
+        fn event_on_the_sell_world_moves_the_world_and_region_boards() {
+            // The world board is a slice of the region board, so a listing on
+            // the sell world invalidates both — but never another region's.
+            let scope = classify_market_update(
+                &listing_event(SELL_WORLD),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                scope,
+                MarketScope {
+                    world: true,
+                    region: true,
+                    cross_region: false
+                }
+            );
+        }
+
+        #[test]
+        fn event_elsewhere_in_the_region_leaves_the_world_board_alone() {
+            let scope = classify_market_update(
+                &listing_event(101),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                scope,
+                MarketScope {
+                    world: false,
+                    region: true,
+                    cross_region: false
+                }
+            );
+        }
+
+        #[test]
+        fn event_in_another_region_only_moves_the_cross_region_board() {
+            let scope = classify_market_update(
+                &listing_event(200),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                scope,
+                MarketScope {
+                    world: false,
+                    region: false,
+                    cross_region: true
+                }
+            );
+        }
+
+        #[test]
+        fn stale_refetches_everything() {
+            // `Stale` names no world, so there is nothing to narrow on.
+            let stale = ServerClient::Stale { subscription_id: 1 };
+            assert_eq!(
+                classify_market_update(&stale, SELL_WORLD, Some("North-America"), &helper()),
+                MarketScope::ALL
+            );
+        }
+
+        #[test]
+        fn an_unresolvable_world_refetches_everything() {
+            // Failing open matters more than the saved bytes: a board that
+            // silently stops refreshing shows stale prices indefinitely.
+            assert_eq!(
+                classify_market_update(
+                    &listing_event(9999),
+                    SELL_WORLD,
+                    Some("North-America"),
+                    &helper()
+                ),
+                MarketScope::ALL
+            );
+            assert_eq!(
+                classify_market_update(&listing_event(101), SELL_WORLD, None, &helper()),
+                MarketScope::ALL
+            );
+        }
+
+        #[test]
+        fn merging_a_burst_of_ticks_unions_the_boards() {
+            // What the debounce window accumulates: separate events on the
+            // sell world and on another region must refetch both, not the
+            // last one to arrive.
+            let own = classify_market_update(
+                &listing_event(SELL_WORLD),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            let foreign = classify_market_update(
+                &listing_event(200),
+                SELL_WORLD,
+                Some("North-America"),
+                &helper(),
+            );
+            assert_eq!(
+                MarketScope::NONE.merge(own).merge(foreign),
+                MarketScope::ALL
+            );
+            assert!(MarketScope::NONE.is_empty());
+            assert!(!own.is_empty());
         }
     }
 
@@ -3629,82 +3890,43 @@ mod tests {
     }
 
     #[test]
-    fn the_default_column_set_adds_no_extra_width() {
-        // The stylesheet's per-breakpoint baseline already covers these, so
-        // counting them here would reserve the width twice and leave the grid
-        // scrolling into empty space.
-        let defaults: std::collections::HashSet<&'static str> =
-            DEFAULT_VISIBLE_COLS.iter().copied().collect();
+    fn no_optional_columns_reserves_no_extra_width() {
+        // The stylesheet's 30.75rem baseline is exactly the four always-on
+        // columns, so an empty set must add nothing on top of it.
         assert_eq!(
-            extra_column_widths_px(&defaults),
-            ExtraColumnWidths::default()
-        );
-        assert_eq!(
-            extra_column_widths_px(&std::collections::HashSet::new()),
-            ExtraColumnWidths::default()
+            optional_column_width_px(&std::collections::HashSet::new()),
+            0
         );
     }
 
     #[test]
-    fn every_opt_in_column_reserves_width() {
-        // A column that neither the CSS baseline nor this function accounts
-        // for is one the scrollports stop short of — the column renders and
-        // cannot be reached, which is the bug this whole mechanism exists to
-        // prevent.
+    fn every_optional_column_reserves_width() {
+        // A column this function does not account for is one the scrollports
+        // stop short of — it renders and cannot be reached, which is the bug
+        // this whole mechanism exists to prevent.
         for col in ALL_OPTIONAL_COLS {
-            if DEFAULT_VISIBLE_COLS.contains(col) {
-                continue;
-            }
             let set: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
-            let widths = extra_column_widths_px(&set);
             assert!(
-                widths.base + widths.md + widths.xl > 0,
+                optional_column_width_px(&set) > 0,
                 "{col} reserves no width, so the grid would stop short of it"
             );
         }
     }
 
     #[test]
-    fn breakpoint_hidden_columns_reserve_no_width_below_their_breakpoint() {
-        // The other half of the reservation contract: a `hidden md:flex` /
-        // `hidden xl:flex` column must not widen the scroll range of a
-        // viewport that never renders it, or a phone scrolls into blank
-        // space. `base` is the only bucket a phone-width stylesheet applies,
-        // and `md` is the widest bucket applied below `xl`.
-        let md_gated: std::collections::HashSet<&'static str> =
-            [COL_TREND, COL_SALES_PER_DAY, COL_VOLUME_30D]
-                .into_iter()
-                .collect();
-        let widths = extra_column_widths_px(&md_gated);
-        assert_eq!(widths.base, 0);
-        assert!(widths.md > 0);
-        assert_eq!(widths.xl, 0);
-
-        let xl_gated: std::collections::HashSet<&'static str> =
-            [COL_DATACENTER].into_iter().collect();
-        let widths = extra_column_widths_px(&xl_gated);
-        assert_eq!(widths.base, 0);
-        assert_eq!(widths.md, 0);
-        assert!(widths.xl > 0);
-
-        // ROI renders at every width, so its reservation must too.
-        let always: std::collections::HashSet<&'static str> = [COL_ROI].into_iter().collect();
-        assert!(extra_column_widths_px(&always).base > 0);
-    }
-
-    #[test]
-    fn hidden_note_matches_the_width_buckets() {
-        // Every optional column that is breakpoint-hidden gets a "desktop
-        // only" note in the Columns picker; the two always-visible ones must
-        // not, or the note would be a lie.
-        for col in ALL_OPTIONAL_COLS {
-            let note = col_hidden_note_class(col);
-            if *col == COL_PROFIT_PER_DAY || *col == COL_ROI {
-                assert!(note.is_none(), "{col} is always visible");
-            } else {
-                assert!(note.is_some(), "{col} is breakpoint-hidden");
-            }
-        }
+    fn column_reservations_add_up() {
+        // The reservation is a plain sum now that no column is breakpoint
+        // hidden — nothing is bucketed away from a narrow viewport.
+        let all: std::collections::HashSet<&'static str> =
+            ALL_OPTIONAL_COLS.iter().copied().collect();
+        let summed: u32 = ALL_OPTIONAL_COLS
+            .iter()
+            .map(|col| {
+                let one: std::collections::HashSet<&'static str> = [*col].into_iter().collect();
+                optional_column_width_px(&one)
+            })
+            .sum();
+        assert_eq!(optional_column_width_px(&all), summed);
     }
 
     #[test]
@@ -3845,49 +4067,16 @@ mod tests {
         }
     }
 
-    /// The header's flip rule, extracted from the href closure so it can be
-    /// pinned without a router. Clicking the column already in effect flips;
-    /// clicking any other column starts descending.
-    fn next_sort_dir(is_active: bool, current: SortDir) -> SortDir {
-        if is_active {
-            match current {
-                SortDir::Desc => SortDir::Asc,
-                SortDir::Asc => SortDir::Desc,
-            }
-        } else {
-            SortDir::Desc
+    #[test]
+    fn every_flip_finder_column_reads_best_first_descending() {
+        // The shared header omits `dir` whenever it matches the column's
+        // default, so every bookmarked `?sort=` on this route means
+        // descending. Giving a column its own default here would silently
+        // flip what those old links resolve to.
+        for mode in [SortMode::Roi, SortMode::Profit, SortMode::ProfitPerDay] {
+            assert_eq!(mode.default_dir(), SortDir::Desc, "{mode}");
         }
-    }
-
-    #[test]
-    fn clicking_the_active_column_flips_direction() {
-        assert_eq!(next_sort_dir(true, SortDir::Desc), SortDir::Asc);
-        assert_eq!(next_sort_dir(true, SortDir::Asc), SortDir::Desc);
-    }
-
-    #[test]
-    fn clicking_a_different_column_starts_descending() {
-        // Arriving at a new column ascending would bury the best rows, which
-        // is the opposite of what every one of these columns is sorted for.
-        assert_eq!(next_sort_dir(false, SortDir::Asc), SortDir::Desc);
-        assert_eq!(next_sort_dir(false, SortDir::Desc), SortDir::Desc);
-    }
-
-    #[test]
-    fn descending_is_the_default_so_it_stays_out_of_the_url() {
-        // The header omits `dir` whenever it equals the default; if that
-        // default ever changed, every bookmarked `?sort=` would silently
-        // flip meaning.
-        assert_eq!(SortDir::default(), SortDir::Desc);
-    }
-
-    #[test]
-    fn sort_dir_round_trips_through_string() {
-        assert_eq!("asc".parse::<SortDir>(), Ok(SortDir::Asc));
-        assert_eq!("desc".parse::<SortDir>(), Ok(SortDir::Desc));
-        assert_eq!(SortDir::Asc.to_string(), "asc");
-        assert_eq!(SortDir::Desc.to_string(), "desc");
-        assert!("sideways".parse::<SortDir>().is_err());
+        assert_eq!(<SortMode as SortColumn>::fallback(), SortMode::ProfitPerDay);
     }
 
     #[test]

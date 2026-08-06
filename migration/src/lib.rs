@@ -32,6 +32,8 @@ mod m20260514_000002_alert_list_update;
 mod m20260514_000003_list_activity;
 mod m20260802_000001_authless_character_claims;
 mod m20260802_000002_user_group_discord_guild;
+mod m20260804_000001_active_listing_cheapest_index;
+mod m20260805_000001_group_invite;
 
 pub struct Migrator;
 
@@ -73,6 +75,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000003_list_activity::Migration),
             Box::new(m20260802_000001_authless_character_claims::Migration),
             Box::new(m20260802_000002_user_group_discord_guild::Migration),
+            Box::new(m20260804_000001_active_listing_cheapest_index::Migration),
+            Box::new(m20260805_000001_group_invite::Migration),
         ]
     }
 }

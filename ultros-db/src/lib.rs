@@ -218,30 +218,6 @@ impl UltrosDb {
             .ok_or_else(|| anyhow::Error::msg("Region not found"))
     }
 
-    #[instrument(skip(self, world_id, item))]
-    pub async fn get_multiple_listings_for_worlds_hq_sensitive(
-        &self,
-        world_id: impl Iterator<Item = WorldId>,
-        item: impl Iterator<Item = ItemId> + Clone,
-        hq: bool,
-        limit: u64,
-    ) -> Result<Vec<active_listing::Model>> {
-        use active_listing::*;
-        let join = futures::future::try_join_all(world_id.flat_map(|world| {
-            item.clone().map(move |i| {
-                Entity::find()
-                    .filter(Column::ItemId.eq(i.0))
-                    .filter(Column::WorldId.eq(world.0))
-                    .filter(Column::Hq.eq(hq))
-                    .order_by_asc(Column::PricePerUnit)
-                    .limit(limit)
-                    .all(&self.db)
-            })
-        }))
-        .await?;
-        Ok(join.into_iter().flat_map(|l| l.into_iter()).collect())
-    }
-
     #[instrument(skip(self))]
     pub async fn get_listings_for_world_hq(
         &self,

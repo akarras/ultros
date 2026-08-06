@@ -4,7 +4,8 @@ use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, Statement,
+    ColumnTrait, DbBackend, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QuerySelect,
+    Statement,
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
@@ -612,17 +613,73 @@ impl UltrosDb {
         Ok((added, removed))
     }
 
+    /// Cheapest price per (item, hq, world) for a specific set of items — the
+    /// query behind the analyzer's cheapest-listing refill.
+    ///
+    /// This replaces `get_multiple_listings_for_worlds_hq_sensitive`, which built
+    /// its result with `worlds.flat_map(|w| items.map(|i| ...))` — **one query per
+    /// (world × item) pair**. Refilling 18 items across Aether's 8 worlds meant
+    /// 144 round-trips, and the analyzer issued them per removed listing while
+    /// holding a write lock. One grouped query answers the same question.
+    ///
+    /// Both qualities come back in a single call: [`ListingSummary`] carries `hq`
+    /// and the analyzer keys on it, so there is no reason to split into two
+    /// round-trips the way the hq-sensitive variant did.
+    pub async fn cheapest_listings_for_items(
+        &self,
+        worlds: &[i32],
+        items: &[i32],
+    ) -> Result<Vec<ListingSummary>> {
+        use active_listing::*;
+        if worlds.is_empty() || items.is_empty() {
+            return Ok(vec![]);
+        }
+        let instant = Instant::now();
+        let summaries = Entity::find()
+            .select_only()
+            .column(Column::ItemId)
+            .column(Column::Hq)
+            .column(Column::WorldId)
+            .column_as(Column::PricePerUnit.min(), "price_per_unit")
+            .filter(Column::ItemId.is_in(items.to_vec()))
+            .filter(Column::WorldId.is_in(worlds.to_vec()))
+            .group_by(Column::ItemId)
+            .group_by(Column::Hq)
+            .group_by(Column::WorldId)
+            .into_model::<ListingSummary>()
+            .all(&self.db)
+            .await?;
+        histogram!("ultros_db_cheapest_listings_for_items_duration_seconds")
+            .record(instant.elapsed());
+        Ok(summaries)
+    }
+
+    /// The cheapest price for every (item, hq, world) currently on the market.
+    ///
+    /// This runs on analyzer boot and on bus-lag recovery, so it wants to be as
+    /// cheap as the shape of the question allows. It used to compute
+    /// `RANK() OVER (PARTITION BY item_id, hq, world_id ORDER BY price_per_unit)`
+    /// over the whole table and then keep only rank 1 — Postgres cannot push that
+    /// filter into the window, so it sorted every row in `active_listing` just to
+    /// discard nearly all of them. `RANK()` also emits ties, so price-matched
+    /// listings came back as duplicate rows.
+    ///
+    /// [`ListingSummary`] is a pure aggregate, so a plain `GROUP BY` answers it
+    /// exactly: one row per group, no global sort, no per-row window state. With
+    /// `idx_active_listing_cheapest` on (item_id, hq, world_id, price_per_unit)
+    /// it can be served by an index-only scan.
     pub async fn cheapest_listings(
         &self,
     ) -> Result<impl Stream<Item = Result<ListingSummary, DbErr>> + '_, DbErr> {
         ListingSummary::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            r#"SELECT ranks.* FROM (SELECT l.item_id, l.hq, l.price_per_unit, l.world_id,
-                RANK() OVER (PARTITION BY l.item_id, l.hq, l.world_id ORDER BY l.price_per_unit ASC) listing_rank
-                FROM active_listing l) ranks
-                WHERE ranks.listing_rank = 1"#,
+            r#"SELECT item_id, hq, world_id, MIN(price_per_unit) AS price_per_unit
+                FROM active_listing
+                GROUP BY item_id, hq, world_id"#,
             vec![],
-        )).stream(&self.db).await
+        ))
+        .stream(&self.db)
+        .await
     }
 }
 

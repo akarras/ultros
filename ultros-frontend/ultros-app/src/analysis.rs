@@ -316,6 +316,16 @@ pub fn velocity_per_day(summary: &SaleSummary) -> Option<f32> {
     Some(summary.num_sold as f32 / span_days.max(MIN_VELOCITY_SPAN_DAYS))
 }
 
+/// Expected gil per day from flipping one item repeatedly: per-flip profit
+/// times [`velocity_per_day`]. Items that sell faster than daily earn more
+/// than one flip's profit per day; slow movers earn a fraction of it.
+/// Returns 0 when there is no sale history to rate the item with.
+pub fn profit_per_day(profit: i32, summary: &SaleSummary) -> i32 {
+    velocity_per_day(summary)
+        .map(|v| (profit as f64 * v as f64) as i32)
+        .unwrap_or(0)
+}
+
 /// Percent change between the mean of the newest samples and the mean of
 /// the oldest samples. `prices` is newest-first, matching the wire order
 /// of `RecentSales`.
@@ -711,6 +721,28 @@ mod tests {
         let s = summary_with(6, 94_041 * 3600 / 6);
         let v = velocity_per_day(&s).unwrap();
         assert!(v < 0.01, "expected near-zero velocity, got {v}");
+    }
+
+    #[test]
+    fn profit_per_day_scales_up_for_fast_sellers() {
+        // 6 sales, avg gap 6h => 4 sales/day. 100 gil profit => 400/day,
+        // not clamped down to the flat profit figure.
+        let s = summary_with(6, 6 * 3600);
+        assert_eq!(profit_per_day(100, &s), 400);
+    }
+
+    #[test]
+    fn profit_per_day_scales_down_for_slow_sellers() {
+        // avg gap 2 days => 0.5 sales/day => half the profit per day.
+        let s = summary_with(2, 2 * 86_400);
+        assert_eq!(profit_per_day(100, &s), 50);
+    }
+
+    #[test]
+    fn profit_per_day_zero_without_sale_history() {
+        let mut s = summary_with(0, 0);
+        s.avg_sale_duration = None;
+        assert_eq!(profit_per_day(100, &s), 0);
     }
 
     #[test]

@@ -130,6 +130,34 @@ fn get_static_pages() -> &'static [SearchResult] {
     &STATIC_PAGES
 }
 
+/// What an in-flight search should do once its request comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchOutcome {
+    /// Still the newest search — commit its results.
+    Commit,
+    /// A newer keystroke started another search — drop these results.
+    Superseded,
+    /// The search box was unmounted while the request was in flight.
+    Cancelled,
+}
+
+/// Decide the fate of the search that started as `started_id`.
+///
+/// Reading through `try_get_untracked` rather than `get_untracked` is
+/// load-bearing. [`SearchOverlay`](crate::components::search_overlay) closes
+/// itself on every navigation, and its `<Show>` disposes this component's
+/// signals when it does — so selecting a search result routes away and drops
+/// `search_id` while the `/api/v1/search` request it started is still in
+/// flight. `get_untracked` panics on a disposed signal, which took the whole
+/// wasm bundle down on search-then-navigate (GlitchTip #6874).
+fn search_outcome(search_id: ReadSignal<usize>, started_id: usize) -> SearchOutcome {
+    match search_id.try_get_untracked() {
+        None => SearchOutcome::Cancelled,
+        Some(id) if id == started_id => SearchOutcome::Commit,
+        Some(_) => SearchOutcome::Superseded,
+    }
+}
+
 #[component]
 pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
     let i18n = use_i18n();
@@ -180,7 +208,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
         spawn_local(async move {
             TimeoutFuture::new(300).await;
 
-            if search_id.get_untracked() != current_id {
+            if search_outcome(search_id, current_id) != SearchOutcome::Commit {
                 return;
             }
 
@@ -206,7 +234,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
             set_loading.set(true);
             match api_search(&s).await {
                 Ok(mut results) => {
-                    if search_id.get_untracked() == current_id {
+                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
                         // Prepend static pages to the backend results
                         let mut final_results = matched_pages;
                         final_results.append(&mut results);
@@ -217,7 +245,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                     }
                 }
                 Err(e) => {
-                    if search_id.get_untracked() == current_id {
+                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
                         log::error!("Search failed: {}", e);
                         // Even if backend fails, show matched static pages
                         let results = matched_pages.into_iter().map(Arc::new).collect();
@@ -577,4 +605,37 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commits_the_newest_search() {
+        let owner = Owner::new();
+        let (search_id, _set) = owner.with(|| signal(7usize));
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Commit);
+    }
+
+    #[test]
+    fn drops_a_search_a_later_keystroke_superseded() {
+        let owner = Owner::new();
+        let (search_id, set_search_id) = owner.with(|| signal(7usize));
+        set_search_id.set(8);
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Superseded);
+    }
+
+    /// Selecting a result navigates, `SearchOverlay`'s location effect closes
+    /// the overlay, and its `<Show>` disposes the search box — all while the
+    /// request is still in flight. Reading `search_id` here used to panic
+    /// ("Tried to access a reactive value that has already been disposed"),
+    /// killing the wasm bundle on the page just navigated to (#6874).
+    #[test]
+    fn cancels_a_search_whose_component_was_disposed_mid_flight() {
+        let owner = Owner::new();
+        let (search_id, _set) = owner.with(|| signal(7usize));
+        owner.cleanup();
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Cancelled);
+    }
 }

@@ -31,7 +31,8 @@ use ultros_api_types::{
     user::{
         AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
         group::{
-            CreateGroup, CreateGroupFromGuild, DiscordManageableGuild, UserGroup, UserGroupMember,
+            CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild,
+            GroupInvite, UserGroup, UserGroupMember,
         },
     },
 };
@@ -571,6 +572,26 @@ pub(crate) async fn add_group_member(group_id: i32, user_id: u64) -> AppResult<(
 
 pub(crate) async fn remove_group_member(group_id: i32, user_id: u64) -> AppResult<()> {
     delete_api(&format!("/api/v1/group/{group_id}/member/remove/{user_id}")).await
+}
+
+pub(crate) async fn get_group_invites(group_id: i32) -> AppResult<Vec<GroupInvite>> {
+    fetch_api(&format!("/api/v1/group/{group_id}/invites")).await
+}
+
+pub(crate) async fn create_group_invite(
+    group_id: i32,
+    invite: CreateGroupInvite,
+) -> AppResult<GroupInvite> {
+    post_api(&format!("/api/v1/group/{group_id}/invite/create"), invite).await
+}
+
+/// Returns the id of the group joined, so the caller can navigate to it.
+pub(crate) async fn use_group_invite(invite_id: String) -> AppResult<i32> {
+    post_api(&format!("/api/v1/group-invite/{invite_id}/use"), ()).await
+}
+
+pub(crate) async fn delete_group_invite(invite_id: String) -> AppResult<()> {
+    delete_api(&format!("/api/v1/group-invite/{invite_id}")).await
 }
 
 pub(crate) async fn get_list_shares(

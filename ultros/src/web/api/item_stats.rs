@@ -58,7 +58,7 @@ pub(crate) async fn get_item_stats(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, item_id, world_name, "item_stats CH query failed");
-            anyhow::anyhow!("ClickHouse item_stats query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("item_stats", e)
         })?;
 
     let variants = ultros_clickhouse::queries::aggregate_item_stats_variants(&scans);

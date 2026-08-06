@@ -3,7 +3,7 @@ use crate::{
     common::try_update_value::ActiveValueCmpSet,
     common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
     entity::{
-        active_listing, discord_user, list, list_activity, list_invite, list_item,
+        active_listing, discord_user, group_invite, list, list_activity, list_invite, list_item,
         list_shared_group, list_shared_user, retainer, user_group, user_group_member,
     },
     world_data::world_cache::{AnySelector, WorldCache},
@@ -835,6 +835,144 @@ impl UltrosDb {
         all_groups.sort_by_key(|g| g.id);
         all_groups.dedup_by_key(|g| g.id);
         Ok(all_groups)
+    }
+
+    // --- Group Invite Management ---
+    //
+    // Mirrors the list invites below, minus the permission column: group
+    // membership is binary, so there is nothing for an invite to grant beyond
+    // membership itself. Guild-linked groups are deliberately included — in
+    // phase 1 the guild link supplies the group's identity, not its membership,
+    // so an invite is no more privileged there than on a manual group.
+
+    pub async fn create_group_invite(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        max_uses: Option<i32>,
+    ) -> Result<group_invite::Model> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden("Only the owner can create invites").into());
+        }
+        if matches!(max_uses, Some(max_uses) if max_uses <= 0) {
+            return Err(ListError::BadRequest("Invite max uses must be positive").into());
+        }
+        Ok(group_invite::ActiveModel {
+            id: ActiveValue::Set(new_invite_id()?),
+            group_id: ActiveValue::Set(group_id),
+            max_uses: ActiveValue::Set(max_uses),
+            uses: ActiveValue::Set(0),
+        }
+        .insert(&self.db)
+        .await?)
+    }
+
+    /// Redeem an invite, returning the group the user now belongs to.
+    ///
+    /// Redeeming twice is a no-op that does *not* consume a second use — unlike
+    /// a list share there is no permission to re-apply, so burning a use for a
+    /// member who is already in the group would just punish double-clicks.
+    pub async fn use_group_invite(&self, invite_id: String, user_id: i64) -> Result<i32> {
+        let txn = self.db.begin().await?;
+
+        let invite = group_invite::Entity::find_by_id(invite_id.clone())
+            .one(&txn)
+            .await?
+            .ok_or(ListError::InviteNotFound)?;
+
+        let already_member = user_group_member::Entity::find_by_id((invite.group_id, user_id))
+            .one(&txn)
+            .await?
+            .is_some();
+        if already_member {
+            txn.rollback().await?;
+            return Ok(invite.group_id);
+        }
+
+        // Atomic conditional increment: only succeeds if the invite still has
+        // uses left. This closes the TOCTOU window where two concurrent
+        // redemptions could both pass a pre-check and then both increment.
+        let update = group_invite::Entity::update_many()
+            .col_expr(
+                group_invite::Column::Uses,
+                Expr::col(group_invite::Column::Uses).add(1),
+            )
+            .filter(group_invite::Column::Id.eq(invite_id))
+            .filter(
+                Condition::any()
+                    .add(group_invite::Column::MaxUses.is_null())
+                    .add(
+                        Expr::col(group_invite::Column::Uses)
+                            .lt(Expr::col(group_invite::Column::MaxUses)),
+                    ),
+            )
+            .exec(&txn)
+            .await?;
+
+        if update.rows_affected == 0 {
+            txn.rollback().await?;
+            // The invite was read above, so the only way to get here is the
+            // max-uses filter rejecting it.
+            return Err(ListError::InviteExhausted.into());
+        }
+
+        user_group_member::Entity::insert(user_group_member::ActiveModel {
+            group_id: ActiveValue::Set(invite.group_id),
+            user_id: ActiveValue::Set(user_id),
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                user_group_member::Column::GroupId,
+                user_group_member::Column::UserId,
+            ])
+            // A no-op update rather than `do_nothing`, which would make the
+            // insert report `RecordNotInserted` on the losing side of a race.
+            .update_column(user_group_member::Column::UserId)
+            .to_owned(),
+        )
+        .exec(&txn)
+        .await?;
+
+        txn.commit().await?;
+        Ok(invite.group_id)
+    }
+
+    pub async fn delete_group_invite(&self, invite_id: String, owner_id: i64) -> Result<()> {
+        let invite = group_invite::Entity::find_by_id(invite_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::InviteNotFound)?;
+        let group = user_group::Entity::find_by_id(invite.group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden("Only the owner can delete invites").into());
+        }
+        invite.delete(&self.db).await?;
+        Ok(())
+    }
+
+    pub async fn get_group_invites(
+        &self,
+        group_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<group_invite::Model>> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != user_id {
+            return Err(ListError::Forbidden("Only the owner can view invites").into());
+        }
+        Ok(group_invite::Entity::find()
+            .filter(group_invite::Column::GroupId.eq(group_id))
+            .all(&self.db)
+            .await?)
     }
 
     // --- Sharing Management ---
