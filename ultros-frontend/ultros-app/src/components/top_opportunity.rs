@@ -118,7 +118,8 @@ pub fn TopOpportunities(world: Signal<Option<String>>) -> impl IntoView {
                 v.retain(|d| {
                     d.return_on_investment > 0.0 && d.profit > 0 && d.launder_suspicion <= 0.7
                 });
-                v.into_iter().take(VISIBLE_DEALS).collect::<Vec<_>>()
+                v.truncate(VISIBLE_DEALS);
+                v
             }))
         }
     });
