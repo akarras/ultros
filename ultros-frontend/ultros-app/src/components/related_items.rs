@@ -1041,7 +1041,11 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 <ActiveListBanner />
                 <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 max-w-6xl">
                     <For
-                        each=Signal::derive(move || recipes().into_iter().take(5).collect::<Vec<_>>())
+                        each=Signal::derive(move || {
+                            let mut r = recipes();
+                            r.truncate(5);
+                            r
+                        })
                         key=|recipe| recipe.key_id
                         children=move |recipe: &'static Recipe| {
                             view! { <Recipe recipe item_id=ItemId(item_id()) /> }
