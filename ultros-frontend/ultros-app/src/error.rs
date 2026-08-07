@@ -24,6 +24,13 @@ pub enum AppError {
     ApiError(#[from] ApiError),
     #[error("Homeworld not set")]
     NoHomeWorld,
+    /// The world list never loaded, so no world/datacenter/region name can be resolved.
+    ///
+    /// Produced when `LocalWorldData` is absent or holds an `Err` — on the client that is a
+    /// failed `/api/v1/world_data` fetch (see `ultros-client`'s bootstrap, which stores the
+    /// failure via `LocalWorldData::failed`).
+    #[error("World data is unavailable")]
+    WorldDataUnavailable,
 }
 
 /// This error type implements From's for the non serializable error types and shoves them into a string
