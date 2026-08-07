@@ -36,7 +36,7 @@ use crate::{
         world_picker::*,
     },
     error::AppError,
-    global_state::LocalWorldData,
+    global_state::{LocalWorldData, region_for_world::region_for_world_name},
     math::filter_outliers_iqr_in_place,
     query_defaults::{
         DEFAULT_MAX_SALE_TIME, filter_query_signal, seed_flip_finder_default_view,
@@ -3014,20 +3014,10 @@ pub fn AnalyzerWorldView() -> impl IntoView {
     );
 
     let region = Memo::new(move |_| {
-        let worlds = use_context::<LocalWorldData>()
-            .expect("Worlds should always be populated here")
-            .0
-            .unwrap();
-        let world = params.with(|p| p.get("world").clone());
-        let world = world.ok_or(AppError::ParamMissing)?;
-        let region = worlds
-            .lookup_world_by_name(&world)
-            .map(|world| {
-                let region = worlds.get_region(world);
-                AnyResult::Region(region).get_name().to_string()
-            })
-            .ok_or(AppError::ParamMissing)?;
-        Result::<_, AppError>::Ok(region)
+        region_for_world_name(
+            use_context::<LocalWorldData>(),
+            params.with(|p| p.get("world").clone()),
+        )
     });
 
     let global_cheapest_listings = ArcResource::new(
