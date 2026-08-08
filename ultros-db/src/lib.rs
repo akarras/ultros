@@ -323,6 +323,20 @@ impl UltrosDb {
                 .await?;
             retainer.id
         };
+        use active_listing::{Column, Entity};
+        use sea_orm::ExprTrait;
+        let materia = (!listing.materia.is_empty()).then(|| {
+            active_listing::MateriaList(
+                listing
+                    .materia
+                    .iter()
+                    .map(|m| active_listing::Materia {
+                        slot_id: m.slot_id.map(|s| s as i32),
+                        materia_id: m.materia_id as i32,
+                    })
+                    .collect(),
+            )
+        });
         let m = active_listing::ActiveModel {
             world_id: Set(world_id.0),
             item_id: Set(item_id.0),
@@ -331,10 +345,46 @@ impl UltrosDb {
             quantity: Set(quantity),
             hq: Set(listing.hq),
             timestamp: Set(listing.last_review_time.naive_utc()),
+            listing_id: Set(listing.listing_id.clone()),
+            materia: Set(materia),
+            stain_id: Set(listing.stain_id.map(|s| s as i32)),
+            creator_name: Set(listing.creator_name.clone().filter(|n| !n.is_empty())),
+            is_crafted: Set(listing.is_crafted),
+            on_mannequin: Set(listing.on_mannequin),
             ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
+        };
+        // Upsert on the listing's Universalis identity. This is what makes
+        // concurrent writers safe: any two tasks racing to store the same
+        // listing — duplicate websocket events, catch-up vs. socket, the manual
+        // refresh route — collapse into one row at the database instead of each
+        // trusting its own pre-insert read. The `WHERE` mirrors the partial
+        // unique index `idx_active_listing_identity`; a listing with no
+        // `listing_id` can't conflict and inserts plainly (legacy diff paths
+        // are responsible for not calling us with duplicates of those).
+        let m = Entity::insert(m)
+            .on_conflict(
+                sea_query::OnConflict::columns([
+                    Column::WorldId,
+                    Column::ItemId,
+                    Column::ListingId,
+                ])
+                .target_and_where(sea_query::Expr::col(Column::ListingId).is_not_null())
+                .update_columns([
+                    Column::RetainerId,
+                    Column::PricePerUnit,
+                    Column::Quantity,
+                    Column::Hq,
+                    Column::Timestamp,
+                    Column::Materia,
+                    Column::StainId,
+                    Column::CreatorName,
+                    Column::IsCrafted,
+                    Column::OnMannequin,
+                ])
+                .to_owned(),
+            )
+            .exec_with_returning(&self.db)
+            .await?;
         Ok(m)
     }
 

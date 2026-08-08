@@ -38,6 +38,7 @@ mod test {
                 quantity: 50,
                 hq: true,
                 timestamp: NaiveDateTime::default(),
+                ..Default::default()
             },
             active_listing::Model {
                 id: 1,
@@ -48,6 +49,7 @@ mod test {
                 quantity: 50,
                 hq: true,
                 timestamp: NaiveDateTime::default(),
+                ..Default::default()
             },
             active_listing::Model {
                 id: 1,
@@ -58,6 +60,7 @@ mod test {
                 quantity: 50,
                 hq: true,
                 timestamp: NaiveDateTime::default(),
+                ..Default::default()
             },
             active_listing::Model {
                 id: 1,
@@ -68,6 +71,7 @@ mod test {
                 quantity: 50,
                 hq: true,
                 timestamp: NaiveDateTime::default(),
+                ..Default::default()
             },
         ];
         let mut list : Vec<_> = listings.iter().collect();

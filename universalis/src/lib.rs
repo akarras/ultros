@@ -129,7 +129,12 @@ pub struct ListingView {
     pub creator_id: Option<String>,
     pub hq: bool,
     pub is_crafted: bool,
-    pub listing_id: Option<u32>,
+    /// Universalis' stable identity for a listing (a decimal string too large
+    /// for u32). Sent as `listingID` — the previous `listing_id: Option<u32>`
+    /// under `rename_all = "camelCase"` looked for `listingId` and silently
+    /// deserialized to `None` on every REST and websocket payload.
+    #[serde(rename = "listingID")]
+    pub listing_id: Option<String>,
     pub materia: Vec<MateriaView>,
     pub on_mannequin: bool,
     pub retainer_city: u32,
@@ -669,6 +674,38 @@ mod pure_tests {
             total: 100,
             tax: 0,
         }
+    }
+
+    /// The exact field shape Universalis sends on both REST and websocket:
+    /// `listingID` (capital D) carrying a decimal string too large for u32.
+    /// Regression: the old `Option<u32>` field under `rename_all = "camelCase"`
+    /// looked for `listingId`, so every payload deserialized to `None` and the
+    /// listing's stable identity was silently discarded.
+    #[test]
+    fn listing_view_parses_listing_id_from_the_wire_shape() {
+        let json = r#"{
+            "lastReviewTime": 1786225863,
+            "pricePerUnit": 1499999,
+            "quantity": 1,
+            "stainID": 0,
+            "creatorName": "",
+            "creatorID": null,
+            "hq": false,
+            "isCrafted": false,
+            "listingID": "21392098345024855",
+            "materia": [{"slotID": 0, "materiaID": 41}],
+            "onMannequin": false,
+            "retainerCity": 1,
+            "retainerID": "33777097243838095",
+            "retainerName": "Stinky'ra",
+            "sellerID": null,
+            "total": 1499999,
+            "tax": 74999
+        }"#;
+        let listing: ListingView = serde_json::from_str(json).unwrap();
+        assert_eq!(listing.listing_id.as_deref(), Some("21392098345024855"));
+        assert_eq!(listing.materia[0].materia_id, 41);
+        assert_eq!(listing.stain_id, Some(0));
     }
 
     #[test]
