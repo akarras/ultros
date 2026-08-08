@@ -33,6 +33,26 @@ pub enum Error {
     BadId(u32),
     #[error("No items were suggested")]
     NoItems,
+    /// Universalis answered with a non-success status. See [`check_status`] for why
+    /// this exists rather than letting the body fall through to the deserializer.
+    #[error("universalis returned HTTP {status} for {url}: {body}")]
+    Status {
+        status: u16,
+        url: String,
+        body: String,
+    },
+}
+
+impl Error {
+    /// True when Universalis answered `404 Not Found`.
+    ///
+    /// Every REST path in this client names an entity (a world, a datacenter, an
+    /// item list), so a 404 means "Universalis does not know that entity" — a
+    /// permanent condition callers should stop retrying, as opposed to the
+    /// transient 429/5xx failures that are worth another pass.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Error::Status { status: 404, .. })
+    }
 }
 
 impl From<async_tungstenite::tungstenite::Error> for Error {
@@ -320,6 +340,52 @@ pub enum WorldOrDatacenter<'a> {
     Datacenter(&'a str),
 }
 
+/// How much of an error body to keep in [`Error::Status`]. Universalis' problem
+/// documents are ~160 bytes; the cap only matters if it ever returns an HTML
+/// error page from a proxy.
+const ERROR_BODY_SNIPPET_LEN: usize = 300;
+
+/// Reject non-success responses before anything tries to deserialize the body.
+///
+/// Universalis answers errors with an RFC 9457 problem document
+/// (`{"type":…,"title":"Not Found","status":404,"traceId":…}`), which has none of
+/// the fields of the success payloads. Calling `Response::json()` straight off the
+/// response therefore reports `missing field \`items\`` — a message that reads like
+/// upstream schema drift and completely hides the status. That is exactly what
+/// ultros' catch-up sweep logged for every world Universalis has since dropped.
+fn check_status(status: u16, url: &str, body: &[u8]) -> Result<(), Error> {
+    if (200..300).contains(&status) {
+        return Ok(());
+    }
+    let body = String::from_utf8_lossy(body);
+    let snippet = match body.char_indices().nth(ERROR_BODY_SNIPPET_LEN) {
+        Some((idx, _)) => format!("{}…", &body[..idx]),
+        None => body.into_owned(),
+    };
+    Err(Error::Status {
+        status,
+        url: url.to_string(),
+        body: snippet,
+    })
+}
+
+/// Read a response body, mapping a non-success status to [`Error::Status`].
+async fn checked_body(url: &str, response: reqwest::Response) -> Result<Vec<u8>, Error> {
+    let status = response.status().as_u16();
+    let body = response.bytes().await?.to_vec();
+    check_status(status, url, &body)?;
+    Ok(body)
+}
+
+/// [`checked_body`] plus deserialization, for the endpoints with a single response shape.
+async fn checked_json<T: serde::de::DeserializeOwned>(
+    url: &str,
+    response: reqwest::Response,
+) -> Result<T, Error> {
+    let body = checked_body(url, response).await?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
 impl UniversalisClient {
     const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
 
@@ -333,19 +399,17 @@ impl UniversalisClient {
     }
 
     pub async fn get_data_centers(&self) -> Result<DataCentersView, Error> {
-        let data_centers = Request::new(
-            Method::GET,
-            Url::parse(&format!("{}/data-centers", Self::UNIVERSALIS_BASE_URL))?,
-        );
-        Ok(self.client.execute(data_centers).await?.json().await?)
+        let url = format!("{}/data-centers", Self::UNIVERSALIS_BASE_URL);
+        let data_centers = Request::new(Method::GET, Url::parse(&url)?);
+        let response = self.client.execute(data_centers).await?;
+        checked_json(&url, response).await
     }
 
     pub async fn get_worlds(&self) -> Result<WorldsView, Error> {
-        let data_centers = Request::new(
-            Method::GET,
-            Url::parse(&format!("{}/worlds", Self::UNIVERSALIS_BASE_URL))?,
-        );
-        Ok(self.client.execute(data_centers).await?.json().await?)
+        let url = format!("{}/worlds", Self::UNIVERSALIS_BASE_URL);
+        let worlds = Request::new(Method::GET, Url::parse(&url)?);
+        let response = self.client.execute(worlds).await?;
+        checked_json(&url, response).await
     }
 
     pub async fn marketboard_current_data(
@@ -357,20 +421,19 @@ impl UniversalisClient {
             return Err(Error::NoItems);
         }
         let id_str = Self::ids_to_string(item_ids);
-        let request = Request::new(
-            Method::GET,
-            Url::parse(&format!(
-                "{}/{world_or_datacenter}/{id_str}",
-                Self::UNIVERSALIS_BASE_URL
-            ))?,
+        let url = format!(
+            "{}/{world_or_datacenter}/{id_str}",
+            Self::UNIVERSALIS_BASE_URL
         );
+        let request = Request::new(Method::GET, Url::parse(&url)?);
         info!("Getting current marketboard data: {}", request.url());
         let response = self.client.execute(request).await?;
+        let body = checked_body(&url, response).await?;
         // serde struggles with this untagged enum so I just manually decide for it :)
         Ok(if item_ids.len() == 1 {
-            SingleView(response.json().await?)
+            SingleView(serde_json::from_slice(&body)?)
         } else {
-            MultiView(response.json().await?)
+            MultiView(serde_json::from_slice(&body)?)
         })
     }
 
@@ -386,11 +449,12 @@ impl UniversalisClient {
             id_str
         );
         info!("getting historical marketboard data: {}", url);
-        let response = self.client.get(url).send().await?;
+        let response = self.client.get(&url).send().await?;
+        let body = checked_body(&url, response).await?;
         Ok(if item_ids.len() == 1 {
-            HistoryView::SingleView(response.json().await?)
+            HistoryView::SingleView(serde_json::from_slice(&body)?)
         } else {
-            HistoryView::MultiView(response.json().await?)
+            HistoryView::MultiView(serde_json::from_slice(&body)?)
         })
     }
 
@@ -408,12 +472,90 @@ impl UniversalisClient {
             Self::UNIVERSALIS_BASE_URL
         );
         info!("getting recently updated items {}", url);
-        Ok(self.client.get(url).send().await?.json().await?)
+        let response = self.client.get(&url).send().await?;
+        checked_json(&url, response).await
     }
 
     fn ids_to_string(item_ids: &[i32]) -> String {
         let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
         id_strs.join(",")
+    }
+}
+
+#[cfg(test)]
+mod status_test {
+    use crate::{Error, MostRecentlyUpdatedItemsView, check_status};
+
+    /// Verbatim body Universalis returns for a world it does not know, e.g.
+    /// `/extra/stats/most-recently-updated?entries=200&world=Innocence`.
+    const NOT_FOUND_BODY: &[u8] = br#"{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-1046d7d509da111cf20beb46d99f08dc-5aaf766c058a47f2-01"}"#;
+
+    const URL: &str = "https://universalis.app/api/v2/extra/stats/most-recently-updated?entries=200&world=Innocence";
+
+    #[test]
+    fn not_found_is_reported_as_a_status_error_not_a_schema_error() {
+        let err = check_status(404, URL, NOT_FOUND_BODY).unwrap_err();
+        let rendered = err.to_string();
+        assert!(rendered.contains("404"), "{rendered}");
+        assert!(rendered.contains("world=Innocence"), "{rendered}");
+        // The old code deserialized this body as the success type and reported
+        // the resulting serde complaint instead of the status.
+        assert!(!rendered.contains("missing field"), "{rendered}");
+    }
+
+    #[test]
+    fn not_found_is_distinguishable_from_transient_failures() {
+        assert!(
+            check_status(404, URL, NOT_FOUND_BODY)
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert!(
+            !check_status(429, URL, b"slow down")
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert!(
+            !check_status(503, URL, b"upstream down")
+                .unwrap_err()
+                .is_not_found()
+        );
+    }
+
+    #[test]
+    fn success_statuses_pass_through() {
+        assert!(check_status(200, URL, b"{}").is_ok());
+        assert!(check_status(204, URL, b"").is_ok());
+    }
+
+    #[test]
+    fn error_bodies_are_truncated_but_still_identify_the_status() {
+        let huge = vec![b'x'; 10_000];
+        let err = check_status(500, URL, &huge).unwrap_err();
+        match &err {
+            Error::Status { body, status, .. } => {
+                assert_eq!(*status, 500);
+                assert!(body.ends_with('…'), "{body}");
+                assert!(body.len() < 400, "body was {} bytes", body.len());
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn truncation_does_not_split_a_utf8_character() {
+        // A multi-byte body longer than the cap must not panic on a byte slice.
+        let body = "é".repeat(1_000).into_bytes();
+        let err = check_status(500, URL, &body).unwrap_err();
+        assert!(err.to_string().contains("500"));
+    }
+
+    #[test]
+    fn a_success_body_still_parses_after_the_status_check() {
+        let body = br#"{"items":[{"itemID":5,"lastUploadTime":1786194855389,"worldID":63,"worldName":"Gilgamesh"}]}"#;
+        check_status(200, URL, body).unwrap();
+        let parsed: MostRecentlyUpdatedItemsView = serde_json::from_slice(body).unwrap();
+        assert_eq!(parsed.items.len(), 1);
     }
 }
 
