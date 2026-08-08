@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -38,6 +38,17 @@ pub(crate) struct UpdateService {
     pub(crate) sales: EventProducer<SaleEventData>,
     /// Per-world timestamp of the last saturation-triggered full sweep.
     pub(crate) full_sweep_cooldowns: Mutex<HashMap<i32, Instant>>,
+    /// Worlds Universalis 404s on. Purely a log de-duplicator — see
+    /// [`UpdateService::note_world_uncovered`].
+    pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
+}
+
+/// True when `error` is a Universalis `404`, i.e. it does not know the entity
+/// we asked about. [`anyhow::Error`] erases the type, so match on the downcast.
+fn universalis_not_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<universalis::Error>()
+        .is_some_and(|e| e.is_not_found())
 }
 
 struct CmpListing(Model);
@@ -100,6 +111,15 @@ impl UpdateService {
         Ok(())
     }
 
+    /// Records that Universalis does not cover `world_id`. Returns `true` the
+    /// first time, so the caller logs once instead of on every sweep.
+    fn note_world_uncovered(&self, world_id: i32) -> bool {
+        self.uncovered_worlds
+            .lock()
+            .expect("uncovered_worlds poisoned")
+            .insert(world_id)
+    }
+
     /// Claims the full-sweep slot for a world if its cooldown has elapsed.
     fn claim_full_sweep_slot(&self, world_id: i32) -> bool {
         let mut cooldowns = self
@@ -121,7 +141,25 @@ impl UpdateService {
         &self,
         world: &world::Model,
     ) -> Result<(), anyhow::Error> {
-        let updates = self.get_missing_updates(world).await?;
+        let updates = match self.get_missing_updates(world).await {
+            Ok(updates) => updates,
+            // Universalis 404s the recency endpoint for worlds it no longer
+            // carries (our `world` table keeps rows for worlds it has since
+            // dropped — `Innocence`, `Pixie`, `Titania`, `Tycoon`, `月牙湾`,
+            // `雪松原`, `黄金谷` as of this writing). There is nothing to catch
+            // up on and never will be, so log it once per process rather than
+            // reporting an error every five minutes forever.
+            Err(e) if universalis_not_found(&e) => {
+                if self.note_world_uncovered(world.id) {
+                    warn!(
+                        world = %world.name,
+                        "universalis has no data for this world; skipping catch-up sweeps"
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
         let item_ids: Box<[i32]> = updates.into_iter().map(|i| i.item_id).collect();
         metrics::counter!("ultros_catchup_items_recovered", "world" => world.name.clone())
             .increment(item_ids.len() as u64);
