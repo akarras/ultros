@@ -16,9 +16,9 @@ pub struct Model {
     /// Set when delivery hit a *permanent* failure (channel deleted, bot
     /// removed) and we stopped retrying. `None` means healthy.
     pub disabled_at: Option<DateTimeUtc>,
-    /// Human-readable reason for the most recent delivery failure. Kept even
-    /// after a successful retry clears `disabled_at`, so the UI can explain a
-    /// past outage.
+    /// Human-readable reason the endpoint was disabled, surfaced by the
+    /// endpoints UI. Cleared alongside `disabled_at` when a delivery or an
+    /// explicit Test succeeds, so it only ever describes a *current* outage.
     pub last_error: Option<String>,
 }
 

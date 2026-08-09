@@ -127,9 +127,9 @@ pub(crate) async fn list_endpoints(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let method = db_to_method(&r.method, &r.config).map_err(ApiError::from)?;
-        // Only surface the reason while the endpoint is actually disabled;
-        // `last_error` outlives a recovery so the row doesn't keep shouting
-        // about an outage that a later delivery already cleared.
+        // Only surface the reason while the endpoint is actually disabled.
+        // Recovery clears both columns together, so this is belt-and-braces: a
+        // stray `last_error` can never make a working endpoint look broken.
         let disabled_reason = r.disabled_at.and(r.last_error);
         out.push(Endpoint {
             id: r.id,
