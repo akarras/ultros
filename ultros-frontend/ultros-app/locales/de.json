@@ -1164,6 +1164,7 @@
     "endpoints_method_discord_channel_id": "Discord-Kanal {{channel_id}}",
     "endpoints_method_webhook": "Webhook",
     "endpoints_method_web_push": "Browser-Push",
+    "endpoints_disabled_notice": "Benachrichtigungen gestoppt: Dieses Ziel ist nicht mehr erreichbar. Behebe das Problem und drücke dann Testen, um es wieder zu aktivieren.",
     "endpoints_test_button": "Testen",
     "endpoints_delete_aria": "Endpunkt löschen",
     "endpoints_err_name_required": "Name ist erforderlich",

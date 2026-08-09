@@ -83,6 +83,7 @@ pub(crate) async fn create_push_subscription(
         id,
         name,
         method: EndpointMethod::WebPush { subscription_id },
+        disabled_reason: None,
     }))
 }
 

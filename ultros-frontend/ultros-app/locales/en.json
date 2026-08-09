@@ -1167,6 +1167,7 @@
     "endpoints_method_discord_channel_id": "Discord channel {{channel_id}}",
     "endpoints_method_webhook": "Webhook",
     "endpoints_method_web_push": "Browser push",
+    "endpoints_disabled_notice": "Alerts stopped: this destination is no longer reachable. Fix it, then press Test to re-enable.",
     "endpoints_test_button": "Test",
     "endpoints_delete_aria": "Delete endpoint",
     "endpoints_err_name_required": "Name is required",

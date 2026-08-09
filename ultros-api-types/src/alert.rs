@@ -140,6 +140,15 @@ pub struct Endpoint {
     pub name: String,
     #[serde(flatten)]
     pub method: EndpointMethod,
+    /// Set when delivery hit a permanent failure (Discord channel deleted, bot
+    /// removed) and alerts have stopped being sent here. Carries the reason
+    /// Discord gave so the UI can explain it. `None` means the endpoint is
+    /// healthy.
+    ///
+    /// Defaults on deserialize so an older client/server pair doesn't break on
+    /// the added field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +203,32 @@ mod endpoint_tests {
     use serde_json::json;
 
     #[test]
+    fn endpoint_carries_disabled_reason_when_broken() {
+        let e = Endpoint {
+            id: 7,
+            name: "Test".to_string(),
+            method: EndpointMethod::DiscordChannel {
+                channel_id: 5,
+                channel_name: None,
+                guild_id: None,
+                guild_name: None,
+            },
+            disabled_reason: Some("Unknown Channel".to_string()),
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["disabled_reason"], json!("Unknown Channel"));
+    }
+
+    #[test]
+    fn endpoint_accepts_payload_without_disabled_reason() {
+        // A server that predates the field must still deserialize here.
+        let v =
+            json!({"id": 7, "name": "Test", "method": "Webhook", "url": "https://example.invalid"});
+        let e: Endpoint = serde_json::from_value(v).unwrap();
+        assert_eq!(e.disabled_reason, None);
+    }
+
+    #[test]
     fn endpoint_method_serializes_with_method_tag() {
         let m = EndpointMethod::DiscordDm { user_id: 42 };
         let v = serde_json::to_value(&m).unwrap();
@@ -208,6 +243,7 @@ mod endpoint_tests {
             method: EndpointMethod::Webhook {
                 url: "https://example.invalid".into(),
             },
+            disabled_reason: None,
         };
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(

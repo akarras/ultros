@@ -1164,6 +1164,7 @@
     "endpoints_method_discord_channel_id": "Discord 頻道 {{channel_id}}",
     "endpoints_method_webhook": "Webhook",
     "endpoints_method_web_push": "瀏覽器推送",
+    "endpoints_disabled_notice": "警報已停止：無法再送達此目標。修復後請點擊「測試」以重新啟用。",
     "endpoints_test_button": "測試",
     "endpoints_delete_aria": "刪除通知端點",
     "endpoints_err_name_required": "名稱必填",
