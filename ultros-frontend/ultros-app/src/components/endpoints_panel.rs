@@ -172,11 +172,24 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         }
                                     };
                                     let id = e.id;
+                                    // Delivery disabled this endpoint after Discord
+                                    // rejected it permanently (channel deleted, bot
+                                    // removed). Without this the endpoint just looks
+                                    // fine while silently sending nothing — say why,
+                                    // and point at Test as the way back.
+                                    let disabled_reason = e.disabled_reason.clone();
                                     view! {
                                         <li class="flex items-center justify-between py-2">
                                             <div>
                                                 <div class="font-medium">{e.name.clone()}</div>
                                                 <div class="text-xs opacity-70">{label}</div>
+                                                {disabled_reason.map(|reason| view! {
+                                                    <div class="text-xs text-amber-400 mt-1">
+                                                        {t!(i18n, endpoints_disabled_notice)}
+                                                        " "
+                                                        <span class="opacity-80">{reason}</span>
+                                                    </div>
+                                                })}
                                             </div>
                                             <div class="flex gap-1">
                                                 <button class="btn-ghost" on:click=move |_| on_test(id)>

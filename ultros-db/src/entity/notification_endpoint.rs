@@ -13,6 +13,13 @@ pub struct Model {
     pub method: String,
     pub config: Json,
     pub created_at: DateTimeUtc,
+    /// Set when delivery hit a *permanent* failure (channel deleted, bot
+    /// removed) and we stopped retrying. `None` means healthy.
+    pub disabled_at: Option<DateTimeUtc>,
+    /// Human-readable reason for the most recent delivery failure. Kept even
+    /// after a successful retry clears `disabled_at`, so the UI can explain a
+    /// past outage.
+    pub last_error: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

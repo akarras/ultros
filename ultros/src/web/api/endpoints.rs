@@ -127,10 +127,15 @@ pub(crate) async fn list_endpoints(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let method = db_to_method(&r.method, &r.config).map_err(ApiError::from)?;
+        // Only surface the reason while the endpoint is actually disabled;
+        // `last_error` outlives a recovery so the row doesn't keep shouting
+        // about an outage that a later delivery already cleared.
+        let disabled_reason = r.disabled_at.and(r.last_error);
         out.push(Endpoint {
             id: r.id,
             name: r.name,
             method,
+            disabled_reason,
         });
     }
     Ok(Json(out))
@@ -205,7 +210,12 @@ pub(crate) async fn create_endpoint(
         .create_endpoint(user.id as i64, &name, method_str, config)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(Endpoint { id, name, method }))
+    Ok(Json(Endpoint {
+        id,
+        name,
+        method,
+        disabled_reason: None,
+    }))
 }
 
 pub(crate) async fn update_endpoint(
@@ -333,10 +343,18 @@ pub(crate) async fn test_endpoint(
     };
 
     match result {
-        Ok(()) => Ok(Json(ResendResult {
-            delivered: true,
-            error: None,
-        })),
+        Ok(()) => {
+            // Testing successfully is how a user un-breaks an endpoint that the
+            // delivery path disabled: fix the channel (or re-invite the bot),
+            // hit Test, and it re-enters the alert rotation.
+            if let Err(e) = db.clear_endpoint_delivery_failure(id).await {
+                tracing::error!("failed to clear delivery failure for endpoint {id}: {e}");
+            }
+            Ok(Json(ResendResult {
+                delivered: true,
+                error: None,
+            }))
+        }
         Err(e) => Ok(Json(ResendResult {
             delivered: false,
             error: Some(format!("{e}")),

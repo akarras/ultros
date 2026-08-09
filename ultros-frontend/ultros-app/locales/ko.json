@@ -1164,6 +1164,7 @@
     "endpoints_method_discord_channel_id": "디스코드 채널 {{channel_id}}",
     "endpoints_method_webhook": "Webhook",
     "endpoints_method_web_push": "브라우저 푸시",
+    "endpoints_disabled_notice": "알림이 중지되었습니다: 이 대상에 더 이상 전송할 수 없습니다. 문제를 해결한 뒤 '테스트'를 눌러 다시 활성화하세요.",
     "endpoints_test_button": "테스트",
     "endpoints_delete_aria": "엔드포인트 삭제",
     "endpoints_err_name_required": "이름은 필수입니다",

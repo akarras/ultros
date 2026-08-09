@@ -154,6 +154,158 @@ pub(crate) async fn deliver_non_discord_endpoint(
     }
 }
 
+/// Whether a Discord API rejection can ever succeed on a later retry.
+///
+/// Discord answers a failed REST call with an HTTP status plus a numeric JSON
+/// error code. A handful of those codes describe a destination that is simply
+/// *gone* — retrying them every time an alert fires produces nothing but error
+/// spam while the owner silently receives no alerts at all.
+///
+/// Codes (<https://discord.com/developers/docs/topics/opcodes-and-status-codes>):
+/// - `10003` Unknown Channel — the channel was deleted.
+/// - `10013` Unknown User — the DM target no longer exists.
+/// - `50001` Missing Access — the bot was removed from the guild/channel.
+/// - `50007` Cannot send messages to this user — DMs closed.
+/// - `50013` Missing Permissions — send permission revoked on the channel.
+///
+/// Everything else (rate limits, 5xx, transport errors) is treated as transient
+/// so a Discord outage never disables a working endpoint. `-1` is serenity's
+/// placeholder when the error body failed to decode, which tells us nothing —
+/// also transient.
+fn is_permanent_discord_failure(status: u16, discord_code: isize) -> bool {
+    // A 5xx is Discord's problem, never the destination's — regardless of the
+    // code it happens to carry.
+    if status >= 500 {
+        return false;
+    }
+    matches!(discord_code, 10003 | 10013 | 50001 | 50007 | 50013)
+}
+
+/// Pull a permanent-failure reason out of an error returned by
+/// [`deliver_to_endpoint`], if the underlying cause was Discord rejecting the
+/// destination for good.
+///
+/// The delivery helpers surface serenity errors through `anyhow`, so walk the
+/// source chain rather than matching only the top-level error.
+pub(crate) fn permanent_failure_reason(err: &anyhow::Error) -> Option<String> {
+    use poise::serenity_prelude::HttpError;
+
+    for cause in err.chain() {
+        let Some(serenity_prelude::Error::Http(HttpError::UnsuccessfulRequest(resp))) =
+            cause.downcast_ref::<serenity_prelude::Error>()
+        else {
+            continue;
+        };
+        if is_permanent_discord_failure(resp.status_code.as_u16(), resp.error.code) {
+            return Some(resp.error.message.clone());
+        }
+    }
+    None
+}
+
+/// Outcome of fanning an alert out across its notification endpoints.
+pub(crate) enum DispatchOutcome {
+    /// At least one endpoint accepted the message.
+    Delivered,
+    /// Nothing delivered, but the failures look transient — the caller should
+    /// still try any legacy fallback destinations.
+    TransientFailure(anyhow::Error),
+    /// Nothing delivered and every failure was permanent (or the alert has no
+    /// deliverable endpoints left because they were all disabled). Retrying —
+    /// including via the legacy fallback, which points at the same dead Discord
+    /// channels — is pointless, so the caller should record the reason quietly
+    /// rather than reporting a new error every fire.
+    PermanentFailure(String),
+}
+
+/// Look up all deliverable notification endpoints for an alert and dispatch the
+/// message via each.
+///
+/// Endpoints that Discord rejects permanently are disabled as a side effect, so
+/// the next fire skips them entirely. A successful delivery clears any
+/// previously recorded failure.
+pub(crate) async fn dispatch_alert_detailed(
+    alert_id: i32,
+    title: &str,
+    body: &str,
+    click_url: &str,
+    db: &UltrosDb,
+    ctx: &serenity_prelude::Context,
+) -> DispatchOutcome {
+    let endpoints = match db.get_notification_endpoints_for_alert(alert_id).await {
+        Ok(e) => e,
+        Err(e) => return DispatchOutcome::TransientFailure(e),
+    };
+
+    if endpoints.is_empty() {
+        // Either the alert never had rules, or every endpoint it had has been
+        // disabled for a permanent failure. Both are steady states that a retry
+        // cannot change, so don't keep raising them as errors.
+        return DispatchOutcome::PermanentFailure(format!(
+            "alert {alert_id} has no deliverable notification endpoints"
+        ));
+    }
+
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut permanent_reason: Option<String> = None;
+    let mut any_ok = false;
+    let mut any_transient = false;
+
+    for endpoint in endpoints {
+        match deliver_to_endpoint(&endpoint, title, body, click_url, db, ctx).await {
+            Ok(()) => {
+                any_ok = true;
+                // Only touch the DB when there is actually stale failure state
+                // to clear — the healthy path is the common one and shouldn't
+                // pay a write per alert fire.
+                if (endpoint.disabled_at.is_some() || endpoint.last_error.is_some())
+                    && let Err(e) = db.clear_endpoint_delivery_failure(endpoint.id).await
+                {
+                    error!(
+                        "failed to clear delivery failure for endpoint {}: {e}",
+                        endpoint.id
+                    );
+                }
+            }
+            Err(e) => {
+                match permanent_failure_reason(&e) {
+                    Some(reason) => {
+                        // Log at warn: this is an expected steady state we are
+                        // acting on, not an unhandled error, and it should stop
+                        // paging via the error reporter.
+                        tracing::warn!(
+                            "disabling endpoint {} for alert {alert_id}: {reason}",
+                            endpoint.id
+                        );
+                        if let Err(e) = db
+                            .disable_endpoint_for_delivery_failure(endpoint.id, &reason)
+                            .await
+                        {
+                            error!("failed to disable endpoint {}: {e}", endpoint.id);
+                        }
+                        permanent_reason.get_or_insert(reason);
+                    }
+                    None => {
+                        error!("delivery failed for alert {alert_id}: {e}");
+                        any_transient = true;
+                    }
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+
+    if any_ok {
+        DispatchOutcome::Delivered
+    } else if any_transient || permanent_reason.is_none() {
+        DispatchOutcome::TransientFailure(
+            last_err.unwrap_or_else(|| anyhow!("no deliveries succeeded")),
+        )
+    } else {
+        DispatchOutcome::PermanentFailure(permanent_reason.unwrap_or_default())
+    }
+}
+
 /// Look up all notification endpoints for an alert and dispatch the message via each.
 /// Returns Ok(()) if at least one delivered; Err describing the last failure otherwise.
 pub(crate) async fn dispatch_alert(
@@ -164,29 +316,10 @@ pub(crate) async fn dispatch_alert(
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
-    let endpoints = db.get_notification_endpoints_for_alert(alert_id).await?;
-
-    if endpoints.is_empty() {
-        return Err(anyhow!("alert {alert_id} has no notification rules"));
-    }
-
-    let mut last_err: Option<anyhow::Error> = None;
-    let mut any_ok = false;
-
-    for endpoint in endpoints {
-        match deliver_to_endpoint(&endpoint, title, body, click_url, db, ctx).await {
-            Ok(()) => any_ok = true,
-            Err(e) => {
-                error!("delivery failed for alert {alert_id}: {e}");
-                last_err = Some(e);
-            }
-        }
-    }
-
-    if any_ok {
-        Ok(())
-    } else {
-        Err(last_err.unwrap_or_else(|| anyhow!("no deliveries succeeded")))
+    match dispatch_alert_detailed(alert_id, title, body, click_url, db, ctx).await {
+        DispatchOutcome::Delivered => Ok(()),
+        DispatchOutcome::TransientFailure(e) => Err(e),
+        DispatchOutcome::PermanentFailure(reason) => Err(anyhow!("{reason}")),
     }
 }
 
@@ -375,6 +508,51 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn dead_discord_destinations_are_permanent() {
+        // The exact pairs behind GlitchTip issues 6877/6878/6879/6885/6889
+        // ("Unknown Channel") and 6881/6882/6883/6884 ("Missing Access"),
+        // which retried forever and produced ~150 error events a day.
+        assert!(is_permanent_discord_failure(404, 10003)); // Unknown Channel
+        assert!(is_permanent_discord_failure(403, 50001)); // Missing Access
+        assert!(is_permanent_discord_failure(404, 10013)); // Unknown User
+        assert!(is_permanent_discord_failure(403, 50007)); // Cannot DM this user
+        assert!(is_permanent_discord_failure(403, 50013)); // Missing Permissions
+    }
+
+    #[test]
+    fn transient_discord_failures_do_not_disable() {
+        // Rate limiting is the whole point of retrying.
+        assert!(!is_permanent_discord_failure(429, 0));
+        // Discord-side outages must never disable a working destination.
+        assert!(!is_permanent_discord_failure(500, 0));
+        assert!(!is_permanent_discord_failure(503, 0));
+        // serenity uses -1 when it couldn't decode the error body — that tells
+        // us nothing, so it can't justify disabling anything.
+        assert!(!is_permanent_discord_failure(400, -1));
+        // An unrecognised 4xx code stays transient rather than guessing.
+        assert!(!is_permanent_discord_failure(400, 50035));
+    }
+
+    #[test]
+    fn a_5xx_never_counts_as_permanent_even_carrying_a_permanent_code() {
+        // Defensive: a gateway returning 502 with a stale body shouldn't take
+        // out every endpoint at once.
+        assert!(!is_permanent_discord_failure(502, 10003));
+        assert!(!is_permanent_discord_failure(500, 50001));
+    }
+
+    #[test]
+    fn non_discord_errors_are_never_permanent() {
+        // Webhook/WebPush failures surface as plain anyhow errors with no
+        // serenity cause in the chain, so they must not disable the endpoint.
+        let err = anyhow!("webhook returned 500: upstream exploded");
+        assert!(permanent_failure_reason(&err).is_none());
+
+        let nested = err.context("delivering to endpoint 3");
+        assert!(permanent_failure_reason(&nested).is_none());
+    }
 
     #[test]
     fn push_payload_carries_the_callers_click_url() {

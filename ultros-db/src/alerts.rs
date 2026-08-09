@@ -182,6 +182,8 @@ impl UltrosDb {
                     config: Set(notification_config),
                     // created_at is DateTimeUtc = DateTime<Utc>
                     created_at: Set(chrono::Utc::now()),
+                    disabled_at: Set(None),
+                    last_error: Set(None),
                 })
                 .exec_with_returning(&txn)
                 .await?
@@ -316,7 +318,13 @@ impl UltrosDb {
         Ok(())
     }
 
-    /// Return all notification endpoints linked to an alert via alert_notification_rule.
+    /// Return the *deliverable* notification endpoints linked to an alert via
+    /// alert_notification_rule.
+    ///
+    /// Endpoints that hit a permanent delivery failure (`disabled_at` set — the
+    /// Discord channel was deleted or the bot was removed) are excluded. They
+    /// stay linked to the alert so the endpoints UI can show why they stopped
+    /// and the user can repair them; they just aren't retried every fire.
     pub async fn get_notification_endpoints_for_alert(
         &self,
         alert_id: i32,
@@ -333,8 +341,58 @@ impl UltrosDb {
 
         Ok(notification_endpoint::Entity::find()
             .filter(notification_endpoint::Column::Id.is_in(endpoint_ids))
+            .filter(notification_endpoint::Column::DisabledAt.is_null())
             .all(&self.db)
             .await?)
+    }
+
+    /// Mark an endpoint as permanently broken so delivery stops retrying it.
+    ///
+    /// Called from the alert delivery path when Discord reports an
+    /// unrecoverable condition (`Unknown Channel`, `Missing Access`). Idempotent
+    /// on `disabled_at` — re-disabling an already-disabled endpoint keeps the
+    /// original timestamp so "broken since" stays truthful — but always
+    /// refreshes `last_error`.
+    pub async fn disable_endpoint_for_delivery_failure(
+        &self,
+        endpoint_id: i32,
+        reason: &str,
+    ) -> Result<()> {
+        let Some(existing) = notification_endpoint::Entity::find_by_id(endpoint_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(());
+        };
+        let already_disabled = existing.disabled_at;
+        let mut active: notification_endpoint::ActiveModel = existing.into();
+        active.disabled_at = Set(Some(already_disabled.unwrap_or_else(chrono::Utc::now)));
+        active.last_error = Set(Some(reason.to_string()));
+        active.update(&self.db).await?;
+        Ok(())
+    }
+
+    /// Clear an endpoint's failure state after a delivery (or an explicit
+    /// "test") succeeds. This is how a repaired endpoint comes back: the user
+    /// fixes the channel, hits Test, and the endpoint re-enters the rotation.
+    ///
+    /// Skips the write when the endpoint is already healthy so the common
+    /// success path doesn't issue an UPDATE per alert fire.
+    pub async fn clear_endpoint_delivery_failure(&self, endpoint_id: i32) -> Result<()> {
+        let Some(existing) = notification_endpoint::Entity::find_by_id(endpoint_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(());
+        };
+        if existing.disabled_at.is_none() && existing.last_error.is_none() {
+            return Ok(());
+        }
+        let mut active: notification_endpoint::ActiveModel = existing.into();
+        active.disabled_at = Set(None);
+        active.last_error = Set(None);
+        active.update(&self.db).await?;
+        Ok(())
     }
 
     pub async fn get_first_endpoint_for_alert(
@@ -423,6 +481,8 @@ impl UltrosDb {
             method: Set(method.to_string()),
             config: Set(config),
             created_at: Set(chrono::Utc::now()),
+            disabled_at: Set(None),
+            last_error: Set(None),
         })
         .exec_with_returning(&self.db)
         .await?;
@@ -448,6 +508,11 @@ impl UltrosDb {
         if let Some((m, c)) = method_and_config {
             active.method = Set(m);
             active.config = Set(c);
+            // Repointing an endpoint at a different destination invalidates any
+            // previous permanent failure — give the new target a fresh chance
+            // instead of leaving it silently disabled.
+            active.disabled_at = Set(None);
+            active.last_error = Set(None);
         }
         active.update(&self.db).await?;
         Ok(())

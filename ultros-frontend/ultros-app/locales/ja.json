@@ -1164,6 +1164,7 @@
     "endpoints_method_discord_channel_id": "Discordチャンネル {{channel_id}}",
     "endpoints_method_webhook": "Webhook",
     "endpoints_method_web_push": "ブラウザプッシュ",
+    "endpoints_disabled_notice": "通知を停止しました: この送信先には届かなくなっています。問題を解決してから「テスト」を押すと再開できます。",
     "endpoints_test_button": "テスト",
     "endpoints_delete_aria": "配信先を削除",
     "endpoints_err_name_required": "名前は必須です",

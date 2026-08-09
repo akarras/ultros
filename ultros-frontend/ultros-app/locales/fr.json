@@ -1164,6 +1164,7 @@
     "endpoints_method_discord_channel_id": "Salon Discord {{channel_id}}",
     "endpoints_method_webhook": "Webhook",
     "endpoints_method_web_push": "Push navigateur",
+    "endpoints_disabled_notice": "Alertes interrompues : cette destination n'est plus accessible. Corrigez le problème, puis appuyez sur Tester pour la réactiver.",
     "endpoints_test_button": "Tester",
     "endpoints_delete_aria": "Supprimer le point de distribution",
     "endpoints_err_name_required": "Le nom est requis",
