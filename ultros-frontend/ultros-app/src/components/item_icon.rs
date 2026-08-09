@@ -17,17 +17,9 @@ pub fn ItemIcon(
     fill: bool,
 ) -> impl IntoView {
     // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive
-    // `valid_search_category` and `item_name` are simple map lookups.
-    // Creating reactive `Memo` nodes for these O(1) derivations carries overhead
-    // that exceeds the cost of recomputing them.
-    let valid_search_category = Signal::derive(move || {
-        tracked_data()
-            .items
-            .get(&ItemId(item_id()))
-            .map(|item| item.item_search_category > 0)
-            .unwrap_or_default()
-    });
-
+    // `item_name` is a simple map lookup. Creating a reactive `Memo` node for
+    // this O(1) derivation carries overhead that exceeds the cost of
+    // recomputing it.
     let item_name = Signal::derive(move || {
         tracked_data()
             .items
@@ -59,7 +51,10 @@ pub fn ItemIcon(
                 alt=item_name
                 class=img_class
                 src=move || {
-                    if !failed_item() && valid_search_category.get() {
+                    // Always request the real icon — the icon pack covers every
+                    // named item (not just marketable ones), and the server
+                    // serves the fallback PNG itself when an id has no image.
+                    if !failed_item() {
                         format!("/static/itemicon/{}?size={}", item_id(), icon_size)
                     } else {
                         "/static/itemicon/fallback".to_string()

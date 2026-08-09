@@ -160,9 +160,9 @@ struct ListingsDiff {
 /// including its multiset handling: a retainer legitimately holding three
 /// identical listings when we already store two yields exactly one insert.
 ///
-/// Universalis' `listingID` would be an exact identity, but `active_listing` has
-/// no column for it, so the key is the same (hq, quantity, price, retainer name)
-/// tuple used everywhere else in this module.
+/// This is the *legacy* content-keyed path: since the identity migration,
+/// id-carrying listings are routed through [`listings_to_upsert`] and only
+/// id-less views (and id-less DB rows) still go through this diff.
 fn listings_to_add(
     listings: Vec<ListingView>,
     existing_items: Vec<(active_listing::Model, Option<retainer::Model>)>,
@@ -245,6 +245,147 @@ fn diff_update_listings(
     ListingsDiff { added, removed }
 }
 
+/// Whether a DB row and an incoming view describe the same listing *state*,
+/// for rows already matched by `listing_id`.
+///
+/// Mirrors Universalis' own change detector, which compares exactly
+/// (listingID, pricePerUnit, quantity) — a reprice keeps its listingID and
+/// arrives as remove(old state) + add(new state). `hq` is immutable per
+/// listing id and included only as a safety net. Cosmetic fields (materia,
+/// dye, creator) are deliberately excluded: Universalis emits no events for
+/// them, so requiring them to match would turn every REST-refreshed cosmetic
+/// difference into spurious churn.
+fn view_state_matches_model(view: &ListingView, model: &active_listing::Model) -> bool {
+    model.price_per_unit == view.price_per_unit.unwrap_or(view.total) as i32
+        && model.quantity == view.quantity.unwrap_or(1) as i32
+        && model.hq == view.hq
+}
+
+/// Splits DB rows into (identity-carrying, legacy) by `listing_id` presence.
+type RowsWithRetainers = Vec<(active_listing::Model, Option<retainer::Model>)>;
+fn split_rows_by_identity(rows: RowsWithRetainers) -> (RowsWithRetainers, RowsWithRetainers) {
+    rows.into_iter().partition(|(m, _)| m.listing_id.is_some())
+}
+
+/// Selects the listings from a `listings/add` delta that need writing, keyed on
+/// `listing_id` where available.
+///
+/// Per incoming view:
+/// - id matches a stored row with identical state → already have it, skip;
+/// - id matches a stored row with different state → a reprice; the upsert in
+///   `create_listing` updates the row in place;
+/// - id matches nothing → fall back to the legacy content diff against rows
+///   that have **no** stored id. This is the pre-migration bridge: a re-sent
+///   listing we stored before ids existed must not be inserted a second time
+///   just because the old row can't be matched by id. Genuinely new listings
+///   fall through the content diff and insert (with their id).
+fn listings_to_upsert(listings: Vec<ListingView>, existing: RowsWithRetainers) -> Vec<ListingView> {
+    let (id_rows, legacy_rows) = split_rows_by_identity(existing);
+    let by_id: HashMap<&str, &active_listing::Model> = id_rows
+        .iter()
+        .filter_map(|(m, _)| m.listing_id.as_deref().map(|id| (id, m)))
+        .collect();
+
+    let mut upserts = Vec::new();
+    let mut fallback = Vec::new();
+    for view in listings {
+        match view.listing_id.as_deref().and_then(|id| by_id.get(id)) {
+            Some(model) if view_state_matches_model(&view, model) => {}
+            Some(_) => upserts.push(view),
+            None => fallback.push(view),
+        }
+    }
+    upserts.extend(listings_to_add(fallback, legacy_rows));
+    upserts
+}
+
+/// Selects the DB rows a `listings/remove` payload should delete, keyed on
+/// `listing_id` where available.
+///
+/// An id match alone is NOT enough to delete: a reprice is published as
+/// remove(old state) + add(new state) with the same listingID, and neither
+/// Universalis' bus nor our task-per-message ingest guarantees their order. If
+/// the add lands first (upserting the row to the new price), the late remove —
+/// which still describes the old price — must not kill the live row. So an
+/// id-matched row is deleted only when its state also matches the remove view;
+/// a state mismatch means "this removal was superseded" and keeps the row.
+///
+/// Views whose id matches no stored row fall back to the legacy content diff
+/// against id-less rows, so removes still land on pre-migration data.
+fn listings_to_remove_with_identity(
+    db_listings: Vec<(active_listing::Model, retainer::Model)>,
+    views: Vec<ListingView>,
+) -> Vec<active_listing::Model> {
+    let (id_rows, legacy_rows): (Vec<_>, Vec<_>) = db_listings
+        .into_iter()
+        .partition(|(m, _)| m.listing_id.is_some());
+    let mut by_id: HashMap<String, active_listing::Model> = id_rows
+        .into_iter()
+        .filter_map(|(m, _)| m.listing_id.clone().map(|id| (id, m)))
+        .collect();
+
+    let mut removed = Vec::new();
+    let mut fallback_views = Vec::new();
+    for view in views {
+        match view.listing_id.as_deref() {
+            Some(id) => match by_id.remove(id) {
+                Some(model) if view_state_matches_model(&view, &model) => removed.push(model),
+                // state mismatch: superseded removal, put the row back and keep it
+                Some(model) => {
+                    by_id.insert(id.to_string(), model);
+                }
+                None => fallback_views.push(view),
+            },
+            None => fallback_views.push(view),
+        }
+    }
+    removed.extend(listings_to_remove(legacy_rows, fallback_views));
+    removed
+}
+
+/// Diffs a full REST board against the DB, keyed on `listing_id` where
+/// available.
+///
+/// Identity-carrying rows are kept when the board re-sends the same state,
+/// upserted when the state changed, and removed when their id is absent from
+/// the board. Legacy (id-less) rows go through the old content diff against
+/// whatever id-less views the board carries — in practice REST boards always
+/// carry ids, so the legacy diff's job is to delete every pre-migration row
+/// while the id side re-inserts the same listings with their identity. That
+/// makes any full-board pass (catch-up, manual refresh, sweep) a one-shot
+/// id-backfill for the item.
+fn diff_board_with_identity(
+    listings: Vec<ListingView>,
+    existing: RowsWithRetainers,
+) -> ListingsDiff {
+    let (id_rows, legacy_rows) = split_rows_by_identity(existing);
+    let (id_views, legacy_views): (Vec<_>, Vec<_>) =
+        listings.into_iter().partition(|v| v.listing_id.is_some());
+
+    let mut by_id: HashMap<String, (active_listing::Model, Option<retainer::Model>)> = id_rows
+        .into_iter()
+        .filter_map(|(m, r)| m.listing_id.clone().map(|id| (id, (m, r))))
+        .collect();
+
+    let mut added = Vec::new();
+    for view in id_views {
+        let id = view.listing_id.as_deref().expect("partitioned on is_some");
+        match by_id.remove(id) {
+            // board re-sends the same state: entry consumed = row kept as-is
+            Some((model, _)) if view_state_matches_model(&view, &model) => {}
+            // state changed (or, guard-fallthrough, id row differs): upsert
+            Some(_) | None => added.push(view),
+        }
+    }
+    // ids the board no longer carries
+    let mut removed: Vec<_> = by_id.into_values().collect();
+
+    let legacy = diff_update_listings(legacy_views, legacy_rows);
+    added.extend(legacy.added);
+    removed.extend(legacy.removed);
+    ListingsDiff { added, removed }
+}
+
 impl UltrosDb {
     /// Resolves every retainer named in `listings` to a stored row, creating any
     /// we haven't seen before.
@@ -323,7 +464,7 @@ impl UltrosDb {
             .all(&self.db)
             .await?;
 
-        let to_add = listings_to_add(listings, existing_items);
+        let to_add = listings_to_upsert(listings, existing_items);
         let added = futures::future::join_all(to_add.iter().map(|m| {
             let retainer_id = retainers
                 .get(&m.retainer_name)
@@ -375,7 +516,7 @@ impl UltrosDb {
             .collect();
 
         let items = try_join_all(
-            listings_to_remove(db_listings, remove_listings)
+            listings_to_remove_with_identity(db_listings, remove_listings)
                 .into_iter()
                 .map(|listing| async move {
                     active_listing::Entity::delete_by_id(listing.id)
@@ -577,7 +718,7 @@ impl UltrosDb {
             .find_also_related(retainer::Entity)
             .all(&self.db)
             .await?;
-        let ListingsDiff { added, removed } = diff_update_listings(listings, existing_items);
+        let ListingsDiff { added, removed } = diff_board_with_identity(listings, existing_items);
         let remove_iter = removed.iter();
         let added = added.iter().map(|m| {
             let retainer_id = retainers
@@ -794,6 +935,7 @@ mod diff_tests {
             quantity,
             hq,
             timestamp: naive_ts(),
+            ..Default::default()
         }
     }
 
@@ -1237,6 +1379,272 @@ mod diff_tests {
     /// Every other test in this module builds views with `world_id: Some(..)`,
     /// which production never does, so they all passed straight through the bug.
     /// This one uses `None` on purpose.
+    /// `listing_view` plus a listing id, matching what production payloads carry
+    /// since the `listingID` deserialization fix.
+    fn listing_view_with_id(
+        world_id: i32,
+        retainer_name: &str,
+        price: u32,
+        quantity: u32,
+        hq: bool,
+        listing_id: &str,
+    ) -> ListingView {
+        let mut view = listing_view(world_id, retainer_name, price, quantity, hq);
+        view.listing_id = Some(listing_id.to_string());
+        view
+    }
+
+    fn db_listing_with_id(
+        id: i32,
+        world_id: i32,
+        retainer_id: i32,
+        price: i32,
+        quantity: i32,
+        hq: bool,
+        listing_id: &str,
+    ) -> active_listing::Model {
+        let mut model = db_listing(id, world_id, retainer_id, price, quantity, hq);
+        model.listing_id = Some(listing_id.to_string());
+        model
+    }
+
+    // ---- identity-keyed add path ----
+
+    #[test]
+    fn upsert_skips_a_resent_listing_with_matching_id_and_state() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Idmus");
+        let existing = vec![(
+            db_listing_with_id(1, world_id, retainer.id, 500, 1, false, "abc"),
+            Some(retainer.clone()),
+        )];
+        let delta = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        assert!(listings_to_upsert(delta, existing).is_empty());
+    }
+
+    #[test]
+    fn upsert_applies_a_reprice_on_the_same_listing_id() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Idmus");
+        let existing = vec![(
+            db_listing_with_id(1, world_id, retainer.id, 500, 1, false, "abc"),
+            Some(retainer.clone()),
+        )];
+        // same id, new price: must be written (create_listing upserts in place)
+        let delta = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            450,
+            1,
+            false,
+            "abc",
+        )];
+        let upserts = listings_to_upsert(delta, existing);
+        assert_eq!(upserts.len(), 1);
+        assert_eq!(upserts[0].price_per_unit, Some(450));
+    }
+
+    /// The pre-migration bridge: a re-sent listing whose row predates the id
+    /// column must not insert a second row just because the id lookup misses.
+    #[test]
+    fn upsert_does_not_duplicate_a_legacy_row_matching_by_content() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Legacymus");
+        // stored before the migration: no listing_id
+        let existing = vec![(
+            db_listing(1, world_id, retainer.id, 500, 1, false),
+            Some(retainer.clone()),
+        )];
+        let delta = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        assert!(
+            listings_to_upsert(delta, existing).is_empty(),
+            "the id-less row already holds this listing"
+        );
+    }
+
+    #[test]
+    fn upsert_inserts_a_genuinely_new_listing_with_its_id() {
+        let world_id = 54;
+        let retainer = retainer_model(1, world_id, "Newmus");
+        let existing = vec![(
+            db_listing(1, world_id, retainer.id, 999, 1, false),
+            Some(retainer.clone()),
+        )];
+        let delta = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        let upserts = listings_to_upsert(delta, existing);
+        assert_eq!(upserts.len(), 1);
+        assert_eq!(upserts[0].listing_id.as_deref(), Some("abc"));
+    }
+
+    // ---- identity-keyed remove path ----
+
+    #[test]
+    fn remove_by_id_deletes_the_matching_row() {
+        let world_id = 63;
+        let retainer = retainer_model(1, world_id, "Idmus");
+        let target = db_listing_with_id(1, world_id, retainer.id, 500, 1, false, "abc");
+        let keeper = db_listing_with_id(2, world_id, retainer.id, 600, 1, false, "def");
+        let db_rows = vec![
+            (target.clone(), retainer.clone()),
+            (keeper.clone(), retainer.clone()),
+        ];
+        let views = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        let removed = listings_to_remove_with_identity(db_rows, views);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].id, target.id);
+    }
+
+    /// The reorder hazard the state guard exists for: a reprice is published as
+    /// remove(old state) + add(new state) with the SAME listingID, and neither
+    /// Universalis' bus nor our task-per-message ingest guarantees order. When
+    /// the add lands first (upserting the row to the new price), the late
+    /// remove still describes the old price — deleting on id alone would kill
+    /// the live listing.
+    #[test]
+    fn remove_by_id_keeps_a_row_the_add_already_repriced() {
+        let world_id = 63;
+        let retainer = retainer_model(1, world_id, "Racemus");
+        // row already upserted to the NEW price by the reordered add
+        let repriced = db_listing_with_id(1, world_id, retainer.id, 450, 1, false, "abc");
+        let db_rows = vec![(repriced.clone(), retainer.clone())];
+        // the late remove still carries the OLD price
+        let views = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        assert!(
+            listings_to_remove_with_identity(db_rows, views).is_empty(),
+            "a superseded removal must not delete the repriced row"
+        );
+    }
+
+    /// Pre-migration bridge on the remove side: an id-carrying remove must
+    /// still delete a row stored before the id column existed.
+    #[test]
+    fn remove_by_id_falls_back_to_content_for_legacy_rows() {
+        let world_id = 63;
+        let retainer = retainer_model(1, world_id, "Legacymus");
+        let legacy = db_listing(1, world_id, retainer.id, 500, 1, false);
+        let keeper = db_listing(2, world_id, retainer.id, 600, 1, false);
+        let db_rows = vec![
+            (legacy.clone(), retainer.clone()),
+            (keeper.clone(), retainer.clone()),
+        ];
+        let views = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        let removed = listings_to_remove_with_identity(db_rows, views);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].id, legacy.id);
+    }
+
+    // ---- identity-keyed full-board diff ----
+
+    #[test]
+    fn board_diff_keeps_unchanged_upserts_changed_and_removes_missing_ids() {
+        let world_id = 74;
+        let retainer = retainer_model(1, world_id, "Boardmus");
+        let unchanged = db_listing_with_id(1, world_id, retainer.id, 500, 1, false, "keep");
+        let repriced = db_listing_with_id(2, world_id, retainer.id, 600, 1, false, "reprice");
+        let gone = db_listing_with_id(3, world_id, retainer.id, 700, 1, false, "gone");
+        let existing = vec![
+            (unchanged.clone(), Some(retainer.clone())),
+            (repriced.clone(), Some(retainer.clone())),
+            (gone.clone(), Some(retainer.clone())),
+        ];
+        let board = vec![
+            listing_view_with_id(world_id, &retainer.name, 500, 1, false, "keep"),
+            listing_view_with_id(world_id, &retainer.name, 550, 1, false, "reprice"),
+            listing_view_with_id(world_id, &retainer.name, 800, 1, false, "new"),
+        ];
+        let diff = diff_board_with_identity(board, existing);
+        let mut added_ids: Vec<_> = diff
+            .added
+            .iter()
+            .map(|v| v.listing_id.as_deref().unwrap())
+            .collect();
+        added_ids.sort();
+        assert_eq!(added_ids, ["new", "reprice"]);
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(diff.removed[0].0.id, gone.id);
+    }
+
+    /// A full board of id-carrying views deletes every legacy row while the id
+    /// side re-inserts the same listings with their identity — any full-board
+    /// pass is a one-shot id backfill for the item. The 306-rows-for-a-
+    /// 30-listing-board duplicate pile on Coeurl/44119 is exactly what this
+    /// pass cleans up.
+    #[test]
+    fn board_diff_replaces_legacy_rows_with_identity_rows() {
+        let world_id = 74;
+        let retainer = retainer_model(1, world_id, "Backfillmus");
+        // three duplicate legacy rows for one real listing
+        let existing: Vec<_> = (1..=3)
+            .map(|i| {
+                (
+                    db_listing(i, world_id, retainer.id, 500, 1, false),
+                    Some(retainer.clone()),
+                )
+            })
+            .collect();
+        let board = vec![listing_view_with_id(
+            world_id,
+            &retainer.name,
+            500,
+            1,
+            false,
+            "abc",
+        )];
+        let diff = diff_board_with_identity(board, existing);
+        assert_eq!(
+            diff.added.len(),
+            1,
+            "the listing re-inserts carrying its id"
+        );
+        assert_eq!(
+            diff.removed.len(),
+            3,
+            "every legacy row is condemned, including the duplicate pile"
+        );
+    }
+
     #[test]
     fn remove_listings_matches_views_with_no_world_id_like_the_websocket_sends() {
         let world_id = 63;
