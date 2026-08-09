@@ -127,32 +127,35 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
 /// shape removes that class of mismatch entirely — the icon is just hidden
 /// via CSS when the value is unknown, so the SSR and CSR view trees agree on
 /// element types/positions regardless of resource state.
+pub fn get_gil_or_dash_icon_class(has_amount: bool) -> &'static str {
+    if has_amount { "inline-flex" } else { "hidden" }
+}
+
+pub fn get_gil_or_dash_value_class(has_amount: bool) -> &'static str {
+    if has_amount {
+        ""
+    } else {
+        "text-[color:var(--color-text-muted)]"
+    }
+}
+
+pub fn format_gil_or_dash(amount: Option<i32>) -> String {
+    amount
+        .map(|t| t.separate_with_commas())
+        .unwrap_or_else(|| "—".to_string())
+}
+
 #[component]
 pub fn GilOrDash(#[prop(into)] amount: Signal<Option<i32>>) -> impl IntoView {
-    let icon_class = move || {
-        if amount().is_some() {
-            "inline-flex"
-        } else {
-            "hidden"
-        }
-    };
-    let value_class = move || {
-        if amount().is_some() {
-            ""
-        } else {
-            "text-[color:var(--color-text-muted)]"
-        }
-    };
+    let icon_class = move || get_gil_or_dash_icon_class(amount().is_some());
+    let value_class = move || get_gil_or_dash_value_class(amount().is_some());
     view! {
         <div class="flex flex-row items-center">
             <span class=icon_class>
                 <GilIcon />
             </span>
             <div class=value_class>
-                {move || amount()
-                    .map(|t| t.separate_with_commas())
-                    .unwrap_or_else(|| "—".to_string())
-                }
+                {move || format_gil_or_dash(amount())}
             </div>
         </div>
     }
@@ -170,4 +173,32 @@ where
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_gil_or_dash_icon_class() {
+        assert_eq!(get_gil_or_dash_icon_class(true), "inline-flex");
+        assert_eq!(get_gil_or_dash_icon_class(false), "hidden");
+    }
+
+    #[test]
+    fn test_get_gil_or_dash_value_class() {
+        assert_eq!(get_gil_or_dash_value_class(true), "");
+        assert_eq!(
+            get_gil_or_dash_value_class(false),
+            "text-[color:var(--color-text-muted)]"
+        );
+    }
+
+    #[test]
+    fn test_format_gil_or_dash() {
+        assert_eq!(format_gil_or_dash(Some(1234)), "1,234");
+        assert_eq!(format_gil_or_dash(None), "—");
+        assert_eq!(format_gil_or_dash(Some(0)), "0");
+        assert_eq!(format_gil_or_dash(Some(-50)), "-50");
+    }
 }
