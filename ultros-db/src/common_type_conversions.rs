@@ -36,6 +36,9 @@ impl From<entity::active_listing::Model> for ActiveListing {
             quantity,
             hq,
             timestamp,
+            // identity/cosmetic columns (listing_id, materia, …) are not part
+            // of the public ActiveListing type yet
+            ..
         } = value;
         Self {
             id,

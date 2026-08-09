@@ -27,6 +27,7 @@ chrono = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 clap = {version = "4.0.18", features = ["derive"]}
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
 [features]
 default = ["websocket"]
