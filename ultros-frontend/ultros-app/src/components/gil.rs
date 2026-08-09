@@ -114,6 +114,28 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     }
 }
 
+/// Visibility class for the gil icon. The icon is hidden rather than
+/// removed so the element shape stays constant - see [`GilOrDash`].
+fn get_gil_or_dash_icon_class(has_amount: bool) -> &'static str {
+    if has_amount { "inline-flex" } else { "hidden" }
+}
+
+/// Class for the value slot - muted while the amount is unknown.
+fn get_gil_or_dash_value_class(has_amount: bool) -> &'static str {
+    if has_amount {
+        ""
+    } else {
+        "text-[color:var(--color-text-muted)]"
+    }
+}
+
+/// The gil amount with thousands separators, or the placeholder.
+fn format_gil_or_dash(amount: Option<i32>) -> String {
+    amount
+        .map(|t| t.separate_with_commas())
+        .unwrap_or_else(|| "—".to_string())
+}
+
 /// Render a gil amount when present, falling back to an em-dash placeholder
 /// when `amount` is `None` — without changing the element shape.
 ///
@@ -127,24 +149,6 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
 /// shape removes that class of mismatch entirely — the icon is just hidden
 /// via CSS when the value is unknown, so the SSR and CSR view trees agree on
 /// element types/positions regardless of resource state.
-pub fn get_gil_or_dash_icon_class(has_amount: bool) -> &'static str {
-    if has_amount { "inline-flex" } else { "hidden" }
-}
-
-pub fn get_gil_or_dash_value_class(has_amount: bool) -> &'static str {
-    if has_amount {
-        ""
-    } else {
-        "text-[color:var(--color-text-muted)]"
-    }
-}
-
-pub fn format_gil_or_dash(amount: Option<i32>) -> String {
-    amount
-        .map(|t| t.separate_with_commas())
-        .unwrap_or_else(|| "—".to_string())
-}
-
 #[component]
 pub fn GilOrDash(#[prop(into)] amount: Signal<Option<i32>>) -> impl IntoView {
     let icon_class = move || get_gil_or_dash_icon_class(amount().is_some());
