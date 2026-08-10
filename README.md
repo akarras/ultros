@@ -163,6 +163,7 @@ The two halves of the data come from different places:
 | `DISCORD_CLIENT_ID` | Discord Application ID | Required |
 | `DISCORD_CLIENT_SECRET` | Discord Client Secret | Required |
 | `HOSTNAME` | Public URL of the app (for OAuth redirects) | `http://localhost:8080` |
+| `ULTROS_INTERNAL_API_ORIGIN` | Origin the SSR renderer calls its own API on. Defaults to the loopback form of `LEPTOS_SITE_ADDR`, so the server never leaves the box to fetch its own data; only set this if the API lives somewhere else. | derived from `LEPTOS_SITE_ADDR` |
 | `KEY` | Secret key for cookie encryption | Random string |
 | `DATABASE_URL` | Postgres connection string | `postgres://user:pass@host/db` |
 | `PORT` | HTTP server port | `8080` |
