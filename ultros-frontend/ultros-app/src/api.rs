@@ -814,9 +814,11 @@ where
 /// Headers that must not be copied from the inbound browser request onto the
 /// outbound internal API request.
 ///
-/// The SSR path re-issues each API call against `HOSTNAME`, which in production
-/// is the *public* origin, so the request travels back out through the CDN.
-/// Copying the inbound `host` header onto a request aimed at a different URL
+/// The SSR path re-issues each API call against [`internal_api_origin`], which
+/// is no longer the public origin — but it still must not carry the inbound
+/// `host`, and the reason it originally mattered is worth keeping: when the
+/// outbound call did travel back out through the CDN,
+/// copying the inbound `host` header onto a request aimed at a different URL
 /// makes the CDN reject it: a `Host` that does not match the edge certificate
 /// answers `403 Forbidden`, and on a pooled TLS connection (the client below
 /// sets a 60s keepalive, so connections are reused) a `Host` that disagrees
@@ -865,6 +867,105 @@ const NON_FORWARDABLE_HEADERS: &[&str] = &[
     "x-forwarded-proto",
     "x-real-ip",
 ];
+
+/// Turn the address the server is bound to into an origin it can call itself
+/// on, or `None` if it does not look like an `addr:port` pair.
+///
+/// `0.0.0.0` and `[::]` are the *unspecified* address — "listen on every
+/// interface". They are a valid bind target and not a valid destination, so
+/// they map to the matching loopback address. Anything else is already a
+/// concrete address the process answers on and is used verbatim.
+#[cfg(feature = "ssr")]
+fn loopback_origin_from_site_addr(site_addr: &str) -> Option<String> {
+    let (host, port) = site_addr.trim().rsplit_once(':')?;
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // IPv6 literals arrive bracketed (`[::]:8080`) and stay bracketed in a URL.
+    let host = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Some("::" | "::0" | "0:0:0:0:0:0:0:0") => "[::1]",
+        Some(_) => host,
+        None if host.is_empty() || host == "0.0.0.0" => "127.0.0.1",
+        None => host,
+    };
+    Some(format!("http://{host}:{port}"))
+}
+
+/// Pick the origin the SSR renderer issues its own API calls against.
+///
+/// Precedence: an explicit override, then the address the server is bound to,
+/// then the public `HOSTNAME`, then a development default.
+///
+/// This used to be `HOSTNAME` alone, and `HOSTNAME` is the app's *public* URL
+/// (`https://ultros.app` in production) — it has to stay that way, OAuth
+/// redirects are built from it. Using it here too meant every server-rendered
+/// page re-fetched its own API by leaving the box: DNS to Cloudflare, a fresh
+/// TLS handshake, back in through the edge, into the very same process.
+///
+/// Measured on the production host: `/api/v1/cheapest/Europe` answers in 8-20ms
+/// over loopback versus ~60ms through the edge when the edge is healthy — and
+/// the edge is not always healthy. A single 4h26m container log window
+/// (2026-08-10 08:53→13:19) held **429** `source: TimedOut` failures against
+/// this module's 10s client budget, concentrated in two minutes (10:53-10:54)
+/// where the edge stalled: 88 for `cheapest/Europe`, 53 for
+/// `cheapest/North-America`, 52 for `retainer/listings/{id}`, and a long tail of
+/// `listings/{world}/{id}` — CN and JP worlds especially. Those are GlitchTip
+/// issues 2209 ("Error doing leptos fetch") and 2210 ("Error getting value").
+///
+/// A failed SSR fetch does not error the page; the resource still renders, just
+/// empty. So the visible symptom is a page that silently loses a section, which
+/// is why this survived so long. Going over loopback removes the entire class:
+/// no DNS, no TLS handshake, no CDN, no WAF, no edge rate limit between the
+/// process and its own API.
+///
+/// It is *not* a fix for the SSR panic flood (GlitchTip 6876/6886/6888/6895) —
+/// those run at a steady ~120/min across the whole window and do not correlate
+/// with the timeout bursts.
+///
+/// `HOSTNAME` is kept as a fallback so an unusual deployment still works, and
+/// its trailing slash is trimmed — `fly.toml` sets `https://ultros.app/`, which
+/// concatenated with a leading-slash path produced a double-slash URL.
+#[cfg(feature = "ssr")]
+fn resolve_internal_api_origin(
+    explicit: Option<&str>,
+    site_addr: Option<&str>,
+    hostname: Option<&str>,
+) -> String {
+    fn set(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|value| !value.is_empty())
+    }
+
+    if let Some(explicit) = set(explicit) {
+        return explicit.trim_end_matches('/').to_owned();
+    }
+    if let Some(origin) = set(site_addr).and_then(loopback_origin_from_site_addr) {
+        return origin;
+    }
+    if let Some(hostname) = set(hostname) {
+        return hostname.trim_end_matches('/').to_owned();
+    }
+    "http://localhost:8080".to_owned()
+}
+
+/// The origin every SSR-side API call is issued against, resolved once.
+///
+/// See [`resolve_internal_api_origin`] for why this is not simply `HOSTNAME`.
+#[cfg(feature = "ssr")]
+fn internal_api_origin() -> &'static str {
+    static ORIGIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ORIGIN.get_or_init(|| {
+        let explicit = std::env::var("ULTROS_INTERNAL_API_ORIGIN").ok();
+        let site_addr = std::env::var("LEPTOS_SITE_ADDR").ok();
+        let hostname = std::env::var("HOSTNAME").ok();
+        let origin = resolve_internal_api_origin(
+            explicit.as_deref(),
+            site_addr.as_deref(),
+            hostname.as_deref(),
+        );
+        tracing::info!(%origin, "resolved SSR internal API origin");
+        origin
+    })
+}
 
 /// Copy the inbound request's headers into a header map suitable for the
 /// outbound internal API call, dropping everything in [`NON_FORWARDABLE_HEADERS`].
@@ -915,9 +1016,7 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname =
-        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
-    let path = format!("{hostname}{path}");
+    let path = format!("{}{path}", internal_api_origin());
     let request = client
         .delete(&path)
         .headers(forwardable_headers(headers))
@@ -993,9 +1092,7 @@ where
     });
     let req_parts = use_context::<Parts>().ok_or(AppError::ParamMissing)?;
     let headers = req_parts.headers;
-    let hostname =
-        std::env::var("HOSTNAME").unwrap_or_else(|_| "http://localhost:8080".to_string());
-    let path = format!("{hostname}{path}");
+    let path = format!("{}{path}", internal_api_origin());
     let request = client
         .get(&path)
         .headers(forwardable_headers(headers))
@@ -1226,6 +1323,114 @@ mod ssr_response_tests {
             "changing the status must not change what callers observe"
         );
         assert_eq!(fixed_401, AppError::ApiError(ApiError::NotAuthenticated));
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod ssr_origin_tests {
+    use super::{loopback_origin_from_site_addr, resolve_internal_api_origin};
+
+    /// The production configuration, and the whole point of the change.
+    ///
+    /// The container runs with `HOSTNAME=https://ultros.app` and
+    /// `LEPTOS_SITE_ADDR=0.0.0.0:8080`. Before this, every SSR fetch went to the
+    /// public origin: out to Cloudflare and back into the same process, 10s
+    /// budget, hundreds of `TimedOut` errors per log window. It must stay on the
+    /// box.
+    #[test]
+    fn production_env_resolves_to_loopback_not_the_public_origin() {
+        let origin =
+            resolve_internal_api_origin(None, Some("0.0.0.0:8080"), Some("https://ultros.app"));
+        assert_eq!(origin, "http://127.0.0.1:8080");
+        assert!(
+            !origin.contains("ultros.app"),
+            "the SSR loopback must not leave the machine: {origin}"
+        );
+    }
+
+    /// `LEPTOS_SITE_ADDR` is what the server actually binds, so it wins over the
+    /// public `HOSTNAME` — but an operator can still pin the origin by hand.
+    #[test]
+    fn explicit_override_wins_over_everything() {
+        assert_eq!(
+            resolve_internal_api_origin(
+                Some("http://api.internal:9000"),
+                Some("0.0.0.0:8080"),
+                Some("https://ultros.app"),
+            ),
+            "http://api.internal:9000"
+        );
+    }
+
+    /// Unset in development (`cargo leptos serve` may not export it), in which
+    /// case behaviour is exactly what it was before: `HOSTNAME`, then the
+    /// localhost default. Blank strings count as unset — an env var set to the
+    /// empty string would otherwise resolve to an origin-less URL.
+    #[test]
+    fn falls_back_through_hostname_then_the_dev_default() {
+        assert_eq!(
+            resolve_internal_api_origin(None, None, Some("http://localhost:3000")),
+            "http://localhost:3000"
+        );
+        assert_eq!(
+            resolve_internal_api_origin(Some(""), Some("  "), Some("")),
+            "http://localhost:8080"
+        );
+        assert_eq!(
+            resolve_internal_api_origin(None, None, None),
+            "http://localhost:8080"
+        );
+    }
+
+    /// `fly.toml` sets `HOSTNAME = "https://ultros.app/"`. Concatenated with a
+    /// leading-slash path that produced `https://ultros.app//api/v1/...`.
+    #[test]
+    fn a_trailing_slash_on_the_origin_is_trimmed() {
+        assert_eq!(
+            resolve_internal_api_origin(None, None, Some("https://ultros.app/")),
+            "https://ultros.app"
+        );
+        assert_eq!(
+            format!("{}{}", "https://ultros.app", "/api/v1/cheapest/Europe"),
+            "https://ultros.app/api/v1/cheapest/Europe"
+        );
+    }
+
+    /// The unspecified address is a valid thing to *bind* and not a valid thing
+    /// to *connect to*, so it has to become the matching loopback address. A
+    /// concrete bind address is already reachable and is used as-is.
+    #[test]
+    fn the_unspecified_address_becomes_loopback() {
+        for (addr, expected) in [
+            ("0.0.0.0:8080", "http://127.0.0.1:8080"),
+            ("[::]:8080", "http://[::1]:8080"),
+            ("[::0]:3000", "http://[::1]:3000"),
+            (":8080", "http://127.0.0.1:8080"),
+            ("127.0.0.1:8080", "http://127.0.0.1:8080"),
+            ("localhost:3000", "http://localhost:3000"),
+            ("[::1]:3000", "http://[::1]:3000"),
+            ("192.168.1.5:8080", "http://192.168.1.5:8080"),
+            (" 0.0.0.0:8080 ", "http://127.0.0.1:8080"),
+        ] {
+            assert_eq!(
+                loopback_origin_from_site_addr(addr).as_deref(),
+                Some(expected),
+                "{addr}"
+            );
+        }
+    }
+
+    /// Anything that is not an `addr:port` pair must fall through to the next
+    /// source rather than produce a URL that cannot be connected to.
+    #[test]
+    fn a_malformed_site_addr_falls_through() {
+        for addr in ["0.0.0.0", "", "http://0.0.0.0:8080/", "0.0.0.0:", "8080"] {
+            assert_eq!(loopback_origin_from_site_addr(addr), None, "{addr}");
+        }
+        assert_eq!(
+            resolve_internal_api_origin(None, Some("0.0.0.0"), Some("https://ultros.app")),
+            "https://ultros.app"
+        );
     }
 }
 
