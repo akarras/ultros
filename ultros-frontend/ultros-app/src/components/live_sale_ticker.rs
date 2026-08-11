@@ -89,9 +89,11 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     hq: sale.hq,
                                 });
                             }
+                            // ⚡ Bolt Optimization: Use sort_unstable_by_key to avoid auxiliary memory allocation.
+                            // Stability is not required for chronological sorting here.
                             sales
                                 .make_contiguous()
-                                .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
+                                .sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
 
                             // ⚡ Bolt Optimization: Filter duplicates and truncate in-place
                             // to avoid allocating a new VecDeque and cloning items on every websocket event.
