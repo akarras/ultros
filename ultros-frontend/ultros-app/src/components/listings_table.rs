@@ -33,7 +33,9 @@ pub fn ListingsTable(
     // Note: We use Arc<Retainer> to make cloning cheap (pointer copy vs string copy).
     let sorted_listings = Memo::new(move |_| {
         let mut listings = listings();
-        listings.sort_by_key(|(listing, _)| listing.price_per_unit);
+        // ⚡ Bolt Optimization: Use sort_unstable_by_key to avoid auxiliary memory allocation
+        // and improve sorting speed over stable sort. Order of equal-priced listings does not matter.
+        listings.sort_unstable_by_key(|(listing, _)| listing.price_per_unit);
         listings
     });
     // This memo handles the cheap slicing/view logic.
