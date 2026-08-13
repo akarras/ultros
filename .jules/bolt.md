@@ -69,3 +69,6 @@ Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only 
 ## 2026-08-07 - Avoid into_iter().take().collect() when limiting arrays
 **Learning:** Using `v.into_iter().take(limit).collect::<Vec<_>>` requires iterating and allocating a new Vec. Rust Vectors have an O(1) in-place `truncate(limit)` method that achieves the exact same result without allocating new memory or requiring a `collect`.
 **Action:** Always prefer `v.truncate(limit)` over `.into_iter().take(limit).collect()` to take the first N elements from an existing `Vec`.
+## 2026-08-12 - Optimize top N item extraction with select_nth_unstable in apply_sales_event
+**Learning:** In `ultros-api-types/src/lib.rs`, taking the top N elements of a slice using a full sort (`sort_by_key`) followed by `.truncate()` takes O(N log N) time on the full array length. When returning the top N items from a potentially large collection, avoid full sorts.
+**Action:** Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only the remaining N elements to partition the array in O(M) time and do the O(N log N) sort only on the truncated array. Guard it with `if slice.len() > limit`.
