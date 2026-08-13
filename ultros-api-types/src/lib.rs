@@ -112,9 +112,14 @@ impl CurrentlyShownItem {
                 }
             }
         }
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        if self.sales.len() > 200 {
+            self.sales
+                .select_nth_unstable_by_key(200, |sale| std::cmp::Reverse(sale.sold_date));
+            self.sales.truncate(200);
+        }
         self.sales
-            .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-        self.sales.truncate(200);
+            .sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
     }
 
     fn upsert_sales(&mut self, sales: Vec<SaleHistory>) {
