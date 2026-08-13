@@ -15,3 +15,6 @@
 ## 2024-07-23 - Add explicit input associations
 **Learning:** In Leptos, when defining `for` and `id` attributes that need dynamic values within `move ||` closures, ensure you do not inadvertently move an entire struct (like `group`) multiple times, which causes E0382. Instead, extract the required value (e.g. `let group_id = group.id;`) beforehand so it can be copied into the closures.
 **Action:** Always extract and copy small values before using them inside Leptos closures to avoid ownership issues.
+## 2026-08-12 - Confirm Action Aria-Live
+**Learning:** Adding `aria-live="polite"` to a button that changes text to confirm an action (e.g. from "Clear All" to "Confirm Clear") is an easy accessibility win to notify screen reader users of the new state. However, putting `aria-live` directly on the button can sometimes be flaky across different screen readers, but it's an acceptable micro-UX improvement for an inline confirmation pattern.
+**Action:** Use `aria-live` regions or visually hidden elements for more complex state changes, but inline `aria-live="polite"` on a changing button is a quick enhancement for simple confirm interactions.
