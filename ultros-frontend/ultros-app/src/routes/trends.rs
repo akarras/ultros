@@ -307,6 +307,21 @@ mod tests {
         assert_eq!(format_volume(1_500_000), "1.5M");
         assert_eq!(format_volume(999_999_999), "1000.0M");
     }
+
+    #[test]
+    fn test_sort_key_from_str() {
+        // Known keys parse to correct variants.
+        assert_eq!(SortKey::from_str("vwap"), SortKey::Vwap);
+        assert_eq!(SortKey::from_str("price"), SortKey::Price);
+        assert_eq!(SortKey::from_str("pct"), SortKey::PctChange);
+        assert_eq!(SortKey::from_str("spd"), SortKey::SalesPerDay);
+
+        // Fallback test: verify that when an unknown or empty parameter is
+        // provided by the client, the application defaults safely to `UnitVolume`
+        // instead of panicking or failing silently. This matches the component's default assumptions.
+        assert_eq!(SortKey::from_str("unknown_key"), SortKey::UnitVolume);
+        assert_eq!(SortKey::from_str(""), SortKey::UnitVolume);
+    }
 }
 
 #[component]
