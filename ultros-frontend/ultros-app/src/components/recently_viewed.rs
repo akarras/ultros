@@ -195,6 +195,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                         <h4 class="dashboard-section-title">{t!(i18n, recently_viewed_title)}</h4>
                         <button
                             class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)] rounded px-1"
+                            aria-live="polite"
                             on:click=move |_| {
                                 if confirm_clear.get_untracked() {
                                     item_data.clear_items();
