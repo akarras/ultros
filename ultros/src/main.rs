@@ -215,6 +215,70 @@ fn error_reporting_disabled(environment: Option<&str>) -> bool {
     environment == Some("development")
 }
 
+/// Format a panic's `#[track_caller]` source location as `file:line:column`.
+///
+/// Mirrors the wasm-side reporter in `ultros-client/src/lib.rs`, so a server
+/// panic and a client panic read identically in Glitchtip.
+fn panic_location_string(info: &std::panic::PanicHookInfo<'_>) -> Option<String> {
+    info.location()
+        .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+}
+
+/// Attach the panicking source location to every Sentry panic event.
+///
+/// `sentry-panic` 0.49 builds its event purely from the panic *payload* and a
+/// runtime backtrace — it never reads `PanicHookInfo::location()`
+/// (`sentry_panic::PanicIntegration::event_from_panic_info`). Our release
+/// binary ships without symbols, so every frame Glitchtip receives is an
+/// `<unknown>` at a bare instruction address, and the addresses are ASLR'd,
+/// so they differ between events for the *same* panic. The result is what the
+/// server backlog actually looks like today: `culprit: <unknown>`, no tags,
+/// and a single un-actionable issue per panic *message* — 34k events under
+/// "called `Option::unwrap()` on a `None` value" (Glitchtip #6876) with no way
+/// to tell which of the ~hundreds of `unwrap()`s in the tree produced them.
+///
+/// `location()` needs no symbols at all: `file:line:column` is baked in at
+/// compile time by `#[track_caller]` and is already sitting on the
+/// `PanicHookInfo` we are handed. Wrapping the hook that `sentry::init`
+/// installed (rather than adding a second `PanicIntegration`, which the
+/// upstream docs say is unsupported — extractors are ignored when the
+/// integration is registered twice) records it on:
+///
+/// * tag `panic.location` — searchable/filterable in Glitchtip, and
+/// * context `rust_panic.location` — the exact shape the wasm reporter uses.
+///
+/// It also fingerprints by location, so panics split into one issue per
+/// panic *site* instead of per message. This is the same trick the client-side
+/// reporter uses ("a stable per-location fingerprint, so it collapses to one
+/// issue per panic site" — `ultros-app/src/error_filter.js`). Expect existing
+/// server panic issues to go quiet and be replaced by per-site ones on deploy.
+///
+/// Must be called *after* `sentry::init`, since that is what installs the hook
+/// being wrapped.
+fn attach_panic_location_to_sentry() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let Some(location) = panic_location_string(info) else {
+            previous(info);
+            return;
+        };
+        sentry::with_scope(
+            |scope| {
+                scope.set_tag("panic.location", &location);
+                scope.set_context(
+                    "rust_panic",
+                    sentry::protocol::Context::Other(
+                        std::iter::once(("location".to_string(), location.clone().into()))
+                            .collect(),
+                    ),
+                );
+                scope.set_fingerprint(Some(["panic", location.as_str()].as_slice()));
+            },
+            || previous(info),
+        );
+    }));
+}
+
 // Bolt: Switched to multi-threaded runtime for better performance on multi-core systems
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -276,6 +340,13 @@ async fn main() -> Result<()> {
             options.send_default_pii = false;
             sentry::init((dsn, options))
         });
+
+    // Wrap the panic hook `sentry::init` just installed so panic events carry
+    // their source location. Only meaningful when reporting is on, and the
+    // wrap must happen after init — see `attach_panic_location_to_sentry`.
+    if _sentry_guard.is_some() {
+        attach_panic_location_to_sentry();
+    }
 
     // Create the db before we proceed
     let filter: EnvFilter =
@@ -499,5 +570,49 @@ mod tests {
         assert!(!error_reporting_disabled(Some("production")));
         assert!(!error_reporting_disabled(Some("staging")));
         assert!(!error_reporting_disabled(None));
+    }
+
+    /// `panic_location_string` is what makes a server panic attributable at
+    /// all: the release binary is unsymbolicated, so `file:line:column` from
+    /// `#[track_caller]` is the only source information Glitchtip ever gets.
+    /// The panic hook is a `Box<dyn Fn>` we cannot call directly from a test,
+    /// so exercise the formatter through a real panic.
+    #[test]
+    fn panic_location_is_file_line_column() {
+        use std::sync::{Arc, Mutex};
+
+        let captured: Arc<Mutex<Option<String>>> = Arc::default();
+        let sink = captured.clone();
+
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            *sink.lock().unwrap() = super::panic_location_string(info);
+        }));
+        let _ = std::panic::catch_unwind(|| panic!("boom"));
+        std::panic::set_hook(previous);
+
+        let location = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("panics carry a location");
+        // `main.rs:<line>:<col>` — the shape the wasm reporter already sends as
+        // `contexts.rust_panic.location`.
+        let (file, line_col) = location
+            .rsplit_once(':')
+            .and_then(|(rest, col)| {
+                rest.rsplit_once(':')
+                    .map(|(file, line)| (file, (line, col)))
+            })
+            .expect("location is file:line:column");
+        assert!(file.ends_with("main.rs"), "unexpected file in {location}");
+        assert!(
+            line_col.0.parse::<u32>().is_ok(),
+            "unexpected line in {location}"
+        );
+        assert!(
+            line_col.1.parse::<u32>().is_ok(),
+            "unexpected column in {location}"
+        );
     }
 }
