@@ -354,11 +354,15 @@ fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
         .get(&format!("{field_label}_min"))
         .and_then(|p| p.parse::<i32>().ok());
 
+    // Inclusive on both ends: the chips read "Profit ≥ 5000" / "Profit ≤ 5000",
+    // and every other tool in the app (analyzer, recipe/fc analyzers) filters
+    // with `>= min` / `<= max`. The pre-kit exclusive bounds silently dropped
+    // the row sitting exactly on the number the user typed.
     match (min, max) {
         (None, None) => true,
-        (None, Some(max)) => value < max,
-        (Some(min), None) => value > min,
-        (Some(min), Some(max)) => (min..max).contains(&value),
+        (None, Some(max)) => value <= max,
+        (Some(min), None) => value >= min,
+        (Some(min), Some(max)) => (min..=max).contains(&value),
     }
 }
 
@@ -384,7 +388,11 @@ fn ExchangeItemContent() -> impl IntoView {
     let params = use_params_map();
     let query = use_query_map();
     let (home_world, _) = use_home_world();
-    let (currency_quantity, set_currency_quantity) = query_signal::<i32>("currency_amount");
+    // `filter_query_signal`, not a plain `query_signal`: this box is typed into
+    // a digit at a time, and the router default (replace: false, scroll: true)
+    // would push a history entry and yank the window to the top per keystroke —
+    // the same bug this rebuild fixed for the filter chips.
+    let (currency_quantity, set_currency_quantity) = filter_query_signal::<i32>("currency_amount");
     let sales = ArcResource::new(home_world, move |world| async move {
         let world = world.ok_or(AppError::NoHomeWorld)?;
         get_recent_sales_for_world(&world.name).await
@@ -1330,6 +1338,47 @@ mod tests {
         assert_eq!(SortMode::fallback(), SortMode::Profit);
         assert_eq!(SortMode::HoursBetweenSales.default_dir(), SortDir::Asc);
         assert_eq!(SortMode::Profit.default_dir(), SortDir::Desc);
+    }
+
+    /// The chips read "Profit ≥ 5000" / "Profit ≤ 5000", so the row sitting
+    /// exactly on the typed number has to survive the filter. The pre-kit
+    /// bounds were exclusive on both ends, which quietly dropped it and
+    /// disagreed with every other tool in the app (`analyzer.rs`,
+    /// `recipe_analyzer.rs`, `fc_crafting_analyzer.rs` all use `>=`/`<=`).
+    #[test]
+    fn range_filter_bounds_are_inclusive() {
+        let params = |pairs: &[(&str, &str)]| {
+            let mut q = ParamsMap::new();
+            for (k, v) in pairs {
+                q.insert(k.to_string(), v.to_string());
+            }
+            q
+        };
+
+        let min_only = params(&[("total_profit_min", "5000")]);
+        assert!(
+            is_in_range(5000, "total_profit", &min_only),
+            "≥ includes 5000"
+        );
+        assert!(is_in_range(5001, "total_profit", &min_only));
+        assert!(!is_in_range(4999, "total_profit", &min_only));
+
+        let max_only = params(&[("total_profit_max", "5000")]);
+        assert!(
+            is_in_range(5000, "total_profit", &max_only),
+            "≤ includes 5000"
+        );
+        assert!(is_in_range(4999, "total_profit", &max_only));
+        assert!(!is_in_range(5001, "total_profit", &max_only));
+
+        // A both-ends range on a single value must keep that value.
+        let exact = params(&[("total_profit_min", "5000"), ("total_profit_max", "5000")]);
+        assert!(is_in_range(5000, "total_profit", &exact));
+        assert!(!is_in_range(4999, "total_profit", &exact));
+        assert!(!is_in_range(5001, "total_profit", &exact));
+
+        // No bounds at all still means "everything".
+        assert!(is_in_range(0, "total_profit", &params(&[])));
     }
 
     #[test]
