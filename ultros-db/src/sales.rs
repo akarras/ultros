@@ -25,6 +25,43 @@ use tracing::{instrument, warn};
 use ultros_api_types::{SaleHistory, UnknownCharacter};
 use universalis::{ItemId, SaleView, WorldId};
 
+/// Ceiling on how many per-world sale-history queries one request may have in
+/// flight at once.
+///
+/// The per-world queries below used to run under `try_join_all`, which polls
+/// *every* future immediately: a region item page fans out one query per world
+/// in the region (~30 for North America, more for Europe), so a single page
+/// render tried to hold that many pooled connections simultaneously. With
+/// `POSTGRES_MAX_CONNECTIONS` at 300 and ingest writing continuously, a handful
+/// of concurrent region renders is enough to exhaust the pool — prod events
+/// carry `acquired connection, but time to acquire exceeded slow threshold`
+/// breadcrumbs at `acquired_after_secs: 2.2` (threshold 2) sitting right next
+/// to the 10s SSR loopback timeouts that GlitchTip files as #2209/#2210, and
+/// the same starvation shows up as #6868/#6869 (`catch-up … update failed`).
+///
+/// Buffering caps the peak connection demand per call while keeping the exact
+/// same queries and the same results — the callers sort and truncate the merged
+/// rows anyway, so nothing downstream depends on the fan-out width. The cost is
+/// a little latency on wide scopes (worlds are answered in batches rather than
+/// all at once); each query is index-served on
+/// `sale_history_lookup_index (sold_item_id, world_id, sold_date DESC)`, so the
+/// batches are individually fast.
+const MAX_CONCURRENT_WORLD_QUERIES: usize = 8;
+
+/// Run per-world queries with at most [`MAX_CONCURRENT_WORLD_QUERIES`] in
+/// flight, collecting results in the order the worlds were supplied.
+async fn fan_out_per_world<F, T>(queries: impl Iterator<Item = F>) -> Result<Vec<T>, anyhow::Error>
+where
+    F: std::future::Future<Output = Result<T, anyhow::Error>>,
+{
+    use futures::stream::{StreamExt, TryStreamExt};
+
+    futures::stream::iter(queries)
+        .buffered(MAX_CONCURRENT_WORLD_QUERIES)
+        .try_collect()
+        .await
+}
+
 impl UltrosDb {
     /// Stores a sale from a given sale view.
     /// Demands that a world name for the sale is provided as it is optional on the sale view, but can be determined other ways
@@ -121,12 +158,12 @@ impl UltrosDb {
         item_id: i32,
         limit: u64,
     ) -> Result<Vec<SaleHistoryReturn>, anyhow::Error> {
-        let all = futures::future::try_join_all(
+        let all: Vec<Vec<sale_history::Model>> = fan_out_per_world(
             world_ids.map(|world_id| self.get_sale_history_for_item(world_id, item_id, limit)),
         )
-        .await;
+        .await?;
 
-        let mut sales: Vec<_> = all?.into_iter().flat_map(|w| w.into_iter()).collect();
+        let mut sales: Vec<_> = all.into_iter().flat_map(|w| w.into_iter()).collect();
 
         // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
         let limit_usize = limit as usize;
@@ -222,7 +259,7 @@ impl UltrosDb {
         item_id: i32,
         limit: u64,
     ) -> Result<Vec<sale_history::Model>, anyhow::Error> {
-        let per_world = futures::future::try_join_all(
+        let per_world: Vec<Vec<sale_history::Model>> = fan_out_per_world(
             world_ids.map(|world_id| self.get_sale_history_for_item(world_id, item_id, limit)),
         )
         .await?;
@@ -332,6 +369,77 @@ pub struct AbbreviatedSaleData {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The whole point of `fan_out_per_world` is that it never has more than
+    /// `MAX_CONCURRENT_WORLD_QUERIES` queries holding a pooled connection at
+    /// once. Each task bumps a counter on entry and yields before dropping it,
+    /// so the observed peak is a real concurrency reading rather than a
+    /// scheduling artifact.
+    #[tokio::test]
+    async fn fan_out_caps_in_flight_queries() {
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let queries = (0..64).map(|world_id| {
+            let in_flight = in_flight.clone();
+            let peak = peak.clone();
+            async move {
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                // Force the runtime to interleave the buffered futures.
+                tokio::task::yield_now().await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(world_id)
+            }
+        });
+
+        let results = fan_out_per_world(queries).await.unwrap();
+
+        assert_eq!(results.len(), 64);
+        assert!(
+            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_WORLD_QUERIES,
+            "peak in-flight {} exceeded the cap {}",
+            peak.load(Ordering::SeqCst),
+            MAX_CONCURRENT_WORLD_QUERIES
+        );
+    }
+
+    /// Callers flatten these results per world, so buffering must not reorder
+    /// them relative to the world list it was handed.
+    #[tokio::test]
+    async fn fan_out_preserves_input_order() {
+        let queries = (0..32).map(|world_id| async move {
+            // Later worlds finish sooner, so an unordered buffer would scramble
+            // the output.
+            for _ in 0..(32 - world_id) {
+                tokio::task::yield_now().await;
+            }
+            Ok::<_, anyhow::Error>(world_id)
+        });
+
+        let results = fan_out_per_world(queries).await.unwrap();
+
+        assert_eq!(results, (0..32).collect::<Vec<_>>());
+    }
+
+    /// `try_join_all` short-circuited on the first failure; the replacement has
+    /// to keep surfacing errors rather than silently dropping a world.
+    #[tokio::test]
+    async fn fan_out_propagates_errors() {
+        let queries = (0..16).map(|world_id| async move {
+            if world_id == 9 {
+                Err(anyhow::anyhow!("world {world_id} blew up"))
+            } else {
+                Ok(world_id)
+            }
+        });
+
+        let err = fan_out_per_world(queries).await.unwrap_err();
+
+        assert!(err.to_string().contains("world 9 blew up"), "got: {err}");
+    }
 
     fn buyer(id: i32, name: &str) -> unknown_final_fantasy_character::Model {
         unknown_final_fantasy_character::Model {
