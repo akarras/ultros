@@ -25,7 +25,6 @@ use crate::global_state::{
 use crate::{
     components::{
         app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
-        tooltip::*,
     },
     routes::{
         about::*,
