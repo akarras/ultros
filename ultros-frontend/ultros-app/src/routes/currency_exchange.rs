@@ -8,18 +8,20 @@ use crate::api::get_recent_sales_for_world;
 use crate::components::ad::Ad;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
+use crate::components::control_bar::{ColumnOption, ControlBar, FilterOption};
+use crate::components::filter_chip::FilterChip;
 use crate::components::icon::Icon;
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::MetaDescription;
 use crate::components::meta::MetaTitle;
-use crate::components::number_input::ParseableInputBox;
-use crate::components::query_button::QueryButton;
 use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
 use crate::components::sort_header::{SortColumn, SortDir, SortHeader};
+use crate::components::tool_help::ToolHeader;
 use crate::error::AppError;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::*;
+use crate::query_defaults::filter_query_signal;
 use crate::routes::not_found::NotFound;
 use chrono::TimeDelta;
 use chrono::Utc;
@@ -156,19 +158,6 @@ fn shop_items(special_shop: &SpecialShop) -> impl Iterator<Item = ShopItems> + '
         })
 }
 
-/// Every min/max query key the filter bar can set; used both to detect
-/// "any filter active" and to clear them all at once.
-const FILTER_QUERY_KEYS: &[&str] = &[
-    "price_per_item_min",
-    "price_per_item_max",
-    "number_received_min",
-    "number_received_max",
-    "total_profit_min",
-    "total_profit_max",
-    "hours_between_sales_min",
-    "hours_between_sales_max",
-];
-
 /// Stable URL IDs for optional columns, in picker + `?cols=` order.
 /// Required columns (item, qty received, profit) are not listed — they
 /// always render, and lead the table so a phone's visible slice is the
@@ -289,38 +278,72 @@ fn skeleton_columns(visible: &std::collections::HashSet<&'static str>) -> Vec<Sk
     cols
 }
 
-/// Compact min/max input pair for one numeric column, bound to the
-/// `{filter_name}_min` / `{filter_name}_max` query params.
-#[component]
-fn FilterRange(#[prop(into)] label: String, filter_name: &'static str) -> impl IntoView {
-    let i18n = use_i18n();
-    let (min, set_min) = query_signal::<i32>(format!("{filter_name}_min"));
-    let (max, set_max) = query_signal::<i32>(format!("{filter_name}_max"));
-    let aria_name = filter_name.replace("_", " ");
-    view! {
-        <div class="flex flex-col gap-1">
-            <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
-                {label}
-            </span>
-            <div class="flex flex-row gap-2">
-                <ParseableInputBox
-                    input=Signal::derive(min)
-                    set_value=SignalSetter::map(set_min)
-                    aria_label=t_string!(i18n, currency_exchange_min_field_aria, name = aria_name.clone())
-                        .to_string()
-                    placeholder=t_string!(i18n, currency_exchange_min).to_string()
-                />
-                <ParseableInputBox
-                    input=Signal::derive(max)
-                    set_value=SignalSetter::map(set_max)
-                    aria_label=t_string!(i18n, currency_exchange_max_field_aria, name = aria_name)
-                        .to_string()
-                    placeholder=t_string!(i18n, currency_exchange_max).to_string()
-                />
-            </div>
-        </div>
-    }
-    .into_any()
+/// One min/max half of a numeric column filter: everything the chip, the
+/// `+ Filter` menu, and Clear-all need to agree on.
+struct RangeFilter {
+    /// Query key, kept verbatim from the old UI so deep links survive.
+    key: &'static str,
+    /// Spinner floor for the chip's inline input. `None` for profit —
+    /// a negative profit floor is a legitimate filter.
+    min: Option<&'static str>,
+}
+
+const RANGE_FILTERS: &[RangeFilter] = &[
+    RangeFilter {
+        key: "price_per_item_min",
+        min: Some("0"),
+    },
+    RangeFilter {
+        key: "price_per_item_max",
+        min: Some("0"),
+    },
+    RangeFilter {
+        key: "number_received_min",
+        min: Some("0"),
+    },
+    RangeFilter {
+        key: "number_received_max",
+        min: Some("0"),
+    },
+    RangeFilter {
+        key: "total_profit_min",
+        min: None,
+    },
+    RangeFilter {
+        key: "total_profit_max",
+        min: None,
+    },
+    RangeFilter {
+        key: "hours_between_sales_min",
+        min: Some("0"),
+    },
+    RangeFilter {
+        key: "hours_between_sales_max",
+        min: Some("0"),
+    },
+];
+
+/// Set the `.hscroll-fade` mask variables from the scrollport's geometry: a
+/// 24px fade on any side that still has content past the fold, 0 otherwise.
+/// The 1px deadbands absorb the browser's rounding of `scrollWidth`.
+#[cfg(feature = "hydrate")]
+fn apply_table_fades(el: &web_sys::HtmlDivElement) {
+    const FADE_PX: f64 = 24.0;
+    let left = el.scroll_left();
+    let right = (el.scroll_width() as f64 - el.client_width() as f64 - left).max(0.0);
+    let px = |on: bool| {
+        if on {
+            format!("{FADE_PX}px")
+        } else {
+            "0px".to_string()
+        }
+    };
+    // Fully qualified for the same reason as the analyzer's chip fades:
+    // tachys' `ElementExt::style` wins method resolution over the inherent
+    // `HtmlElement::style` on a bare `el.style()` call.
+    let style = web_sys::HtmlElement::style(el);
+    let _ = style.set_property("--hfade-start", &px(left > 1.0));
+    let _ = style.set_property("--hfade-end", &px(right > 1.0));
 }
 
 fn is_in_range(value: i32, field_label: &str, query_map: &ParamsMap) -> bool {
@@ -414,24 +437,210 @@ fn ExchangeItemContent() -> impl IntoView {
     let (dir_param, _) = query_signal::<String>("dir");
     let sort_mode = Memo::new(move |_| sort_param().and_then(|s| s.parse::<SortMode>().ok()));
     let sort_dir = Memo::new(move |_| dir_param().and_then(|s| s.parse::<SortDir>().ok()));
-    let (cols_param, _set_cols_param) = query_signal::<String>("cols");
+    let (cols_param, set_cols_param) = query_signal::<String>("cols");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
     let list_scroll = NodeRef::<leptos::html::Div>::new();
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
 
-    // The filter inputs live behind a toggle: the chip row below already says
-    // which filters are set, so the expanded controls were pure duplication
-    // occupying the whole fold. Start expanded only when a deep link arrives
-    // with filters already applied, so those inputs are editable without a
-    // click.
-    let active_filter_count = Signal::derive(move || {
-        let q = query();
-        FILTER_QUERY_KEYS
-            .iter()
-            .filter(|key| q.get(key).and_then(|v| v.parse::<i32>().ok()).is_some())
-            .count()
+    // One (getter, setter) per range filter, in RANGE_FILTERS order. The
+    // filter *logic* keeps reading the raw query map through `is_in_range`;
+    // these signals exist for the chips, bound with `filter_query_signal`
+    // (replace: true, scroll: false) so editing a filter neither pushes a
+    // history entry per keystroke nor yanks the window back to the top.
+    type RangeFilterSignal = (Memo<Option<i32>>, SignalSetter<Option<i32>>);
+    let filter_signals: Vec<RangeFilterSignal> = RANGE_FILTERS
+        .iter()
+        .map(|f| filter_query_signal::<i32>(f.key))
+        .collect();
+    let filter_signals = StoredValue::new(filter_signals);
+
+    // A filter the user just added from the `+ Filter` menu but hasn't
+    // committed yet — its chip mounts in edit state with an empty input.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
+
+    // Filters currently drawn as a chip. Drives the "no active filters"
+    // hint and keeps `+ Filter` from offering a second copy of something
+    // the user can already see.
+    let active_filters = Memo::new(move |_| {
+        filter_signals.with_value(|sigs| {
+            RANGE_FILTERS
+                .iter()
+                .zip(sigs)
+                .filter(|(f, (get, _))| get.get().is_some() || pending_filter.get() == Some(f.key))
+                .map(|(f, _)| f.key)
+                .collect::<Vec<_>>()
+        })
     });
-    let (filters_open, set_filters_open) = signal(active_filter_count.get_untracked() > 0);
+
+    // Menu label for a filter: the long, explanatory one — the menu is where
+    // a filter has to be recognized, not just recalled. The chip reuses the
+    // terser comparison-shaped label.
+    let menu_label = move |key: &str| -> String {
+        match key {
+            "price_per_item_min" => {
+                t_string!(i18n, currency_exchange_filter_price_min_label).to_string()
+            }
+            "price_per_item_max" => {
+                t_string!(i18n, currency_exchange_filter_price_max_label).to_string()
+            }
+            "number_received_min" => {
+                t_string!(i18n, currency_exchange_filter_qty_min_label).to_string()
+            }
+            "number_received_max" => {
+                t_string!(i18n, currency_exchange_filter_qty_max_label).to_string()
+            }
+            "total_profit_min" => {
+                t_string!(i18n, currency_exchange_filter_profit_min_label).to_string()
+            }
+            "total_profit_max" => {
+                t_string!(i18n, currency_exchange_filter_profit_max_label).to_string()
+            }
+            "hours_between_sales_min" => {
+                t_string!(i18n, currency_exchange_filter_hours_min_label).to_string()
+            }
+            "hours_between_sales_max" => {
+                t_string!(i18n, currency_exchange_filter_hours_max_label).to_string()
+            }
+            _ => String::new(),
+        }
+    };
+    let chip_label = move |key: &str| -> String {
+        match key {
+            "price_per_item_min" => t_string!(i18n, currency_exchange_chip_price_min).to_string(),
+            "price_per_item_max" => t_string!(i18n, currency_exchange_chip_price_max).to_string(),
+            "number_received_min" => t_string!(i18n, currency_exchange_chip_qty_min).to_string(),
+            "number_received_max" => t_string!(i18n, currency_exchange_chip_qty_max).to_string(),
+            "total_profit_min" => t_string!(i18n, currency_exchange_chip_profit_min).to_string(),
+            "total_profit_max" => t_string!(i18n, currency_exchange_chip_profit_max).to_string(),
+            "hours_between_sales_min" => {
+                t_string!(i18n, currency_exchange_chip_hours_min).to_string()
+            }
+            "hours_between_sales_max" => {
+                t_string!(i18n, currency_exchange_chip_hours_max).to_string()
+            }
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything not already on screen.
+    let filter_options = Memo::new(move |_| {
+        let active = active_filters();
+        RANGE_FILTERS
+            .iter()
+            .filter(|f| !active.contains(&f.key))
+            .map(|f| FilterOption {
+                id: f.key,
+                label: menu_label(f.key),
+            })
+            .collect::<Vec<_>>()
+    });
+    let column_options = Memo::new(move |_| {
+        vec![
+            ColumnOption {
+                id: COL_PRICE_PER_ITEM,
+                label: t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
+            },
+            ColumnOption {
+                id: COL_SHOPS,
+                label: t_string!(i18n, currency_exchange_table_shops).to_string(),
+            },
+            ColumnOption {
+                id: COL_COST,
+                label: t_string!(i18n, currency_exchange_table_cost).to_string(),
+            },
+            ColumnOption {
+                id: COL_HOURS,
+                label: t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
+            },
+        ]
+    });
+    let toggle_column = Callback::new(move |col: &'static str| {
+        let mut set = visible_cols.get_untracked();
+        if set.contains(col) {
+            set.remove(col);
+        } else {
+            set.insert(col);
+        }
+        set_cols_param.set(Some(serialize_visible_cols(&set)));
+    });
+    let reset_columns = Callback::new(move |_| set_cols_param.set(None));
+    let add_filter = Callback::new(move |key: &'static str| pending_filter.set(Some(key)));
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        filter_signals.with_value(|sigs| {
+            for (_, set) in sigs.iter() {
+                set.set(None);
+            }
+        });
+    });
+
+    // Filtered row total, written from inside the Suspense closure where the
+    // rows are computed and read by the control bar's summary. Guarded so a
+    // re-render with an unchanged count doesn't re-notify the bar.
+    let trade_count = RwSignal::new(0usize);
+
+    // --- Table scrollport: edge fades --------------------------------------
+    // The table is wider than a phone viewport and scrolls horizontally with
+    // no scrollbar to say so; `--hfade-start`/`--hfade-end` drive the
+    // `.hscroll-fade` mask so a fade appears on whichever side has more
+    // columns. Client-only, same listener-parking shape as the analyzer's
+    // chip fades: a forgotten listener keeps firing after disposal, and a
+    // `new_local` StoredValue must never exist in an SSR-compiled path.
+    #[cfg(feature = "hydrate")]
+    {
+        use web_sys::wasm_bindgen::JsCast;
+        use web_sys::wasm_bindgen::closure::Closure;
+        let fade_listeners = StoredValue::new_local(
+            None::<(
+                web_sys::HtmlDivElement,
+                Closure<dyn FnMut()>,
+                Closure<dyn FnMut()>,
+            )>,
+        );
+        on_cleanup(move || {
+            fade_listeners.update_value(|slot| {
+                if let Some((el, scroll_cb, resize_cb)) = slot.take() {
+                    let _ = el.remove_event_listener_with_callback(
+                        "scroll",
+                        scroll_cb.as_ref().unchecked_ref(),
+                    );
+                    if let Some(win) = web_sys::window() {
+                        let _ = win.remove_event_listener_with_callback(
+                            "resize",
+                            resize_cb.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            });
+        });
+        Effect::new(move |_| {
+            // Tracked: toggling a column changes scrollWidth without a
+            // scroll or resize event firing.
+            let _ = visible_cols.get();
+            let Some(el) = list_scroll.get() else {
+                return;
+            };
+            apply_table_fades(&el);
+            if fade_listeners.with_value(|slot| slot.is_some()) {
+                return;
+            }
+            let on_scroll = {
+                let el = el.clone();
+                Closure::wrap(Box::new(move || apply_table_fades(&el)) as Box<dyn FnMut()>)
+            };
+            let on_resize = {
+                let el = el.clone();
+                Closure::wrap(Box::new(move || apply_table_fades(&el)) as Box<dyn FnMut()>)
+            };
+            let _ =
+                el.add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref());
+            if let Some(win) = web_sys::window() {
+                let _ = win
+                    .add_event_listener_with_callback("resize", on_resize.as_ref().unchecked_ref());
+            }
+            fade_listeners.set_value(Some((el, on_scroll, on_resize)));
+        });
+    }
 
     // Define the computation logic as a separate closure that takes data as arguments.
     // This avoids capturing the ArcResources directly, preventing move/FnOnce issues.
@@ -535,145 +744,100 @@ fn ExchangeItemContent() -> impl IntoView {
             <MetaDescription text=move || {
                 t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
             } />
-            <div class="panel p-4 rounded-xl mb-4">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
-                        {move || item().map(|i| i.name.as_str())} " - " {t!(i18n, currency_exchange_title)}
-                    </h2>
-                    <div class="flex flex-wrap items-center gap-3">
-                        <label
-                            for="currency-quantity"
-                            class="text-sm text-[color:var(--color-text-muted)]"
-                        >
-                            {t!(i18n, currency_exchange_how_many)}
-                        </label>
-                        <input
-                            id="currency-quantity"
-                            class="input w-24"
-                            prop:value=currency_quantity
-                            on:input=move |e| {
-                                let event = event_target_value(&e);
-                                if let Ok(p) = event.parse() {
-                                    set_currency_quantity.set(Some(p));
-                                }
-                            }
-                        />
-                        <button
-                            type="button"
-                            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium
-                            border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)]
-                            hover:text-[color:var(--brand-fg)] hover:bg-white/5 transition-colors"
-                            aria-expanded=move || filters_open().to_string()
-                            aria-controls="currency-filter-panel"
-                            on:click=move |_| set_filters_open.update(|open| *open = !*open)
-                        >
-                            <Icon icon=icondata::AiFilterFilled />
-                            {t!(i18n, currency_exchange_filters)}
-                            {move || {
-                                let count = active_filter_count();
-                                (count > 0)
-                                    .then(|| {
-                                        view! {
-                                            <span class="inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full text-xs
-                                            bg-[color:color-mix(in_srgb,var(--brand-ring)_25%,transparent)]
-                                            text-[color:var(--brand-fg)]">
-                                                {count}
-                                            </span>
-                                        }
-                                    })
-                            }}
-                        </button>
-                    </div>
-                </div>
-
-                <Show when=move || filters_open() fallback=|| ()>
-                    <div
-                        id="currency-filter-panel"
-                        class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-3 pt-3
-                        border-t border-[color:var(--color-outline)]"
-                    >
-                        <FilterRange
-                            label=t_string!(i18n, currency_exchange_price_per_item_title).to_string()
-                            filter_name="price_per_item"
-                        />
-                        <FilterRange
-                            label=t_string!(i18n, currency_exchange_qty_received_title).to_string()
-                            filter_name="number_received"
-                        />
-                        <FilterRange
-                            label=t_string!(i18n, currency_exchange_profit_title).to_string()
-                            filter_name="total_profit"
-                        />
-                        <FilterRange
-                            label=t_string!(i18n, currency_exchange_sales_velocity_title).to_string()
-                            filter_name="hours_between_sales"
-                        />
-                    </div>
-                </Show>
-
-                <div class="flex flex-wrap gap-2 mt-3">
-                    {move || {
-                        let q = query();
-                        let mut chips: Vec<AnyView> = Vec::new();
-
-                        let get_i = |k: &str| q.get(k).and_then(|v| v.parse::<i32>().ok());
-
-                        let mut push_chip = |label: &str, key: &'static str, val: Option<i32>| {
-                            if let Some(v) = val {
-                                let key_owned = key.to_string();
-                                chips.push(view! {
-                                    <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
-                                                  text-[color:var(--color-text)]
-                                                  bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]
-                                                  border-[color:var(--color-outline)]">
-                                        {format!("{label}: {v}")}
-                                        <QueryButton
-                                            key=key_owned.clone()
-                                            value=""
-                                            class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-                                            active_classes=""
-                                        >
-                                            <Icon icon=icondata::MdiClose />
-                                        </QueryButton>
-                                    </span>
-                                }.into_any());
-                            }
-                        };
-
-                        push_chip(t_string!(i18n, currency_exchange_chip_price_min), "price_per_item_min", get_i("price_per_item_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_price_max), "price_per_item_max", get_i("price_per_item_max"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_qty_min), "number_received_min", get_i("number_received_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_qty_max), "number_received_max", get_i("number_received_max"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_profit_min), "total_profit_min", get_i("total_profit_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_profit_max), "total_profit_max", get_i("total_profit_max"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_hours_min), "hours_between_sales_min", get_i("hours_between_sales_min"));
-                        push_chip(t_string!(i18n, currency_exchange_chip_hours_max), "hours_between_sales_max", get_i("hours_between_sales_max"));
-
-                        if !chips.is_empty() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-xs
-                                              text-[color:var(--color-text)]
-                                              bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]
-                                              border-[color:var(--color-outline)]">
-                                    <QueryButton
-                                        key="sort"
-                                        value=Signal::derive(move || sort_param().unwrap_or_else(|| "profit".into()))
-                                        class="inline-flex items-center gap-1 text-[color:var(--color-text)] hover:text-[color:var(--brand-fg)]"
-                                        active_classes=""
-                                        remove_queries=FILTER_QUERY_KEYS
-                                    >
-                                        <span class="inline-flex items-center gap-1">
-                                            <Icon icon=icondata::MdiClose />
-                                            {t!(i18n, currency_exchange_clear_all)}
-                                        </span>
-                                    </QueryButton>
-                                </span>
-                            }.into_any());
+            <ToolHeader
+                title=format!("{} — {}", item_name(), t_string!(i18n, currency_exchange_title))
+                summary=t_string!(i18n, currency_exchange_tool_summary).to_string()
+                context=t_string!(i18n, currency_exchange_tool_context).to_string()
+                help_href="/help"
+                help_body=t_string!(i18n, currency_exchange_tool_help).to_string()
+            />
+            <div class="flex flex-row justify-end items-center gap-3 my-3">
+                <label for="currency-quantity" class="text-sm text-[color:var(--color-text-muted)]">
+                    {t!(i18n, currency_exchange_how_many)}
+                </label>
+                <input
+                    id="currency-quantity"
+                    class="input w-24"
+                    inputmode="numeric"
+                    prop:value=currency_quantity
+                    on:input=move |e| {
+                        if let Ok(p) = event_target_value(&e).parse() {
+                            set_currency_quantity.set(Some(p));
                         }
-                        view! { <>{chips}</> }
-                    }}
-                </div>
+                    }
+                />
             </div>
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, currency_exchange_trade_count, n = move || trade_count.get())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                columns=Signal::derive(column_options)
+                visible_columns=Signal::derive(move || visible_cols.get())
+                on_toggle_column=toggle_column
+                on_reset_columns=reset_columns
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, currency_exchange_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    filter_signals
+                        .with_value(|sigs| {
+                            RANGE_FILTERS
+                                .iter()
+                                .zip(sigs.iter().copied())
+                                .filter(|(f, (get, _))| {
+                                    get.get().is_some() || pending_filter.get() == Some(f.key)
+                                })
+                                .map(|(f, (get, set))| {
+                                    let key = f.key;
+                                    let value = Signal::derive(move || {
+                                        get.get().map(|v| v.to_string())
+                                    });
+                                    let start_editing =
+                                        pending_filter.get_untracked() == Some(key);
+                                    let on_commit = Callback::new(move |v: Option<String>| {
+                                        set.set(v.and_then(|v| v.parse::<i32>().ok()));
+                                        if pending_filter.get_untracked() == Some(key) {
+                                            pending_filter.set(None);
+                                        }
+                                    });
+                                    // `min` is an `into`-String prop, so "no floor"
+                                    // has to omit the prop rather than pass None.
+                                    match f.min {
+                                        Some(m) => Either::Left(view! {
+                                            <FilterChip
+                                                label=chip_label(key)
+                                                value=value
+                                                numeric=true
+                                                min=m
+                                                start_editing=start_editing
+                                                on_commit=on_commit
+                                            />
+                                        }),
+                                        None => Either::Right(view! {
+                                            <FilterChip
+                                                label=chip_label(key)
+                                                value=value
+                                                numeric=true
+                                                start_editing=start_editing
+                                                on_commit=on_commit
+                                            />
+                                        }),
+                                    }
+                                })
+                                .collect_view()
+                        })
+                }}
+            </ControlBar>
             <div>
                 {move || {
                     if home_world().is_none() {
@@ -746,6 +910,29 @@ fn ExchangeItemContent() -> impl IntoView {
                                                 let mode = sort_mode.get().unwrap_or_else(SortMode::fallback);
                                                 let dir = sort_dir.get().unwrap_or_else(|| mode.default_dir());
                                                 sort_trades(&mut p, mode, dir);
+                                                // Feed the control bar's "N trades" summary. Guarded
+                                                // so a re-render with an unchanged count doesn't
+                                                // re-notify the bar.
+                                                if trade_count.get_untracked() != p.len() {
+                                                    trade_count.set(p.len());
+                                                }
+                                                // Filters that matched nothing get a message and a
+                                                // way out, not a silently empty body.
+                                                if p.is_empty() && !active_filters.get().is_empty() {
+                                                    return view! {
+                                                        <tr>
+                                                            <td colspan="7" class="px-3 py-8 text-center text-[color:var(--color-text-muted)]">
+                                                                <div class="flex flex-col items-center gap-2">
+                                                                    {t!(i18n, currency_exchange_no_matches)}
+                                                                    <button class="btn-secondary" on:click=move |_| clear_all.run(())>
+                                                                        {t!(i18n, currency_exchange_clear_all)}
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                    .into_any();
+                                                }
                                                 let visible = visible_cols.get();
                                                 p.into_iter()
                                                     .map(|p| {
@@ -780,13 +967,14 @@ fn ExchangeItemContent() -> impl IntoView {
                                                         }
                                                     })
                                                     .collect_view()
+                                                    .into_any()
                                             };
                                             view! {
                                                 // Only the table scrolls sideways on narrow
                                                 // viewports; the surrounding panel must not, or
                                                 // `overflow-x` would force `overflow-y: auto` and
                                                 // trap anything absolutely positioned inside it.
-                                                <div class="overflow-x-auto" node_ref=list_scroll>
+                                                <div class="overflow-x-auto hscroll-fade" node_ref=list_scroll>
                                                 <table class="w-full text-sm text-left">
                                                     <thead class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
                                                         <tr class="border-b border-white/5">
@@ -993,6 +1181,13 @@ pub fn CurrencySelection() -> impl IntoView {
             <MetaTitle title=t_string!(i18n, currency_exchange_meta_title_ultros) />
             <MetaDescription text=t_string!(i18n, currency_exchange_meta_desc_default) />
 
+            // The route wrapper no longer renders a shared heading (the
+            // exchange-item page brings its own ToolHeader), so the landing
+            // page names itself.
+            <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">
+                {t!(i18n, currency_exchange_title)}
+            </h1>
+
             // One panel for the blurb and the search box. The blurb is a single
             // sentence — the long marketing paragraph pushed the currency grid
             // below the fold on every viewport.
@@ -1073,20 +1268,15 @@ pub fn CurrencySelection() -> impl IntoView {
 
 #[component]
 pub fn CurrencyExchange() -> impl IntoView {
-    let i18n = use_i18n();
     view! {
         <div class="app-inline-ad">
             <Ad class="w-full h-[100px]" />
         </div>
         <div class="main-content">
-            <A href="/currency-exchange">
-                <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] hover:opacity-90 transition-all ease-in-out duration-500">
-                    {t!(i18n, currency_exchange_title)}
-                </h3>
-            </A>
             <Outlet />
         </div>
-    }.into_any()
+    }
+    .into_any()
 }
 
 #[cfg(test)]
@@ -1168,13 +1358,17 @@ mod tests {
         );
     }
 
-    /// `FILTER_QUERY_KEYS` drives the active-filter badge and "Clear all".
-    /// Task 3 of the kit rebuild pins this against the chip filter table;
-    /// until then pin the literal list so the contract can't drift silently.
+    /// `RANGE_FILTERS` drives the chips, the `+ Filter` menu, and Clear-all,
+    /// and its keys are a URL contract: they must stay exactly the names the
+    /// pre-kit page wrote, or every bookmarked filter deep link silently
+    /// stops filtering. `is_in_range` reads these same `{key}` names off the
+    /// raw query map, so a drifted key would also detach a chip from the
+    /// filtering it claims to do.
     #[test]
-    fn filter_query_keys_cover_every_filterable_column() {
+    fn range_filter_keys_are_a_stable_url_contract() {
+        let keys: Vec<&str> = RANGE_FILTERS.iter().map(|f| f.key).collect();
         assert_eq!(
-            FILTER_QUERY_KEYS,
+            keys,
             [
                 "price_per_item_min",
                 "price_per_item_max",

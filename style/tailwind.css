@@ -2405,6 +2405,30 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .filter-chip-row::-webkit-scrollbar {
     display: none;
 }
+/* Generic horizontal-scroll affordance for a table scrollport: same edge-fade
+   technique as .filter-chip-row above, on its own variable pair so the two
+   never fight when nested. The component sets the variables from the
+   element's scroll geometry (currency_exchange.rs); both default to 0px,
+   which collapses each gradient stop pair — no visual change when the
+   content fits or before hydration measures it. */
+.hscroll-fade {
+    --hfade-start: 0px;
+    --hfade-end: 0px;
+    -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--hfade-start),
+        #000 calc(100% - var(--hfade-end)),
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to right,
+        transparent 0,
+        #000 var(--hfade-start),
+        #000 calc(100% - var(--hfade-end)),
+        transparent 100%
+    );
+}
 /* ----- Flip Finder grid: horizontal scrollports -----
    The grid is wider than the viewport at every breakpoint, and `html`/`body`
    are `overflow-x: hidden`, so something has to scroll or the right-hand
