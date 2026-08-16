@@ -411,15 +411,18 @@ pub fn is_troll_listing(price: i32, median: i32) -> bool {
 /// Sniper-clamped price set: drops sales priced below `SNIPER_FRACTION` of the
 /// raw median. If the clamp would remove everything, the raw set is kept.
 /// Shared by the analyzer's `compute_summary` and the item-page flip card.
-pub fn sniper_clamp(prices: Vec<i32>) -> Vec<i32> {
+pub fn sniper_clamp(mut prices: Vec<i32>) -> Vec<i32> {
     if prices.is_empty() {
         return prices;
     }
-    let mut raw = prices.clone();
-    let raw_median = median_in_place_i32(&mut raw);
+    let raw_median = median_in_place_i32(&mut prices);
     let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
-    let clamped: Vec<i32> = prices.iter().copied().filter(|p| *p >= floor).collect();
-    if clamped.is_empty() { prices } else { clamped }
+
+    let has_valid = prices.iter().any(|&p| p >= floor);
+    if has_valid {
+        prices.retain(|&p| p >= floor);
+    }
+    prices
 }
 
 /// Flip estimate shared by the flip-finder table and the item-page flip card:

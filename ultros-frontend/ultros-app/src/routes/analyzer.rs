@@ -393,7 +393,7 @@ fn compute_summary(sale: SaleData, filter_outliers: bool) -> SaleSummary {
 
     // 3. Average price respects the existing IQR filter-outliers toggle.
     let avg_price = if filter_outliers {
-        let mut prices = clamped.clone();
+        let mut prices = clamped;
         let filtered = filter_outliers_iqr_in_place(&mut prices);
         if filtered.is_empty() {
             0
