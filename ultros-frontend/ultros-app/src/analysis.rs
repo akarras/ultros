@@ -411,15 +411,25 @@ pub fn is_troll_listing(price: i32, median: i32) -> bool {
 /// Sniper-clamped price set: drops sales priced below `SNIPER_FRACTION` of the
 /// raw median. If the clamp would remove everything, the raw set is kept.
 /// Shared by the analyzer's `compute_summary` and the item-page flip card.
-pub fn sniper_clamp(prices: Vec<i32>) -> Vec<i32> {
+///
+/// # Note
+/// The clamp runs in-place, so the order of the returned elements is
+/// **undefined** — neither the input order nor sorted. Every caller feeds the
+/// result straight into `median_in_place_i32`, a min/max/sum, or
+/// `filter_outliers_iqr_in_place`, all of which are order-independent. Sort the
+/// result yourself if you ever need a stable order.
+pub fn sniper_clamp(mut prices: Vec<i32>) -> Vec<i32> {
     if prices.is_empty() {
         return prices;
     }
-    let mut raw = prices.clone();
-    let raw_median = median_in_place_i32(&mut raw);
+    let raw_median = median_in_place_i32(&mut prices);
     let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
-    let clamped: Vec<i32> = prices.iter().copied().filter(|p| *p >= floor).collect();
-    if clamped.is_empty() { prices } else { clamped }
+
+    let has_valid = prices.iter().any(|&p| p >= floor);
+    if has_valid {
+        prices.retain(|&p| p >= floor);
+    }
+    prices
 }
 
 /// Flip estimate shared by the flip-finder table and the item-page flip card:
@@ -448,11 +458,20 @@ mod tests {
     use chrono::{Duration, Utc};
     use ultros_api_types::recent_sales::{SaleData, Sales};
 
+    /// `sniper_clamp` returns its survivors in an undefined order, so compare
+    /// the multiset rather than pinning whatever `select_nth_unstable` happened
+    /// to leave behind.
+    fn sorted_clamp(prices: Vec<i32>) -> Vec<i32> {
+        let mut out = sniper_clamp(prices);
+        out.sort_unstable();
+        out
+    }
+
     #[test]
     fn sniper_clamp_drops_prices_below_ten_percent_of_median() {
         // raw median of [10, 1000, 1100, 1200, 1300] is 1100; floor = 110 → 10 dropped
         assert_eq!(
-            sniper_clamp(vec![10, 1000, 1100, 1200, 1300]),
+            sorted_clamp(vec![10, 1000, 1100, 1200, 1300]),
             vec![1000, 1100, 1200, 1300]
         );
     }
@@ -462,6 +481,57 @@ mod tests {
         // all equal → floor = 100 * 0.1 = 10, nothing dropped; and empty stays empty
         assert_eq!(sniper_clamp(vec![100]), vec![100]);
         assert_eq!(sniper_clamp(Vec::new()), Vec::<i32>::new());
+    }
+
+    /// The in-place clamp must keep the same survivors as the straightforward
+    /// clone-and-filter it replaced. Sizes here straddle 20, the length at
+    /// which `select_nth_unstable` stops insertion-sorting the whole slice and
+    /// starts leaving the input genuinely unordered.
+    #[test]
+    fn sniper_clamp_matches_clone_and_filter_reference() {
+        fn reference(prices: Vec<i32>) -> Vec<i32> {
+            if prices.is_empty() {
+                return prices;
+            }
+            let mut raw = prices.clone();
+            let raw_median = median_in_place_i32(&mut raw);
+            let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
+            let clamped: Vec<i32> = prices.iter().copied().filter(|p| *p >= floor).collect();
+            if clamped.is_empty() { prices } else { clamped }
+        }
+
+        // Deterministic LCG — no rand dependency in this crate's test deps.
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % 5000) as i32 + 1
+        };
+
+        for len in [1usize, 2, 3, 5, 19, 20, 21, 64, 257] {
+            for _ in 0..40 {
+                let prices: Vec<i32> = (0..len).map(|_| next()).collect();
+                let mut expected = reference(prices.clone());
+                expected.sort_unstable();
+                assert_eq!(
+                    sorted_clamp(prices.clone()),
+                    expected,
+                    "len {len} diverged for {prices:?}"
+                );
+            }
+        }
+    }
+
+    /// A lone snipe among realistic prices is dropped even once the input is
+    /// long enough that the clamp no longer leaves it sorted.
+    #[test]
+    fn sniper_clamp_drops_snipes_in_a_large_unsorted_set() {
+        let mut prices: Vec<i32> = (0..64).map(|i| 1000 + (i * 37) % 400).collect();
+        prices.insert(31, 5); // one snipe, well below 10% of the ~1200 median
+        let clamped = sorted_clamp(prices);
+        assert_eq!(clamped.len(), 64);
+        assert!(!clamped.contains(&5));
     }
 
     #[test]
