@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures::{Stream, future::try_join_all};
+use futures::Stream;
 use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
@@ -20,6 +20,82 @@ use crate::{
     common::partial_diff_iterator::PartialDiffIterator,
     entity::{active_listing, retainer},
 };
+
+/// Ceiling on how many per-listing writes one board update may have in flight.
+///
+/// `add_listings`, `update_listings` and `remove_listings` each issue one query
+/// *per listing* — `create_listing` is an
+/// `INSERT INTO active_listing … ON CONFLICT … RETURNING`, and the remove path
+/// deletes row by row. Running them under `join_all`/`try_join_all` polls every
+/// future immediately, so each one holds its own pooled connection: a full
+/// market board is up to 100 listings, i.e. up to 100 simultaneous connections
+/// for a single item.
+///
+/// That multiplies with the catch-up sweep, which drives items through
+/// `buffer_unordered(50)` (`item_update_service::check_items`). Unbounded, one
+/// sweep can therefore demand thousands of connections against a
+/// `POSTGRES_MAX_CONNECTIONS` of 300 — and the symptoms are all over production:
+/// `catch-up listing update failed: Failed to acquire connection from pool:
+/// Connection pool timed out` (GlitchTip #6869/#6868), `acquired connection, but
+/// time to acquire exceeded slow threshold`, and 1.5–2.0s
+/// `INSERT INTO "active_listing" …` slow-statement breadcrumbs sitting directly
+/// next to the 10s SSR loopback timeouts filed as #2209/#2210. Those timeouts
+/// are what leave the SSR render owner disposed, which is where the panic family
+/// #7150/#7157/#7158/#7164 comes from.
+///
+/// #1172 bounded the per-world *sale* fan-out for the same reason; this is the
+/// write side it left behind. At 4, the catch-up sweep's peak demand is
+/// 50 × 4 = 200 connections, leaving headroom for websocket ingest and web
+/// requests. Buffering changes nothing observable: `buffered` preserves output
+/// order, and both the collect-all and short-circuit-on-error semantics of the
+/// call sites are kept exactly as they were.
+const MAX_CONCURRENT_LISTING_WRITES: usize = 4;
+
+/// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
+/// flight, collecting every result in the order the writes were supplied.
+///
+/// Drop-in for `futures::future::join_all`: it does not short-circuit, so
+/// callers that inspect individual `Result`s still see one entry per write.
+///
+/// Deliberately a plain `fn` returning `impl Future`, mirroring `join_all`'s own
+/// shape rather than being an `async fn`. `buffered` is stricter than `join_all`
+/// about higher-ranked lifetimes: an `async fn` wrapper pins the supplied
+/// futures to one lifetime, and every `tokio::spawn` that transitively reaches
+/// this call then fails to compile with "implementation of `FnOnce`/`Send` is
+/// not general enough". For the same reason the call sites hand over futures
+/// that *own* their `ListingView` instead of borrowing one out of the diff.
+fn fan_out_listing_writes<I>(
+    writes: I,
+) -> impl std::future::Future<Output = Vec<<I::Item as std::future::Future>::Output>>
+where
+    I: IntoIterator,
+    I::Item: std::future::Future,
+{
+    use futures::stream::StreamExt;
+
+    futures::stream::iter(writes)
+        .buffered(MAX_CONCURRENT_LISTING_WRITES)
+        .collect()
+}
+
+/// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
+/// flight, short-circuiting on the first error.
+///
+/// Drop-in for `futures::future::try_join_all`. Also a plain `fn` returning
+/// `impl Future`, for the reason spelled out on [`fan_out_listing_writes`].
+fn try_fan_out_listing_writes<I, T, E>(
+    writes: I,
+) -> impl std::future::Future<Output = std::result::Result<Vec<T>, E>>
+where
+    I: IntoIterator,
+    I::Item: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    use futures::stream::{StreamExt, TryStreamExt};
+
+    futures::stream::iter(writes)
+        .buffered(MAX_CONCURRENT_LISTING_WRITES)
+        .try_collect()
+}
 
 pub type ListingUpdate = (
     Vec<(ActiveListing, Retainer)>,
@@ -465,12 +541,19 @@ impl UltrosDb {
             .await?;
 
         let to_add = listings_to_upsert(listings, existing_items);
-        let added = futures::future::join_all(to_add.iter().map(|m| {
+        let added = fan_out_listing_writes(to_add.into_iter().map(|m| {
             let retainer_id = retainers
                 .get(&m.retainer_name)
                 .expect("Should always have a retainer at this point.")
                 .id;
-            self.create_listing(m, item_id, world_id, Some(retainer_id))
+            // Each future owns its `ListingView`. Holding a borrow into `to_add`
+            // across the buffered stream instead makes rustc give up on the
+            // higher-ranked lifetime and fail every `tokio::spawn` that reaches
+            // this call with "implementation of `Send` is not general enough".
+            async move {
+                self.create_listing(&m, item_id, world_id, Some(retainer_id))
+                    .await
+            }
         }))
         .await;
 
@@ -515,7 +598,7 @@ impl UltrosDb {
             .flat_map(|(listing, retainer)| retainer.map(|r| (listing, r)))
             .collect();
 
-        let items = try_join_all(
+        let items = try_fan_out_listing_writes(
             listings_to_remove_with_identity(db_listings, remove_listings)
                 .into_iter()
                 .map(|listing| async move {
@@ -720,15 +803,19 @@ impl UltrosDb {
             .await?;
         let ListingsDiff { added, removed } = diff_board_with_identity(listings, existing_items);
         let remove_iter = removed.iter();
-        let added = added.iter().map(|m| {
+        // Each future owns its `ListingView` — see the note in `add_listings`.
+        let added = added.into_iter().map(|m| {
             let retainer_id = retainers
                 .get(&m.retainer_name)
                 .expect("Should always have a retainer at this point.")
                 .id;
-            self.create_listing(m, item_id, world_id, Some(retainer_id))
+            async move {
+                self.create_listing(&m, item_id, world_id, Some(retainer_id))
+                    .await
+            }
         });
         let (added, _removed_result) =
-            futures::future::join(futures::future::join_all(added), async move {
+            futures::future::join(fan_out_listing_writes(added), async move {
                 let ids_to_remove: Vec<i32> = remove_iter.map(|(l, _)| l.id).collect();
                 if ids_to_remove.is_empty() {
                     return Result::<usize>::Ok(0);
@@ -842,6 +929,98 @@ pub struct ListingSummary {
     pub hq: bool,
     pub price_per_unit: i32,
     pub world_id: i32,
+}
+
+#[cfg(test)]
+mod fan_out_tests {
+    //! The point of [`fan_out_listing_writes`] is that a single board update
+    //! never has more than [`MAX_CONCURRENT_LISTING_WRITES`] queries holding a
+    //! pooled connection at once. Each task bumps a counter on entry and yields
+    //! before dropping it, so the observed peak is a real concurrency reading
+    //! rather than a scheduling artifact.
+
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Build 100 tracked writes — a full FFXIV market board, the widest fan-out
+    /// a single item can produce.
+    fn tracked_writes(
+        in_flight: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    ) -> impl Iterator<Item = impl std::future::Future<Output = usize>> {
+        (0..100usize).map(move |i| {
+            let in_flight = in_flight.clone();
+            let peak = peak.clone();
+            async move {
+                let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                i
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn fan_out_caps_in_flight_writes() {
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let results = fan_out_listing_writes(tracked_writes(in_flight, peak.clone())).await;
+
+        assert!(
+            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_LISTING_WRITES,
+            "peak in-flight writes {} exceeded the cap {MAX_CONCURRENT_LISTING_WRITES}",
+            peak.load(Ordering::SeqCst)
+        );
+        // Every write still runs, and `buffered` keeps them in supplied order —
+        // callers zip these results back against their input by position.
+        assert_eq!(results, (0..100).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn try_fan_out_caps_in_flight_writes() {
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let results: std::result::Result<Vec<usize>, ()> = try_fan_out_listing_writes(
+            tracked_writes(in_flight, peak.clone()).map(|f| async move { Ok(f.await) }),
+        )
+        .await;
+
+        assert!(
+            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_LISTING_WRITES,
+            "peak in-flight writes {} exceeded the cap {MAX_CONCURRENT_LISTING_WRITES}",
+            peak.load(Ordering::SeqCst)
+        );
+        assert_eq!(results.unwrap(), (0..100).collect::<Vec<_>>());
+    }
+
+    /// The remove path used `try_join_all`, which abandons the remaining writes
+    /// on the first error. Buffering must not quietly turn that into
+    /// "run everything anyway".
+    #[tokio::test]
+    async fn try_fan_out_short_circuits_on_error() {
+        let started = Arc::new(AtomicUsize::new(0));
+
+        let results: std::result::Result<Vec<usize>, usize> =
+            try_fan_out_listing_writes((0..100usize).map(|i| {
+                let started = started.clone();
+                async move {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    tokio::task::yield_now().await;
+                    if i == 5 { Err(i) } else { Ok(i) }
+                }
+            }))
+            .await;
+
+        assert_eq!(results, Err(5));
+        assert!(
+            started.load(Ordering::SeqCst) < 100,
+            "short-circuit should have stopped the sweep, but all 100 writes started"
+        );
+    }
 }
 
 #[cfg(test)]
