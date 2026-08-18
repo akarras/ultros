@@ -4,8 +4,8 @@ use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, DbBackend, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QuerySelect,
-    Statement,
+    ColumnTrait, DbBackend, DeleteMany, EntityTrait, ExprTrait, FromQueryResult, QueryFilter,
+    QuerySelect, Statement,
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
@@ -23,13 +23,17 @@ use crate::{
 
 /// Ceiling on how many per-listing writes one board update may have in flight.
 ///
-/// `add_listings`, `update_listings` and `remove_listings` each issue one query
-/// *per listing* — `create_listing` is an
-/// `INSERT INTO active_listing … ON CONFLICT … RETURNING`, and the remove path
-/// deletes row by row. Running them under `join_all`/`try_join_all` polls every
-/// future immediately, so each one holds its own pooled connection: a full
-/// market board is up to 100 listings, i.e. up to 100 simultaneous connections
-/// for a single item.
+/// `add_listings` and `update_listings` issue one *insert* per listing —
+/// `create_listing` is an
+/// `INSERT INTO active_listing … ON CONFLICT … RETURNING`, which has no
+/// batched equivalent that still hands each row back. Running them under
+/// `join_all` polls every future immediately, so each one holds its own pooled
+/// connection: a full market board is up to 100 listings, i.e. up to 100
+/// simultaneous connections for a single item.
+///
+/// The delete side needs no fan-out at all: both `update_listings` and
+/// `remove_listings` clear their rows with a single
+/// `DELETE … WHERE "id" IN (…)` — see [`delete_listings_by_id`].
 ///
 /// That multiplies with the catch-up sweep, which drives items through
 /// `buffer_unordered(50)` (`item_update_service::check_items`). Unbounded, one
@@ -47,8 +51,8 @@ use crate::{
 /// write side it left behind. At 4, the catch-up sweep's peak demand is
 /// 50 × 4 = 200 connections, leaving headroom for websocket ingest and web
 /// requests. Buffering changes nothing observable: `buffered` preserves output
-/// order, and both the collect-all and short-circuit-on-error semantics of the
-/// call sites are kept exactly as they were.
+/// order, so the call sites still zip results back against their input by
+/// position.
 const MAX_CONCURRENT_LISTING_WRITES: usize = 4;
 
 /// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
@@ -78,23 +82,27 @@ where
         .collect()
 }
 
-/// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
-/// flight, short-circuiting on the first error.
+/// The single `DELETE` that clears a whole batch of matched listing rows, or
+/// `None` when nothing matched.
 ///
-/// Drop-in for `futures::future::try_join_all`. Also a plain `fn` returning
-/// `impl Future`, for the reason spelled out on [`fan_out_listing_writes`].
-fn try_fan_out_listing_writes<I, T, E>(
-    writes: I,
-) -> impl std::future::Future<Output = std::result::Result<Vec<T>, E>>
-where
-    I: IntoIterator,
-    I::Item: std::future::Future<Output = std::result::Result<T, E>>,
-{
-    use futures::stream::{StreamExt, TryStreamExt};
-
-    futures::stream::iter(writes)
-        .buffered(MAX_CONCURRENT_LISTING_WRITES)
-        .try_collect()
+/// Deleting by primary key one row at a time is the shape `remove_listings`
+/// used to have, and it is strictly worse than the `IN (…)` form
+/// `update_listings` has always used: N round trips instead of one, each
+/// taking its own pooled connection, against a table whose single-row
+/// `DELETE … WHERE "id" = $1` is regularly a 1.4s slow-statement in
+/// production. Bounding the fan-out (#1174) capped how many of those ran at
+/// once but not how many were issued — a 100-listing board still cost 100
+/// statements.
+fn delete_listings_by_id(
+    ids: impl IntoIterator<Item = i32>,
+) -> Option<DeleteMany<active_listing::Entity>> {
+    let ids: Vec<i32> = ids.into_iter().collect();
+    if ids.is_empty() {
+        // A no-op remove is the common case (the paired full-board update
+        // already deleted the rows); it must not cost a round trip.
+        return None;
+    }
+    Some(active_listing::Entity::delete_many().filter(active_listing::Column::Id.is_in(ids)))
 }
 
 pub type ListingUpdate = (
@@ -598,17 +606,10 @@ impl UltrosDb {
             .flat_map(|(listing, retainer)| retainer.map(|r| (listing, r)))
             .collect();
 
-        let items = try_fan_out_listing_writes(
-            listings_to_remove_with_identity(db_listings, remove_listings)
-                .into_iter()
-                .map(|listing| async move {
-                    active_listing::Entity::delete_by_id(listing.id)
-                        .exec(&self.db)
-                        .await
-                        .map(|_| listing)
-                }),
-        )
-        .await?;
+        let items = listings_to_remove_with_identity(db_listings, remove_listings);
+        if let Some(delete) = delete_listings_by_id(items.iter().map(|l| l.id)) {
+            delete.exec(&self.db).await?;
+        }
         let retainers = items.iter().map(|i| i.retainer_id).unique();
         let retainers: HashMap<i32, Retainer> = retainer::Entity::find()
             .filter(retainer::Column::Id.is_in(retainers))
@@ -978,48 +979,51 @@ mod fan_out_tests {
         // callers zip these results back against their input by position.
         assert_eq!(results, (0..100).collect::<Vec<_>>());
     }
+}
 
-    #[tokio::test]
-    async fn try_fan_out_caps_in_flight_writes() {
-        let in_flight = Arc::new(AtomicUsize::new(0));
-        let peak = Arc::new(AtomicUsize::new(0));
+#[cfg(test)]
+mod remove_listings_query_tests {
+    //! `remove_listings` used to issue one `DELETE … WHERE "id" = $1` per
+    //! matched row. Those statements are visible in production as 1.38s
+    //! slow-statement breadcrumbs, four at a time in the same millisecond,
+    //! attached to the `accept error: Too many open files` the box reported on
+    //! 2026-08-18 (GlitchTip #7188). One statement per batch is what
+    //! `update_listings` has always done; these lock the remove path to it.
 
-        let results: std::result::Result<Vec<usize>, ()> = try_fan_out_listing_writes(
-            tracked_writes(in_flight, peak.clone()).map(|f| async move { Ok(f.await) }),
-        )
-        .await;
+    use super::*;
+    use sea_orm::QueryTrait;
 
-        assert!(
-            peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_LISTING_WRITES,
-            "peak in-flight writes {} exceeded the cap {MAX_CONCURRENT_LISTING_WRITES}",
-            peak.load(Ordering::SeqCst)
-        );
-        assert_eq!(results.unwrap(), (0..100).collect::<Vec<_>>());
+    fn built_sql(ids: impl IntoIterator<Item = i32>) -> Option<String> {
+        delete_listings_by_id(ids).map(|d| d.build(DbBackend::Postgres).to_string())
     }
 
-    /// The remove path used `try_join_all`, which abandons the remaining writes
-    /// on the first error. Buffering must not quietly turn that into
-    /// "run everything anyway".
-    #[tokio::test]
-    async fn try_fan_out_short_circuits_on_error() {
-        let started = Arc::new(AtomicUsize::new(0));
-
-        let results: std::result::Result<Vec<usize>, usize> =
-            try_fan_out_listing_writes((0..100usize).map(|i| {
-                let started = started.clone();
-                async move {
-                    started.fetch_add(1, Ordering::SeqCst);
-                    tokio::task::yield_now().await;
-                    if i == 5 { Err(i) } else { Ok(i) }
-                }
-            }))
-            .await;
-
-        assert_eq!(results, Err(5));
-        assert!(
-            started.load(Ordering::SeqCst) < 100,
-            "short-circuit should have stopped the sweep, but all 100 writes started"
+    #[test]
+    fn a_whole_batch_is_one_delete_statement() {
+        assert_eq!(
+            built_sql([7, 11, 13]).as_deref(),
+            Some(r#"DELETE FROM "active_listing" WHERE "active_listing"."id" IN (7, 11, 13)"#),
+            "the batch must clear in a single round trip, not one DELETE per id"
         );
+    }
+
+    #[test]
+    fn a_full_market_board_is_still_one_delete_statement() {
+        // 100 listings is the widest a single item can get. Row-by-row, this
+        // was 100 statements and 100 pool acquisitions for one board update.
+        let sql = built_sql(1..=100).expect("100 ids must produce a statement");
+        assert_eq!(
+            sql.matches("DELETE FROM").count(),
+            1,
+            "a full board must still be one statement, got: {sql}"
+        );
+        assert!(sql.contains("IN (1, 2, 3,"), "unexpected shape: {sql}");
+    }
+
+    #[test]
+    fn nothing_matched_costs_no_round_trip() {
+        // The common case: the paired full-board update already deleted the
+        // rows, so the diff matches nothing and we must not touch the pool.
+        assert_eq!(built_sql([]), None);
     }
 }
 
