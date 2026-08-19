@@ -9,7 +9,7 @@ use crate::components::icon::Icon;
 use crate::components::skeleton::BoxSkeleton;
 use crate::components::tool_help::ActionableEmptyState;
 use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
-use crate::global_state::LocalWorldData;
+use crate::global_state::use_world_display_name;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use components::{A, Outlet};
@@ -59,9 +59,8 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
     let data = tracked_data();
     let items = &data.items;
     listings.sort_by_key(|u| ItemSortKey::from(&u.current));
-    let worlds = use_context::<LocalWorldData>().unwrap().0.unwrap();
-    let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
-    let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
+    let world_name =
+        use_world_display_name(AnySelector::World(retainer.world_id)).unwrap_or_default();
     let is_empty = listings.is_empty();
     let listings: Vec<_> = listings
         .into_iter()
@@ -154,10 +153,8 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
     let items = &data.items;
     let mut listings = listings;
     listings.sort_by_key(|u| ItemSortKey::from(u));
-    let world_data = use_context::<LocalWorldData>().unwrap();
-    let worlds = world_data.0.unwrap();
-    let world = worlds.lookup_selector(AnySelector::World(retainer.world_id));
-    let world_name = world.as_ref().map(|w| w.get_name()).unwrap_or_default();
+    let world_name =
+        use_world_display_name(AnySelector::World(retainer.world_id)).unwrap_or_default();
     let is_empty = listings.is_empty();
     let listings: Vec<_> = listings
         .into_iter()
@@ -447,15 +444,9 @@ pub fn SingleRetainerListings() -> impl IntoView {
                         r.and_then(|r| {
                             r.ok()
                                 .map(|r| {
-                                    let worlds = use_context::<LocalWorldData>()
-                                        .expect("Local world data must be verified")
-                                        .0
-                                        .unwrap();
-                                    let world = worlds
-                                        .lookup_selector(AnySelector::World(r.retainer.world_id));
-                                    let world_name = world
-                                        .as_ref()
-                                        .map(|w| w.get_name())
+                                    let world_name = use_world_display_name(
+                                            AnySelector::World(r.retainer.world_id),
+                                        )
                                         .unwrap_or_default();
                                     view! {
                                         <MetaTitle title=format!(

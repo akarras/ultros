@@ -10,7 +10,10 @@ use leptos::prelude::*;
 use ultros_api_types::world_helper::AnyResult;
 
 use crate::error::AppError;
-use crate::global_state::{LocalWorldData, home_world::use_home_world};
+use crate::global_state::{
+    LocalWorldData, home_world::use_home_world, local_world_data::world_helper_from_context,
+    use_world_helper,
+};
 
 const DEFAULT_REGION: &str = "North-America";
 
@@ -32,9 +35,7 @@ pub fn region_for_world_name(
     world_data: Option<LocalWorldData>,
     world_name: Option<String>,
 ) -> Result<String, AppError> {
-    let worlds = world_data
-        .and_then(|data| data.0.ok())
-        .ok_or(AppError::WorldDataUnavailable)?;
+    let worlds = world_helper_from_context(world_data)?;
     let world_name = world_name.ok_or(AppError::ParamMissing)?;
     worlds
         .lookup_world_by_name(&world_name)
@@ -58,7 +59,7 @@ where
 {
     let (home_world, _) = use_home_world();
     Memo::new(move |_| {
-        let Some(worlds) = use_context::<LocalWorldData>().and_then(|d| d.0.ok()) else {
+        let Ok(worlds) = use_world_helper() else {
             return DEFAULT_REGION.to_string();
         };
 
