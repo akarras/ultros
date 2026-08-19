@@ -9,8 +9,8 @@ use ultros_api_types::{
 };
 
 use super::{
-    LocalWorldData,
     cookies::{Cookies, get_now},
+    use_world_helper,
 };
 
 const HOMEWORLD_COOKIE_NAME: &str = "HOME_WORLD";
@@ -39,7 +39,10 @@ pub struct GuessedRegion(pub String);
 pub fn use_home_world() -> (Signal<Option<World>>, SignalSetter<Option<World>>) {
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(HOMEWORLD_COOKIE_NAME);
-    let world_1 = Some(use_context::<LocalWorldData>().unwrap().0.unwrap());
+    // `None` when the world list never loaded. The `and_then` below and the `is_some()`
+    // guard in `set_world` were already written for that case; the `.unwrap()`s made it
+    // unreachable and turned a failed `/api/v1/world_data` fetch into a hard panic instead.
+    let world_1 = use_world_helper().ok();
     let world_2 = world_1.clone();
     let world = Memo::new(move |_| {
         let cookie = cookie();
@@ -78,7 +81,7 @@ pub fn selector_to_setter_signal(
     setter: SignalSetter<Option<OwnedResult>>,
 ) -> SignalSetter<Option<AnySelector>> {
     let signal = move |signal: Option<AnySelector>| {
-        let world_data = use_context::<LocalWorldData>().unwrap().0.ok();
+        let world_data = use_world_helper().ok();
         if let Some(worlds) = signal.and_then(|signal| {
             world_data.and_then(|worlds| worlds.lookup_selector(signal).map(OwnedResult::from))
         }) {
@@ -94,7 +97,7 @@ pub fn get_price_zone() -> (
 ) {
     let cookies = use_context::<Cookies>().unwrap();
     let (cookie, set_cookie) = cookies.get_cookie(DEFAULT_PRICE_ZONE);
-    let worlds = use_context::<LocalWorldData>().and_then(|worlds| worlds.0.ok());
+    let worlds = use_world_helper().ok();
     let guessed_region = use_context::<GuessedRegion>().map(|r| r.0);
     let world = Memo::new(move |_| {
         worlds.clone().and_then(|w| {
@@ -106,9 +109,8 @@ pub fn get_price_zone() -> (
     });
 
     let set_world = move |world: Option<OwnedResult>| {
-        let worlds = use_context::<LocalWorldData>().unwrap().0;
         // only set the world cookie once the worlds are populated
-        if worlds.ok().is_some() {
+        if use_world_helper().is_ok() {
             let world = world.map(|w| {
                 let mut cookie = Cookie::new(DEFAULT_PRICE_ZONE, w.get_name().to_string());
                 cookie.set_same_site(SameSite::Strict);
