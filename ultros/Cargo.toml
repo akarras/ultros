@@ -102,6 +102,13 @@ openssl = { version = "0.10", features = ["vendored"] }
 # the process-level CryptoProvider". We install one explicitly in `main()`.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
+# Unix-only, and only for `getrlimit`/`setrlimit` in `fd_limit`. Docker gives a
+# container the daemon's default RLIMIT_NOFILE soft limit of 1024, which this
+# process blows through under a crawl burst (GlitchTip #7188). `libc` is already
+# in the tree transitively, so this is a free direct dep.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.6.0"
 

@@ -5,6 +5,7 @@ pub(crate) mod analyzer_service;
 pub(crate) mod character_claim;
 mod discord;
 pub(crate) mod event;
+mod fd_limit;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
@@ -361,6 +362,11 @@ async fn main() -> Result<()> {
         )
         .with(sentry_tracing::layer())
         .init();
+    // Before anything opens a socket. Docker hands the container the daemon's
+    // default RLIMIT_NOFILE soft limit of 1024, which a crawl burst exhausts —
+    // `accept()` then returns EMFILE (GlitchTip #7188) and the renderer's
+    // loopback fetches fail alongside it. See `fd_limit`.
+    fd_limit::raise_open_file_limit();
     // Install the Prometheus recorder before any service spawns. `metrics::`
     // macros are no-ops against the default NoopRecorder, so anything emitted
     // before installation vanishes — and the analyzer records its
