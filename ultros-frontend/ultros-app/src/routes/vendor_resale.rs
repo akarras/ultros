@@ -999,6 +999,17 @@ pub fn VendorResale() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_sort_mode_from_str() {
+        // Valid states matching URL query parameters
+        assert_eq!(SortMode::from_str("roi"), Ok(SortMode::Roi));
+        assert_eq!(SortMode::from_str("profit"), Ok(SortMode::Profit));
+        // Verify invalid options trigger fallback/error paths instead of parsing panic
+        assert_eq!(SortMode::from_str("unknown"), Err(()));
+        assert_eq!(SortMode::from_str(""), Err(()));
+    }
 
     /// Builds just the fields `is_suspicious_market_price` reads.
     fn summary(num_sold: usize, median_price: i32) -> SaleSummary {
