@@ -10214,6 +10214,7 @@ dependencies = [
  "leptos",
  "leptos_axum",
  "leptos_router",
+ "libc",
  "lodestone",
  "metrics",
  "metrics-exporter-prometheus",
