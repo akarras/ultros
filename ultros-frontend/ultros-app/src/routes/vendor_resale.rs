@@ -291,7 +291,7 @@ fn VendorResaleTable(
     // name — an unachievable listing is worse than no row at all here, because
     // it inflates ROI and therefore sorts to the top.
     let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
-    let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
+    let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));

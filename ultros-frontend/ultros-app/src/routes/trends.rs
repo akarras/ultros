@@ -400,7 +400,7 @@ pub fn Trends() -> impl IntoView {
             })
             .unwrap_or(DEFAULT_WINDOW)
     });
-    let show_suspicious = Memo::new(move |_| suspicious().unwrap_or(false));
+    let show_suspicious = Signal::derive(move || suspicious().unwrap_or(false));
 
     let trends = ArcResource::new(
         move || (world(), window_days(), show_suspicious()),
