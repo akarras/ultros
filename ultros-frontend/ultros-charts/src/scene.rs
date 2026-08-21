@@ -124,9 +124,85 @@ pub struct Scene {
     pub nodes: Vec<Node>,
 }
 
+/// Rough advance width of `text` rendered at `size` px, used to right-align
+/// text runs that the layout has to position by hand (there is no text
+/// metrics engine here — the SVG backend hands the string to resvg and the
+/// Leptos backend hands it to the browser).
+///
+/// **Why this is not `text.len()`.** `len()` is *bytes*. Every FFXIV world on
+/// the Chinese and Korean data centres has a CJK name (紫水靈園, 카벙클), and
+/// those are 3 bytes per character in UTF-8 — so a byte count overestimates a
+/// CJK legend chip by ~3x while a per-character count underestimates it by
+/// ~2x, because CJK glyphs are full-width. Split the difference: count
+/// characters, and charge full-width ones the whole em.
+///
+/// The Latin factor (0.54) reproduces the 7px-per-char figure the legend used
+/// at 13px, so Latin layouts are unchanged.
+pub fn estimate_text_width(text: &str, size: f32) -> f32 {
+    text.chars()
+        .map(|c| if is_full_width(c) { size } else { size * 0.54 })
+        .sum()
+}
+
+/// Whether `c` occupies a full em in a typical CJK font.
+///
+/// Deliberately a plain range check rather than a `unicode-width` dependency:
+/// the only thing riding on it is a legend x-offset, and these ranges cover
+/// everything ultros actually renders — Hangul, kana, CJK ideographs (plus the
+/// Traditional-Chinese extension block), and the fullwidth forms that show up
+/// in world names such as `Kuji／Sargatanas`.
+fn is_full_width(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F     // Hangul Jamo
+        | 0x2E80..=0x303E   // CJK radicals, kangxi, CJK symbols/punctuation
+        | 0x3041..=0x33FF   // kana, Hangul compat jamo, CJK compat
+        | 0x3400..=0x4DBF   // CJK ext A
+        | 0x4E00..=0x9FFF   // CJK unified ideographs
+        | 0xA960..=0xA97F   // Hangul Jamo extended-A
+        | 0xAC00..=0xD7A3   // Hangul syllables
+        | 0xF900..=0xFAFF   // CJK compatibility ideographs
+        | 0xFE30..=0xFE4F   // CJK compatibility forms
+        | 0xFF00..=0xFF60   // fullwidth forms
+        | 0xFFE0..=0xFFE6
+        | 0x20000..=0x3FFFD // CJK ext B and beyond
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[track_caller]
+    fn assert_width(text: &str, expected: f32) {
+        let got = estimate_text_width(text, 13.0);
+        assert!(
+            (got - expected).abs() < 0.01,
+            "estimate_text_width({text:?}) = {got}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn latin_width_matches_the_legend_s_old_7px_per_char() {
+        // The legend used `name.len() as f32 * 7.0` at size 13; keeping Latin
+        // output within a rounding error of that is what makes this change
+        // safe for every existing chart.
+        assert_width("Sargatanas", 70.2);
+    }
+
+    #[test]
+    fn cjk_world_names_are_measured_per_character_not_per_byte() {
+        // 紫水靈園 is 4 characters but 12 UTF-8 bytes, so the old byte count
+        // charged the legend 12 * 7 = 84px for a chip that is really ~52px
+        // wide — pushing the whole legend row left off its right edge.
+        assert_eq!("紫水靈園".len(), 12);
+        assert_width("紫水靈園", 52.0);
+        // Hangul syllables are full-width too (카벙클 = a Korean world name).
+        assert_width("카벙클", 39.0);
+        // Fullwidth solidus, as seen in `Kuji／Sargatanas`.
+        assert_width("／", 13.0);
+        // Mixed runs charge each script its own width.
+        assert_width("Kuji／Sargatanas", 14.0 * 7.02 + 13.0);
+    }
 
     #[test]
     fn parses_hex_colors() {
