@@ -19,7 +19,7 @@ use crate::data::grouping::GroupLevel;
 use crate::data::stats::{median, robust_price_domain};
 use crate::data::trend::least_squares;
 use crate::scale::{LinearScale, TimeScale, format_percent, short_number};
-use crate::scene::{Color, Node, Scene, Stroke, TextAnchor};
+use crate::scene::{Color, Node, Scene, Stroke, TextAnchor, estimate_text_width};
 use crate::svg::{band_path_d, dots_path_d, rects_path_d, vlines_path_d};
 use crate::theme::Theme;
 
@@ -871,11 +871,11 @@ pub fn build_price_history_chart(
         });
     }
     if options.show_legend && options.title.is_some() && resolved.len() > 1 {
-        // Right-aligned row of "● Name" chips. 7px per char approximates
-        // Jaldi at 13px — close enough for a legend.
+        // Right-aligned row of "● Name" chips, positioned by an estimated
+        // advance width (there is no text metrics engine on this side).
         let mut x = plot_right;
         for (index, s) in resolved.iter().enumerate().rev() {
-            x -= s.name.len() as f32 * 7.0;
+            x -= estimate_text_width(&s.name, 13.0);
             scene.nodes.push(Node::Text {
                 x,
                 y: 32.0,

@@ -111,12 +111,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LEPTOS_SITE_ROOT="site"
 # Minimal runtime deps: TLS roots, freetype + fontconfig for resvg rendering.
 # No `apt upgrade` — keeps builds reproducible against the pinned base image.
+#
+# `fonts-noto-cjk` is not optional decoration. The item-card PNG renderer
+# (`web/item_card.rs`) draws world names into the chart legend, and every
+# world on the Chinese and Korean data centres has a CJK name (紫水靈園,
+# 카벙클, 모그리). With only the Latin Jaldi/Pacifico faces installed usvg
+# finds no font covering those code points, logs `No fonts with a X character
+# were found`, and rasterizes a row of .notdef boxes — ~39k of those warnings
+# a day in production, and a tofu legend in every Discord embed for those
+# worlds.
+#
+# The package ships Sans and Serif in one deb; only Sans is ever selected, so
+# the Serif faces are dropped in the same layer (89 MB -> ~39 MB).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         fontconfig \
+        fonts-noto-cjk \
         libfontconfig1 \
         libfreetype6 \
+    && rm -f /usr/share/fonts/opentype/noto/NotoSerifCJK-*.ttc \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
