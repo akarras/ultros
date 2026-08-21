@@ -1188,7 +1188,7 @@ fn AnalyzerTable(
     let (min_confidence, set_min_confidence) = filter_query_signal::<ConfidenceFloor>("confidence");
     let (min_volume, set_min_volume) = filter_query_signal::<u32>("min-volume");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
-    let show_suspicious_active = Memo::new(move |_| show_suspicious().unwrap_or(false));
+    let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
     let world_clone = worlds.clone();
     let world_filter_list = Memo::new(move |_| {
         let world = world_filter().or_else(datacenter_filter)?;
