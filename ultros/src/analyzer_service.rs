@@ -372,6 +372,12 @@ fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
 /// `last_n_sales` stream, which is slow but correct.
 const MAX_SNAPSHOT_AGE: Duration = Duration::hours(3);
 
+/// Whether `file_name` is a finished snapshot, as opposed to the
+/// `.partial-snapshot-*` temp file `serialize_state` renames from.
+fn is_snapshot_name(file_name: &str) -> bool {
+    file_name.starts_with("snapshot-")
+}
+
 /// Age of a snapshot from its filename, which `serialize_state` writes as
 /// `snapshot-<unix seconds>.bin.gz`.
 ///
@@ -536,7 +542,24 @@ impl AnalyzerService {
 
         let timestamp = Utc::now().timestamp();
         let filename = format!("analyzer-data/snapshot-{}.bin.gz", timestamp);
-        fs::write(&filename, &compressed_bytes).await?;
+        // Write somewhere the restore path cannot see, then rename into place.
+        //
+        // `fs::write` straight to `filename` is not atomic, and the shutdown
+        // snapshot is written from a SIGTERM handler racing Docker's stop
+        // grace period: kill the process partway through and a half-written
+        // `snapshot-<ts>.bin.gz` is left on disk with a *newer* name than
+        // every good snapshot. The next boot picks it first and dies on
+        // `Error decompressing file ...: unexpected end of file` (GlitchTip
+        // #7217). A rename inside one directory is atomic, so a reader either
+        // sees the whole file or does not see it at all.
+        //
+        // The temp name deliberately does not start with `snapshot-`:
+        // `snapshot_age` parses everything up to the first `.`, so a
+        // `snapshot-<ts>.bin.gz.part` would still look like a legitimate,
+        // freshest-on-disk snapshot to the restore scan.
+        let temp_filename = format!("analyzer-data/.partial-snapshot-{}.bin.gz", timestamp);
+        fs::write(&temp_filename, &compressed_bytes).await?;
+        fs::rename(&temp_filename, &filename).await?;
         info!("Wrote snapshot to {}", filename);
         if !is_shutdown {
             let mut dir = fs::read_dir("analyzer-data").await?;
@@ -544,6 +567,10 @@ impl AnalyzerService {
             while let Ok(Some(entry)) = dir.next_entry().await {
                 entries.push(entry);
             }
+            // Only rotate real snapshots. Counting a leftover `.partial-*`
+            // (from a kill between the write and the rename) toward the
+            // keep-4 budget would evict a good snapshot in its place.
+            entries.retain(|e| is_snapshot_name(&e.file_name().to_string_lossy()));
             if entries.len() > 4 {
                 entries.sort_by_key(|x| x.file_name());
                 for entry in entries.iter().take(entries.len() - 4) {
@@ -583,7 +610,14 @@ impl AnalyzerService {
         };
         let mut entries = vec![];
         while let Ok(Some(entry)) = dir.next_entry().await {
-            entries.push(entry);
+            // A `.partial-snapshot-*` left over from a kill between the write
+            // and the rename is by definition incomplete. Skipping it here is
+            // belt-and-braces — `snapshot_age` would reject the name anyway —
+            // but it keeps a torn file from being logged as a mystery every
+            // boot.
+            if is_snapshot_name(&entry.file_name().to_string_lossy()) {
+                entries.push(entry);
+            }
         }
         entries.sort_by_key(|x| x.file_name());
         for entry in entries.iter().rev() {
@@ -648,6 +682,8 @@ impl AnalyzerService {
                 let mut s = Vec::new();
                 if let Err(e) = decoder.read_to_end(&mut s) {
                     error!("Error decompressing file {path:?}: {e}");
+                    metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "corrupt")
+                        .increment(1);
                     continue;
                 }
                 s
@@ -659,6 +695,8 @@ impl AnalyzerService {
                 Ok(s) => s,
                 Err(e) => {
                     error!("Error deserializing state {e}");
+                    metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "corrupt")
+                        .increment(1);
                     continue;
                 }
             };
@@ -2866,6 +2904,79 @@ mod tests {
                 .await,
             "a future-dated snapshot (clock skew / copied file) must be rejected, \
              not treated as fresh because its negative age passes the max-age check"
+        );
+
+        // Part 4: Torn writes (GlitchTip #7217).
+        //
+        // `serialize_state` must leave nothing behind that the restore scan
+        // could mistake for a snapshot, and a truncated file that predates
+        // this fix must be stepped over rather than taken as the newest.
+        let leftovers: Vec<String> = {
+            let mut dir = tokio::fs::read_dir("analyzer-data").await.unwrap();
+            let mut names = vec![];
+            while let Ok(Some(e)) = dir.next_entry().await {
+                names.push(e.file_name().to_string_lossy().into_owned());
+            }
+            names
+        };
+        assert!(
+            leftovers.iter().all(|n| is_snapshot_name(n)),
+            "serialize_state left a temp file behind: {leftovers:?}"
+        );
+
+        // Plant a torn gzip under a name *newer* than every good snapshot —
+        // exactly what a SIGKILL partway through the shutdown write produced.
+        let torn = format!(
+            "analyzer-data/snapshot-{}.bin.gz",
+            Utc::now().timestamp() + 1
+        );
+        tokio::fs::write(&torn, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
+            .await
+            .unwrap();
+        assert!(
+            restore_target
+                .try_restore_from_snapshot_at(Utc::now() + chrono::Duration::seconds(2))
+                .await,
+            "a truncated newest snapshot must be skipped, not abort the restore"
+        );
+        tokio::fs::remove_file(&torn).await.unwrap();
+
+        // A leftover partial must never be picked up as the freshest snapshot,
+        // which is why the temp name does not start with `snapshot-`: the
+        // extension-stripping in `snapshot_age` would happily parse it.
+        let partial = format!(
+            "analyzer-data/.partial-snapshot-{}.bin.gz",
+            Utc::now().timestamp() + 1
+        );
+        tokio::fs::write(&partial, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
+            .await
+            .unwrap();
+        assert!(
+            restore_target
+                .try_restore_from_snapshot_at(Utc::now() + chrono::Duration::seconds(2))
+                .await,
+            "a leftover partial write must be invisible to the restore scan"
+        );
+        tokio::fs::remove_file(&partial).await.unwrap();
+    }
+
+    #[test]
+    fn partial_writes_are_not_mistaken_for_snapshots() {
+        assert!(is_snapshot_name("snapshot-1787249095.bin.gz"));
+        assert!(!is_snapshot_name(".partial-snapshot-1787249095.bin.gz"));
+
+        // The reason the temp file is not named `snapshot-<ts>.bin.gz.part`:
+        // `snapshot_age` stops at the first `.`, so such a name would parse as
+        // a perfectly fresh snapshot and sort newest.
+        let now = chrono::DateTime::from_timestamp(1_787_249_100, 0).unwrap();
+        assert_eq!(
+            snapshot_age("snapshot-1787249095.bin.gz.part", now),
+            Some(chrono::Duration::seconds(5)),
+            "the age parser cannot be relied on to reject a partial name"
+        );
+        assert_eq!(
+            snapshot_age(".partial-snapshot-1787249095.bin.gz", now),
+            None
         );
     }
 
