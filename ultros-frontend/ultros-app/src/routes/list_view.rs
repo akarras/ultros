@@ -894,14 +894,18 @@ pub fn ListView() -> impl IntoView {
                                         }
                                     })
                                     .collect::<Vec<_>>();
-                                // ⚡ Bolt Optimization: Replace stable sort and vector reallocation
-                                // with in-place unstable sort and truncation to avoid O(N) allocation
-                                // during hot search filter renders.
+                                // ⚡ Bolt Optimization: Use select_nth_unstable_by_key to avoid O(N log N) full sort
+                                // when we only need the top 100 results. This reduces time complexity to O(N).
+                                if score.len() > 100 {
+                                    score.select_nth_unstable_by_key(100, |(_, i)| (
+                                        Reverse(i.level_item),
+                                    ));
+                                    score.truncate(100);
+                                }
                                 score
                                     .sort_unstable_by_key(|(_, i)| (
                                         Reverse(i.level_item),
                                     ));
-                                score.truncate(100);
                                 score
                             })
                     };
