@@ -5,20 +5,35 @@ use crate::components::icon::Icon;
 use icondata as i;
 use leptos::prelude::*;
 
+/// Whether `current` is the text that was copied most recently.
+///
+/// `last_copied` is an `Option` because [`GlobalLastCopiedText`] is provided by
+/// `AppInner`, and a component can end up rendering under an owner that never
+/// saw that `provide_context` — a suspended SSR fragment whose owner was
+/// disposed before it resolved is the case prod actually hits (GlitchTip
+/// #7176). Treating a missing context as "nothing copied yet" costs the button
+/// only its checkmark state; unwrapping cost the entire page, because a panic
+/// here aborts the SSR stream mid-response.
+///
+/// This mirrors how the rest of the codebase already reads this context —
+/// `copy_invite_url`, `ShareListModal`, and the groups route all take it as
+/// `Option<GlobalLastCopiedText>` and degrade instead of panicking.
+fn is_copied(last_copied: Option<GlobalLastCopiedText>, current: &str) -> bool {
+    last_copied
+        .and_then(|last_copied| last_copied.0.get())
+        .is_some_and(|last| last == current)
+}
+
 #[component]
 pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView {
-    let last_copied_text = use_context::<GlobalLastCopiedText>().unwrap();
+    let last_copied_text = use_context::<GlobalLastCopiedText>();
     let toasts = use_toast();
     // ⚡ Bolt Optimization: Removed `Memo::new` for cheap operations
     // `clipboard_text` is just a signal get, `copied` is simple string equality,
     // and `icon` is a cheap branch. Creating reactive `Memo` nodes for these
     // O(1) derivations carries overhead that exceeds the cost of recomputing them.
     let get_clipboard_text = move || clipboard_text();
-    let copied = move || {
-        last_copied_text.0()
-            .map(|t| get_clipboard_text() == t)
-            .unwrap_or_default()
-    };
+    let copied = move || is_copied(last_copied_text, &get_clipboard_text());
     let icon = Signal::derive(move || {
         if !copied() {
             i::BsClipboard2Fill
@@ -71,7 +86,9 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
                                 );
                             }
                         });
-                        last_copied_text.0.set(Some(text));
+                        if let Some(last_copied_text) = last_copied_text {
+                            last_copied_text.0.set(Some(text));
+                        }
                         if let Some(toasts) = toasts {
                             toasts.success("Copied to clipboard!");
                         }
@@ -89,4 +106,45 @@ pub fn Clipboard(#[prop(into)] clipboard_text: Signal<String>) -> impl IntoView 
         </button>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reproduces GlitchTip #7176: `Clipboard` rendered under an owner that has
+    /// no `GlobalLastCopiedText`. The old hard `.unwrap()` panicked here, and on
+    /// the server that killed the whole SSR response mid-stream.
+    #[test]
+    fn shows_uncopied_when_the_context_is_missing() {
+        let owner = Owner::new();
+        owner.with(|| assert!(!is_copied(None, "Ultros")));
+    }
+
+    #[test]
+    fn matches_when_the_last_copied_text_is_the_same() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let ctx = GlobalLastCopiedText(RwSignal::new(Some("Ultros".to_string())));
+            assert!(is_copied(Some(ctx), "Ultros"));
+        });
+    }
+
+    #[test]
+    fn does_not_match_a_different_last_copied_text() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let ctx = GlobalLastCopiedText(RwSignal::new(Some("Gilgamesh".to_string())));
+            assert!(!is_copied(Some(ctx), "Ultros"));
+        });
+    }
+
+    #[test]
+    fn does_not_match_before_anything_has_been_copied() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let ctx = GlobalLastCopiedText(RwSignal::new(None));
+            assert!(!is_copied(Some(ctx), "Ultros"));
+        });
+    }
 }
