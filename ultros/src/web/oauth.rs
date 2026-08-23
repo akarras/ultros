@@ -181,13 +181,16 @@ pub async fn begin_login(
         CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
             .same_site(SameSite::Strict)
             .secure(true)
-            .http_only(true),
+            .http_only(true)
+            .path("/")
+            .build(),
     );
     let cookies = cookies.add(
         CookieBuilder::new("pkce_verifier", pkce_verifier.secret().clone())
             .same_site(SameSite::Lax)
             .secure(true)
             .http_only(true)
+            .path("/")
             .build(),
     );
 
@@ -206,6 +209,7 @@ pub async fn begin_login(
             .same_site(SameSite::Lax)
             .secure(true)
             .http_only(true)
+            .path("/")
             .build(),
     );
 
