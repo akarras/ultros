@@ -54,8 +54,11 @@ pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
 
 /// Matches against items that start with the same prefix
 /// "Diadochos" -> "Diadochos Helmet" etc
-fn prefix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &tracked_data().items;
+fn prefix_item_iterator<'a>(
+    data: &'a xiv_gen::Data,
+    item: &'a Item,
+) -> impl Iterator<Item = &'a Item> {
+    let items = &data.items;
     let prefix = item.name.split_once(' ').map(|(prefix, _)| prefix);
     items.values().filter(move |f| {
         if let Some(prefix) = prefix {
@@ -68,8 +71,11 @@ fn prefix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
     })
 }
 
-fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &tracked_data().items;
+fn suffix_item_iterator<'a>(
+    data: &'a xiv_gen::Data,
+    item: &'a Item,
+) -> impl Iterator<Item = &'a Item> {
+    let items = &data.items;
     let suffix = item.name.rsplit_once(' ').map(|(_, suffix)| suffix);
     items.values().filter(move |f| {
         if let Some(suffix) = suffix {
@@ -83,8 +89,8 @@ fn suffix_item_iterator(item: &'static Item) -> impl Iterator<Item = &'static It
 }
 
 /// This iterator will attempt to find related items using the classjobcategory && ilvl
-fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
-    let items = &tracked_data().items;
+fn item_set_iter<'a>(data: &'a xiv_gen::Data, item: &'a Item) -> impl Iterator<Item = &'a Item> {
+    let items = &data.items;
     items.values().filter(|i| {
         item.class_job_category != 0
             && item.class_job_category == i.class_job_category
@@ -92,6 +98,40 @@ fn item_set_iter(item: &'static Item) -> impl Iterator<Item = &'static Item> {
             && i.key_id != item.key_id
             && item.item_search_category > 0
     })
+}
+
+/// The item ids shown in the "related items" grid on the item page, in render
+/// order.
+///
+/// **This selection is locale-dependent and must never be rendered during
+/// SSR/hydration.** The server always renders game data in English (`xiv_gen_db`
+/// is never swapped under `ssr`) while the client swaps to the visitor's locale
+/// *before* `hydrate()` runs, so the prefix/suffix name match below picks a
+/// different set of items on each side. Japanese/Chinese/Korean item names carry
+/// no ASCII space at all, so `split_once(' ')` yields `None` and the name match
+/// contributes nothing client-side: measured over the whole pack, 11257 of 16843
+/// marketable items render a different *number* of `<A>` elements under `ja`
+/// than under `en`. That is a structural DOM mismatch, and tachys panics on it
+/// with `failed_to_cast_element` — GlitchTip #6831, reproduced on prod at
+/// `/item/Sargatanas/4` with `i18n_pref_locale=ja` (4/4 panics) against an `en`
+/// control (0/4).
+///
+/// `RelatedItems` therefore defers this grid to after hydration; see the
+/// `hydrated` gate there. `related_items_are_locale_dependent` pins the
+/// invariant that makes that gate load-bearing.
+pub(crate) fn related_item_ids(data: &xiv_gen::Data, item_id: ItemId) -> Vec<ItemId> {
+    let Some(item) = data.items.get(&item_id) else {
+        return Vec::new();
+    };
+    item_set_iter(data, item)
+        .chain(prefix_item_iterator(data, item))
+        .chain(suffix_item_iterator(data, item))
+        .sorted_by_key(|i| i.key_id.0)
+        .unique_by(|i| i.key_id)
+        .filter(|i| i.item_search_category > 0)
+        .filter(|i| i.key_id.0 != item.key_id.0)
+        .map(|i| i.key_id)
+        .collect()
 }
 
 /// This iterator will traverse the recipe tree for items that are related to using this item for crafting
@@ -701,6 +741,59 @@ mod tests {
     use super::*;
     use xiv_gen::SpecialShop;
 
+    /// A spread of marketable items: gear (which has a class job category), plus
+    /// consumables/materials (which do not, and are carried entirely by the name
+    /// match).
+    fn sample_item_ids() -> Vec<ItemId> {
+        let data = xiv_gen_db::data_for(xiv_gen::Language::En);
+        data.items
+            .values()
+            .filter(|i| i.item_search_category > 0)
+            .sorted_by_key(|i| i.key_id.0)
+            .step_by(97)
+            .map(|i| i.key_id)
+            .collect()
+    }
+
+    /// GlitchTip #6831's third recurrence, pinned as an invariant: this grid is
+    /// chosen by item *name*, so it resolves differently under the English data
+    /// the server renders with and the locale data the client hydrates with.
+    ///
+    /// Only the number of rendered nodes matters for hydration — the grid shows
+    /// the first 12 — so that is what this asserts, and it is why `RelatedItems`
+    /// must keep deferring the grid past hydration. If this test ever fails
+    /// because the selection became locale-stable, the `hydrated` gate can go.
+    #[test]
+    fn related_items_are_locale_dependent() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        let ja = xiv_gen_db::data_for(xiv_gen::Language::Ja);
+        let diverged = sample_item_ids()
+            .into_iter()
+            .filter(|id| ja.items.contains_key(id))
+            .filter(|&id| {
+                related_item_ids(en, id).len().min(12) != related_item_ids(ja, id).len().min(12)
+            })
+            .count();
+        assert!(
+            diverged > 0,
+            "expected the related-items grid to render a different node count under ja than \
+             under en; if this is genuinely zero now, re-check before dropping the hydration gate"
+        );
+    }
+
+    #[test]
+    fn related_items_are_deterministically_ordered() {
+        let en = xiv_gen_db::data_for(xiv_gen::Language::En);
+        for id in sample_item_ids() {
+            let ids = related_item_ids(en, id);
+            assert!(
+                ids.windows(2).all(|w| w[0].0 < w[1].0),
+                "item {} produced an unsorted/duplicated related list",
+                id.0
+            );
+        }
+    }
+
     #[test]
     fn test_special_shop_has_item() {
         let shop = SpecialShop {
@@ -907,23 +1000,28 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 #[component]
 pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let i18n = use_i18n();
-    let db = tracked_data();
-    // ⚡ Bolt Optimization: Replace Memo::new with Signal::derive for O(1) ops
-    let item = Signal::derive(move || db.items.get(&ItemId(item_id())));
     let (price_zone, _) = get_price_zone();
+    // The grid below is chosen by matching item *names*, and SSR renders game
+    // data in English while the client has already swapped to the visitor's
+    // locale by the time `hydrate()` runs — so the two sides disagree about how
+    // many `<A>` elements belong here and tachys panics walking the DOM
+    // (GlitchTip #6831; see `related_item_ids`). Render nothing until the first
+    // client effect has run, so SSR and the initial CSR pass both emit an empty
+    // grid and the real list arrives as an ordinary reactive update afterwards.
+    // Same idiom as `RecipePriceEstimate` above.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
     let related_items_data = Memo::new(move |_| {
-        item()
-            .map(|item| {
-                item_set_iter(item)
-                    .chain(prefix_item_iterator(item))
-                    .chain(suffix_item_iterator(item))
-                    .sorted_by_key(|i| i.key_id.0)
-                    .unique_by(|i| i.key_id)
-                    .filter(|i| i.item_search_category > 0)
-                    .filter(|i| i.key_id.0 != item.key_id.0)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+        if !hydrated.get() {
+            return Vec::new();
+        }
+        let data = tracked_data();
+        related_item_ids(data, ItemId(item_id()))
+            .into_iter()
+            .filter_map(|id| data.items.get(&id))
+            .collect::<Vec<_>>()
     });
 
     let item_set = move || {
