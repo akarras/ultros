@@ -877,23 +877,35 @@ pub fn ListView() -> impl IntoView {
             <Show when=item_modal_open>
                 {move || {
                     let (search, set_search) = signal("".to_string());
-                    let items = &tracked_data().items;
+                    // Lowercase the searchable item names once per modal open instead of
+                    // once per item per keystroke. `tracked_data()` is read here, so a
+                    // locale swap re-runs this block and rebuilds the index against the
+                    // new names — the index is never keyed on stale English strings.
+                    // Same shape as components/add_recipe_to_current_list.rs.
+                    // `StoredValue` so `item_search` stays `Copy` — the view closure
+                    // below captures it by move.
+                    let search_index = StoredValue::new(
+                        tracked_data()
+                            .items
+                            .iter()
+                            .filter(|(_, i)| i.item_search_category > 0)
+                            .map(|(id, i)| (id, i, i.name.to_lowercase()))
+                            .collect::<Vec<_>>(),
+                    );
                     let item_search = move || {
                         search
                             .with(|s| {
+                                if s.is_empty() {
+                                    return Vec::new();
+                                }
                                 let s_lower = s.to_lowercase();
-                                let mut score = items
-                                    .iter()
-                                    .filter(|(_, i)| i.item_search_category > 0)
-                                    .filter(|_| !s.is_empty())
-                                    .filter_map(|(id, i)| {
-                                        if i.name.to_lowercase().contains(&s_lower) {
-                                            Some((id, i))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<Vec<_>>();
+                                let mut score = search_index.with_value(|index| {
+                                    index
+                                        .iter()
+                                        .filter(|(_, _, lower)| lower.contains(&s_lower))
+                                        .map(|(id, i, _)| (*id, *i))
+                                        .collect::<Vec<_>>()
+                                });
                                 // ⚡ Bolt Optimization: Use select_nth_unstable_by_key to avoid O(N log N) full sort
                                 // when we only need the top 100 results. This reduces time complexity to O(N).
                                 if score.len() > 100 {
