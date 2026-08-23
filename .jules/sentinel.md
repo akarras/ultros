@@ -8,11 +8,7 @@
 **Learning:** `reqwest::Client::new()` in Rust does not have a default timeout. If a user sets a malicious webhook URL that holds the connection open, it could exhaust server resources and block other alerts from being sent.
 **Prevention:** Always configure an explicit `.timeout()` when instantiating `reqwest::Client` for outbound HTTP requests to user-controlled URLs.
 
-## 2024-05-24 - [Fix Cookie Path Scoping]
-**Vulnerability:** Incomplete Cookie Scope Configuration
-**Learning:** The `discord_auth` cookie was being set during a `/redirect` endpoint without an explicitly set `Path=/`. This scopes the cookie to the `/redirect` path, meaning the browser wouldn't send the auth cookie to other paths (like `/api/v1/user`), effectively breaking authentication outside that route. Other cookies in the same file were properly using `cookie.set_path("/")` or `CookieBuilder` with `.path("/")`.
-**Prevention:** Always explicitly set `cookie.set_path("/")` for application-wide authentication or session cookies to ensure they are sent to all relevant routes.
-## 2026-07-26 - [Fix Open Redirect Bypass via Whitespace]
-**Vulnerability:** Open Redirect bypass
-**Learning:** Browsers sometimes normalize or ignore whitespace characters like tabs (`\t`) and spaces (` `) in URL paths. A URL like `/\t/evil.com` or `/ /evil.com` starts with `/` and thus bypasses a strict `starts_with("//")` protocol-relative check, but the browser may resolve it to `//evil.com` and redirect the user.
-**Prevention:** Always strip or reject raw whitespace characters (like spaces and tabs) when validating relative redirect URLs to prevent open redirect vulnerabilities.
+## 2024-05-24 - [Fix OAuth Cookie Path Scoping]
+**Vulnerability:** Broken Authentication Flow
+**Learning:** The `pkce_challenge`, `pkce_verifier`, and `oauth_state` cookies were being set during the `/begin_login` endpoint without an explicitly set `Path=/`. This scopes the cookie to the `/begin_login` path, meaning the browser wouldn't send them to the OAuth callback path, breaking the authentication flow. These are temporary, single-use cookies required strictly for the OAuth callback endpoint to verify the login attempt.
+**Prevention:** Always explicitly set `.path("/")` for temporary OAuth cookies if the callback endpoint is on a different path, to ensure they are sent during the redirect.
