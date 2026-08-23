@@ -17,24 +17,20 @@ pub struct JobSetGroup {
     pub items: Vec<GroupableItem>,
 }
 
-/// Strip a leading English `Ornate ` (case-insensitive) marker —
-/// FFXIV labels dyeable glamour variants this way, and the underlying
-/// piece is otherwise identical to its plain-set counterpart.
-/// Returns the input unchanged when the marker is absent.
+/// True when the name carries the English `Ornate ` (case-insensitive)
+/// marker. Ornate pieces are NOT dye glamours of the base item — they
+/// are distinct items with extra materia slots that routinely trade at
+/// 10–100x the base piece — so they must never join the base set (they
+/// would double-count a slot and dominate the set total).
 ///
-/// V1 only handles the English token. The grouping algorithm itself
+/// V1 only recognises the English token. The grouping algorithm itself
 /// is language-agnostic (pure prefix comparison), so a localised
 /// "Ornate" variant just falls through to the ungrouped fallback
 /// rather than joining its set — a graceful degradation.
-fn strip_ornate_prefix(name: &str) -> &str {
+fn has_ornate_prefix(name: &str) -> bool {
     const ORNATE: &str = "Ornate ";
     let bytes = name.as_bytes();
-    if bytes.len() >= ORNATE.len() && bytes[..ORNATE.len()].eq_ignore_ascii_case(ORNATE.as_bytes())
-    {
-        &name[ORNATE.len()..]
-    } else {
-        name
-    }
+    bytes.len() >= ORNATE.len() && bytes[..ORNATE.len()].eq_ignore_ascii_case(ORNATE.as_bytes())
 }
 
 /// Longest common prefix of two `&str` slices, expressed as a UTF-8
@@ -80,19 +76,24 @@ pub fn group_into_sets(items: Vec<GroupableItem>) -> (Vec<JobSetGroup>, Vec<Grou
     let mut ungrouped: Vec<GroupableItem> = Vec::new();
 
     for (ilvl, bucket) in buckets.into_iter().rev() {
+        // Divert Ornate variants before the LCP fold — they'd both
+        // pollute set membership (see `has_ornate_prefix`) and, left
+        // in the bucket, force the common prefix apart at "O".
+        let (bucket, ornate): (Vec<_>, Vec<_>) = bucket
+            .into_iter()
+            .partition(|item| !has_ornate_prefix(&item.name));
+        ungrouped.extend(ornate);
+
         if bucket.len() < 2 {
             ungrouped.extend(bucket);
             continue;
         }
 
-        // Fold LCP across all names in the bucket, comparing the
-        // glamour-stripped form so "Ornate Courtly Lover's …" can
-        // join "Courtly Lover's …" instead of forcing the bucket
-        // apart at the first character.
-        let mut reference: &str = strip_ornate_prefix(&bucket[0].name);
+        // Fold LCP across all names in the bucket.
+        let mut reference: &str = &bucket[0].name;
         let mut prefix_len = reference.len();
         for item in &bucket[1..] {
-            let candidate = strip_ornate_prefix(&item.name);
+            let candidate: &str = &item.name;
             let common = lcp_bytes(&reference[..prefix_len], candidate);
             prefix_len = common;
             if prefix_len == 0 {
@@ -293,11 +294,13 @@ mod tests {
     }
 
     #[test]
-    fn ornate_variant_joins_base_set() {
-        // FFXIV dyeable glamours ship as "Ornate <Set Name> <Slot>",
-        // sharing iLvl with the plain set. They should land in the
-        // same group, with the stem still reading as the plain set
-        // name so the UI doesn't display "Ornate" twice.
+    fn ornate_variant_excluded_from_base_set() {
+        // "Ornate <Set Name> <Slot>" pieces are NOT dye glamours of the
+        // base item — they're distinct items with extra materia slots
+        // that trade at 10–100x the base piece's price. Grouping them
+        // into the set double-counts a slot and blows up the set total
+        // (SAM 770 read 16.7M instead of ~760k). They must fall through
+        // to ungrouped, while the base pieces still form their set.
         let items = vec![
             it(1, "Courtly Lover's Surcoat of Fending", 770),
             it(2, "Courtly Lover's Breeches of Fending", 770),
@@ -308,13 +311,29 @@ mod tests {
 
         let (groups, ungrouped) = group_into_sets(items);
 
-        assert!(
-            ungrouped.is_empty(),
-            "Ornate variants should not fall through to ungrouped, got: {ungrouped:?}",
-        );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].stem, "Courtly Lover's");
-        assert_eq!(groups[0].items.len(), 5);
+        let mut set_ids: Vec<i32> = groups[0].items.iter().map(|i| i.id.0).collect();
+        set_ids.sort();
+        assert_eq!(set_ids, vec![1, 2, 3]);
+        let mut ungrouped_ids: Vec<i32> = ungrouped.iter().map(|i| i.id.0).collect();
+        ungrouped_ids.sort();
+        assert_eq!(ungrouped_ids, vec![4, 5]);
+    }
+
+    #[test]
+    fn ornate_only_bucket_yields_no_set() {
+        // A bucket that is nothing but Ornate variants must not form a
+        // phantom set once the variants are diverted.
+        let items = vec![
+            it(4, "Ornate Courtly Lover's Surcoat of Fending", 770),
+            it(5, "Ornate Courtly Lover's Breeches of Fending", 770),
+        ];
+
+        let (groups, ungrouped) = group_into_sets(items);
+
+        assert!(groups.is_empty());
+        assert_eq!(ungrouped.len(), 2);
     }
 
     #[test]
