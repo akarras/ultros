@@ -1013,6 +1013,42 @@ mod tests {
     }
 
     #[test]
+    fn find_set_excludes_ornate_variant_from_set_and_total() {
+        // Regression for /items/jobset/samurai/set/770: the set carried
+        // both "Courtly Lover's Cloak of Striking" AND "Ornate Courtly
+        // Lover's Cloak of Striking" — two chest pieces, with the Ornate
+        // one legitimately listed around 16M gil — so the set total read
+        // ~16.7M instead of the ~760k a wearable set actually costs.
+        const SAM_CAT: i32 = 65;
+        let items = [
+            make_item(1, "Courtly Lover's Cloak of Striking", 770, SAM_CAT, 9821),
+            make_item(2, "Courtly Lover's Brais of Striking", 770, SAM_CAT, 9823),
+            make_item(
+                3,
+                "Ornate Courtly Lover's Cloak of Striking",
+                770,
+                SAM_CAT,
+                9821,
+            ),
+        ];
+
+        let group = find_set_for_job(items.iter(), |it| it.class_job_category == SAM_CAT, 770)
+            .expect("770 set must resolve");
+        assert_eq!(group.stem, "Courtly Lover's");
+        let mut got_ids: Vec<i32> = group.items.iter().map(|i| i.id.0).collect();
+        got_ids.sort();
+        assert_eq!(got_ids, vec![1, 2], "ornate variant must not join the set");
+
+        // And the total only counts the wearable pieces.
+        let prices = map_with(&[
+            (1, true, 100_000),
+            (2, true, 100_000),
+            (3, true, 16_000_000),
+        ]);
+        assert_eq!(set_total(&group, &prices, false), Some(200_000));
+    }
+
+    #[test]
     fn find_set_returns_none_for_unknown_ilvl() {
         const SAM_CAT: i32 = 65;
         let items = [
