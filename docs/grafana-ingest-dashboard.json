@@ -1,0 +1,400 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "The Prometheus datasource scraping ultros:9091/metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "title": "Ultros Ingest & Websocket Health",
+  "uid": "ultros-ingest",
+  "tags": ["ultros", "ingest"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Inbound events/sec",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ultros_websocket_rx[5m]))",
+          "legendFormat": "events/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 10 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Worst world staleness",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(ultros_world_ingest_staleness_seconds)",
+          "legendFormat": "max staleness"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 900 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Liveness timeouts (24h)",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(ultros_websocket_liveness_timeouts_total[24h])) or vector(0)",
+          "legendFormat": "reconnects"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Bus events dropped (24h)",
+      "id": 4,
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(ultros_analyzer_bus_lagged_total[24h])) or vector(0)",
+          "legendFormat": "dropped"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Real catch-up recoveries (24h)",
+      "description": "Items where the catch-up sweep actually changed our data — genuine websocket misses. Series without an outcome label (pre-upgrade) are excluded; upload-churn noops live in the bottom-right panel.",
+      "id": 5,
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(ultros_catchup_items_recovered{outcome=\"changed\"}[24h])) or vector(0)",
+          "legendFormat": "items"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Worlds never ingested",
+      "id": 6,
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ultros_worlds_never_ingested",
+          "legendFormat": "worlds"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Inbound websocket events/sec (Universalis feed)",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ultros_websocket_rx[5m]))",
+          "legendFormat": "all worlds"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ultros_websocket_liveness_timeouts_total[5m])) * 60",
+          "legendFormat": "liveness timeouts/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "liveness timeouts/min" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.drawStyle", "value": "bars" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Busiest worlds by event rate (top 10)",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, rate(ultros_websocket_rx[5m]))",
+          "legendFormat": "world {{WorldId}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "fillOpacity": 0 } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingest staleness — 10 most stale worlds",
+      "description": "Seconds since the last successful listing write per world. This is the primary 'are we behind' signal: small = server current, lag is client-side; large = ingest behind or feed dead.",
+      "id": 9,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, ultros_world_ingest_staleness_seconds)",
+          "legendFormat": "{{world}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 0 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 900 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Event-bus drops/sec by bus",
+      "description": "Nonzero means a consumer (analyzer, browser websocket fan-out) fell behind the broadcast ring and events were discarded. Postgres is unaffected; in-RAM caches and connected clients miss those events.",
+      "id": 10,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (bus) (rate(ultros_analyzer_bus_lagged_total[5m]))",
+          "legendFormat": "{{bus}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "fillOpacity": 20, "drawStyle": "bars" } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "DB write latency (precomputed quantiles)",
+      "description": "These are summaries, not histograms — quantiles are precomputed by the exporter. Rising p99 here with a healthy inbound rate means the backlog is forming in the unbounded spawned-task pile in run_socket_listener.",
+      "id": 11,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ultros_db_add_listings_duration_seconds{quantile=\"0.99\"}",
+          "legendFormat": "add_listings p99"
+        },
+        {
+          "refId": "B",
+          "expr": "ultros_db_add_listings_duration_seconds{quantile=\"0.5\"}",
+          "legendFormat": "add_listings p50"
+        },
+        {
+          "refId": "C",
+          "expr": "ultros_db_update_listings_duration_seconds{quantile=\"0.99\"}",
+          "legendFormat": "update_listings p99"
+        },
+        {
+          "refId": "D",
+          "expr": "ultrso_db_update_sales_duration_seconds{quantile=\"0.99\"}",
+          "legendFormat": "update_sales p99 (metric name typo is real)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "DB writes/sec by operation",
+      "id": 12,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ultros_db_add_listings_duration_seconds_count[5m]))",
+          "legendFormat": "add_listings"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ultros_db_update_listings_duration_seconds_count[5m]))",
+          "legendFormat": "update_listings"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(ultrso_db_update_sales_duration_seconds_count[5m]))",
+          "legendFormat": "update_sales"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Listings inserted / removed per sec",
+      "id": 13,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ultros_db_inserted_items[5m]))",
+          "legendFormat": "inserted"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ultros_db_removed_items[5m]))",
+          "legendFormat": "removed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Catch-up sweep: outcomes & saturated windows",
+      "description": "The REST catch-up sweep, split by outcome: 'changed' = the websocket genuinely missed data; 'noop' = Universalis upload churn with nothing new (structural noise); 'failed' = write failed, retried next cycle. Saturated windows mean the sweep itself can't keep up.",
+      "id": 14,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(ultros_catchup_items_recovered[5m])) * 60",
+          "legendFormat": "{{outcome}}/min"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ultros_catchup_window_saturated[5m])) * 60",
+          "legendFormat": "windows saturated/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "opm", "custom": { "fillOpacity": 10 } },
+        "overrides": []
+      }
+    }
+  ]
+}

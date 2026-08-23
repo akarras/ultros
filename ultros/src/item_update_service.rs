@@ -51,6 +51,73 @@ fn universalis_not_found(error: &anyhow::Error) -> bool {
         .is_some_and(|e| e.is_not_found())
 }
 
+/// How one item's catch-up fetch turned out, used to label
+/// `ultros_catchup_items_recovered`.
+///
+/// The recency diff flags an item whenever Universalis' upload time is newer
+/// than our ingest marker, but an upload that changed nothing emits no
+/// websocket events — so the marker never moves and the item is flagged even
+/// though we missed nothing. Without the label, that structural noise is
+/// indistinguishable from a genuinely lagging feed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CatchupOutcome {
+    /// The fetch altered our data — a genuine missed update.
+    Changed,
+    /// Universalis' upload was newer than our marker but contained nothing we
+    /// didn't already have. Upload churn, not backlog.
+    Noop,
+    /// A write failed; the marker was left untouched so the item is retried
+    /// on the next cycle.
+    Failed,
+}
+
+/// Classifies one item's catch-up result. `sales_changed` is `None` when the
+/// sales write failed; a listing change still counts as `Changed` in that case
+/// because real data was recovered regardless.
+fn classify_catchup(listings_changed: bool, sales_changed: Option<bool>) -> CatchupOutcome {
+    match (listings_changed, sales_changed) {
+        (true, _) => CatchupOutcome::Changed,
+        (false, Some(true)) => CatchupOutcome::Changed,
+        (false, Some(false)) => CatchupOutcome::Noop,
+        (false, None) => CatchupOutcome::Failed,
+    }
+}
+
+/// Per-world tally of [`CatchupOutcome`]s for one sweep.
+#[derive(Default, Debug, PartialEq, Eq)]
+struct CatchupTally {
+    changed: u64,
+    noop: u64,
+    failed: u64,
+}
+
+impl CatchupTally {
+    fn add(&mut self, outcome: CatchupOutcome) {
+        match outcome {
+            CatchupOutcome::Changed => self.changed += 1,
+            CatchupOutcome::Noop => self.noop += 1,
+            CatchupOutcome::Failed => self.failed += 1,
+        }
+    }
+
+    fn record(&self, world_name: &str) {
+        for (outcome, count) in [
+            ("changed", self.changed),
+            ("noop", self.noop),
+            ("failed", self.failed),
+        ] {
+            if count > 0 {
+                metrics::counter!(
+                    "ultros_catchup_items_recovered",
+                    "world" => world_name.to_string(),
+                    "outcome" => outcome
+                )
+                .increment(count);
+            }
+        }
+    }
+}
+
 struct CmpListing(Model);
 
 impl PartialOrd<WorldItemRecencyView> for CmpListing {
@@ -161,9 +228,8 @@ impl UpdateService {
             Err(e) => return Err(e),
         };
         let item_ids: Box<[i32]> = updates.into_iter().map(|i| i.item_id).collect();
-        metrics::counter!("ultros_catchup_items_recovered", "world" => world.name.clone())
-            .increment(item_ids.len() as u64);
-        self.check_items(world, &item_ids).await?;
+        let tally = self.check_items(world, &item_ids).await?;
+        tally.record(&world.name);
         if item_ids.len() >= usize::from(RECENTLY_UPDATED_WINDOW) {
             // Every entry in the recency window was one we missed, so more
             // updates have likely scrolled past where this endpoint can see.
@@ -210,8 +276,9 @@ impl UpdateService {
             ..
         }: &world::Model,
         item_ids: &[i32],
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<CatchupTally, anyhow::Error> {
         let world_id = WorldId(*id);
+        let mut tally = CatchupTally::default();
         for item_ids in item_ids.chunks(100) {
             let market_data = self
                 .universalis
@@ -219,12 +286,14 @@ impl UpdateService {
                 .await?;
             info!("missing data {item_ids:?}");
 
-            stream::iter(
+            let outcomes = stream::iter(
                 market_data
                     .items()
                     .map(|(item_id, listings, sales)| async move {
+                        let listings_changed;
                         match self.db.update_listings(listings, item_id, world_id).await {
                             Ok((added, removed)) => {
+                                listings_changed = !added.is_empty() || !removed.is_empty();
                                 let _ =
                                     self.listings
                                         .send(EventType::Add(Arc::new(ListingEventData {
@@ -248,27 +317,34 @@ impl UpdateService {
                                 // a failed listing write would make the item look freshly
                                 // ingested and hide the gap from every later pass, so
                                 // leave it untouched and retry on the next cycle.
-                                return;
+                                return CatchupOutcome::Failed;
                             }
                         }
-                        match self.db.update_sales(sales, item_id, world_id).await {
+                        let sales_changed = match self.db.update_sales(sales, item_id, world_id).await {
                             Ok(added) => {
+                                let sales_changed = !added.is_empty();
                                 let _ = self
                                     .sales
                                     .send(EventType::added(SaleEventData { sales: added }));
+                                Some(sales_changed)
                             }
                             Err(e) => {
-                                error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up sale update failed")
+                                error!(error = ?e, item_id = item_id.0, world_id = world_id.0, "catch-up sale update failed");
+                                None
                             }
-                        }
+                        };
+                        classify_catchup(listings_changed, sales_changed)
                     }),
             )
             .buffer_unordered(50)
             .collect::<Vec<_>>()
             .await;
+            for outcome in outcomes {
+                tally.add(outcome);
+            }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        Ok(())
+        Ok(tally)
     }
 }
 
@@ -372,6 +448,48 @@ mod tests {
         assert!(
             missed.is_empty(),
             "a prematurely bumped marker makes the still-missing item invisible to catch-up"
+        );
+    }
+
+    /// The whole point of the outcome label: an upload that changed nothing —
+    /// no listing delta, no new sales — is upload churn, not a missed update.
+    /// Only when the fetch actually altered our data did the websocket miss
+    /// something.
+    #[test]
+    fn unchanged_fetch_is_noop_any_change_is_changed() {
+        assert_eq!(classify_catchup(false, Some(false)), CatchupOutcome::Noop);
+        assert_eq!(classify_catchup(true, Some(false)), CatchupOutcome::Changed);
+        assert_eq!(classify_catchup(false, Some(true)), CatchupOutcome::Changed);
+        assert_eq!(classify_catchup(true, Some(true)), CatchupOutcome::Changed);
+    }
+
+    /// A failed sales write is only `Failed` when nothing else was recovered:
+    /// if the listings changed, real data landed and the item counts as
+    /// `Changed` even though the sales half will be retried next cycle.
+    #[test]
+    fn failed_sales_write_is_failed_unless_listings_changed() {
+        assert_eq!(classify_catchup(false, None), CatchupOutcome::Failed);
+        assert_eq!(classify_catchup(true, None), CatchupOutcome::Changed);
+    }
+
+    #[test]
+    fn tally_counts_each_outcome_separately() {
+        let mut tally = CatchupTally::default();
+        for outcome in [
+            CatchupOutcome::Changed,
+            CatchupOutcome::Noop,
+            CatchupOutcome::Noop,
+            CatchupOutcome::Failed,
+        ] {
+            tally.add(outcome);
+        }
+        assert_eq!(
+            tally,
+            CatchupTally {
+                changed: 1,
+                noop: 2,
+                failed: 1,
+            }
         );
     }
 
