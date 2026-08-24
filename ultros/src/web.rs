@@ -957,6 +957,92 @@ async fn price_density(
     Ok(cached_json(body, ttl))
 }
 
+/// How loudly `TraceLayer`'s `on_failure` should report a failed response.
+///
+/// `Error` is what the `sentry_tracing` layer turns into a GlitchTip issue, so
+/// this decides what lands in the backlog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureReportLevel {
+    Debug,
+    Warn,
+    Error,
+}
+
+/// `on_failure` fires *in addition to* whatever produced the response, so a
+/// 5xx that came from a [`WebError`]/[`ApiError`] has already been reported —
+/// with its error type, its typed title, and its breadcrumbs
+/// ([`error::report_title`]). This layer only sees a bare status code and a
+/// latency, so re-reporting it at `error!` buys nothing and costs double:
+/// every incident lands in the backlog twice, once as an actionable issue and
+/// once as a content-free `"response failed"`.
+///
+/// The 2026-08-23 ClickHouse outage is the worked example — each failing item
+/// card produced a `"Returning web error"` *and* a `"response failed"` under
+/// the same trace id, and because the reporter groups by request URL, one
+/// outage splintered into dozens of count-1 issues of both kinds.
+///
+/// So:
+/// - **503** stays at `debug` — the analyzer's warm-up window is a transient
+///   startup state, not a bug (issues 5033/5034).
+/// - Any other **status code** drops to `warn`: still in the logs, no longer a
+///   duplicate issue.
+/// - A [`ServerErrorsFailureClass::Error`] stays at `error`. That class is a
+///   transport- or body-level failure with no response behind it, so *nothing
+///   else reports it* — this layer is the only witness.
+fn failure_report_level(class: &ServerErrorsFailureClass) -> FailureReportLevel {
+    match class {
+        ServerErrorsFailureClass::StatusCode(status)
+            if *status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
+        {
+            FailureReportLevel::Debug
+        }
+        ServerErrorsFailureClass::StatusCode(_) => FailureReportLevel::Warn,
+        ServerErrorsFailureClass::Error(_) => FailureReportLevel::Error,
+    }
+}
+
+#[cfg(test)]
+mod failure_report_level_tests {
+    use super::*;
+
+    /// Warm-up 503s never reach the backlog.
+    #[test]
+    fn service_unavailable_stays_quiet() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::StatusCode(
+                hyper::StatusCode::SERVICE_UNAVAILABLE
+            )),
+            FailureReportLevel::Debug
+        );
+    }
+
+    /// Regression test for the duplicate reporting the 2026-08-23 ClickHouse
+    /// outage exposed: the 500 is already reported by `WebError`, so this
+    /// layer must not report it a second time.
+    #[test]
+    fn internal_server_error_is_not_reported_twice() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::StatusCode(
+                hyper::StatusCode::INTERNAL_SERVER_ERROR
+            )),
+            FailureReportLevel::Warn,
+            "the error type already reported this one with a typed title"
+        );
+    }
+
+    /// A transport/body failure has no response behind it, so no error type
+    /// reported it — this layer is the only place it can surface.
+    #[test]
+    fn transport_failures_are_still_reported() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::Error(
+                "connection reset".to_string()
+            )),
+            FailureReportLevel::Error
+        );
+    }
+}
+
 #[cfg(test)]
 mod price_series_tests {
     use super::*;
@@ -2543,27 +2629,26 @@ pub(crate) async fn start_web(
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
         // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
-        // which the `sentry_tracing` layer turns into a GlitchTip issue. The
-        // analyzer service returns 503 during its warm-up window — those aren't
-        // bugs, just a transient startup state (see WebError::as_status_code and
-        // issues 5033/5034). Drop 503 to debug so it stays out of error logs.
+        // which the `sentry_tracing` layer turns into a GlitchTip issue.
+        // See `failure_report_level` for which failures still warrant one.
         .layer(TraceLayer::new_for_http().on_failure(
-            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| match class {
-                ServerErrorsFailureClass::StatusCode(status)
-                    if status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
-                {
-                    tracing::debug!(
-                        %status,
+            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| {
+                match failure_report_level(&class) {
+                    FailureReportLevel::Debug => tracing::debug!(
+                        classification = %class,
                         ?latency,
                         "response failed (likely warm-up)",
-                    );
-                }
-                _ => {
-                    tracing::error!(
+                    ),
+                    FailureReportLevel::Warn => tracing::warn!(
                         classification = %class,
                         ?latency,
                         "response failed",
-                    );
+                    ),
+                    FailureReportLevel::Error => tracing::error!(
+                        classification = %class,
+                        ?latency,
+                        "response failed",
+                    ),
                 }
             },
         ))
