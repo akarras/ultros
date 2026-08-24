@@ -93,9 +93,33 @@ impl ClickHouseError {
             // Backfill failures wrap a Postgres-side message; there is no
             // ClickHouse status code to read.
             ClickHouseError::Backfill(_) => ClickHouseErrorKind::Other,
-            ClickHouseError::Client(e) => classify_client_error(&e.to_string()),
+            // The *chain*, not just `to_string()`. `clickhouse`'s `Network`
+            // variant renders as `"network error: {hyper_util error}"`, and
+            // hyper_util's own `Display` is the useless `"client error
+            // (Connect)"` — `"tcp connect error"` and `"Connection refused"`
+            // live one and two links further down. Classifying on the top
+            // link alone sent every ClickHouse-is-down event to `Other`.
+            ClickHouseError::Client(e) => classify_client_error(&error_chain_text(e)),
         }
     }
+}
+
+/// `error` plus every link of its `source()` chain, joined with `": "`.
+///
+/// Mirrors how a human reads a `{:?}`-printed error: the useful wording is
+/// often several `source()` hops below the variant that got returned.
+fn error_chain_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    // Bounded so a (pathological) cyclic chain can't spin forever; real chains
+    // here are two or three links.
+    for _ in 0..8 {
+        let Some(current) = source else { break };
+        text.push_str(": ");
+        text.push_str(&current.to_string());
+        source = current.source();
+    }
+    text
 }
 
 /// Match on the rendered text rather than `clickhouse::error::Error`'s variants:
@@ -104,16 +128,32 @@ impl ClickHouseError {
 /// from a malformed query. Deliberately conservative — an unrecognised error
 /// falls through to `Other` rather than being mislabelled, because a wrong label
 /// is worse than a vague one when it points an operator at a subsystem.
+///
+/// `text` is the whole `source()` chain (see [`error_chain_text`]), not one
+/// error's `Display` — several of the substrings below only ever appear on a
+/// nested cause.
 fn classify_client_error(text: &str) -> ClickHouseErrorKind {
     if text.contains("Code: 241") || text.contains("MEMORY_LIMIT_EXCEEDED") {
         ClickHouseErrorKind::MemoryLimitExceeded
-    } else if text.contains("timed out") || text.contains("TimedOut") {
-        ClickHouseErrorKind::Timeout
     } else if text.contains("Connection refused")
         || text.contains("tcp connect error")
         || text.contains("dns error")
+        // A server that goes away mid-request (restart, OOM kill) reads as a
+        // reset, not a refusal — same incident, same operator response.
+        || text.contains("Connection reset")
+        || text.contains("connection closed before message completed")
     {
+        // Checked ahead of the timeout arm: a connect that gave up waiting
+        // renders as *both* "tcp connect error" and "timed out", and it is a
+        // reachability problem, not a slow query. The transport wording is
+        // the more specific signal, so it wins.
         ClickHouseErrorKind::Unavailable
+    } else if text.contains("timed out")
+        || text.contains("TimedOut")
+        // `clickhouse::error::Error::TimedOut`'s own `Display`.
+        || text.contains("timeout expired")
+    {
+        ClickHouseErrorKind::Timeout
     } else {
         ClickHouseErrorKind::Other
     }
@@ -165,6 +205,88 @@ mod error_kind_tests {
         assert_eq!(
             classify_client_error("bad response: Code: 62. DB::Exception: Syntax error"),
             ClickHouseErrorKind::Other
+        );
+    }
+
+    /// A nested error whose own `Display` hides the interesting part in its
+    /// `source`, exactly like `hyper_util`'s connect error does.
+    #[derive(Debug)]
+    struct Layered {
+        text: &'static str,
+        source: Option<Box<Layered>>,
+    }
+
+    impl std::fmt::Display for Layered {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.text)
+        }
+    }
+
+    impl std::error::Error for Layered {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.source
+                .as_deref()
+                .map(|s| s as &(dyn std::error::Error + 'static))
+        }
+    }
+
+    /// Reproduces the 2026-08-23 outage: ClickHouse was refusing connections
+    /// and every failure was labelled `other` instead of `unavailable`.
+    ///
+    /// `clickhouse::error::Error::Network` renders as
+    /// `"network error: client error (Connect)"` — `hyper_util`'s `Display`
+    /// and nothing else. `"tcp connect error"` / `"Connection refused"` only
+    /// exist further down the `source()` chain, so classifying on
+    /// `to_string()` alone can never see them.
+    #[test]
+    fn connection_refused_is_unavailable_not_other() {
+        let inner = Layered {
+            text: "tcp connect error: Connection refused (os error 111)",
+            source: None,
+        };
+        let err = ClickHouseError::Client(clickhouse::error::Error::Network(Box::new(Layered {
+            text: "client error (Connect)",
+            source: Some(Box::new(inner)),
+        })));
+
+        assert_eq!(
+            err.to_string(),
+            "ClickHouse client error: network error: client error (Connect)",
+            "the rendered message really does hide the cause — that is the bug"
+        );
+        assert_eq!(err.kind(), ClickHouseErrorKind::Unavailable);
+    }
+
+    /// The same 2026-08-23 outage produced two transport shapes as ClickHouse
+    /// went down: connections refused before it died, and in-flight requests
+    /// reset as it went. Both are the same operator-visible event.
+    #[test]
+    fn connection_reset_is_unavailable() {
+        let err = ClickHouseError::Client(clickhouse::error::Error::Network(Box::new(Layered {
+            text: "client error (SendRequest)",
+            source: Some(Box::new(Layered {
+                text: "Connection reset by peer (os error 104)",
+                source: None,
+            })),
+        })));
+        assert_eq!(err.kind(), ClickHouseErrorKind::Unavailable);
+    }
+
+    /// `Error::TimedOut` renders as `"timeout expired"`, which matched neither
+    /// of the substrings the classifier looked for.
+    #[test]
+    fn client_timeout_is_a_timeout() {
+        let err = ClickHouseError::Client(clickhouse::error::Error::TimedOut);
+        assert_eq!(err.kind(), ClickHouseErrorKind::Timeout);
+    }
+
+    /// A connect that gave up waiting is a reachability problem, not a slow
+    /// query — the transport wording wins over the generic "timed out".
+    #[test]
+    fn connect_timeout_is_unavailable() {
+        assert_eq!(
+            classify_client_error("tcp connect error: connection timed out"),
+            ClickHouseErrorKind::Unavailable
         );
     }
 

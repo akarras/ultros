@@ -419,6 +419,54 @@ mod tests {
         );
     }
 
+    /// The typed ClickHouse title only survives if the error stays a
+    /// [`WebError::ClickHouse`] all the way to `into_response`.
+    ///
+    /// Regression test for the 2026-08-23 outage: `item_card::generate_image`
+    /// returned `anyhow::Result`, so `build_price_series`'s typed error was
+    /// flattened into `AnyhowError` at the first `?`. Every item-card request
+    /// during the outage reported as the generic "Returning web error" — the
+    /// exact failure mode the `ClickHouse` variant was added to prevent.
+    ///
+    /// The second half of this test is what the *old* code did, kept so the
+    /// hazard stays visible: any call site that routes a `WebError` through
+    /// `anyhow` silently loses its grouping.
+    #[test]
+    fn clickhouse_errors_keep_their_title_unless_laundered_through_anyhow() {
+        let typed: WebError = ClickHouseQueryError::new(
+            "price_series",
+            ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
+        )
+        .into();
+        assert_eq!(
+            report_title(&typed),
+            "ClickHouse price_series query failed (timeout)"
+        );
+
+        let laundered: WebError = anyhow::Error::from(ClickHouseQueryError::new(
+            "price_series",
+            ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
+        ))
+        .into();
+        assert_eq!(
+            report_title(&laundered),
+            "Returning web error",
+            "an `anyhow` hop erases the grouping — call sites must return WebError"
+        );
+    }
+
+    /// A ClickHouse failure is still a 500: only the reporting title changes,
+    /// not what the client sees.
+    #[test]
+    fn clickhouse_failure_is_a_server_error() {
+        let err: WebError = ClickHouseQueryError::new(
+            "price_series",
+            ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
+        )
+        .into();
+        assert_eq!(err.as_status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     /// 401 is a *client* error, so it must not trip the `is_server_error()`
     /// paths that log at error level and replace the message with a generic
     /// "Internal server error". This is what preserves the original intent of

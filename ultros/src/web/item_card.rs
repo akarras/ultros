@@ -28,13 +28,22 @@ use xiv_gen::{Item, ItemId};
 /// picks a fixed, reasonable default.
 const CARD_WINDOW_DAYS: i64 = 30;
 
+/// Renders the item card PNG.
+///
+/// Returns [`WebError`], **not** `anyhow::Result`: `build_price_series` hands
+/// back a typed [`WebError::ClickHouse`], and funnelling it through `anyhow`
+/// here flattened it into `WebError::AnyhowError` by the time the handler saw
+/// it. That is exactly the laundering `report_title` exists to prevent — the
+/// 2026-08-23 ClickHouse outage reported every item card as the generic
+/// "Returning web error" instead of "ClickHouse price_series query failed
+/// (unavailable)", so the outage was unalertable.
 pub(crate) async fn generate_image(
     ch: &ClickHouseClient,
     world_cache: &WorldCache,
     world_helper: &WorldHelper,
     item: &'static Item,
     world: &str,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>, WebError> {
     let to = chrono::Utc::now();
     let from = to - chrono::Duration::days(CARD_WINDOW_DAYS);
     let series = build_price_series(
@@ -60,7 +69,7 @@ pub(crate) async fn generate_image(
             ..Default::default()
         },
     );
-    svg_to_png(&scene_to_svg(&scene))
+    Ok(svg_to_png(&scene_to_svg(&scene))?)
 }
 
 fn font_db() -> Arc<usvg::fontdb::Database> {
