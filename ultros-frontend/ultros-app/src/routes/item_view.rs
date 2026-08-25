@@ -1705,7 +1705,18 @@ fn ListingsContent(
             get_listings(item_id, world.as_str())
                 .await
                 .map(Arc::new) // Keep large listing payloads cheap to share across page sections.
-                .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
+                .inspect_err(|e| {
+                    // Only *our* side breaking is worth error-level reporting.
+                    // A world segment the API can't resolve is a 404 it is
+                    // right to return, already logged with its status and path
+                    // by the fetch layer -- re-reporting it here is what filled
+                    // GlitchTip issue 2210. See `AppError::is_api_response`.
+                    if e.is_api_response() {
+                        tracing::warn!(error = ?e, item_id, %world, "Error getting value");
+                    } else {
+                        tracing::error!(error = ?e, item_id, %world, "Error getting value");
+                    }
+                })
         },
     );
     Effect::new(move |_| {
