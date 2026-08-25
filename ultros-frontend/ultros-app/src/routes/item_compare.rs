@@ -175,7 +175,17 @@ pub(crate) fn FlipRouteCard(
                     get_listings(item_id, &name)
                         .await
                         .map(Arc::new)
-                        .inspect_err(|e| tracing::error!(error = ?e, "Error getting compare-buy-from listings")),
+                        .inspect_err(|e| {
+                            // Same rule as `item_view`: `?compare-buy-from=` is
+                            // a raw URL parameter, so an unresolvable world here
+                            // is user input the API correctly 404s, not a fault
+                            // of ours. See `AppError::is_api_response`.
+                            if e.is_api_response() {
+                                tracing::warn!(error = ?e, item_id, buy_world = %name, "Error getting compare-buy-from listings");
+                            } else {
+                                tracing::error!(error = ?e, item_id, buy_world = %name, "Error getting compare-buy-from listings");
+                            }
+                        }),
                 ),
             }
         },

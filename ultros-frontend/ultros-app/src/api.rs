@@ -1324,6 +1324,40 @@ mod ssr_response_tests {
         );
         assert_eq!(fixed_401, AppError::ApiError(ApiError::NotAuthenticated));
     }
+
+    /// Regression for GlitchTip issue 2210 ("Error getting value"), 6584 events.
+    ///
+    /// A world segment the API cannot resolve — in production, mojibake where
+    /// the world name belongs, e.g.
+    /// `/api/v1/listings/綛糸襲臂ゅ甥/42525` — comes back as a 404
+    /// carrying `WorldCacheError`'s message. This helper already logs it at
+    /// warn, so whatever awaits the resource must be able to tell that the API
+    /// *answered* and skip a second, error-level report.
+    #[test]
+    fn unresolvable_world_404_is_an_api_response() {
+        let body = serde_json::to_string(&JsonErrorWrapper::ApiError(ApiError::Message(
+            "Name lookup error 綛糸襲臂ゅ甥".to_string(),
+        )))
+        .unwrap();
+        let err = parse_internal_api_response::<i32>(StatusCode::NOT_FOUND, &body)
+            .expect_err("a 404 must be an error");
+        assert!(
+            err.is_api_response(),
+            "a 404 for a bad world name is the API answering, got {err:?}"
+        );
+    }
+
+    /// The counterpart that must keep error-level reporting: a 2xx whose body
+    /// will not deserialize is a real bug and is logged nowhere else.
+    #[test]
+    fn malformed_success_body_is_not_an_api_response() {
+        let err = parse_internal_api_response::<i32>(StatusCode::OK, "not json")
+            .expect_err("garbage on a 200 is an error");
+        assert!(
+            !err.is_api_response(),
+            "a malformed 200 body is our own failure, got {err:?}"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "ssr"))]

@@ -33,6 +33,32 @@ pub enum AppError {
     WorldDataUnavailable,
 }
 
+impl AppError {
+    /// Whether this is the API *answering* with an error, as opposed to the
+    /// call to it failing.
+    ///
+    /// An [`AppError::ApiError`] is a response the server deliberately
+    /// produced. By the time a caller sees one it has already been logged with
+    /// the status and the path it came from — `get_api` warns on every
+    /// non-success status, and the server reports its own 5xx directly
+    /// (`ultros/src/web/error.rs`). Re-reporting it at error level from the
+    /// component that awaited the resource adds no context and creates a
+    /// *second* GlitchTip issue for one failure.
+    ///
+    /// That double report is GlitchTip issue 2210 ("Error getting value"). Its
+    /// live traffic is a bad world name in the URL: a request for
+    /// `/api/v1/listings/綛糸襲臂ゅ甥/42525` — mojibake where the world segment
+    /// belongs — is a 404 the API is *right* to return, logged at warn by the
+    /// fetch layer and then immediately re-logged at error by the caller.
+    ///
+    /// Everything else — a transport failure, a malformed body on a 2xx, a
+    /// missing route parameter — is our own side breaking, is reported nowhere
+    /// else, and stays at error level.
+    pub(crate) fn is_api_response(&self) -> bool {
+        matches!(self, AppError::ApiError(_))
+    }
+}
+
 /// This error type implements From's for the non serializable error types and shoves them into a string
 /// Upon being actually serialized
 #[derive(Clone, Debug)]
@@ -176,5 +202,49 @@ mod test {
                 "error deserializing Resource: expected value at line 1 column 1".to_string()
             )))
         );
+    }
+
+    /// Regression for GlitchTip issue 2210. A 404 for a bad world name in the
+    /// URL is the API answering, not a failure of ours — the fetch layer has
+    /// already logged it with its status and path, so the awaiting component
+    /// must not report it a second time at error level.
+    #[test]
+    fn api_error_responses_are_the_api_answering() {
+        use ultros_api_types::result::ApiError;
+
+        for api in [
+            // The shape the bad-world-name 404 actually arrives in: the server
+            // flattens `WorldCacheError` into `Message` on its way out.
+            ApiError::Message("Name lookup error 綛糸襲臂ゅ甥".to_string()),
+            ApiError::NotFound,
+            ApiError::NotAuthenticated,
+            ApiError::Forbidden,
+            ApiError::BadRequest("nope".to_string()),
+        ] {
+            let error = AppError::ApiError(api.clone());
+            assert!(
+                error.is_api_response(),
+                "{api:?} is a response the API produced and already logged"
+            );
+        }
+    }
+
+    /// The complement: anything that is *our* side breaking is reported
+    /// nowhere else, so it must keep error-level reporting.
+    #[test]
+    fn our_own_failures_are_not_api_responses() {
+        for error in [
+            // A 2xx whose body would not deserialize — a real bug.
+            AppError::Json("expected value at line 1 column 1".to_string()),
+            AppError::SystemError(SystemError::Message("connection reset".to_string())),
+            AppError::ParamMissing,
+            AppError::WorldDataUnavailable,
+            AppError::NoItem,
+        ] {
+            assert!(
+                !error.is_api_response(),
+                "{error:?} is not something the API answered with"
+            );
+        }
     }
 }
