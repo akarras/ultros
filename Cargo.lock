@@ -10274,6 +10274,7 @@ dependencies = [
 name = "ultros-app"
 version = "0.1.0"
 dependencies = [
+ "any_spawner",
  "anyhow",
  "axum",
  "cfg-if",

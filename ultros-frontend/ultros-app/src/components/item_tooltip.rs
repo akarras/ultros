@@ -3,6 +3,7 @@ use xiv_gen::{ItemId, ItemUiCategoryId};
 
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 
 use super::hover_card::{AccentHairline, HOVER_CARD_CHROME, HoverCard};
 use super::item_icon::{IconSize, ItemIcon};
@@ -29,7 +30,7 @@ pub fn ItemTooltip<T>(
 where
     T: Sized + Render + RenderHtml + Send + 'static,
 {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     let disabled =
         Signal::derive(move || !tracked_data().items.contains_key(&ItemId(item_id.get())));
     let content = move || {

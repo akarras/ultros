@@ -1,5 +1,5 @@
 use crate::freshness::get_freshness_verdict_display;
-use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 use chrono::Duration;
 use leptos::prelude::*;
 use ultros_api_types::freshness::FreshnessVerdict;
@@ -10,7 +10,7 @@ pub fn FreshnessBadge(
     age: Option<Duration>,
     #[prop(optional)] compact: bool,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     let display = get_freshness_verdict_display(verdict, age);
 
     view! {
