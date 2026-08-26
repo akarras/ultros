@@ -4,7 +4,7 @@ use xiv_gen::ItemId;
 use super::{gil::*, world_name::*};
 use crate::{
     components::skeleton::SingleLineSkeleton, global_state::cheapest_prices::CheapestPrices,
-    i18n::*,
+    i18n::*, i18n_fallback::use_i18n_or_default,
 };
 use ultros_api_types::world_helper::AnySelector;
 
@@ -47,9 +47,16 @@ pub fn CheapestPrice(
     #[prop(optional)]
     show_world: Option<bool>,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     let show_world = show_world.unwrap_or(true);
-    let cheapest = use_context::<CheapestPrices>().unwrap().read_listings;
+    // `CheapestPrices` is provided by `AppInner`, and — like the i18n context
+    // above — a disposed SSR fragment can hand this component an owner that
+    // never saw it. Unwrapping cost the whole page; showing the same
+    // placeholder the component already renders while the resource is pending
+    // costs one price cell.
+    let Some(cheapest) = use_context::<CheapestPrices>().map(|prices| prices.read_listings) else {
+        return view! { <SingleLineSkeleton /> }.into_any();
+    };
     let hydrated = RwSignal::new(false);
     Effect::new(move |_| {
         hydrated.set(true);

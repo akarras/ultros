@@ -1,5 +1,6 @@
 use crate::components::tooltip::Tooltip;
-use crate::i18n::{t_string, use_i18n};
+use crate::i18n::t_string;
+use crate::i18n_fallback::use_i18n_or_default;
 use chrono::{DateTime, Utc};
 use leptos::prelude::*;
 
@@ -43,7 +44,7 @@ pub fn RealtimeStatus(
     #[prop(optional)]
     compact: bool,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     #[allow(unused_variables)]
     let (clock_tick, set_clock_tick) = signal(0_u32);
 

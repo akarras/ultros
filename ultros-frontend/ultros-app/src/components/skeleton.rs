@@ -17,6 +17,7 @@
 use leptos::prelude::*;
 
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 
 /// Bar widths cycled through to keep placeholder text from looking like a
 /// perfectly ragged-right block. Chosen by position, never at random — see
@@ -158,7 +159,7 @@ pub fn TableSkeleton(
     #[prop(default = true)]
     striped: bool,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     let header_row = header.then(|| {
         let cells = columns
             .iter()
@@ -221,7 +222,7 @@ pub fn TableSkeleton(
 /// The `sr-only` label still describes the cell to anyone reading through it.
 #[component]
 pub fn SingleLineSkeleton() -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     view! {
         <div class="w-full">
             <div class="skeleton-block skeleton-shimmer w-full h-3 rounded-md" aria-hidden="true"></div>
@@ -239,7 +240,7 @@ pub fn BoxSkeleton(
     #[prop(default = 6)]
     rows: usize,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     let rows = (0..rows)
         .map(|row| {
             view! {
