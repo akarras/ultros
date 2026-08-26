@@ -122,7 +122,8 @@ impl Greeting {
 pub fn HomePage() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let (homeworld, _) = use_home_world();
-    let needs_onboarding = Memo::new(move |_| homeworld.with(|w| w.is_none()));
+    // ⚡ Bolt Optimization: Replace Memo::new with a plain closure for O(1) ops
+    let needs_onboarding = move || homeworld.with(|w| w.is_none());
     // Market Pulse needs a world name string; track home world reactively so
     // the strip refreshes when the user changes home world.
     let pulse_world: Signal<Option<String>> =
@@ -154,7 +155,7 @@ pub fn HomePage() -> impl IntoView {
             <div class="container flex w-full min-w-0 flex-col gap-6 lg:flex-row mx-auto items-start max-w-7xl">
                 // Main content
                 <div class="flex w-full min-w-0 flex-col grow gap-8">
-                    {move || needs_onboarding.get().then(|| view! {
+                    {move || needs_onboarding().then(|| view! {
                         <A
                             href="/welcome"
                             attr:class="group focus:outline-none rounded-2xl"
