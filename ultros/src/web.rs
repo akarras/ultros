@@ -2680,10 +2680,25 @@ pub(crate) async fn start_web(
             axum::http::header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         ))
+        // `same-origin` would strip the Referer from every cross-origin
+        // request, AdSense and Sentry included. `strict-origin-when-cross-origin`
+        // is the modern browser default: full URL same-origin, bare origin
+        // cross-origin, nothing on an HTTPS->HTTP downgrade. Stating it
+        // explicitly pins the behaviour for older clients without changing
+        // what third parties already receive.
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::REFERRER_POLICY,
-            HeaderValue::from_static("same-origin"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
+        // The standards-track spelling of the `X-Frame-Options: DENY` above,
+        // not additional protection — every browser we serve honours one or
+        // the other. It is here so scanners stop flagging its absence.
+        //
+        // CAREFUL: this claims the CSP header, and the layer is `overriding`.
+        // Adding a directive here is not free — the app loads Google
+        // Analytics, AdSense and Sentry from other origins, so a `script-src`
+        // or `connect-src` added to this string silently kills all three.
+        // Ship any new directive in report-only first.
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'none'"),
