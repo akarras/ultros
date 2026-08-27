@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use leptos::{either::Either, prelude::*};
 use xiv_gen::Item;
 
@@ -5,7 +6,6 @@ use crate::global_state::home_world::get_price_zone;
 
 use super::item_icon::*;
 use super::item_tooltip::ItemTooltip;
-use leptos_router::components::A;
 
 #[component]
 fn ItemDetails(item: &'static Item) -> impl IntoView {
@@ -35,7 +35,7 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
             } else {
                 Either::Right(
                     view! {
-                        <A
+                        <AppLink
                             attr:class="flex flex-row items-center gap-2 min-w-0"
                             exact=true
                             href=move || {
@@ -50,7 +50,7 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
                             }
                         >
                             <ItemDetails item />
-                        </A>
+                        </AppLink>
                     },
                 )
             }}

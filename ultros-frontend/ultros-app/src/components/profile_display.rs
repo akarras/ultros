@@ -1,9 +1,9 @@
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::i18n::{t, use_i18n};
 use crate::{api::get_login, components::loading::Loading};
 use icondata as i;
 use leptos::{either::Either, prelude::*};
-use leptos_router::components::*;
 
 #[component]
 pub fn ProfileDisplay() -> impl IntoView {
@@ -18,9 +18,9 @@ pub fn ProfileDisplay() -> impl IntoView {
                             Either::Left(
                                 view! {
                                     <div class="flex items-center gap-2">
-                                        <A href="/profile">
+                                        <AppLink href="/profile">
                                             <img class="avatar" src=auth.avatar alt=auth.username />
-                                        </A>
+                                        </AppLink>
 
                                     </div>
                                 },
@@ -38,10 +38,10 @@ pub fn ProfileDisplay() -> impl IntoView {
                                             <Icon height="1.2em" width="1.2em" icon=i::BsDiscord aria_hidden=true />
                                             <span>{t!(i18n, profile_login_button)}</span>
                                         </a>
-                                        <A href="/settings" attr:class="nav-link">
+                                        <AppLink href="/settings" attr:class="nav-link">
                                             <Icon height="2em" width="2em" icon=i::IoSettingsSharp aria_hidden=true />
                                             <span class="sr-only">Settings</span>
-                                        </A>
+                                        </AppLink>
                                     </div>
                                 },
                             )

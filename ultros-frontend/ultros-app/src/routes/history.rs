@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use crate::components::item_icon::ItemIcon;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::recently_viewed::RecentItems;
@@ -6,7 +7,6 @@ use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use ultros_api_types::icon_size::IconSize;
 use xiv_gen::ItemId;
 
@@ -76,7 +76,7 @@ pub fn History() -> impl IntoView {
                                                                 .get(&ItemId(item_id));
 
                                                             view! {
-                                                                <A href=format!("/item/{item_id}")>
+                                                                <AppLink href=format!("/item/{item_id}")>
                                                                     <div class="flex items-center gap-4 p-3 card transition-colors duration-200 hover:translate-x-1">
                                                                         <ItemIcon item_id icon_size=IconSize::Medium />
 
@@ -88,7 +88,7 @@ pub fn History() -> impl IntoView {
                                                                             </div>
                                                                         </div>
                                                                     </div>
-                                                                </A>
+                                                                </AppLink>
                                                             }
                                                         })
                                                         .collect_view()}

@@ -1,4 +1,5 @@
 use crate::components::account_menu::AccountMenu;
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
@@ -7,7 +8,6 @@ use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
 /// First path segment of `path` — the section of the app a URL belongs to.
@@ -22,7 +22,7 @@ fn section_of(path: &str) -> &str {
 /// One sidebar entry, highlighted whenever the current page belongs to
 /// `section`.
 ///
-/// Deliberately a plain `<a>` rather than the router's `<A>`: `<A>` sets
+/// Deliberately a plain `<a>` rather than the router's `<AppLink>`: `<AppLink>` sets
 /// `aria-current` by comparing the whole resolved href against the URL, and
 /// most of these hrefs carry a world (`/flip-finder/{homeworld}`,
 /// `/scrip-sources?world=…`). Viewing a world other than your homeworld — or
@@ -114,10 +114,10 @@ pub fn SideNav() -> impl IntoView {
     view! {
         <aside class="side-nav" aria-label=t_string!(i18n, side_nav_aria_primary)>
             <div class="side-nav-brand">
-                <A href="/" attr:class="side-nav-brand-link">
+                <AppLink href="/" attr:class="side-nav-brand-link">
                     <Icon icon=i::MdiJellyfish width="1.6em" height="1.6em" />
                     <span class="side-nav-brand-text">"ULTROS"</span>
-                </A>
+                </AppLink>
                 <button
                     class="side-nav-collapse hidden lg:inline-flex"
                     aria-label=t_string!(i18n, side_nav_toggle_sidebar).to_string()

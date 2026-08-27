@@ -3,6 +3,7 @@ use crate::api::{
     get_user_retainer_listings,
 };
 use crate::components::alert_drawer::{AlertDrawer, AlertKind};
+use crate::components::app_link::AppLink;
 use crate::components::clipboard::Clipboard;
 use crate::components::gil::*;
 use crate::components::icon::Icon;
@@ -12,7 +13,7 @@ use crate::components::{item_icon::*, loading::*, meta::*, world_name::*};
 use crate::global_state::use_world_display_name;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use components::{A, Outlet};
+use components::Outlet;
 use hooks::use_params_map;
 use icondata as i;
 use leptos::either::Either;
@@ -76,7 +77,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                         {if let Some(item) = item {
                             Either::Left(
                                 view! {
-                                    <A
+                                    <AppLink
                                         attr:class="flex flex-row"
                                         href=format!("/item/{world_name}/{}", listing.item_id)
                                     >
@@ -85,7 +86,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
                                             item_id=listing.item_id
                                         />
                                         {item.name.as_str()}
-                                    </A>
+                                    </AppLink>
                                     <Clipboard clipboard_text=item.name.as_str() />
                                 },
                             )
@@ -168,7 +169,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                         {if let Some(item) = item {
                             Either::Left(
                                 view! {
-                                    <A
+                                    <AppLink
                                         attr:class="flex flex-row"
                                         href=format!("/item/{}/{}", world_name, listing.item_id)
                                     >
@@ -177,7 +178,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
                                             item_id=listing.item_id
                                         />
                                         {item.name.as_str()}
-                                    </A>
+                                    </AppLink>
                                     <Clipboard clipboard_text=item.name.as_str() />
                                 },
                             )
@@ -428,7 +429,7 @@ pub fn SingleRetainerListings() -> impl IntoView {
     view! {
         <span>
             {t!(i18n, retainers_claim_prompt_start)}
-            <A href="/retainers/edit">{t!(i18n, retainers_claim_prompt_link)}</A>
+            <AppLink href="/retainers/edit">{t!(i18n, retainers_claim_prompt_link)}</AppLink>
         </span>
         <Suspense fallback=move || {
             view! {
@@ -567,18 +568,18 @@ pub fn Retainers() -> impl IntoView {
     view! {
         <MetaRobotsNoIndex />
         <div class="flex items-center gap-2 md:gap-3 mb-3">
-            <A exact=true attr:class="nav-link" href="/retainers/edit">
+            <AppLink exact=true attr:class="nav-link" href="/retainers/edit">
                 <Icon height="1.25em" width="1.25em" icon=i::BsPencilFill />
                 <span>{t!(i18n, retainers_edit_tab)}</span>
-            </A>
-            <A exact=true attr:class="nav-link" href="/retainers/listings">
+            </AppLink>
+            <AppLink exact=true attr:class="nav-link" href="/retainers/listings">
                 <Icon height="1.25em" width="1.25em" icon=i::AiOrderedListOutlined />
                 <span>{t!(i18n, retainers_all_listings_tab)}</span>
-            </A>
-            <A exact=true attr:class="nav-link" href="/retainers/undercuts">
+            </AppLink>
+            <AppLink exact=true attr:class="nav-link" href="/retainers/undercuts">
                 <Icon height="1.25em" width="1.25em" icon=i::AiExclamationOutlined />
                 <span>{t!(i18n, retainers_undercuts_tab)}</span>
-            </A>
+            </AppLink>
         </div>
         <div class="main-content">
             <div class="container mx-auto">

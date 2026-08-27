@@ -1,7 +1,7 @@
+use crate::components::app_link::AppLink;
 use itertools::Itertools;
 /// Related items links items that are related to the current set
 use leptos::prelude::*;
-use leptos_router::components::A;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use ultros_api_types::{cheapest_listings::CheapestListingMapKey, icon_size::IconSize};
@@ -110,7 +110,7 @@ fn item_set_iter<'a>(data: &'a xiv_gen::Data, item: &'a Item) -> impl Iterator<I
 /// different set of items on each side. Japanese/Chinese/Korean item names carry
 /// no ASCII space at all, so `split_once(' ')` yields `None` and the name match
 /// contributes nothing client-side: measured over the whole pack, 11257 of 16843
-/// marketable items render a different *number* of `<A>` elements under `ja`
+/// marketable items render a different *number* of `<AppLink>` elements under `ja`
 /// than under `en`. That is a structural DOM mismatch, and tachys panics on it
 /// with `failed_to_cast_element` — GlitchTip #6831, reproduced on prod at
 /// `/item/Sargatanas/4` with `i18n_pref_locale=ja` (4/4 panics) against an `en`
@@ -1004,7 +1004,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     // The grid below is chosen by matching item *names*, and SSR renders game
     // data in English while the client has already swapped to the visitor's
     // locale by the time `hydrate()` runs — so the two sides disagree about how
-    // many `<A>` elements belong here and tachys panics walking the DOM
+    // many `<AppLink>` elements belong here and tachys panics walking the DOM
     // (GlitchTip #6831; see `related_item_ids`). Render nothing until the first
     // client effect has run, so SSR and the initial CSR pass both emit an empty
     // grid and the real list arrives as an ordinary reactive update afterwards.
@@ -1028,7 +1028,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         related_items_data.with(|items| {
             items.iter().take(12).map(|&item| {
                 view! {
-                    <A
+                    <AppLink
                         attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
                         exact=true
                         href=move || {
@@ -1053,7 +1053,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                         <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                             <CheapestPrice item_id=item.key_id />
                         </div>
-                    </A>
+                    </AppLink>
                 }
             }).collect_view()
         })
@@ -1079,7 +1079,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                             related_items_data.with(|items| {
                                 items.iter().skip(12).map(|&item| {
                                     view! {
-                                        <A
+                                        <AppLink
                                             attr:class="group flex flex-col gap-2 rounded-lg p-3 transition-all hover:scale-[1.02] hover:shadow-lg border border-[color:var(--color-outline)] hover:border-brand-300/60"
                                             exact=true
                                             href=move || {
@@ -1104,7 +1104,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                                             <div class="text-sm font-bold text-[color:var(--brand-fg)] mt-1 ml-1">
                                                 <CheapestPrice item_id=item.key_id />
                                             </div>
-                                        </A>
+                                        </AppLink>
                                     }
                                 }).collect_view()
                             })

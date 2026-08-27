@@ -1,4 +1,5 @@
 use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
+use crate::components::app_link::AppLink;
 use crate::components::chart_query::{RangePreset, resolve_range};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
@@ -27,7 +28,6 @@ use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
-use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
 use leptos_use::signal_debounced;
@@ -127,7 +127,7 @@ fn WorldButton(
         })
     };
     view! {
-        <A
+        <AppLink
             attr:class=move || {
                 [
                     "rounded-md flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap border border-transparent",
@@ -167,7 +167,7 @@ fn WorldButton(
                         })
                 }}
                 {label}
-            </A>
+            </AppLink>
     }.into_any()
 }
 

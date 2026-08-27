@@ -3,6 +3,7 @@ use crate::api::{
     delete_group_invite, get_group_invites, get_group_members, get_groups, get_login,
     list_manageable_discord_guilds, remove_group_member, use_group_invite,
 };
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::components::invite_link;
 use crate::components::loading::Loading;
@@ -14,7 +15,6 @@ use crate::i18n::*;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
 use ultros_api_types::user::group::{CreateGroup, CreateGroupInvite, UserGroup};
 
@@ -131,10 +131,10 @@ pub fn Groups() -> impl IntoView {
                     Some(Some(_)) => {
                         view! {
                             <div class="flex items-center gap-2 md:gap-3">
-                                <A exact=true attr:class="nav-link" href="/groups">
+                                <AppLink exact=true attr:class="nav-link" href="/groups">
                                     <Icon height="1.25em" width="1.25em" icon=i::BiGroupSolid />
                                     <span>{t!(i18n, groups)}</span>
-                                </A>
+                                </AppLink>
                             </div>
 
                             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -379,7 +379,7 @@ pub fn GroupInviteAccept() -> impl IntoView {
                                 Some(Err(e)) => view! {
                                     <div class="space-y-3">
                                         <div class="alert alert-error">{t!(i18n, groups_invite_accept_error, error = e.to_string())}</div>
-                                        <A href="/groups" attr:class="btn-secondary">{t!(i18n, groups_back_to_groups_link)}</A>
+                                        <AppLink href="/groups" attr:class="btn-secondary">{t!(i18n, groups_back_to_groups_link)}</AppLink>
                                     </div>
                                 }.into_any(),
                                 None => view! {

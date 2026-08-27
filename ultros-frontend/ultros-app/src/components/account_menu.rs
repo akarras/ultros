@@ -11,6 +11,7 @@
 //!    switcher at all.
 
 use crate::api::get_login;
+use crate::components::app_link::AppLink;
 use crate::components::character_switcher::CharacterSwitcher;
 use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
@@ -20,7 +21,6 @@ use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::html;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 #[component]
 pub fn AccountMenu() -> impl IntoView {
@@ -84,14 +84,14 @@ pub fn AccountMenu() -> impl IntoView {
                                     // thing a signed-in player does here, so it
                                     // sits above the navigation links.
                                     <CharacterSwitcher />
-                                    <A href="/profile" attr:class="menu-item">
+                                    <AppLink href="/profile" attr:class="menu-item">
                                         <Icon icon=i::BsPersonCircle width="1.1em" height="1.1em" />
                                         <span class="ml-2">{t!(i18n, profile)}</span>
-                                    </A>
-                                    <A href="/settings" attr:class="menu-item">
+                                    </AppLink>
+                                    <AppLink href="/settings" attr:class="menu-item">
                                         <Icon icon=i::IoSettingsSharp width="1.1em" height="1.1em" />
                                         <span class="ml-2">{t!(i18n, settings)}</span>
-                                    </A>
+                                    </AppLink>
                                     <div class="menu-divider"></div>
                                     <LanguageAccordion />
                                     <QuickThemeToggle menu_item=true />
@@ -111,10 +111,10 @@ pub fn AccountMenu() -> impl IntoView {
                                         <Icon icon=i::BsDiscord width="1.1em" height="1.1em" />
                                         <span class="ml-2">{t!(i18n, login_with_discord)}</span>
                                     </a>
-                                    <A href="/settings" attr:class="menu-item">
+                                    <AppLink href="/settings" attr:class="menu-item">
                                         <Icon icon=i::IoSettingsSharp width="1.1em" height="1.1em" />
                                         <span class="ml-2">{t!(i18n, settings)}</span>
-                                    </A>
+                                    </AppLink>
                                     <div class="menu-divider"></div>
                                     <LanguageAccordion />
                                     <QuickThemeToggle menu_item=true />

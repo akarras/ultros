@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -29,7 +30,6 @@ use itertools::Itertools;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use leptos_router::components::A;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::*;
 
@@ -77,13 +77,13 @@ fn ItemAmount(#[prop(into)] item_amount: Option<ItemAmount>) -> impl IntoView {
         .map(|item_amount| {
             view! {
                 <div class="flex flex-row gap-1">
-                    <A
+                    <AppLink
                         attr:class="flex flex-row gap-1 min-w-0"
                         href=format!("/item/{}", item_amount.item.key_id.0)
                     >
                         <ItemIcon item_id=item_amount.item.key_id.0 icon_size=IconSize::Small />
                         <span class="truncate" title=item_amount.item.name.as_str()>{item_amount.item.name.as_str()}</span>
-                    </A>
+                    </AppLink>
                     <div>{t!(i18n, currency_exchange_quantity_x)} {item_amount.amount}</div>
                     <span on:click=move |ev| { ev.stop_propagation(); ev.prevent_default(); }>
                         <AddToList item_id=item_amount.item.key_id.0 />
@@ -852,12 +852,12 @@ fn ExchangeItemContent() -> impl IntoView {
                         let left = view! {
                             <div class="bg-red-900/50 p-4 rounded-lg text-white">
                                 {t!(i18n, currency_exchange_home_world_not_set_prefix)}
-                                <A
+                                <AppLink
                                     href="/settings"
                                     attr:class="underline"
                                 >
                                     {t!(i18n, currency_exchange_settings)}
-                                </A> {t!(i18n, currency_exchange_home_world_not_set_suffix)}
+                                </AppLink> {t!(i18n, currency_exchange_home_world_not_set_suffix)}
                             </div>
                         };
                         Either::Left(left)
@@ -1231,7 +1231,7 @@ pub fn CurrencySelection() -> impl IntoView {
                     key=|(item_id, _, _)| *item_id
                     children=|(item_id, item_name, category_name)| {
                         view! {
-                            <A
+                            <AppLink
                                 href=item_id.to_string()
                                 attr:class="card-link group flex items-center gap-2 px-3 py-2 rounded-lg border \
                                            border-white/5 bg-[color:var(--color-background-elevated)] \
@@ -1250,7 +1250,7 @@ pub fn CurrencySelection() -> impl IntoView {
                                         {category_name}
                                     </span>
                                 </div>
-                            </A>
+                            </AppLink>
                         }
                     }
                 />

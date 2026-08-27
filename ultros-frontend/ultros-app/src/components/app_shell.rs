@@ -1,4 +1,5 @@
 use crate::components::ad::DesktopAdRail;
+use crate::components::app_link::provide_router_available;
 use crate::components::mobile_bar::MobileBar;
 use crate::components::search_overlay::SearchOverlay;
 use crate::components::side_nav::SideNav;
@@ -12,6 +13,10 @@ use leptos_router::hooks::use_location;
 /// drawer and adds a fixed bottom bar (Menu, Search, Items).
 #[component]
 pub fn AppShell(children: Children) -> impl IntoView {
+    // Everything below here renders inside `<Router>`; `AppLink` reads this
+    // marker to tell a live render from one whose owner has been disposed.
+    // See `components::app_link`.
+    provide_router_available();
     let nav = provide_side_nav_settings();
     provide_search_overlay_state();
     let location = use_location();

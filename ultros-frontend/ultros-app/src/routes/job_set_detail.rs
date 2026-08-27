@@ -4,10 +4,10 @@
 //! by-side totals for the user's current price zone and their home
 //! world.
 
+use crate::components::app_link::AppLink;
 use std::collections::{BTreeMap, HashSet};
 
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 use xiv_gen::{ClassJobCategoryId, ItemId};
@@ -338,7 +338,7 @@ fn material_row(m: MaterialEntry) -> impl IntoView {
     let name = m.name.clone();
     let amount = m.amount;
     view! {
-        <A
+        <AppLink
             href=format!("/item/{}", id)
             attr:class="group flex flex-row items-center gap-2 p-2 rounded-lg panel \
                        border border-white/5 hover:border-brand-500/30 transition-colors"
@@ -356,7 +356,7 @@ fn material_row(m: MaterialEntry) -> impl IntoView {
                     <CheapestPrice item_id=xiv_gen::ItemId(id) show_hq=false />
                 </div>
             </div>
-        </A>
+        </AppLink>
     }
     .into_any()
 }
@@ -493,14 +493,14 @@ pub fn JobSetDetail() -> impl IntoView {
 
         <div class="flex flex-col gap-4">
             <div class="flex flex-row items-center gap-3 flex-wrap">
-                <A
+                <AppLink
                     href=back_href
                     attr:class="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg \
                                bg-white/5 hover:bg-white/10 text-[color:var(--color-text-muted)] \
                                border border-white/5 transition-colors"
                 >
                     {move || t_string!(i18n, job_set_detail_back).to_string().replace("%job%", &job_name())}
-                </A>
+                </AppLink>
                 <Show when=move || !set_entries.get().is_empty()>
                     <AddSetToList
                         button_label=Signal::derive(move || t_string!(i18n, job_set_detail_add_set_button).to_string())
@@ -542,12 +542,12 @@ pub fn JobSetDetail() -> impl IntoView {
                                 view! {
                                     <div class="flex flex-col p-3 rounded-lg panel border border-white/5">
                                         <div class="flex flex-row items-center gap-3 mb-2">
-                                            <A
+                                            <AppLink
                                                 href=format!("/item/{}", item_id)
                                                 attr:class="shrink-0 flex items-center justify-center w-12 h-12"
                                             >
                                                 <ItemIcon item_id=item_id icon_size=IconSize::Medium />
-                                            </A>
+                                            </AppLink>
                                             <div class="flex flex-col min-w-0">
                                                 {if let Some(label) = slot {
                                                     view! {
@@ -558,13 +558,13 @@ pub fn JobSetDetail() -> impl IntoView {
                                                 } else {
                                                     ().into_any()
                                                 }}
-                                                <A
+                                                <AppLink
                                                     href=format!("/item/{}", item_id)
                                                     attr:class="font-medium text-sm leading-snug \
                                                                hover:text-brand-300 transition-colors line-clamp-2"
                                                 >
                                                     {item_name}
-                                                </A>
+                                                </AppLink>
                                             </div>
                                         </div>
                                         <div class="flex flex-col gap-1.5 mt-1 pt-2 border-t border-white/5 text-sm">

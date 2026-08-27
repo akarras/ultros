@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
@@ -22,7 +23,6 @@ use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use leptos_router::components::A;
 use leptos_router::components::Outlet;
 use leptos_router::hooks::{query_signal, use_params_map};
 use paginate::Pages;
@@ -866,15 +866,15 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                 }
                             >
                                 <ItemTooltip item_id=item_id>
-                                    <A href=move || format!("/item/{}/{}",
+                                    <AppLink href=move || format!("/item/{}/{}",
                                         scope_name.get(),
                                         item_id)
                                     >
                                         <ItemIcon item_id=item_id icon_size=IconSize::Small />
-                                    </A>
+                                    </AppLink>
                                 </ItemTooltip>
                                 <div class="flex flex-col min-w-0">
-                                    <A href=move || format!("/item/{}/{}",
+                                    <AppLink href=move || format!("/item/{}/{}",
                                         scope_name.get(),
                                         item.key_id.0)
                                         attr:class="font-medium leading-snug text-[color:var(--color-text)] truncate \
@@ -882,7 +882,7 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                                                    hover:underline decoration-brand-300/30 underline-offset-4"
                                     >
                                         {item.name.as_str()}
-                                    </A>
+                                    </AppLink>
                                     // Compact metadata, only below `lg` where the
                                     // dedicated columns are hidden.
                                     <div class="flex lg:hidden items-center gap-2 text-xs text-[color:var(--color-text-muted)]">

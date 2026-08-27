@@ -1,9 +1,9 @@
+use crate::components::app_link::AppLink;
 use std::ops::Deref;
 
 use crate::Cookies;
 use crate::i18n::{t, t_string, use_i18n};
 use leptos::{html::Ins, prelude::*};
-use leptos_router::components::A;
 use leptos_use::{UseMutationObserverOptions, use_mutation_observer_with_options};
 use log::info;
 
@@ -187,7 +187,7 @@ pub fn Ad(#[prop(optional)] class: Option<&'static str>) -> impl IntoView {
                     ></ins>
                     <span class="text-neutral-500 italic text-sm">
                         "ads are optional. you may disable or enable them under "
-                        <A href="/settings">{t!(i18n, ad_settings_link)}</A>
+                        <AppLink href="/settings">{t!(i18n, ad_settings_link)}</AppLink>
                     </span>
                 </div>
             </div>
