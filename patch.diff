@@ -1,0 +1,16 @@
+--- ultros-frontend/ultros-app/src/components/sale_history_table.rs
++++ ultros-frontend/ultros-app/src/components/sale_history_table.rs
+@@ -225,10 +225,10 @@
+     }
+ }
+
+-fn find_date_range(
++fn find_date_range<'a>(
+     date_range: &RangeInclusive<NaiveDateTime>,
+-    sales: &[SaleHistory],
+-) -> Option<&[SaleHistory]> {
++    sales: &'a [SaleHistory],
++) -> Option<&'a [SaleHistory]> {
+     if sales.is_empty() {
+         return None;
+     }

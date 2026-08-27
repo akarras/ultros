@@ -78,3 +78,6 @@ Use `select_nth_unstable_by_key(N)` followed by `.truncate(N)` and sorting only 
 ## 2025-02-12 - Leptos Signal::derive vs Memo::new
 **Learning:** Using `Memo::new` for O(1) operations (e.g. `show_suspicious().unwrap_or(false)`) is a performance anti-pattern. It creates unnecessary reactive nodes and carries overhead that exceeds the cost of recomputing the value. `Signal::derive` should be used for simple, cheap calculations, whereas `Memo::new` is better suited for expensive operations like allocations and mapping collections.
 **Action:** Replace `Memo::new` with `Signal::derive` (or direct closure) when calculating simple derivations from signals to avoid the overhead of caching and equality checks.
+## 2024-05-14 - Removed clone by using reference in try_new
+**Learning:** Found unnecessary clone of a `RangeInclusive` in `try_new` for SaleHistory. Changing the `find_date_range` to take a reference to the `RangeInclusive` prevents the clone and improves performance.
+**Action:** Always check if a clone of an arg is necessary or if we can pass it as a reference instead.
