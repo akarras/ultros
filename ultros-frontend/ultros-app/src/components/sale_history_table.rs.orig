@@ -465,7 +465,7 @@ mod tests {
     fn test_find_date_range_empty() {
         let range = NaiveDateTime::default()..=NaiveDateTime::default();
         let sales = vec![];
-        assert!(find_date_range(&range, &sales).is_none());
+        assert!(find_date_range(range, &sales).is_none());
     }
 
     #[test]
@@ -477,7 +477,7 @@ mod tests {
         let sales = vec![create_sale(base_date)];
 
         let range = (base_date - Duration::hours(2))..=(base_date - Duration::hours(1));
-        assert!(find_date_range(&range, &sales).is_none());
+        assert!(find_date_range(range, &sales).is_none());
     }
 
     #[test]

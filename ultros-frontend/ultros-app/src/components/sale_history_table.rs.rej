@@ -1,0 +1,19 @@
+--- sale_history_table.rs
++++ sale_history_table.rs
+@@ -465,7 +465,7 @@
+         let sales: Vec<SaleHistory> = vec![];
+         let range = datetime(2020, 1, 2)..=datetime(2020, 1, 3);
+
+-        assert!(find_date_range(range, &sales).is_none());
++        assert!(find_date_range(&range, &sales).is_none());
+     }
+
+     #[test]
+@@ -477,7 +477,7 @@
+         ];
+         let range = datetime(2020, 1, 5)..=datetime(2020, 1, 6);
+
+-        assert!(find_date_range(range, &sales).is_none());
++        assert!(find_date_range(&range, &sales).is_none());
+     }
+ }
