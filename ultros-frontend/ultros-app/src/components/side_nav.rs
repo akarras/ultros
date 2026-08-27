@@ -22,7 +22,7 @@ fn section_of(path: &str) -> &str {
 /// One sidebar entry, highlighted whenever the current page belongs to
 /// `section`.
 ///
-/// Deliberately a plain `<a>` rather than the router's `<AppLink>`: `<AppLink>` sets
+/// Deliberately a plain `<a>` rather than `<AppLink>`: the router link it wraps sets
 /// `aria-current` by comparing the whole resolved href against the URL, and
 /// most of these hrefs carry a world (`/flip-finder/{homeworld}`,
 /// `/scrip-sources?world=…`). Viewing a world other than your homeworld — or
