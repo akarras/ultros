@@ -7,6 +7,7 @@ pub mod add_to_list;
 pub mod alert_config_drawer;
 pub mod alert_drawer;
 pub mod alert_rules_panel;
+pub mod app_link;
 pub mod app_shell;
 pub mod character_switcher;
 pub mod chart_query;

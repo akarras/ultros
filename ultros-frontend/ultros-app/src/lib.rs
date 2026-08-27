@@ -13,6 +13,7 @@ pub(crate) mod sales_cadence;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
+use crate::components::app_link::AppLink;
 use i18n::*;
 
 use crate::components::icon::Icon;
@@ -64,7 +65,7 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_meta::*;
-use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
+use leptos_router::components::{ParentRoute, Route, Router, Routes};
 use leptos_router::{SsrMode, path};
 use log::info;
 
@@ -386,18 +387,18 @@ pub fn Footer() -> impl IntoView {
                             <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
-                    <A
+                    <AppLink
                         href="/help"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, help_label)}</span>
-                    </A>
-                    <A
+                    </AppLink>
+                    <AppLink
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsInfoCircle width="1.2em" height="1.2em" /><span>{t!(i18n, about)}</span>
-                    </A>
+                    </AppLink>
                 </div>
                 <div class="divider opacity-50"></div>
                 <div class="text-center space-y-3 muted text-sm max-w-3xl mx-auto opacity-75 hover:opacity-100 transition-opacity">

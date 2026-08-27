@@ -1,10 +1,10 @@
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::global_state::home_world::use_home_world;
 use crate::i18n::{t, t_string};
 use icondata as i;
 use leptos::prelude::*;
 use leptos_meta::Script;
-use leptos_router::components::A;
 
 use crate::components::{
     ad::Ad,
@@ -78,7 +78,7 @@ fn ToolChip(
     // background by default. Accent glow appears on hover so the rail
     // stays quiet at rest and signals intent on focus.
     view! {
-        <A
+        <AppLink
             href=href
             attr:class="group flex flex-col items-center justify-start gap-2 px-4 py-4 rounded-xl hover:bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 transition-colors min-w-[160px] max-w-[200px] text-center snap-start"
         >
@@ -87,7 +87,7 @@ fn ToolChip(
             </span>
             <span class="text-xs font-semibold text-[color:var(--color-text)] whitespace-nowrap transition-colors">{label}</span>
             <span class="text-[10px] text-[color:var(--color-text-muted)]/80 leading-normal transition-colors line-clamp-2">{description}</span>
-        </A>
+        </AppLink>
     }
     .into_any()
 }
@@ -156,7 +156,7 @@ pub fn HomePage() -> impl IntoView {
                 // Main content
                 <div class="flex w-full min-w-0 flex-col grow gap-8">
                     {move || needs_onboarding().then(|| view! {
-                        <A
+                        <AppLink
                             href="/welcome"
                             attr:class="group focus:outline-none rounded-2xl"
                             attr:aria-label=move || t_string!(i18n, home_onboarding_banner_cta).to_string()
@@ -178,7 +178,7 @@ pub fn HomePage() -> impl IntoView {
                                     <Icon icon=i::FaArrowRightSolid width="0.9em" height="0.9em" />
                                 </span>
                             </div>
-                        </A>
+                        </AppLink>
                     })}
                     // Hero: command-center greeting when a home world is set,
                     // or the marketing pitch for new/anonymous visitors. We
@@ -224,24 +224,24 @@ pub fn HomePage() -> impl IntoView {
                                             {move || t_string!(i18n, ultros_description)}
                                         </p>
                                         <div class="flex flex-wrap items-center gap-4 pt-4">
-                                            <A href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
+                                            <AppLink href="/flip-finder" attr:class="btn-primary py-3 px-6 text-lg">
                                                 <Icon icon=i::FaMoneyBillTrendUpSolid width="1.25em" height="1.25em" />
                                                 <span>{move || t_string!(i18n, open_flip_finder)}</span>
-                                            </A>
-                                            <A
+                                            </AppLink>
+                                            <AppLink
                                                 href="/welcome"
                                                 attr:class="btn-secondary py-3 px-6 text-lg"
                                             >
                                                 <Icon icon=i::FaMapLocationDotSolid width="1.25em" height="1.25em" />
                                                 <span>{move || t_string!(i18n, set_home_world)}</span>
-                                            </A>
-                                            <A
+                                            </AppLink>
+                                            <AppLink
                                                 href="/bot"
                                                 attr:class="text-[color:var(--accent)] hover:underline flex items-center gap-1.5 font-semibold text-lg ml-2"
                                             >
                                                 <Icon icon=i::BsDiscord width="1.25em" height="1.25em" />
                                                 <span>{move || t_string!(i18n, discord_bot)}</span>
-                                            </A>
+                                            </AppLink>
                                         </div>
                                     </div>
                                     <div class="hidden md:flex md:w-56 lg:w-64 aspect-square items-center justify-center animate-float opacity-60">

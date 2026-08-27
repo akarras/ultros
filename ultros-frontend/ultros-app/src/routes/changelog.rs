@@ -1,10 +1,10 @@
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::changelog::use_mark_changelog_seen;
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 /// One shipped, user-visible change, written for players rather than for
 /// people reading the commit log.
@@ -232,13 +232,13 @@ pub fn Changelog() -> impl IntoView {
                             <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{entry.title}</h2>
                             <p class="text-sm text-[color:var(--color-text-muted)]">{entry.blurb}</p>
                             {entry.link.map(|href| view! {
-                                <A
+                                <AppLink
                                     href=href
                                     attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-1.5 self-start"
                                 >
                                     {t!(i18n, changelog_try_it)}
                                     <Icon icon=i::FaArrowRightSolid width="0.8em" height="0.8em" />
-                                </A>
+                                </AppLink>
                             })}
                         </li>
                     }).collect_view()}

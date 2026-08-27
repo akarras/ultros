@@ -10,13 +10,13 @@
 //! drop-up, reached through the Menu slot. This is an accepted trade: the
 //! old top bar showed a persistent sign-in button on phones.
 
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 #[component]
 pub fn MobileBar() -> impl IntoView {
@@ -49,10 +49,10 @@ pub fn MobileBar() -> impl IntoView {
                 <span class="mobile-bar-label">{t!(i18n, search)}</span>
             </button>
 
-            <A href="/items" attr:class="mobile-bar-slot">
+            <AppLink href="/items" attr:class="mobile-bar-slot">
                 <Icon icon=i::MdiJellyfish width="1.4em" height="1.4em" />
                 <span class="mobile-bar-label">{t!(i18n, items)}</span>
-            </A>
+            </AppLink>
         </nav>
     }
     .into_any()

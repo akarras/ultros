@@ -1,9 +1,9 @@
 use super::gil::*;
 use super::relative_time::*;
+use crate::components::app_link::AppLink;
 use crate::components::{datacenter_name::*, world_name::*};
 use crate::i18n::*;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use std::sync::Arc;
 use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelector};
 
@@ -99,10 +99,10 @@ pub fn ListingsTable(
                                     <Gil amount=total />
                                 </td>
                                 <td>
-                                    <A href=format!(
+                                    <AppLink href=format!(
                                         "/retainers/listings/{}",
                                         retainer.id,
-                                    )>{retainer.name.clone()}</A>
+                                    )>{retainer.name.clone()}</AppLink>
                                 </td>
                                 <td>
                                     <WorldName id=AnySelector::World(listing.world_id) />

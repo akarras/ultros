@@ -1,10 +1,11 @@
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::{
-    components::{A, Outlet},
+    components::Outlet,
     hooks::{use_navigate, use_params_map},
 };
 
@@ -100,7 +101,7 @@ pub fn ListInviteAccept() -> impl IntoView {
                                 Some(Err(e)) => view! {
                                     <div class="space-y-3">
                                         <div class="alert alert-error">{t!(i18n, lists_invite_accept_error, error = e.to_string())}</div>
-                                        <A href="/list" attr:class="btn-secondary">{t!(i18n, lists_back_to_lists_link)}</A>
+                                        <AppLink href="/list" attr:class="btn-secondary">{t!(i18n, lists_back_to_lists_link)}</AppLink>
                                     </div>
                                 }.into_any(),
                                 None => view! {

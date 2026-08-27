@@ -1,13 +1,13 @@
 use super::gil::*;
 use super::item_icon::*;
 use super::relative_time::RelativeToNow;
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::global_state::xiv_data::tracked_data;
 use chrono::NaiveDateTime;
 use icondata as i;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;
 
@@ -162,12 +162,12 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 <h3 class="dashboard-section-title">{t!(i18n, live_sale_no_homeworld_title)}</h3>
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, live_sale_no_homeworld_prefix)}
-                    <A
+                    <AppLink
                         href="/settings"
                         attr:class="text-[color:var(--accent)] hover:underline transition-colors"
                     >
                         {t!(i18n, settings)}
-                    </A>
+                    </AppLink>
                     {t!(i18n, live_sale_no_homeworld_suffix)}
                 </div>
             </div>
@@ -216,7 +216,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                         }
                     >
                         <For each=sales key=|sale| sale.sold_date let:sale>
-                            <A href=move || {
+                            <AppLink href=move || {
                                 format!(
                                     "/item/{}/{}",
                                     homeworld().map(|world| world.name).unwrap_or_default(),
@@ -251,7 +251,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                         </div>
                                     </div>
                                 </div>
-                            </A>
+                            </AppLink>
                         </For>
                     </Show>
                 </div>

@@ -18,9 +18,9 @@
 //! list at. `derive_buy_sell` keeps the old derivation only as a fallback
 //! for a server that predates those fields.
 
+use crate::components::app_link::AppLink;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
-use leptos_router::components::A;
 use thousands::Separable;
 use ultros_api_types::world_helper::AnySelector;
 
@@ -135,12 +135,12 @@ pub fn TopOpportunities(world: Signal<Option<String>>) -> impl IntoView {
         <section class="dashboard-section">
             <header class="flex items-baseline justify-between mb-3">
                 <h2 class="dashboard-section-title">{t!(i18n, top_opportunities_title)}</h2>
-                <A
+                <AppLink
                     href=flip_finder_href
                     attr:class="text-xs text-[color:var(--accent)] hover:underline"
                 >
                     {t!(i18n, top_opportunities_view_all)}
-                </A>
+                </AppLink>
             </header>
             <Suspense fallback=move || view! {
                 <div class="space-y-2">
@@ -209,9 +209,9 @@ fn EmptyState(world: Signal<Option<String>>) -> impl IntoView {
             <div class="text-xs text-[color:var(--color-text-muted)] max-w-prose">
                 {t!(i18n, top_opportunities_empty_body)}
             </div>
-            <A href=browse_href attr:class="text-xs text-[color:var(--accent)] hover:underline">
+            <AppLink href=browse_href attr:class="text-xs text-[color:var(--accent)] hover:underline">
                 {t!(i18n, top_opportunities_empty_cta)}
-            </A>
+            </AppLink>
         </div>
     }
 }

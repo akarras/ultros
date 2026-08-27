@@ -1,7 +1,7 @@
+use crate::components::app_link::AppLink;
 use crate::components::meta::{MetaRobotsNoIndex, MetaTitle};
 use crate::i18n::*;
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 #[component]
 pub fn NotFound() -> impl IntoView {
@@ -63,9 +63,9 @@ pub fn NotFound() -> impl IntoView {
                 </p>
 
                 <div class="pt-6 flex flex-wrap justify-center gap-4">
-                    <A href="/" attr:class="btn btn-primary px-8 py-3 text-lg shadow-lg shadow-brand-900/20 hover:shadow-brand-900/40 transition-all duration-300">
+                    <AppLink href="/" attr:class="btn btn-primary px-8 py-3 text-lg shadow-lg shadow-brand-900/20 hover:shadow-brand-900/40 transition-all duration-300">
                         {t!(i18n, not_found_return_home)}
-                    </A>
+                    </AppLink>
                     <a href="javascript:history.back()" class="btn btn-neutral px-8 py-3 text-lg">
                         {t!(i18n, not_found_go_back)}
                     </a>

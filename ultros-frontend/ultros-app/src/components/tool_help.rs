@@ -1,9 +1,9 @@
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
-use leptos_router::components::A;
 
 #[component]
 pub fn ToolHeader(
@@ -52,10 +52,10 @@ pub fn ToolHeader(
                     <p class="text-sm leading-relaxed text-[color:var(--color-text)]">
                         {help_body.clone()}
                     </p>
-                    <A href=help_href_text.clone() attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] font-semibold inline-flex items-center gap-2">
+                    <AppLink href=help_href_text.clone() attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] font-semibold inline-flex items-center gap-2">
                         {t!(i18n, tool_help_open_full_help)}
                         <Icon icon=i::FaArrowRightSolid width="0.85em" height="0.85em" />
-                    </A>
+                    </AppLink>
                 </div>
             </Show>
         </section>
@@ -151,7 +151,7 @@ pub fn ActionableEmptyState(
     #[prop(optional, into)]
     on_action: Option<Callback<()>>,
     /// Render the primary action as a plain `<a rel="external">` rather than a
-    /// client-side `<A>`. Needed for server routes (`/login`) that the leptos
+    /// client-side `<AppLink>`. Needed for server routes (`/login`) that the leptos
     /// router must not try to handle.
     #[prop(optional)]
     action_external: bool,
@@ -194,9 +194,9 @@ pub fn ActionableEmptyState(
                                 .into_any()
                         } else {
                             view! {
-                                <A href=href.to_string() attr:class="btn-primary">
+                                <AppLink href=href.to_string() attr:class="btn-primary">
                                     {label}
-                                </A>
+                                </AppLink>
                             }
                                 .into_any()
                         },
@@ -215,9 +215,9 @@ pub fn ActionableEmptyState(
                                 .into_any()
                         } else {
                             view! {
-                                <A href=href.to_string() attr:class="btn-secondary">
+                                <AppLink href=href.to_string() attr:class="btn-secondary">
                                     {label}
-                                </A>
+                                </AppLink>
                             }
                                 .into_any()
                         },

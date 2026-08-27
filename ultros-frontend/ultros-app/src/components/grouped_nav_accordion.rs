@@ -2,8 +2,8 @@
 //! Sections have optional headers (role groups) and hold the chip links
 //! the toolbar builds for the selected group.
 
+use crate::components::app_link::AppLink;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use xiv_gen::{ClassJobId, ItemSearchCategoryId};
 
 use crate::components::fonts::{ClassJobIcon, ItemSearchCategoryIcon};
@@ -89,7 +89,7 @@ pub fn GroupedNavAccordion(
                                                 .into_iter()
                                                 .map(|link| {
                                                     view! {
-                                                        <A href=link.href attr:class="item-explorer-chip">
+                                                        <AppLink href=link.href attr:class="item-explorer-chip">
                                                             {match link.icon {
                                                                 NavIcon::Job(id) => {
                                                                     view! { <ClassJobIcon id=id /> }.into_any()
@@ -99,7 +99,7 @@ pub fn GroupedNavAccordion(
                                                                 }
                                                             }}
                                                             <span>{link.label}</span>
-                                                        </A>
+                                                        </AppLink>
                                                     }
                                                 })
                                                 .collect::<Vec<_>>()}
