@@ -21,3 +21,8 @@ sample-chart.svg
 # Local Claude Code workspace: dev-server launch config, per-user settings,
 # and agent worktrees. Machine-specific, not shared config.
 .claude/
+
+# Merge/patch leftovers. Jules has committed these into a PR more than once
+# (#1197 shipped a .orig, a .rej and three loose .patch/.diff files).
+*.orig
+*.rej
