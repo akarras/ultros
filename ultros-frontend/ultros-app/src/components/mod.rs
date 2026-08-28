@@ -60,6 +60,7 @@ pub(crate) mod push_subscribe;
 pub mod query_button;
 pub mod realtime_status;
 pub mod recently_viewed;
+pub mod region_menu;
 pub mod related_items;
 pub mod relative_time;
 pub mod reorderable_list;

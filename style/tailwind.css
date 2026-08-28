@@ -2035,6 +2035,50 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     margin: 0.3rem 0.15rem;
 }
 
+/* ----- Sidebar region (price zone) row + drop-up ----- */
+/* Reuses the account trigger/panel classes for geometry; only the wrapper
+   and the accordion-specific bits are new. Each block in the bottom cluster
+   (footer, region, account) carries its own border-top, so adjacent blocks
+   share exactly one hairline and the region row keeps its separator when
+   the footer is hidden in the collapsed rail. */
+.side-nav-region {
+    position: relative;
+    border-top: 1px solid var(--color-outline);
+}
+/* Row wrapper pairing a full-width select button with a square expand
+   chevron. Two sibling buttons — a button nested in a button is invalid
+   HTML and breaks tapping. */
+.menu-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.1rem;
+}
+.menu-row > .menu-item {
+    flex: 1;
+    min-width: 0;
+}
+.menu-expand {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem;
+    border-radius: 0.375rem;
+    color: var(--color-text-muted);
+    background: transparent;
+    border: none;
+}
+.menu-expand:hover {
+    background-color: color-mix(in srgb, var(--brand-ring) 18%, transparent);
+    color: var(--color-text);
+}
+.menu-expand > svg {
+    transition: transform 0.15s ease;
+}
+.menu-expand[aria-expanded="true"] > svg {
+    transform: rotate(180deg);
+}
+
 /* ----- Sidebar account row + drop-up ----- */
 .side-nav-account {
     position: relative;
@@ -2112,6 +2156,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         right: auto;
         bottom: 3.5rem;
         width: 15rem;
+    }
+    /* The region trigger reuses `.side-nav-account-trigger`, so the
+       centering rules above already apply to it. The region panel uses the
+       same fixed-position escape as the account
+       panel above, but sits one row higher: it must clear the account row
+       (~3.1rem) plus its own trigger row (~2.3rem) plus the shared gap. */
+    .app-shell-collapsed .side-nav-region-panel {
+        bottom: 6rem;
     }
 }
 
