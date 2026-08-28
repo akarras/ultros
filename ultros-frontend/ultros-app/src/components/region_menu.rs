@@ -12,10 +12,10 @@
 use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::components::world_picker::SelectorKind;
-use crate::global_state::LocalWorldData;
 use crate::global_state::home_world::{
     get_price_zone, locale_preferred_region, result_to_selector_read, selector_to_setter_signal,
 };
+use crate::global_state::use_world_helper;
 use crate::i18n::{t, t_string, use_i18n};
 use icondata as i;
 use leptos::either::Either;
@@ -210,9 +210,11 @@ pub fn RegionMenu() -> impl IntoView {
         set_open(false);
     });
 
-    let local_worlds = use_context::<LocalWorldData>()
-        .expect("Local world data should always be present")
-        .0;
+    // NOT `use_context().expect(..)`: the sidebar renders on every page, and
+    // an absent `LocalWorldData` context is a live production state (GlitchTip
+    // #7120/#7187). `use_world_helper` collapses "never provided" and "holds an
+    // Err" into the one error branch this panel already renders.
+    let local_worlds = use_world_helper();
 
     let panel_body = match local_worlds {
         Ok(worlds) => {
