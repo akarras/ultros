@@ -32,6 +32,78 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-08-23",
+        title: "Gear sets without the Ornate outliers",
+        blurb: "Ornate crafted pieces cost many times more than the regular version of the same gear, so they no longer get averaged into a job's gear set. They are still listed, just on their own.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-08-15",
+        title: "Currency Exchange, rebuilt",
+        blurb: "A denser, spreadsheet-style table with collapsible filters, and every reward now shows its real item icon.",
+        link: Some("/currency-exchange"),
+    },
+    ChangelogEntry {
+        date: "2026-08-06",
+        title: "Check a flip before you commit",
+        blurb: "Flip Finder rows now open a comparison view on the item page: the cheapest listing where you would buy, the expected sale price where you would sell, and the profit per unit and per stack after tax.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-08-06",
+        title: "Charts that fit their scope",
+        blurb: "A datacenter or region chart now groups lines to match instead of drawing every world. Quick range buttons, clearer time labels, and the chart's settings live in the address bar so a pasted link shows the same view. The crosshair works by touch, too.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-06",
+        title: "Groups you can actually join",
+        blurb: "Create a group straight from a Discord server you manage, or hand out a shareable invite link the way lists already do.",
+        link: Some("/groups"),
+    },
+    ChangelogEntry {
+        date: "2026-08-06",
+        title: "Flip Finder keeps up",
+        blurb: "The table updates in place as live market data arrives, profit per day no longer flattens fast sellers, and opening the page with no filters lands on a sensible default view.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-08-05",
+        title: "Vendor resale drops the fantasy prices",
+        blurb: "Listings priced far above what an item actually sells for are hidden from vendor resale, and the sort headers no longer get stuck.",
+        link: Some("/vendor-resale"),
+    },
+    ChangelogEntry {
+        date: "2026-08-05",
+        title: "A better fit on phones",
+        blurb: "Pages run edge to edge on small screens, popovers close on tap-away, Escape or navigation, and the search sheet dismisses with a tap.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-03",
+        title: "Trends ranks what actually sells",
+        blurb: "Market Trends now picks its candidates by recent sale volume across the whole market, so the movers you see are the real ones.",
+        link: Some("/trends"),
+    },
+    ChangelogEntry {
+        date: "2026-08-02",
+        title: "Claim characters without the Lodestone dance",
+        blurb: "Claiming a character no longer requires pasting a code into your Lodestone bio — your Discord sign-in is enough. The sidebar can then swap your home world to match whichever character you are playing.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-08-02",
+        title: "All your alerts in one drawer",
+        blurb: "One place to add price and undercut alerts, and the drawer shows what is already active so you are not guessing.",
+        link: Some("/alerts"),
+    },
+    ChangelogEntry {
+        date: "2026-08-02",
+        title: "Loading looks like the page",
+        blurb: "Tables sketch their real columns with a shimmer while data loads, instead of a blank panel that jumps when content arrives.",
+        link: None,
+    },
+    ChangelogEntry {
         date: "2026-08-01",
         title: "One sidebar instead of a top bar",
         blurb: "Navigation, search, your account and the language picker all moved into a single sidebar, so tools get the full width of the window. The sidebar collapses to icons when you want the space back.",
