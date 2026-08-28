@@ -31,10 +31,23 @@
 //! check goes through [`RouterAvailable`], a marker this crate provides from
 //! `AppShell` — which renders inside `<Router>` and already calls
 //! `use_location()`, so it cannot be reached without router context either.
+//!
+//! [`use_location_or_default`] is the same idea for the other panicking router
+//! read this app makes. `use_location()` is an `expect` too
+//! (`hooks.rs:173`, "Tried to access Location outside a <Router>."), and
+//! GlitchTip #7278 caught it firing from `QueryButton` — the sort/filter chips
+//! build their href out of the live pathname and query. Under a dead owner it
+//! yields an *empty* location instead, so the href degrades to a query-only
+//! relative URL (`?sort=price`). A browser resolves that against the document's
+//! own path, which is the path the link wanted in the first place; what is lost
+//! is the other query params riding along, not the link.
 
 use leptos::either::Either;
 use leptos::prelude::*;
 use leptos_router::components::{A, ToHref};
+use leptos_router::hooks::use_location;
+use leptos_router::location::{Location, State};
+use leptos_router::params::ParamsMap;
 
 /// Marker for "router context is reachable from this owner".
 ///
@@ -51,6 +64,26 @@ pub fn provide_router_available() {
 /// Whether [`provide_router_available`] is visible from the current owner.
 pub fn has_router_context() -> bool {
     use_context::<RouterAvailable>().is_some()
+}
+
+/// [`use_location`] that yields an empty location instead of panicking when
+/// the router context is missing.
+///
+/// The empty pathname is deliberate: callers format `{pathname}{query}`, so
+/// the href they build stays a valid relative URL that the browser resolves
+/// against the current document. See the module docs.
+pub fn use_location_or_default() -> Location {
+    if has_router_context() {
+        use_location()
+    } else {
+        Location {
+            pathname: Memo::new(|_| String::new()),
+            search: Memo::new(|_| String::new()),
+            query: Memo::new(|_| ParamsMap::new()),
+            hash: Memo::new(|_| String::new()),
+            state: RwSignal::new(State::default()).read_only(),
+        }
+    }
 }
 
 /// `<A/>` that renders a plain `<a>` instead of panicking when the router
@@ -118,6 +151,29 @@ mod tests {
     /// With the marker in scope the component is `<A/>`, so the same missing
     /// router context must still panic rather than silently degrade — the
     /// fallback is for dead owners, not for a mis-mounted app.
+    /// Reproduces GlitchTip #7278 at its source: the `expect` inside
+    /// `use_location()`.
+    #[test]
+    #[should_panic(expected = "Tried to access Location outside a <Router>")]
+    fn use_location_panics_when_the_router_context_is_missing() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let _ = use_location();
+        });
+    }
+
+    #[test]
+    fn use_location_or_default_yields_an_empty_location_instead() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let location = use_location_or_default();
+            assert_eq!(location.pathname.get(), "");
+            assert_eq!(location.search.get(), "");
+            assert_eq!(location.hash.get(), "");
+            assert!(location.query.with(|q| q.to_query_string().is_empty()));
+        });
+    }
+
     #[test]
     #[should_panic(expected = "called use_resolved_path outside a <Router>")]
     fn uses_the_router_link_when_the_marker_is_provided() {

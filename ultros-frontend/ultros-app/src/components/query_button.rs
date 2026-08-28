@@ -1,6 +1,7 @@
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
 use leptos_router::location::Location;
+
+use crate::components::app_link::use_location_or_default;
 
 /// A button that sets the query property to the given value
 #[component]
@@ -26,9 +27,12 @@ pub fn QueryButton<T>(
 where
     T: IntoView + 'static,
 {
+    // Not `use_location()`: that is an `expect`, and a suspended SSR fragment
+    // can rebuild this button under an owner that never saw `<Router>`, which
+    // killed the whole response (GlitchTip #7278).
     let Location {
         pathname, query, ..
-    } = use_location();
+    } = use_location_or_default();
     let key_1 = key.clone();
     let is_active = Signal::derive(move || {
         query.with(|q| {
@@ -57,4 +61,28 @@ where
         </a>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GlitchTip #7278: rendered under an owner with no router context, this
+    /// button used to panic mid-SSR-stream. It must render a usable href
+    /// instead — query-only, so the browser resolves it against the page the
+    /// user is actually on.
+    #[test]
+    fn renders_a_relative_href_without_router_context() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! {
+                <QueryButton key="sort" value="price" class="c" active_classes="a">
+                    "Price"
+                </QueryButton>
+            }
+            .to_html();
+            assert!(html.contains("href=\"?sort=price\""), "{html}");
+            assert!(html.contains("Price"), "{html}");
+        });
+    }
 }
