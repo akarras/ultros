@@ -148,9 +148,6 @@ mod tests {
         });
     }
 
-    /// With the marker in scope the component is `<A/>`, so the same missing
-    /// router context must still panic rather than silently degrade — the
-    /// fallback is for dead owners, not for a mis-mounted app.
     /// Reproduces GlitchTip #7278 at its source: the `expect` inside
     /// `use_location()`.
     #[test]
@@ -174,6 +171,9 @@ mod tests {
         });
     }
 
+    /// With the marker in scope the component is `<A/>`, so the same missing
+    /// router context must still panic rather than silently degrade — the
+    /// fallback is for dead owners, not for a mis-mounted app.
     #[test]
     #[should_panic(expected = "called use_resolved_path outside a <Router>")]
     fn uses_the_router_link_when_the_marker_is_provided() {
