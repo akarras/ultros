@@ -2,6 +2,7 @@ use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::tooltip::Tooltip;
 use crate::components::virtual_scroller::*;
+use crate::global_state::platform::use_platform_hotkeys;
 use crate::i18n::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
@@ -161,6 +162,7 @@ fn search_outcome(search_id: ReadSignal<usize>, started_id: usize) -> SearchOutc
 #[component]
 pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
     let i18n = use_i18n();
+    let apple_hotkeys = use_platform_hotkeys().apple;
     let text_input = NodeRef::<Input>::new();
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
@@ -365,7 +367,14 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                     on:input=on_input
                     on:focusin=focus_in
                     on:focusout=focus_out
-                    placeholder=t_string!(i18n, search_box_placeholder)
+                    placeholder=move || {
+                        let hotkey = if apple_hotkeys.get() {
+                            "⌘K".to_string()
+                        } else {
+                            t_string!(i18n, hotkey_ctrl_k).to_string()
+                        };
+                        t_string!(i18n, search_box_placeholder).replace("%hotkey%", &hotkey)
+                    }
                     class="input w-full pl-10 pr-10"
                     type="text"
                     prop:value=search

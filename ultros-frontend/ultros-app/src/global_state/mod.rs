@@ -6,6 +6,7 @@ pub mod craft_options;
 pub mod crafter_levels;
 pub mod home_world;
 pub(crate) mod local_world_data;
+pub mod platform;
 pub mod region_for_world;
 pub mod search_overlay;
 pub mod side_nav;
