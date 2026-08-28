@@ -2656,6 +2656,9 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 .side-nav-kbd {
     margin-left: auto;
+    /* "Ctrl K"/"Strg K" contain a space the old "⌘K" glyph didn't — never
+       let a squeezed row break the key label onto two lines. */
+    white-space: nowrap;
     font-size: 0.62rem;
     font-family: ui-monospace, monospace;
     color: var(--color-text-muted);
