@@ -1422,7 +1422,11 @@ pub fn ChartWrapper(
         {
             return (key.0, key.1, SaleProbe::Known(*newest));
         }
-        let probe = listing_resource.with(|value| match value {
+        // `with_or`, not `with`: this memo is created during SSR too, and
+        // `With::with` panics on a disposed signal — the truncated-response
+        // failure the helper's own docs describe. `Pending` is the right
+        // degradation, since nothing SSR-rendered consumes the probe.
+        let probe = with_or(&listing_resource, SaleProbe::Pending, |value| match value {
             Some(Ok(data)) => SaleProbe::Known(
                 data.sales
                     .iter()
