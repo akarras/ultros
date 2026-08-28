@@ -1,6 +1,8 @@
 use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
 use crate::components::app_link::AppLink;
-use crate::components::chart_query::{RangePreset, resolve_range};
+use crate::components::chart_query::{
+    RangeDecision, RangePreset, SaleProbe, decide_range, effective_preset,
+};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
@@ -1384,7 +1386,9 @@ pub fn ChartWrapper(
     // The time window has two URL shapes. A preset click writes `?range=1mo`,
     // so the link keeps meaning "the last month" indefinitely; a slicer drag
     // has no relative meaning, so it writes absolute `?from=&to=` epoch
-    // seconds. `resolve_range` applies the precedence.
+    // seconds. `decide_range` applies the precedence, and with neither
+    // shape present the window defaults dynamically from the item's newest
+    // sale (see `sale_probe_state` below).
     let (range_param, set_range_param) = filter_query_signal::<RangePreset>("range");
     let (from_param, set_from_param) = filter_query_signal::<i64>("from");
     let (to_param, set_to_param) = filter_query_signal::<i64>("to");
@@ -1393,19 +1397,84 @@ pub fn ChartWrapper(
     // need to slide in real time, and re-resolving on every tick would
     // refetch. Computed during SSR too (this is just a component body), but
     // nothing SSR-rendered ever consumes it: `selected_range` only reaches
-    // `debounced_range` -> a client-only `LocalResource`, and
+    // `debounced_decision` -> a client-only `LocalResource`, and
     // `selected_domain`, which short-circuits on `available_domain` --
     // itself derived from a client-only `LocalResource` and additionally
     // gated behind `<Show when=available_domain.is_some()>`.
     let now = StoredValue::new(chrono::Utc::now().timestamp());
-    let selected_range = Signal::derive(move || {
+
+    // Newest-sale probe for the dynamic default range: with no range params
+    // in the URL, a hot item (sold within the last week) defaults to the
+    // week window instead of full history. The probe reads the listings
+    // payload the page already fetches, so deciding costs no extra request.
+    //
+    // Latched per (item, world): once the first payload answers, realtime
+    // sale events prepended into `listing_resource` must not re-run the
+    // decision — a live sale on a rarely-traded item would otherwise
+    // suddenly narrow a full-history chart to one week mid-view. The
+    // latched arm reads only the identity signals, so later resource
+    // updates don't even re-run the memo until the identity changes.
+    let sale_probe_state = Memo::new(move |prev: Option<&(i32, String, SaleProbe)>| {
+        let key = (item_id.get(), world.get());
+        if let Some((prev_item, prev_world, SaleProbe::Known(newest))) = prev
+            && *prev_item == key.0
+            && *prev_world == key.1
+        {
+            return (key.0, key.1, SaleProbe::Known(*newest));
+        }
+        // `with_or`, not `with`: this memo is created during SSR too, and
+        // `With::with` panics on a disposed signal — the truncated-response
+        // failure the helper's own docs describe. `Pending` is the right
+        // degradation, since nothing SSR-rendered consumes the probe.
+        let probe = with_or(&listing_resource, SaleProbe::Pending, |value| match value {
+            Some(Ok(data)) => SaleProbe::Known(
+                data.sales
+                    .iter()
+                    .map(|sale| sale.sold_date.and_utc().timestamp())
+                    .max(),
+            ),
+            // A failed listings fetch must not leave the chart waiting
+            // forever — fall back to the full-history default.
+            Some(Err(_)) => SaleProbe::Known(None),
+            None => SaleProbe::Pending,
+        });
+        (key.0, key.1, probe)
+    });
+    let sale_probe = Signal::derive(move || sale_probe_state.get().2);
+
+    // What the chart should fetch: explicit URL params win, the dynamic
+    // default fills their absence, and `Pending` holds the fetch until the
+    // probe answers — fetching full history first and narrowing after would
+    // flash exactly the misleading view this default exists to avoid.
+    let range_decision = Signal::derive(move || {
         let from_to = from_param.get().zip(to_param.get());
-        resolve_range(range_param.get(), from_to, now.get_value())
+        decide_range(
+            range_param.get(),
+            from_to,
+            sale_probe.get(),
+            now.get_value(),
+        )
+    });
+    let selected_range = Signal::derive(move || match range_decision.get() {
+        RangeDecision::Resolved(range) => range,
+        RangeDecision::Pending => None,
+    });
+    // The preset button that should render pressed — `?range=` when set,
+    // else whatever the dynamic default landed on.
+    let chart_preset = Signal::derive(move || {
+        let from_to = from_param.get().zip(to_param.get());
+        effective_preset(
+            range_param.get(),
+            from_to,
+            sale_probe.get(),
+            now.get_value(),
+        )
     });
 
-    // A drag commits absolute bounds and clears any preset; "All" clears
-    // everything. Writing all three together keeps the two shapes from
-    // coexisting in one URL.
+    // A drag commits absolute bounds and clears any preset. Writing all
+    // three together keeps the two shapes from coexisting in one URL.
+    // ("All" no longer comes through here — it is an explicit preset now,
+    // so it goes through `set_range_preset` below.)
     let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
         set_range_param.set(None);
         match next {
@@ -1453,20 +1522,28 @@ pub fn ChartWrapper(
     // settles rather than one per pointer move; the slicer's own handle
     // rendering reads the undebounced `selected_range` so it still tracks
     // the pointer at full rate.
-    let debounced_range = signal_debounced(selected_range, 300.0);
+    let debounced_decision = signal_debounced(range_decision, 300.0);
 
     // LocalResource = client-only, same rationale as `item_stats_resource`
     // above: avoids a hydration mismatch when the fetch resolves at
-    // different times on server vs. client.
+    // different times on server vs. client. Resolves to `None` (no request
+    // sent) while the range decision is still pending on the sale probe.
     let series_resource = LocalResource::new(move || {
         let id = item_id.get();
         let world_name = world.get();
         let series_group = SeriesGroup::from(group.get());
         let hq_filter = hq.get();
-        let range = debounced_range.get();
-        async move { get_price_series(id, &world_name, series_group, hq_filter, range).await }
+        let decision = debounced_decision.get();
+        async move {
+            match decision {
+                RangeDecision::Pending => None,
+                RangeDecision::Resolved(range) => {
+                    Some(get_price_series(id, &world_name, series_group, hq_filter, range).await)
+                }
+            }
+        }
     });
-    let series = Signal::derive(move || series_resource.get().and_then(|r| r.ok()));
+    let series = Signal::derive(move || series_resource.get().flatten().and_then(|r| r.ok()));
 
     // Fetched only while density mode is active — the mode is the gate, so
     // flipping to Density triggers the fetch and every other mode costs
@@ -1484,16 +1561,21 @@ pub fn ChartWrapper(
         // matter how little history actually exists — the same
         // one-data-point failure the price series had, so keep both charts
         // on the same window.
-        let range = debounced_range.get().or_else(|| {
-            series.get().filter(|s| !s.is_empty()).map(|s| {
-                (
-                    s.from.and_utc().timestamp(),
-                    s.to.and_utc().timestamp() + s.bucket_seconds,
-                )
-            })
-        });
+        let decision = debounced_decision.get();
+        let range = match decision {
+            RangeDecision::Resolved(range) => range.or_else(|| {
+                series.get().filter(|s| !s.is_empty()).map(|s| {
+                    (
+                        s.from.and_utc().timestamp(),
+                        s.to.and_utc().timestamp() + s.bucket_seconds,
+                    )
+                })
+            }),
+            // Still waiting on the sale probe — don't fetch (guard below).
+            RangeDecision::Pending => None,
+        };
         async move {
-            if !active {
+            if !active || decision == RangeDecision::Pending {
                 return None;
             }
             get_price_density(id, &world_name, hq_filter, range, 32)
@@ -1585,6 +1667,7 @@ pub fn ChartWrapper(
                                 {move || {
                                     series_resource
                                         .get()
+                                        .flatten()
                                         .and_then(|r| r.err())
                                         .map(|e| view! {
                                             <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl px-3 py-2 text-sm">
@@ -1612,7 +1695,7 @@ pub fn ChartWrapper(
                                     set_group=set_group
                                     selected_range=selected_range
                                     on_range_change=set_selected_range
-                                    range_preset=range_param
+                                    range_preset=chart_preset
                                     set_range_preset=set_range_preset
                                 />
 

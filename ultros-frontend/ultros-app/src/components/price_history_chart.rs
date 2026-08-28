@@ -388,8 +388,9 @@ fn TimelineSlicer(
     // Converted to a Callback in Task 7 — the window is owned by the route
     // and backed by the URL, not by this component.
     #[prop(into)] set_selected_range: Callback<Option<(i64, i64)>>,
-    /// The active quick-range preset, read straight off `?range=` so the
-    /// pressed button is exact rather than inferred from the window.
+    /// The *effective* quick-range preset: `?range=` when present, else the
+    /// dynamic default the route decided from the item's newest sale, so
+    /// the pressed button always names the window on screen.
     #[prop(into)]
     range_preset: Signal<Option<RangePreset>>,
     #[prop(into)] set_range_preset: Callback<Option<RangePreset>>,
@@ -505,7 +506,7 @@ fn TimelineSlicer(
                         aria-label=move || t_string!(i18n, chart_timeline_label).to_string()
                         class="inline-flex shrink-0 overflow-hidden rounded-md border border-[color:var(--color-outline)]"
                     >
-                        {RangePreset::ALL
+                        {RangePreset::WINDOWS
                             .into_iter()
                             .map(|preset| {
                                 let label = move || match preset {
@@ -517,6 +518,11 @@ fn TimelineSlicer(
                                     }
                                     RangePreset::Year => {
                                         t_string!(i18n, chart_range_1y).to_string()
+                                    }
+                                    // Not in WINDOWS; the All button is
+                                    // rendered separately below.
+                                    RangePreset::All => {
+                                        t_string!(i18n, chart_range_all).to_string()
                                     }
                                 };
                                 // A window ending before the item's newest
@@ -577,15 +583,19 @@ fn TimelineSlicer(
                                 }
                             })
                             .collect_view()}
+                        // Full history is an explicit preset (`?range=all`)
+                        // now that the no-params default is dynamic —
+                        // clearing the params would just re-trigger the
+                        // dynamic default. `range_preset` is the *effective*
+                        // preset, so this also lights up when a rarely-sold
+                        // item lands on full history by default.
                         <button
                             type="button"
                             aria-pressed=move || {
-                                (range_preset.get().is_none() && selected_range.get().is_none())
-                                    .to_string()
+                                (range_preset.get() == Some(RangePreset::All)).to_string()
                             }
                             class=move || {
-                                let active = range_preset.get().is_none()
-                                    && selected_range.get().is_none();
+                                let active = range_preset.get() == Some(RangePreset::All);
                                 [
                                     "border-l border-[color:var(--color-outline)] px-2.5 py-1 text-xs transition-colors",
                                     if active {
@@ -597,8 +607,7 @@ fn TimelineSlicer(
                                     .join(" ")
                             }
                             on:click=move |_| {
-                                set_range_preset.run(None);
-                                set_selected_range.run(None);
+                                set_range_preset.run(Some(RangePreset::All));
                             }
                         >
                             {move || t_string!(i18n, chart_range_all).to_string()}
