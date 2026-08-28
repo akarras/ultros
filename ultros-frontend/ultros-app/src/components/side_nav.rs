@@ -1,6 +1,7 @@
 use crate::components::account_menu::AccountMenu;
 use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
+use crate::components::region_menu::RegionMenu;
 use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
 use crate::global_state::search_overlay::use_search_overlay_state;
@@ -256,11 +257,13 @@ pub fn SideNav() -> impl IntoView {
                 </SideNavItem>
             </nav>
 
-            // Footer sits ABOVE the account row so the account row is the
-            // bottom-most control. Collapsed, the 56px sidebar has no room for
-            // the Discord + GitHub pair (GitHub was clipped by the right edge)
-            // and the version hash is hidden anyway, so the whole footer is
-            // hidden at that width — see `.app-shell-collapsed .side-nav-footer`.
+            // Footer sits ABOVE the region + account rows so those two
+            // controls are bottom-most. Collapsed, the 56px sidebar has no
+            // room for the Discord + GitHub pair (GitHub was clipped by the
+            // right edge) and the version hash is hidden anyway, so the whole
+            // footer is hidden at that width — see
+            // `.app-shell-collapsed .side-nav-footer`. The region and account
+            // rows survive collapse as icon-only triggers.
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />
@@ -277,6 +280,7 @@ pub fn SideNav() -> impl IntoView {
                 </a>
             </div>
 
+            <RegionMenu />
             <AccountMenu />
         </aside>
     }
