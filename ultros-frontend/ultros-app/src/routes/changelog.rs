@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-28",
+        title: "Sale history opens on the part you care about",
+        blurb: "An item that has sold in the last week now opens its price chart on the week view instead of years of history. Quiet items still open on full history, and the All button pins it whenever you want the long view.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-28",
         title: "Sort by any column that has a number",
         blurb: "Vendor resale now sorts by vendor price, market price, and average sale time, and Flip Finder by buy price, price drift, and last sold. Cost and time columns start best-first: cheapest buy-in, most recent sale.",
         link: Some("/vendor-resale"),

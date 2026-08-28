@@ -1467,9 +1467,10 @@ pub fn ChartWrapper(
         )
     });
 
-    // A drag commits absolute bounds and clears any preset; "All" clears
-    // everything. Writing all three together keeps the two shapes from
-    // coexisting in one URL.
+    // A drag commits absolute bounds and clears any preset. Writing all
+    // three together keeps the two shapes from coexisting in one URL.
+    // ("All" no longer comes through here — it is an explicit preset now,
+    // so it goes through `set_range_preset` below.)
     let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
         set_range_param.set(None);
         match next {
