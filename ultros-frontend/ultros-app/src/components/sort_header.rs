@@ -19,9 +19,10 @@
 //!   different.
 
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
 use leptos_router::location::Location;
 use leptos_router::params::ParamsMap;
+
+use crate::components::app_link::use_location_or_default;
 
 use crate::components::icon::Icon;
 use icondata as i;
@@ -221,9 +222,11 @@ pub fn SortHeader<M>(
 where
     M: SortColumn,
 {
+    // See `QueryButton`: `use_location()` panics under a dead owner, and this
+    // header renders inside suspended tables.
     let Location {
         pathname, query, ..
-    } = use_location();
+    } = use_location_or_default();
     let is_active = Signal::derive(move || sort_mode.get().unwrap_or_else(M::fallback) == mode);
     let dir = Signal::derive(move || {
         sort_dir
@@ -398,5 +401,26 @@ mod test {
         sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
         assert_eq!(rows.len(), 100);
         assert_eq!(rows, (400..500).rev().collect::<Vec<_>>());
+    }
+
+    /// Same defect class as GlitchTip #7278 in `QueryButton`: this header
+    /// reads the location too, so it has to degrade rather than take the SSR
+    /// stream down with it.
+    #[test]
+    fn renders_a_relative_href_without_router_context() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! {
+                <SortHeader
+                    mode=Col::Cost
+                    label="Cost"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                />
+            }
+            .to_html();
+            assert!(html.contains("href=\"?sort=cost\""), "{html}");
+            assert!(html.contains("Cost"), "{html}");
+        });
     }
 }
