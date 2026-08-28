@@ -7,6 +7,7 @@ pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) mod i18n_fallback;
 pub(crate) mod math;
+pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;

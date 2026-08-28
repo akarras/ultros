@@ -17,6 +17,7 @@ pub mod resale_quality;
 pub mod result;
 pub mod retainer;
 mod sale_history;
+pub mod sale_stats;
 pub mod search;
 pub mod sparklines;
 pub mod trends;

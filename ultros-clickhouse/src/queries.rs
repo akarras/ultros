@@ -990,6 +990,66 @@ pub async fn price_density(
         .await?)
 }
 
+/// One row of [`bulk_sale_stats`]: aggregate sale statistics for one
+/// `(item_id, hq)` pair across the requested world set and window.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct BulkSaleStatsRow {
+    pub item_id: i32,
+    pub hq: u8,
+    pub min_price: i32,
+    pub median_price: i32,
+    pub avg_price: i32,
+    pub num_sold: i64,
+}
+
+/// Aggregate min / exact-median / mean per-unit sale price for **every**
+/// item with sales in the trailing `window_days`, across `world_ids`.
+///
+/// Backs `GET /api/v1/sale_stats/{worldDcOrRegion}` — the recipe analyzer's
+/// selectable cost basis. This intentionally scans `sales` rather than
+/// folding the per-world `item_stats_window` rollup: medians don't compose
+/// across worlds, and a trailing-window scan bounded by `sold_date` is
+/// cheap at ClickHouse scale. The endpoint sets a multi-minute
+/// `Cache-Control`, so edge caching bounds how often the scan reruns.
+///
+/// Same conventions as [`price_series`]: no `FINAL` (unmerged
+/// `ReplacingMergeTree` duplicates shift aggregates imperceptibly), no
+/// joins, and only numeric values are interpolated into the SQL string.
+pub async fn bulk_sale_stats(
+    ch: &ClickHouseClient,
+    world_ids: &[i32],
+    window_days: u16,
+) -> Result<Vec<BulkSaleStatsRow>, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+        SELECT
+            item_id,
+            hq,
+            toInt32(min(price_per_item))                AS min_price,
+            toInt32(quantileExact(0.5)(price_per_item)) AS median_price,
+            toInt32(round(avg(price_per_item)))         AS avg_price,
+            toInt64(count())                            AS num_sold
+        FROM sales
+        WHERE world_id IN ({worlds})
+          AND sold_date >= now() - INTERVAL {window_days} DAY
+        GROUP BY item_id, hq
+        "#
+    );
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<BulkSaleStatsRow>()
+        .await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
