@@ -11,7 +11,7 @@ use crate::components::job_set_card::JobSetCard;
 use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
-use crate::components::sort_header::{SortColumn, SortDir, SortHeader};
+use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::toggle::Toggle;
 use crate::components::world_name::WorldName;
 use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*};
@@ -559,23 +559,6 @@ impl SortColumn for ItemSortOption {
 /// `?page=35&sort=ilvl` deep-links used to hydrate-crash on.
 const RESET_ON_SORT: &[&str] = &["page"];
 
-/// `aria-sort` for a header cell. The shared [`SortHeader`] renders the link;
-/// the cell around it is what carries `role="columnheader"`, so the ARIA
-/// state has to be computed out here.
-fn column_aria_sort(
-    mode: ItemSortOption,
-    sort: Memo<Option<ItemSortOption>>,
-    dir: Memo<Option<SortDir>>,
-) -> &'static str {
-    if sort.get().unwrap_or_else(ItemSortOption::fallback) != mode {
-        return "none";
-    }
-    match dir.get().unwrap_or_else(|| mode.default_dir()) {
-        SortDir::Asc => "ascending",
-        SortDir::Desc => "descending",
-    }
-}
-
 #[component]
 fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
     let i18n = use_i18n();
@@ -718,6 +701,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             // offset for chrome that is not there — the app shell's top bar
             // scrolls away with the page — so it pinned the toolbar with a
             // 72px strip of content scrolling above it.
+            //
+            // Kept alongside the sortable column headers: the header row is
+            // `hidden lg:grid`, so below `lg` this bar is the only sort
+            // control, and "Added" has no column of its own at any width.
             <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
                 <div class="flex flex-row flex-wrap gap-2 items-center">
                     <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">{t!(i18n, item_explorer_sort_by)}</span>
@@ -796,45 +783,28 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
                     }
                 >
                     <div role="columnheader"></div>
-                    <div
-                        role="columnheader"
-                        aria-sort=move || column_aria_sort(ItemSortOption::Name, sort, direction)
-                    >
-                        <SortHeader
-                            mode=ItemSortOption::Name
-                            label=t_string!(i18n, item_explorer_name).to_string()
-                            sort_mode=sort
-                            sort_dir=direction
-                            reset_keys=RESET_ON_SORT
-                        />
-                    </div>
-                    <div
-                        role="columnheader"
-                        aria-sort=move || {
-                            column_aria_sort(ItemSortOption::ItemLevel, sort, direction)
-                        }
-                    >
-                        <SortHeader
-                            mode=ItemSortOption::ItemLevel
-                            label=t_string!(i18n, item_explorer_ilvl).to_string()
-                            sort_mode=sort
-                            sort_dir=direction
-                            reset_keys=RESET_ON_SORT
-                        />
-                    </div>
+                    <SortableHeaderCell
+                        mode=ItemSortOption::Name
+                        label=t_string!(i18n, item_explorer_name).to_string()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                    <SortableHeaderCell
+                        mode=ItemSortOption::ItemLevel
+                        label=t_string!(i18n, item_explorer_ilvl).to_string()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
                     <div role="columnheader">{t!(i18n, item_explorer_col_equip_level)}</div>
-                    <div
-                        role="columnheader"
-                        aria-sort=move || column_aria_sort(ItemSortOption::Price, sort, direction)
-                    >
-                        <SortHeader
-                            mode=ItemSortOption::Price
-                            label=t_string!(i18n, nq).to_string()
-                            sort_mode=sort
-                            sort_dir=direction
-                            reset_keys=RESET_ON_SORT
-                        />
-                    </div>
+                    <SortableHeaderCell
+                        mode=ItemSortOption::Price
+                        label=t_string!(i18n, nq).to_string()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
                     <div role="columnheader">{t!(i18n, hq)}</div>
                     <div role="columnheader" class="hidden xl:block">
                         {t!(i18n, item_explorer_vendor)}

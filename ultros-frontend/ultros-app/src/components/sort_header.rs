@@ -123,6 +123,79 @@ pub(crate) fn sort_href<M: SortColumn>(
     format!("{}{}", pathname, q.to_query_string())
 }
 
+/// `aria-sort` for a header cell.
+fn column_aria_sort<M: SortColumn>(
+    mode: M,
+    sort: Signal<Option<M>>,
+    dir: Signal<Option<SortDir>>,
+) -> &'static str {
+    if sort.get().unwrap_or_else(M::fallback) != mode {
+        return "none";
+    }
+    match dir.get().unwrap_or_else(|| mode.default_dir()) {
+        SortDir::Asc => "ascending",
+        SortDir::Desc => "descending",
+    }
+}
+
+/// Sort `rows` under `cmp` oriented by `dir`, truncating to the best `limit`
+/// rows first when there are more than that. Both steps share the one
+/// oriented comparator — truncating in a fixed direction while sorting in the
+/// other would keep exactly the wrong rows.
+pub fn sort_and_truncate<T>(
+    rows: &mut Vec<T>,
+    dir: SortDir,
+    limit: usize,
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
+) {
+    let oriented = |a: &T, b: &T| match dir {
+        SortDir::Asc => cmp(a, b),
+        SortDir::Desc => cmp(a, b).reverse(),
+    };
+    if rows.len() > limit {
+        rows.select_nth_unstable_by(limit, oriented);
+        rows.truncate(limit);
+    }
+    rows.sort_unstable_by(oriented);
+}
+
+/// A complete sortable header cell: the `role="columnheader"` div with a live
+/// `aria-sort`, wrapping a [`SortHeader`] link. Tables that own their cell
+/// markup (responsive classes on the cell, grids) can keep composing
+/// [`SortHeader`] directly; everything else should use this.
+#[component]
+pub fn SortableHeaderCell<M>(
+    /// Column this header sorts by.
+    mode: M,
+    #[prop(into)] label: String,
+    /// Classes for the cell (widths, padding, responsive visibility).
+    #[prop(into, optional)]
+    class: String,
+    /// Current `?sort=`, as parsed by the route.
+    #[prop(into)]
+    sort_mode: Signal<Option<M>>,
+    /// Current `?dir=`, as parsed by the route.
+    #[prop(into)]
+    sort_dir: Signal<Option<SortDir>>,
+    /// Query keys dropped when the sort changes (e.g. `page`).
+    #[prop(optional)]
+    reset_keys: &'static [&'static str],
+) -> impl IntoView
+where
+    M: SortColumn,
+{
+    view! {
+        <div
+            role="columnheader"
+            class=class
+            aria-sort=move || column_aria_sort(mode, sort_mode, sort_dir)
+        >
+            <SortHeader mode label sort_mode sort_dir reset_keys />
+        </div>
+    }
+    .into_any()
+}
+
 /// One sortable column header link.
 ///
 /// Renders the `<a>` only; callers keep their own `role="columnheader"` cell
@@ -299,5 +372,31 @@ mod test {
         assert_eq!(SortDir::Asc.to_string(), "asc");
         assert_eq!(SortDir::Desc.to_string(), "desc");
         assert!("sideways".parse::<SortDir>().is_err());
+    }
+
+    #[test]
+    fn sort_and_truncate_orders_both_directions() {
+        let mut rows = vec![3, 1, 2];
+        sort_and_truncate(&mut rows, SortDir::Asc, 100, |a, b| a.cmp(b));
+        assert_eq!(rows, vec![1, 2, 3]);
+        sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
+        assert_eq!(rows, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn truncation_follows_the_sort_direction() {
+        // The regression this helper exists to prevent: a truncation keyed to
+        // a fixed descending metric would keep the LARGEST rows and then sort
+        // them ascending — the cheapest rows, the ones the click asked for,
+        // would never make the cut.
+        let mut rows: Vec<i32> = (0..500).collect();
+        sort_and_truncate(&mut rows, SortDir::Asc, 100, |a, b| a.cmp(b));
+        assert_eq!(rows.len(), 100);
+        assert_eq!(rows, (0..100).collect::<Vec<_>>());
+
+        let mut rows: Vec<i32> = (0..500).collect();
+        sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
+        assert_eq!(rows.len(), 100);
+        assert_eq!(rows, (400..500).rev().collect::<Vec<_>>());
     }
 }

@@ -15,9 +15,9 @@ use crate::{
     components::{
         gil::*,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         virtual_scroller::*,
@@ -28,7 +28,7 @@ use crate::{
 use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -66,6 +66,8 @@ enum SortMode {
     Roi,
     Profit,
     Velocity,
+    TotalCost,
+    MarketPrice,
 }
 
 impl FromStr for SortMode {
@@ -76,6 +78,8 @@ impl FromStr for SortMode {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
             "velocity" => Ok(SortMode::Velocity),
+            "cost" => Ok(SortMode::TotalCost),
+            "price" => Ok(SortMode::MarketPrice),
             _ => Err(()),
         }
     }
@@ -87,8 +91,38 @@ impl Display for SortMode {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
             SortMode::Velocity => "velocity",
+            SortMode::TotalCost => "cost",
+            SortMode::MarketPrice => "price",
         };
         f.write_str(val)
+    }
+}
+
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+
+    /// Total cost reads best-first ascending — the cheapest project is the
+    /// interesting one. Everything else is a biggest-first metric.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::TotalCost => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitData) -> Ordering {
+    match mode {
+        SortMode::Roi => a.return_on_investment.cmp(&b.return_on_investment),
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Velocity => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
+        SortMode::TotalCost => a.cost.cmp(&b.cost),
+        SortMode::MarketPrice => a.market_price.cmp(&b.market_price),
     }
 }
 
@@ -211,6 +245,7 @@ fn FCCraftingAnalyzerTable(
     let sequences = &data.company_craft_sequences;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     // Seeded by FCCraftingAnalyzer so a first-time visitor isn't shown recipes
@@ -359,35 +394,9 @@ fn FCCraftingAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Roi => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.return_on_investment));
-                }
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Velocity => {
-                    results.select_nth_unstable_by(limit, |a, b| {
-                        b.daily_sales
-                            .partial_cmp(&a.daily_sales)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Roi => results.sort_unstable_by_key(|d| Reverse(d.return_on_investment)),
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Velocity => results.sort_unstable_by(|a, b| {
-                b.daily_sales
-                    .partial_cmp(&a.daily_sales)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_fc_crafts(mode, a, b));
 
         results
             .into_iter()
@@ -507,38 +516,41 @@ fn FCCraftingAnalyzerTable(
                      header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="roi"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_roi)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_total_cost)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_market_price)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="velocity"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_daily_sales)}
-                                </QueryButton>
-                             </div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, fc_crafting_analyzer_col_profit).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Roi
+                                label=t_string!(i18n, fc_crafting_analyzer_col_roi).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::TotalCost
+                                label=t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::MarketPrice
+                                label=t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Velocity
+                                label=t_string!(i18n, fc_crafting_analyzer_col_daily_sales).to_string()
+                                class="w-30 shrink-0 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -755,5 +767,26 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                  </Suspense>
              </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::Velocity,
+            SortMode::TotalCost,
+            SortMode::MarketPrice,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
     }
 }

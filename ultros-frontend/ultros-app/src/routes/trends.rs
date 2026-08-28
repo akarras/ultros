@@ -31,8 +31,8 @@ use crate::{
         market_heat::MarketHeat,
         market_movers::MarketMovers,
         meta::{MetaDescription, MetaTitle},
-        query_button::QueryButton,
         skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell},
         sparkline::Sparkline,
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills},
@@ -53,15 +53,54 @@ enum SortKey {
     SalesPerDay,
 }
 
-impl SortKey {
-    fn from_str(s: &str) -> Self {
+impl std::str::FromStr for SortKey {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "vwap" => SortKey::Vwap,
-            "price" => SortKey::Price,
-            "pct" => SortKey::PctChange,
-            "spd" => SortKey::SalesPerDay,
-            _ => SortKey::UnitVolume,
+            "units" => Ok(SortKey::UnitVolume),
+            "vwap" => Ok(SortKey::Vwap),
+            "price" => Ok(SortKey::Price),
+            "pct" => Ok(SortKey::PctChange),
+            "spd" => Ok(SortKey::SalesPerDay),
+            _ => Err(()),
         }
+    }
+}
+
+impl std::fmt::Display for SortKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SortKey::UnitVolume => "units",
+            SortKey::Vwap => "vwap",
+            SortKey::Price => "price",
+            SortKey::PctChange => "pct",
+            SortKey::SalesPerDay => "spd",
+        })
+    }
+}
+
+/// Every column reads biggest-first descending, so the shared default
+/// direction applies unchanged.
+impl SortColumn for SortKey {
+    fn fallback() -> Self {
+        SortKey::UnitVolume
+    }
+}
+
+fn compare_trends(key: SortKey, a: &TrendItem, b: &TrendItem) -> std::cmp::Ordering {
+    match key {
+        SortKey::UnitVolume => a.unit_volume_window.cmp(&b.unit_volume_window),
+        SortKey::Vwap => a.vwap_window.cmp(&b.vwap_window),
+        SortKey::Price => a.price.cmp(&b.price),
+        SortKey::PctChange => a
+            .pct_change_window
+            .partial_cmp(&b.pct_change_window)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        SortKey::SalesPerDay => a
+            .sales_per_day
+            .partial_cmp(&b.sales_per_day)
+            .unwrap_or(std::cmp::Ordering::Equal),
     }
 }
 
@@ -138,6 +177,10 @@ fn TrendsTableSkeleton() -> impl IntoView {
 #[component]
 fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
     let i18n = use_i18n();
+    // Same URL params `Trends` sorts by — the header cells only need to read
+    // and rewrite them, so a second `query_signal` on the same keys is fine.
+    let (sort_mode, _set_sort_mode) = query_signal::<SortKey>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let items = Memo::new(move |_| {
         items
             .iter()
@@ -149,63 +192,47 @@ fn TrendsTable(items: Vec<TrendItem>, world: String) -> impl IntoView {
     view! {
         <div class="overflow-x-auto content-visible contain-layout contain-paint will-change-scroll forced-layer rounded-lg border border-[color:var(--color-outline)]">
             <div class="min-w-[940px]">
-                // Header row — sortable columns use QueryButton so the
-                // sort key persists in the URL.
+                // Header row — sortable columns use the shared SortableHeaderCell
+                // so the sort key and direction persist in the URL.
                 <div class="flex flex-row items-center h-12 text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--color-text-muted)] border-b border-[color:var(--line)] bg-[color:color-mix(in_srgb,var(--brand-ring)_6%,transparent)]" role="rowgroup">
                     <div role="columnheader" class="w-[40px] px-2 py-3 text-center">{t!(i18n, hq)}</div>
                     <div role="columnheader" class="flex-1 min-w-[14rem] px-3 py-3">{t!(i18n, trends_col_item)}</div>
                     <div role="columnheader" class="w-[100px] px-3 py-3 text-center">{t!(i18n, trends_col_spark)}</div>
-                    <div role="columnheader" class="w-[110px] px-3 py-3 text-right">
-                        <QueryButton
-                            class="!text-brand-300 hover:text-brand-200"
-                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                            key="sort"
-                            value="price"
-                        >
-                            {t!(i18n, trends_col_price)}
-                        </QueryButton>
-                    </div>
-                    <div role="columnheader" class="w-[110px] px-3 py-3 text-right">
-                        <QueryButton
-                            class="!text-brand-300 hover:text-brand-200"
-                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                            key="sort"
-                            value="vwap"
-                        >
-                            {t!(i18n, trends_col_vwap)}
-                        </QueryButton>
-                    </div>
-                    <div role="columnheader" class="w-[90px] px-3 py-3 text-right">
-                        <QueryButton
-                            class="!text-brand-300 hover:text-brand-200"
-                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                            key="sort"
-                            value="pct"
-                        >
-                            {t!(i18n, trends_col_pct_change)}
-                        </QueryButton>
-                    </div>
-                    <div role="columnheader" class="w-[100px] px-3 py-3 text-right">
-                        <QueryButton
-                            class="!text-brand-300 hover:text-brand-200"
-                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                            key="sort"
-                            value="spd"
-                        >
-                            {t!(i18n, trends_col_sales_per_day)}
-                        </QueryButton>
-                    </div>
-                    <div role="columnheader" class="w-[110px] px-3 py-3 text-right">
-                        <QueryButton
-                            class="!text-brand-300 hover:text-brand-200"
-                            active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                            key="sort"
-                            value="units"
-                            default=true
-                        >
-                            {t!(i18n, trends_col_units_window)}
-                        </QueryButton>
-                    </div>
+                    <SortableHeaderCell
+                        mode=SortKey::Price
+                        label=t_string!(i18n, trends_col_price).to_string()
+                        class="w-[110px] px-3 py-3 text-right"
+                        sort_mode
+                        sort_dir
+                    />
+                    <SortableHeaderCell
+                        mode=SortKey::Vwap
+                        label=t_string!(i18n, trends_col_vwap).to_string()
+                        class="w-[110px] px-3 py-3 text-right"
+                        sort_mode
+                        sort_dir
+                    />
+                    <SortableHeaderCell
+                        mode=SortKey::PctChange
+                        label=t_string!(i18n, trends_col_pct_change).to_string()
+                        class="w-[90px] px-3 py-3 text-right"
+                        sort_mode
+                        sort_dir
+                    />
+                    <SortableHeaderCell
+                        mode=SortKey::SalesPerDay
+                        label=t_string!(i18n, trends_col_sales_per_day).to_string()
+                        class="w-[100px] px-3 py-3 text-right"
+                        sort_mode
+                        sort_dir
+                    />
+                    <SortableHeaderCell
+                        mode=SortKey::UnitVolume
+                        label=t_string!(i18n, trends_col_units_window).to_string()
+                        class="w-[110px] px-3 py-3 text-right"
+                        sort_mode
+                        sort_dir
+                    />
                     <div role="columnheader" class="w-[110px] px-3 py-3 text-center">{t!(i18n, trends_col_quality)}</div>
                 </div>
 
@@ -309,18 +336,24 @@ mod tests {
     }
 
     #[test]
-    fn test_sort_key_from_str() {
-        // Known keys parse to correct variants.
-        assert_eq!(SortKey::from_str("vwap"), SortKey::Vwap);
-        assert_eq!(SortKey::from_str("price"), SortKey::Price);
-        assert_eq!(SortKey::from_str("pct"), SortKey::PctChange);
-        assert_eq!(SortKey::from_str("spd"), SortKey::SalesPerDay);
+    fn test_sort_key_round_trips() {
+        // Display must produce exactly the token FromStr parses back — the
+        // shared SortHeader's hrefs depend on that round trip.
+        for key in [
+            SortKey::UnitVolume,
+            SortKey::Vwap,
+            SortKey::Price,
+            SortKey::PctChange,
+            SortKey::SalesPerDay,
+        ] {
+            assert_eq!(key.to_string().parse::<SortKey>(), Ok(key));
+        }
 
-        // Fallback test: verify that when an unknown or empty parameter is
-        // provided by the client, the application defaults safely to `UnitVolume`
-        // instead of panicking or failing silently. This matches the component's default assumptions.
-        assert_eq!(SortKey::from_str("unknown_key"), SortKey::UnitVolume);
-        assert_eq!(SortKey::from_str(""), SortKey::UnitVolume);
+        // Unknown or empty `?sort=` no longer parses silently — the route
+        // falls back through `SortColumn::fallback()` instead.
+        assert!("unknown_key".parse::<SortKey>().is_err());
+        assert!("".parse::<SortKey>().is_err());
+        assert_eq!(SortKey::fallback(), SortKey::UnitVolume);
     }
 }
 
@@ -390,7 +423,8 @@ pub fn Trends() -> impl IntoView {
     let (category_filter, set_category_filter) = query_signal::<i32>("category");
     let (min_sales, set_min_sales) = query_signal::<u32>("min_sales");
     let (min_price, set_min_price) = query_signal::<i32>("min_price");
-    let (sort, _set_sort) = query_signal::<String>("sort");
+    let (sort, _set_sort) = query_signal::<SortKey>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
 
     let window_days = Memo::new(move |_| {
         window_param()
@@ -444,24 +478,15 @@ pub fn Trends() -> impl IntoView {
             .filter(|it| min_sales().map(|m| it.sales_in_window >= m).unwrap_or(true))
             .filter(|it| min_price().map(|m| it.price >= m).unwrap_or(true))
             .collect();
-        let key = SortKey::from_str(sort().as_deref().unwrap_or("units"));
-        match key {
-            SortKey::UnitVolume => {
-                items.sort_by(|a, b| b.unit_volume_window.cmp(&a.unit_volume_window))
+        let key = sort().unwrap_or_else(SortKey::fallback);
+        let dir = sort_dir().unwrap_or_else(|| key.default_dir());
+        items.sort_by(|a, b| {
+            let ord = compare_trends(key, a, b);
+            match dir {
+                SortDir::Asc => ord,
+                SortDir::Desc => ord.reverse(),
             }
-            SortKey::Vwap => items.sort_by(|a, b| b.vwap_window.cmp(&a.vwap_window)),
-            SortKey::Price => items.sort_by(|a, b| b.price.cmp(&a.price)),
-            SortKey::PctChange => items.sort_by(|a, b| {
-                b.pct_change_window
-                    .partial_cmp(&a.pct_change_window)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-            SortKey::SalesPerDay => items.sort_by(|a, b| {
-                b.sales_per_day
-                    .partial_cmp(&a.sales_per_day)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-        }
+        });
         items
     });
 
