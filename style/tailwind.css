@@ -1852,6 +1852,11 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     border-right: 1px solid var(--color-outline);
     background-color: var(--color-background-panel);
     overflow-y: auto;
+    /* Never a horizontal scrollport: a single stray pixel of row content
+       (the collapsed rail is only 56px) would otherwise make the whole
+       sidebar pannable sideways — focusing a row then scrolls its trailing
+       edge into view and the rail visibly shifts. */
+    overflow-x: hidden;
 }
 .side-nav-brand {
     display: flex;
@@ -1981,6 +1986,18 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     }
     .app-shell-collapsed .side-nav-brand-link {
         justify-content: center;
+    }
+    /* Side by side, the logo + collapse chevron need ~62px and overflowed the
+       56px rail (the chevron's right edge was clipped). Stack them instead. */
+    .app-shell-collapsed .side-nav-brand {
+        flex-direction: column;
+        justify-content: center;
+        gap: 0.25rem;
+        height: auto;
+        padding: 0.5rem 0;
+    }
+    .app-shell-collapsed .side-nav-collapse {
+        margin-left: 0;
     }
 }
 
@@ -2741,5 +2758,20 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 @media (min-width: 1024px) {
     .app-shell-collapsed .side-nav-kbd {
         display: none;
+    }
+    /* Collapsed, the dot leaves the flex flow: kept inline it adds
+       icon + gap + dot ≈ 57px of row content to a 56px rail (making the
+       changelog row overflow and, before `.side-nav` clipped overflow-x,
+       scroll the whole rail sideways on focus), and its `margin-left: auto`
+       defeats the row's centered icon. Overlaid on the row's top-right
+       corner it costs no width and still marks the icon as unread. */
+    .app-shell-collapsed .side-nav-item {
+        position: relative;
+    }
+    .app-shell-collapsed .side-nav-badge {
+        position: absolute;
+        top: 0.3rem;
+        right: 0.35rem;
+        margin-left: 0;
     }
 }
