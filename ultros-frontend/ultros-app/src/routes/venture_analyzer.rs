@@ -9,9 +9,9 @@ use crate::{
         gil::*,
         icon::Icon,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
@@ -29,7 +29,7 @@ use leptos_router::{
     hooks::{query_signal, use_location, use_navigate, use_query_map},
 };
 use std::{
-    cmp::Reverse,
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -53,6 +53,9 @@ struct VentureProfitData {
 enum SortMode {
     Profit,
     Level,
+    UnitPrice,
+    AvgPrice,
+    DailySales,
 }
 
 impl std::str::FromStr for SortMode {
@@ -62,6 +65,9 @@ impl std::str::FromStr for SortMode {
         match s {
             "profit" => Ok(SortMode::Profit),
             "level" => Ok(SortMode::Level),
+            "unit-price" => Ok(SortMode::UnitPrice),
+            "avg-price" => Ok(SortMode::AvgPrice),
+            "daily-sales" => Ok(SortMode::DailySales),
             _ => Err(()),
         }
     }
@@ -72,8 +78,32 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Profit => "profit",
             SortMode::Level => "level",
+            SortMode::UnitPrice => "unit-price",
+            SortMode::AvgPrice => "avg-price",
+            SortMode::DailySales => "daily-sales",
         };
         f.write_str(val)
+    }
+}
+
+/// Every column reads best-first descending — ventures cost venture coins,
+/// not gil, so there is no cost-like column to default ascending.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+}
+
+fn compare_ventures(mode: SortMode, a: &VentureProfitData, b: &VentureProfitData) -> Ordering {
+    match mode {
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Level => a.task_level.cmp(&b.task_level),
+        SortMode::UnitPrice => a.market_price.cmp(&b.market_price),
+        SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
+        SortMode::DailySales => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
     }
 }
 
@@ -101,6 +131,7 @@ fn VentureAnalyzerTable(
     let retainer_task_normals = &data.retainer_task_normals;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
     let query = use_query_map();
@@ -257,23 +288,9 @@ fn VentureAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Level => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.task_level));
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Level => results.sort_unstable_by_key(|d| Reverse(d.task_level)),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_ventures(mode, a, b));
 
         results
             .into_iter()
@@ -369,29 +386,41 @@ fn VentureAnalyzerTable(
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 p-4">{t!(i18n, venture_analyzer_col_venture_item)}</div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, venture_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">{t!(i18n, venture_analyzer_col_unit_price)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, venture_analyzer_col_avg_price)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, venture_analyzer_col_daily_sales)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="level"
-                                >
-                                    {t!(i18n, venture_analyzer_col_level)}
-                                </QueryButton>
-                             </div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, venture_analyzer_col_profit).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::UnitPrice
+                                label=t_string!(i18n, venture_analyzer_col_unit_price).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::AvgPrice
+                                label=t_string!(i18n, venture_analyzer_col_avg_price).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::DailySales
+                                label=t_string!(i18n, venture_analyzer_col_daily_sales).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Level
+                                label=t_string!(i18n, venture_analyzer_col_level).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -609,5 +638,54 @@ pub fn VentureAnalyzer() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Profit,
+            SortMode::Level,
+            SortMode::UnitPrice,
+            SortMode::AvgPrice,
+            SortMode::DailySales,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
+    }
+
+    #[test]
+    fn compare_ventures_orders_ascending_by_column() {
+        let row = |profit: i32, daily_sales: f32| VentureProfitData {
+            task_level: profit,
+            item_id: 1,
+            quantity: 1,
+            market_price: profit,
+            profit,
+            avg_price: profit,
+            daily_sales,
+        };
+        let low = row(10, 0.5);
+        let high = row(20, 2.0);
+        for mode in [
+            SortMode::Profit,
+            SortMode::Level,
+            SortMode::UnitPrice,
+            SortMode::AvgPrice,
+            SortMode::DailySales,
+        ] {
+            assert_eq!(
+                compare_ventures(mode, &low, &high),
+                Ordering::Less,
+                "{mode:?}"
+            );
+        }
     }
 }

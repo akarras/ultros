@@ -9,9 +9,9 @@ use crate::{
         gil::*,
         icon::Icon,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
@@ -27,7 +27,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -57,6 +57,10 @@ struct LeveProfitData {
 enum SortMode {
     Profit,
     Level,
+    Revenue,
+    Cost,
+    AvgPrice,
+    DailySales,
 }
 
 impl std::str::FromStr for SortMode {
@@ -66,6 +70,10 @@ impl std::str::FromStr for SortMode {
         match s {
             "profit" => Ok(SortMode::Profit),
             "level" => Ok(SortMode::Level),
+            "revenue" => Ok(SortMode::Revenue),
+            "cost" => Ok(SortMode::Cost),
+            "avg-price" => Ok(SortMode::AvgPrice),
+            "daily-sales" => Ok(SortMode::DailySales),
             _ => Err(()),
         }
     }
@@ -76,8 +84,41 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Profit => "profit",
             SortMode::Level => "level",
+            SortMode::Revenue => "revenue",
+            SortMode::Cost => "cost",
+            SortMode::AvgPrice => "avg-price",
+            SortMode::DailySales => "daily-sales",
         };
         f.write_str(val)
+    }
+}
+
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+
+    /// Cost reads best-first ascending — the cheapest turn-in is the
+    /// interesting one. Everything else is a biggest-first metric.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::Cost => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+fn compare_leves(mode: SortMode, a: &LeveProfitData, b: &LeveProfitData) -> Ordering {
+    match mode {
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Level => a.class_job_level.cmp(&b.class_job_level),
+        SortMode::Revenue => a.revenue.cmp(&b.revenue),
+        SortMode::Cost => a.cost.cmp(&b.cost),
+        SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
+        SortMode::DailySales => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
     }
 }
 
@@ -108,6 +149,7 @@ fn LeveAnalyzerTable(
     let class_job_categories = &data.class_job_categorys;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
     let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
@@ -323,23 +365,9 @@ fn LeveAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Level => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.class_job_level));
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Level => results.sort_unstable_by_key(|d| Reverse(d.class_job_level)),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_leves(mode, a, b));
 
         results
             .into_iter()
@@ -425,30 +453,48 @@ fn LeveAnalyzerTable(
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 p-4">{t!(i18n, leve_analyzer_col_leve_item)}</div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, leve_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">{t!(i18n, leve_analyzer_col_revenue)}</div>
-                             <div role="columnheader" class="w-30 p-4">{t!(i18n, leve_analyzer_col_cost)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, leve_analyzer_col_avg_price)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, leve_analyzer_col_daily_sales)}</div>
-                             <div role="columnheader" class="w-40 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="level"
-                                >
-                                    {t!(i18n, leve_analyzer_col_level)}
-                                </QueryButton>
-                             </div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, leve_analyzer_col_profit).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Revenue
+                                label=t_string!(i18n, leve_analyzer_col_revenue).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Cost
+                                label=t_string!(i18n, leve_analyzer_col_cost).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::AvgPrice
+                                label=t_string!(i18n, leve_analyzer_col_avg_price).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::DailySales
+                                label=t_string!(i18n, leve_analyzer_col_daily_sales).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Level
+                                label=t_string!(i18n, leve_analyzer_col_level).to_string()
+                                class="w-40 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -671,5 +717,27 @@ pub fn LeveAnalyzer() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Profit,
+            SortMode::Level,
+            SortMode::Revenue,
+            SortMode::Cost,
+            SortMode::AvgPrice,
+            SortMode::DailySales,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
     }
 }

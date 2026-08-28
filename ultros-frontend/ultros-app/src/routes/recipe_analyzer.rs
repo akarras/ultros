@@ -18,9 +18,9 @@ use crate::{
         gil::*,
         icon::Icon,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         tooltip::Tooltip,
@@ -38,7 +38,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -149,6 +149,9 @@ enum SortMode {
     Roi,
     Profit,
     Velocity,
+    CostPerUnit,
+    Price,
+    AvgPrice,
 }
 
 impl FromStr for SortMode {
@@ -159,6 +162,9 @@ impl FromStr for SortMode {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
             "velocity" => Ok(SortMode::Velocity),
+            "cost" => Ok(SortMode::CostPerUnit),
+            "price" => Ok(SortMode::Price),
+            "avg-price" => Ok(SortMode::AvgPrice),
             _ => Err(()),
         }
     }
@@ -170,8 +176,40 @@ impl Display for SortMode {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
             SortMode::Velocity => "velocity",
+            SortMode::CostPerUnit => "cost",
+            SortMode::Price => "price",
+            SortMode::AvgPrice => "avg-price",
         };
         f.write_str(val)
+    }
+}
+
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+
+    /// Cost per unit reads best-first ascending — the cheapest craft is the
+    /// interesting one. Everything else is a biggest-first metric.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::CostPerUnit => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+fn compare_recipes(mode: SortMode, a: &RecipeProfitData, b: &RecipeProfitData) -> Ordering {
+    match mode {
+        SortMode::Roi => a.return_on_investment.cmp(&b.return_on_investment),
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Velocity => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
+        SortMode::CostPerUnit => a.cost.cmp(&b.cost),
+        SortMode::Price => a.market_price.cmp(&b.market_price),
+        SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
     }
 }
 
@@ -211,6 +249,7 @@ fn RecipeAnalyzerTable(
     });
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
     let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
     let (job_filter, set_job_filter) = query_signal::<String>("job");
@@ -399,35 +438,9 @@ fn RecipeAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Roi => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.return_on_investment));
-                }
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Velocity => {
-                    results.select_nth_unstable_by(limit, |a, b| {
-                        b.daily_sales
-                            .partial_cmp(&a.daily_sales)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Roi => results.sort_unstable_by_key(|d| Reverse(d.return_on_investment)),
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Velocity => results.sort_unstable_by(|a, b| {
-                b.daily_sales
-                    .partial_cmp(&a.daily_sales)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_recipes(mode, a, b));
 
         results
             .into_iter()
@@ -691,39 +704,48 @@ fn RecipeAnalyzerTable(
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">{t!(i18n, item)}</div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="roi"
-                                >
-                                    {t!(i18n, roi)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, recipe_analyzer_col_cost_per_unit)}</div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4">{t!(i18n, price)}</div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="velocity"
-                                >
-                                    {t!(i18n, daily_sales)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-32 shrink-0 p-4 hidden md:block">{t!(i18n, avg_price)}</div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, profit).to_string()
+                                class="w-32 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Roi
+                                label=t_string!(i18n, roi).to_string()
+                                class="w-32 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::CostPerUnit
+                                label=t_string!(i18n, recipe_analyzer_col_cost_per_unit).to_string()
+                                class="w-32 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Price
+                                label=t_string!(i18n, price).to_string()
+                                class="w-32 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Velocity
+                                label=t_string!(i18n, daily_sales).to_string()
+                                class="w-32 shrink-0 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::AvgPrice
+                                label=t_string!(i18n, avg_price).to_string()
+                                class="w-32 shrink-0 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                              <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
                         </div>
                     }.into_any()
@@ -1043,6 +1065,23 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 mod test {
     use super::*;
     use xiv_gen::ClassJobId;
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::Velocity,
+            SortMode::CostPerUnit,
+            SortMode::Price,
+            SortMode::AvgPrice,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
+    }
 
     /// `Recipe::craft_type` is a row index into the `CraftType` sheet, which
     /// xiv-gen doesn't load. The eight Disciple of the Hand jobs are
