@@ -7,6 +7,7 @@ pub(crate) mod freshness;
 pub(crate) mod global_state;
 pub(crate) mod i18n_fallback;
 pub(crate) mod math;
+pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
@@ -21,8 +22,9 @@ use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    side_nav::provide_side_nav_settings, theme::provide_theme_settings,
-    toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
+    platform::provide_platform_hotkeys, side_nav::provide_side_nav_settings,
+    theme::provide_theme_settings, toasts::provide_toast_context,
+    xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
@@ -474,6 +476,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_context(RecentItems::new());
     provide_theme_settings();
     provide_side_nav_settings();
+    provide_platform_hotkeys();
     provide_toast_context();
     provide_xiv_data_revision();
     provide_on_hand_context();

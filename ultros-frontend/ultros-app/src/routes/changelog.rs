@@ -38,6 +38,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
         link: Some("/vendor-resale"),
     },
     ChangelogEntry {
+        date: "2026-08-28",
+        title: "Sort and filter chips no longer break the page",
+        blurb: "On a slow response, a sort or filter chip could take the whole page down with it while it was still loading. The chips now fall back to a plain link instead of failing the render.",
+        link: None,
+    },
+    ChangelogEntry {
         date: "2026-08-23",
         title: "Gear sets without the Ornate outliers",
         blurb: "Ornate crafted pieces cost many times more than the regular version of the same gear, so they no longer get averaged into a job's gear set. They are still listed, just on their own.",

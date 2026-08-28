@@ -77,6 +77,48 @@ where
     })
 }
 
+/// Resolves the datacenter owning `world_name`, or `None` when the name
+/// doesn't resolve down to a datacenter (an unknown name, or a region —
+/// regions have no single datacenter).
+///
+/// Same plain-function shape as [`region_for_world_name`], for the same
+/// reason: every failure mode is a return value, never a panic inside a
+/// memo.
+pub fn datacenter_for_world_name(
+    world_data: Option<LocalWorldData>,
+    world_name: Option<String>,
+) -> Option<String> {
+    let worlds = world_helper_from_context(world_data).ok()?;
+    let world_name = world_name?;
+    let found = worlds.lookup_world_by_name(&world_name)?;
+    let datacenter_id = match found {
+        AnyResult::World(world) => world.datacenter_id,
+        AnyResult::Datacenter(dc) => return Some(dc.name.clone()),
+        AnyResult::Region(_) => return None,
+    };
+    worlds
+        .lookup_selector(ultros_api_types::world_helper::AnySelector::Datacenter(
+            datacenter_id,
+        ))
+        .and_then(|dc| dc.as_datacenter().map(|dc| dc.name.clone()))
+}
+
+/// Returns a reactive `Memo<Option<String>>` of the datacenter name for
+/// `world_name_source`, with the same home-world fallback as
+/// [`use_region_for_world`]. Yields `None` when the name can't be narrowed
+/// to a datacenter, so callers can fall back to their region scope.
+pub fn use_datacenter_for_world<F>(world_name_source: F) -> Memo<Option<String>>
+where
+    F: Fn() -> Option<String> + 'static + Send + Sync,
+{
+    let (home_world, _) = use_home_world();
+    Memo::new(move |_| {
+        let world_data = use_context::<LocalWorldData>();
+        let world_name = world_name_source().or_else(|| home_world.get().map(|w| w.name));
+        datacenter_for_world_name(world_data, world_name)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +192,44 @@ mod tests {
         assert_eq!(
             region_for_world_name(Some(worlds()), Some("Nonexistent".to_string())),
             Err(AppError::ParamMissing)
+        );
+    }
+
+    #[test]
+    fn datacenter_resolves_for_a_world_or_datacenter_name() {
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("Gilgamesh".to_string())),
+            Some("Aether".to_string())
+        );
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("Aether".to_string())),
+            Some("Aether".to_string())
+        );
+    }
+
+    /// A region has no single datacenter, and every failure mode is `None`
+    /// (never a panic) — this feeds a memo, same as `region_for_world_name`.
+    #[test]
+    fn datacenter_is_none_for_regions_unknowns_and_missing_data() {
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("North-America".to_string())),
+            None
+        );
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("Nonexistent".to_string())),
+            None
+        );
+        assert_eq!(datacenter_for_world_name(Some(worlds()), None), None);
+        assert_eq!(
+            datacenter_for_world_name(
+                Some(LocalWorldData::failed("world data fetch failed")),
+                Some("Gilgamesh".to_string())
+            ),
+            None
+        );
+        assert_eq!(
+            datacenter_for_world_name(None, Some("Gilgamesh".to_string())),
+            None
         );
     }
 }

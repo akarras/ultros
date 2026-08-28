@@ -25,6 +25,7 @@ use ultros_api_types::{
     resale_quality::{ResaleQualityRequest, ResaleQualityResponse},
     result::JsonErrorWrapper,
     retainer::{Retainer, RetainerListings},
+    sale_stats::BulkSaleStats,
     search::SearchResult,
     sparklines::{MoversResponse, SparklinesRequest, SparklinesResponse},
     trends::TrendsData,
@@ -242,6 +243,15 @@ pub(crate) async fn get_bulk_listings(
     }
     let ids = item_ids.format(",");
     fetch_api(&format!("/api/v1/bulkListings/{world}/{ids}")).await
+}
+
+/// Bulk sale-history statistics (min/median/avg per item) for a world,
+/// datacenter, or region — the recipe analyzer's selectable cost basis.
+pub(crate) async fn get_sale_stats(scope_name: &str, window_days: u16) -> AppResult<BulkSaleStats> {
+    fetch_api(&format!(
+        "/api/v1/sale_stats/{scope_name}?window={window_days}"
+    ))
+    .await
 }
 
 /// Get most expensive

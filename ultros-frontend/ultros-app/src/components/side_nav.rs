@@ -4,6 +4,7 @@ use crate::components::icon::Icon;
 use crate::components::region_menu::RegionMenu;
 use crate::global_state::changelog::use_whats_new_indicator;
 use crate::global_state::home_world::use_home_world;
+use crate::global_state::platform::use_platform_hotkeys;
 use crate::global_state::search_overlay::use_search_overlay_state;
 use crate::global_state::side_nav::use_side_nav_settings;
 use crate::i18n::{t, t_string, use_i18n};
@@ -96,6 +97,7 @@ pub fn SideNav() -> impl IntoView {
     let i18n = use_i18n();
     let nav = use_side_nav_settings();
     let search_overlay = use_search_overlay_state();
+    let apple_hotkeys = use_platform_hotkeys().apple;
     let (homeworld, _set_homeworld) = use_home_world();
     let whats_new = use_whats_new_indicator();
 
@@ -141,7 +143,15 @@ pub fn SideNav() -> impl IntoView {
                 >
                     <Icon icon=i::AiSearchOutlined />
                     <span class="side-nav-label">{t!(i18n, search)}</span>
-                    <span class="side-nav-kbd">"⌘K"</span>
+                    <span class="side-nav-kbd">
+                        {move || {
+                            if apple_hotkeys.get() {
+                                "⌘K".to_string()
+                            } else {
+                                t_string!(i18n, hotkey_ctrl_k).to_string()
+                            }
+                        }}
+                    </span>
                 </button>
                 <SideNavItem href="/items".to_string() section="items" icon=i::MdiJellyfish hero=true>
                     {t!(i18n, item_explorer)}

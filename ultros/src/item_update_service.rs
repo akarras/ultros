@@ -13,6 +13,7 @@ use ultros_db::{
     UltrosDb,
     common::partial_diff_iterator::{DiffItem, PartialDiffIterator},
     entity::{listing_last_updated::Model, world},
+    listings::ListingSummary,
     world_data::world_cache::WorldCache,
 };
 use universalis::{UniversalisClient, WorldId, WorldItemRecencyView};
@@ -208,7 +209,7 @@ impl UpdateService {
         &self,
         world: &world::Model,
     ) -> Result<(), anyhow::Error> {
-        let updates = match self.get_missing_updates(world).await {
+        let (window_ids, updates) = match self.get_missing_updates(world).await {
             Ok(updates) => updates,
             // Universalis 404s the recency endpoint for worlds it no longer
             // carries (our `world` table keeps rows for worlds it has since
@@ -243,14 +244,90 @@ impl UpdateService {
             } else {
                 warn!(world = %world.name, "recency window saturated, full sweep on cooldown");
             }
+            // Either way every window item just got (or recently got) a full
+            // refetch; probing them for drift now would only re-answer the
+            // question the refetch already settled.
+            return Ok(());
+        }
+
+        // Price-drift probe over the window items the marker diff called
+        // in-sync. The marker cannot be trusted for them: Universalis delivers
+        // each upload's events independently per channel, so a lost
+        // `listings/remove` alongside a delivered `sales/add` (a purchase,
+        // exactly the #1178 case) stamps the marker fresh while the board keeps
+        // the sold listing forever. Comparing cheapest prices against their
+        // aggregated cache catches that directly.
+        let repaired: HashSet<i32> = item_ids.iter().copied().collect();
+        let probe_ids: Vec<i32> = window_ids
+            .into_iter()
+            .filter(|id| !repaired.contains(id))
+            .collect();
+        if probe_ids.is_empty() {
+            return Ok(());
+        }
+        match self.find_price_drift(world, &probe_ids).await {
+            Ok(drifted) if !drifted.is_empty() => {
+                warn!(
+                    world = %world.name,
+                    count = drifted.len(),
+                    items = ?drifted,
+                    "cheapest-price drift despite fresh ingest markers; refetching boards"
+                );
+                metrics::counter!("ultros_catchup_price_drift_items", "world" => world.name.clone())
+                    .increment(drifted.len() as u64);
+                let tally = self.check_items(world, &drifted).await?;
+                tally.record(&world.name);
+            }
+            Ok(_) => {}
+            // The probe is an extra safety net on top of the normal sweep — a
+            // failed probe cycle must not fail the world's catch-up pass.
+            Err(e) => error!(error = ?e, world = %world.name, "price-drift probe failed"),
         }
         Ok(())
     }
 
+    /// Items whose cheapest listed price in our DB disagrees with Universalis'
+    /// aggregated cache for `world`, per quality. Runs on items whose ingest
+    /// markers look fresh, so any mismatch means our board silently drifted —
+    /// in practice a `listings/remove` that never reached us (Universalis'
+    /// publisher drops/misroutes some removals) while adds and sales kept
+    /// stamping the marker. Items Universalis itself cannot answer for
+    /// (`failedItems`) are skipped rather than flagged.
+    ///
+    /// Both sides are read while the market keeps moving, so an item can be
+    /// flagged by an ordinary in-flight update; the cost of a false positive is
+    /// one redundant board refetch, bounded by the recency window size.
+    async fn find_price_drift(
+        &self,
+        world: &world::Model,
+        item_ids: &[i32],
+    ) -> Result<Vec<i32>, anyhow::Error> {
+        let mut theirs = HashMap::new();
+        for chunk in item_ids.chunks(100) {
+            let aggregated = self
+                .universalis
+                .aggregated_market_data(&world.name, chunk)
+                .await?;
+            for item in aggregated.results {
+                theirs.insert(item.item_id, item.world_min_prices());
+            }
+        }
+        let ours = self
+            .db
+            .cheapest_listings_for_items(&[world.id], item_ids)
+            .await?;
+        Ok(drifted_items(theirs, &ours))
+    }
+
+    /// Returns (every item id in Universalis' recency window, the subset our
+    /// markers say we missed). The full window feeds the price-drift probe:
+    /// marker freshness alone cannot prove a board is in sync (see
+    /// [`UpdateService::find_price_drift`]), so the probe needs the items the
+    /// marker diff considered fine, not just the ones it flagged.
     async fn get_missing_updates(
         &self,
         world: &world::Model,
-    ) -> Result<Vec<WorldItemRecencyView>, anyhow::Error> {
+    ) -> Result<(Vec<i32>, Vec<WorldItemRecencyView>), anyhow::Error> {
         let recently_updated = self
             .universalis
             .recently_updated_items(
@@ -265,7 +342,11 @@ impl UpdateService {
                 recently_updated.items.len() as u64 * 2,
             )
             .await?;
-        Ok(missed_updates(our_recently_updated, recently_updated.items))
+        let window_ids = recently_updated.items.iter().map(|i| i.item_id).collect();
+        Ok((
+            window_ids,
+            missed_updates(our_recently_updated, recently_updated.items),
+        ))
     }
 
     async fn check_items(
@@ -348,6 +429,35 @@ impl UpdateService {
     }
 }
 
+/// Items whose cheapest price per quality differs between Universalis'
+/// aggregated view (`theirs`, keyed by item id, absent = Universalis could not
+/// answer and the item is skipped) and our stored listings (`ours`, absent =
+/// we hold no listings of that (item, quality)). Sorted for stable logs.
+fn drifted_items(
+    theirs: HashMap<i32, (Option<i64>, Option<i64>)>,
+    ours: &[ListingSummary],
+) -> Vec<i32> {
+    let mut our_mins: HashMap<i32, (Option<i64>, Option<i64>)> = HashMap::new();
+    for summary in ours {
+        let entry = our_mins.entry(summary.item_id).or_default();
+        let slot = if summary.hq {
+            &mut entry.1
+        } else {
+            &mut entry.0
+        };
+        *slot = Some(summary.price_per_unit as i64);
+    }
+    let mut drifted: Vec<i32> = theirs
+        .into_iter()
+        .filter(|(item_id, their_mins)| {
+            our_mins.get(item_id).copied().unwrap_or_default() != *their_mins
+        })
+        .map(|(item_id, _)| item_id)
+        .collect();
+    drifted.sort_unstable();
+    drifted
+}
+
 /// Items Universalis has seen updates for that we appear to have missed:
 /// either absent from our recent-update list entirely, or present but with a
 /// Universalis upload newer than our last ingest (allowing
@@ -397,6 +507,59 @@ mod tests {
             world_id: WORLD_ID,
             world_name: None,
         }
+    }
+
+    fn summary(item_id: i32, hq: bool, price: i32) -> ListingSummary {
+        ListingSummary {
+            item_id,
+            hq,
+            price_per_unit: price,
+            world_id: WORLD_ID,
+        }
+    }
+
+    #[test]
+    fn matching_mins_are_not_drifted() {
+        let theirs = HashMap::from([(1, (Some(100), Some(250)))]);
+        let ours = [summary(1, false, 100), summary(1, true, 250)];
+        assert!(drifted_items(theirs, &ours).is_empty());
+    }
+
+    /// The #1178 signature: a sold listing's removal never reached us, so we
+    /// still hold a cheaper row than the live board.
+    #[test]
+    fn phantom_cheap_listing_is_drifted() {
+        let theirs = HashMap::from([(1, (Some(53000), None))]);
+        let ours = [summary(1, false, 27000)];
+        assert_eq!(drifted_items(theirs, &ours), [1]);
+    }
+
+    /// Drift in one quality flags the item even when the other quality agrees.
+    #[test]
+    fn single_quality_drift_is_enough() {
+        let theirs = HashMap::from([(1, (Some(100), Some(250)))]);
+        let ours = [summary(1, false, 100), summary(1, true, 200)];
+        assert_eq!(drifted_items(theirs, &ours), [1]);
+    }
+
+    /// Their board is empty but we still hold rows (a fully-bought-out item
+    /// whose removals were all lost), and the mirror case where they have
+    /// listings we never stored — both directions must flag.
+    #[test]
+    fn presence_mismatch_in_either_direction_is_drifted() {
+        let theirs = HashMap::from([(1, (None, None)), (2, (Some(500), None))]);
+        let ours = [summary(1, false, 40)];
+        assert_eq!(drifted_items(theirs, &ours), [1, 2]);
+    }
+
+    /// Both sides empty (item in the recency window because of a sale on an
+    /// empty board) is in sync, and items Universalis could not answer for
+    /// (absent from `theirs`) are never flagged, whatever we hold.
+    #[test]
+    fn empty_both_sides_and_unanswered_items_are_ignored() {
+        let theirs = HashMap::from([(1, (None, None))]);
+        let ours = [summary(9, false, 40)];
+        assert!(drifted_items(theirs, &ours).is_empty());
     }
 
     #[test]
