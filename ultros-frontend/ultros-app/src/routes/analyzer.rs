@@ -27,7 +27,7 @@ use crate::{
         sales_cadence_badge::SalesCadenceBadge,
         saved_views::SavedViewsMenu,
         skeleton::{SingleLineSkeleton, SkeletonCell, SkeletonColumn, TableSkeleton},
-        sort_header::{SortColumn, SortDir, SortHeader},
+        sort_header::{SortColumn, SortDir, SortHeader, cmp_none_last},
         sparkline::Sparkline,
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
@@ -150,7 +150,6 @@ use leptos_router::{
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
 };
 use std::{
-    cmp::Reverse,
     collections::{HashMap, hash_map::Entry},
     str::FromStr,
     sync::Arc,
@@ -212,13 +211,27 @@ enum SortMode {
     Roi,
     Profit,
     ProfitPerDay,
+    BuyPrice,
+    LastSold,
+    Drift,
 }
 
-/// Every Flip Finder column reads best-first descending, so the shared
-/// default direction applies unchanged.
+/// Profit, profit/day, ROI and drift read best-first descending — the
+/// biggest return, the fastest-rising price. Buy price is a cost and last
+/// sold a staleness, so a fresh click on those starts ascending: cheapest
+/// buy-in first, most recently sold first.
 impl SortColumn for SortMode {
     fn fallback() -> Self {
         SortMode::ProfitPerDay
+    }
+
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::BuyPrice | SortMode::LastSold => SortDir::Asc,
+            SortMode::Roi | SortMode::Profit | SortMode::ProfitPerDay | SortMode::Drift => {
+                SortDir::Desc
+            }
+        }
     }
 }
 
@@ -281,18 +294,43 @@ impl std::fmt::Display for ConfidenceFloor {
 
 /// Sort rows in place. Extracted from the `sorted_data` memo so the
 /// ordering is unit-testable without a reactive runtime.
+///
+/// Only row-local columns are sortable. The enrichment-backed columns —
+/// Velocity, Confidence, Sales/Day, 30d Volume — are fetched lazily for the
+/// *visible* rows only (see the visible-window effect below), so an order
+/// built on them would reshuffle under the cursor as the user scrolls and
+/// batches arrive, and would rank the ~93% of rows without coverage on a
+/// value the column doesn't display.
+///
+/// Rows that can't produce a value — no sales for Last Sold, fewer than 4
+/// buffered sales for Drift — sort last in both directions.
 fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
-    let key = |d: &CalculatedProfitData| -> i32 {
+    rows.sort_by(|a, b| {
+        let ord = |x: i32, y: i32| match dir {
+            SortDir::Asc => x.cmp(&y),
+            SortDir::Desc => y.cmp(&x),
+        };
         match mode {
-            SortMode::Roi => d.return_on_investment,
-            SortMode::Profit => d.profit,
-            SortMode::ProfitPerDay => d.profit_per_day,
+            SortMode::Roi => ord(a.return_on_investment, b.return_on_investment),
+            SortMode::Profit => ord(a.profit, b.profit),
+            SortMode::ProfitPerDay => ord(a.profit_per_day, b.profit_per_day),
+            SortMode::BuyPrice => ord(a.inner.cheapest_price, b.inner.cheapest_price),
+            SortMode::LastSold => cmp_none_last(
+                a.inner.sale_summary.days_since_last_sale,
+                b.inner.sale_summary.days_since_last_sale,
+                dir,
+                Ord::cmp,
+            ),
+            // Recomputed per comparison; `prices` buffers at most 6 samples,
+            // so this stays a couple of additions per row.
+            SortMode::Drift => cmp_none_last(
+                price_drift_pct(&a.inner.prices),
+                price_drift_pct(&b.inner.prices),
+                dir,
+                |x, y| x.total_cmp(y),
+            ),
         }
-    };
-    match dir {
-        SortDir::Desc => rows.sort_by_key(|d| Reverse(key(d))),
-        SortDir::Asc => rows.sort_by_key(key),
-    }
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -436,6 +474,13 @@ impl FromStr for SortMode {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
             "profit-per-day" => Ok(SortMode::ProfitPerDay),
+            "buy-price" => Ok(SortMode::BuyPrice),
+            // These two equal the FILTER_LAST_SOLD / FILTER_MIN_DRIFT query
+            // *keys*, but they live in a different namespace — the value of
+            // `?sort=` — same as the COL_DRIFT / FILTER_MIN_DRIFT overlap
+            // noted where the FILTER_* tokens are declared.
+            "last-sold" => Ok(SortMode::LastSold),
+            "drift" => Ok(SortMode::Drift),
             _ => Err(()),
         }
     }
@@ -447,6 +492,9 @@ impl std::fmt::Display for SortMode {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
             SortMode::ProfitPerDay => "profit-per-day",
+            SortMode::BuyPrice => "buy-price",
+            SortMode::LastSold => "last-sold",
+            SortMode::Drift => "drift",
         };
         f.write_str(val)
     }
@@ -2533,7 +2581,12 @@ fn AnalyzerTable(
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
                                     <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
-                                        {t!(i18n, analyzer_col_drift)}
+                                        <SortHeader
+                                            mode=SortMode::Drift
+                                            label=t_string!(i18n, analyzer_col_drift).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
@@ -2552,7 +2605,12 @@ fn AnalyzerTable(
                                     </div>
                                 })}
                                 <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
-                                    {t!(i18n, analyzer_col_buy_price)}
+                                    <SortHeader
+                                        mode=SortMode::BuyPrice
+                                        label=t_string!(i18n, analyzer_col_buy_price).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 {move || visible_cols().contains(COL_WORLD).then(|| view! {
                                     <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
@@ -2562,14 +2620,16 @@ fn AnalyzerTable(
                                                 world_filter()
                                                     .map(|_filter| {
                                                         view! {
-                                                            <div
+                                                            <button
+                                                                type="button"
+                                                                aria-label=t_string!(i18n, aria_remove_filter)
                                                                 class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
                                                                 on:click=move |_| {
                                                                     set_world_filter(None);
                                                                 }
                                                             >
                                                                 <Icon icon=icondata::MdiFilterRemove />
-                                                            </div>
+                                                            </button>
                                                         }
                                                     })
                                             }}
@@ -2584,14 +2644,16 @@ fn AnalyzerTable(
                                                 datacenter_filter()
                                                     .map(|_filter| {
                                                         view! {
-                                                            <div
+                                                            <button
+                                                                type="button"
+                                                                aria-label=t_string!(i18n, aria_remove_filter)
                                                                 class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
                                                                 on:click=move |_| {
                                                                     set_datacenter_filter(None);
                                                                 }
                                                             >
                                                                 <Icon icon=icondata::MdiFilterRemove />
-                                                            </div>
+                                                            </button>
                                                         }
                                                     })
                                             }}
@@ -2625,7 +2687,12 @@ fn AnalyzerTable(
                                 })}
                                 {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
                                     <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-col leading-tight">
-                                        <span>{t!(i18n, analyzer_col_last_sold)}</span>
+                                        <SortHeader
+                                            mode=SortMode::LastSold
+                                            label=t_string!(i18n, analyzer_col_last_sold).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
@@ -3833,6 +3900,101 @@ mod tests {
         assert_eq!(rows[0].profit_per_day, 99);
     }
 
+    /// Row with the fields the three row-local sortable columns read.
+    fn calc_row(
+        cheapest_price: i32,
+        days_since_secs: Option<i64>,
+        prices: Vec<i32>,
+    ) -> CalculatedProfitData {
+        CalculatedProfitData {
+            inner: Arc::new(ProfitData {
+                estimated_sale_price: 0,
+                cheapest_price,
+                cheapest_world_id: 0,
+                prices,
+                sale_summary: SaleSummary {
+                    item_id: 1,
+                    hq: false,
+                    num_sold: 6,
+                    avg_sale_duration: None,
+                    days_since_last_sale: days_since_secs.map(chrono::Duration::seconds),
+                    max_price: 0,
+                    avg_price: 0,
+                    median_price: 0,
+                    min_price: 0,
+                },
+            }),
+            profit: 0,
+            return_on_investment: 0,
+            profit_per_day: 0,
+        }
+    }
+
+    #[test]
+    fn buy_price_sorts_cheapest_first_by_default() {
+        let mut rows = vec![
+            calc_row(300, None, Vec::new()),
+            calc_row(100, None, Vec::new()),
+            calc_row(200, None, Vec::new()),
+        ];
+        sort_rows(
+            &mut rows,
+            SortMode::BuyPrice,
+            SortMode::BuyPrice.default_dir(),
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.inner.cheapest_price)
+                .collect::<Vec<_>>(),
+            vec![100, 200, 300]
+        );
+    }
+
+    #[test]
+    fn last_sold_sorts_saleless_rows_last_in_both_directions() {
+        let mut rows = vec![
+            calc_row(0, Some(3_600), Vec::new()),
+            calc_row(0, None, Vec::new()),
+            calc_row(0, Some(60), Vec::new()),
+        ];
+        let days = |rows: &[CalculatedProfitData]| {
+            rows.iter()
+                .map(|r| {
+                    r.inner
+                        .sale_summary
+                        .days_since_last_sale
+                        .map(|d| d.num_seconds())
+                })
+                .collect::<Vec<_>>()
+        };
+        sort_rows(&mut rows, SortMode::LastSold, SortDir::Asc);
+        assert_eq!(days(&rows), vec![Some(60), Some(3_600), None]);
+        sort_rows(&mut rows, SortMode::LastSold, SortDir::Desc);
+        assert_eq!(days(&rows), vec![Some(3_600), Some(60), None]);
+    }
+
+    #[test]
+    fn drift_sorts_undriftable_rows_last_in_both_directions() {
+        // Fewer than 4 buffered sales yields no drift at all; those rows must
+        // never displace a row with a real trend, whichever direction.
+        let rising = vec![200, 200, 100, 100]; // newest-first: +100%
+        let falling = vec![100, 100, 200, 200]; // newest-first: -50%
+        let mut rows = vec![
+            calc_row(0, None, falling.clone()),
+            calc_row(0, None, vec![100, 100]),
+            calc_row(0, None, rising.clone()),
+        ];
+        let drifts = |rows: &[CalculatedProfitData]| {
+            rows.iter()
+                .map(|r| price_drift_pct(&r.inner.prices))
+                .collect::<Vec<_>>()
+        };
+        sort_rows(&mut rows, SortMode::Drift, SortDir::Desc);
+        assert_eq!(drifts(&rows), vec![Some(100.0), Some(-50.0), None]);
+        sort_rows(&mut rows, SortMode::Drift, SortDir::Asc);
+        assert_eq!(drifts(&rows), vec![Some(-50.0), Some(100.0), None]);
+    }
+
     #[test]
     fn velocity_floor_prefers_clickhouse_rate_over_derived() {
         // The Velocity column shows the ClickHouse rate whenever the rollup
@@ -4119,15 +4281,39 @@ mod tests {
     }
 
     #[test]
-    fn every_flip_finder_column_reads_best_first_descending() {
+    fn sort_defaults_keep_old_links_meaning() {
         // The shared header omits `dir` whenever it matches the column's
-        // default, so every bookmarked `?sort=` on this route means
-        // descending. Giving a column its own default here would silently
-        // flip what those old links resolve to.
-        for mode in [SortMode::Roi, SortMode::Profit, SortMode::ProfitPerDay] {
+        // default, so every bookmarked `?sort=` on this route resolves
+        // through these. Changing a column's default here silently flips
+        // what those old links mean.
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::ProfitPerDay,
+            SortMode::Drift,
+        ] {
             assert_eq!(mode.default_dir(), SortDir::Desc, "{mode}");
         }
+        for mode in [SortMode::BuyPrice, SortMode::LastSold] {
+            assert_eq!(mode.default_dir(), SortDir::Asc, "{mode}");
+        }
         assert_eq!(<SortMode as SortColumn>::fallback(), SortMode::ProfitPerDay);
+    }
+
+    #[test]
+    fn every_sort_token_round_trips_through_display() {
+        // Display must emit exactly the token FromStr parses back out of
+        // `?sort=` — that round trip is the shared header's whole mechanism.
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::ProfitPerDay,
+            SortMode::BuyPrice,
+            SortMode::LastSold,
+            SortMode::Drift,
+        ] {
+            assert_eq!(SortMode::from_str(&mode.to_string()), Ok(mode));
+        }
     }
 
     #[test]

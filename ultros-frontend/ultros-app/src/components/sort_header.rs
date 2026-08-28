@@ -19,9 +19,10 @@
 //!   different.
 
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
 use leptos_router::location::Location;
 use leptos_router::params::ParamsMap;
+
+use crate::components::app_link::use_location_or_default;
 
 use crate::components::icon::Icon;
 use icondata as i;
@@ -159,6 +160,28 @@ pub fn sort_and_truncate<T>(
     rows.sort_unstable_by(oriented);
 }
 
+/// Compare two optional sort keys so rows without a value sort last in
+/// *both* directions. The direction flip applies only between two present
+/// values — reversing the whole comparator instead would drag the
+/// value-less rows to the top exactly when the user asks for best-first.
+pub fn cmp_none_last<T>(
+    a: Option<T>,
+    b: Option<T>,
+    dir: SortDir,
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(x), Some(y)) => match dir {
+            SortDir::Asc => cmp(&x, &y),
+            SortDir::Desc => cmp(&x, &y).reverse(),
+        },
+    }
+}
+
 /// A complete sortable header cell: the `role="columnheader"` div with a live
 /// `aria-sort`, wrapping a [`SortHeader`] link. Tables that own their cell
 /// markup (responsive classes on the cell, grids) can keep composing
@@ -221,9 +244,11 @@ pub fn SortHeader<M>(
 where
     M: SortColumn,
 {
+    // See `QueryButton`: `use_location()` panics under a dead owner, and this
+    // header renders inside suspended tables.
     let Location {
         pathname, query, ..
-    } = use_location();
+    } = use_location_or_default();
     let is_active = Signal::derive(move || sort_mode.get().unwrap_or_else(M::fallback) == mode);
     let dir = Signal::derive(move || {
         sort_dir
@@ -384,6 +409,15 @@ mod test {
     }
 
     #[test]
+    fn cmp_none_last_keeps_missing_values_last_in_both_directions() {
+        let mut rows = vec![Some(2), None, Some(1), Some(3), None];
+        rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Asc, Ord::cmp));
+        assert_eq!(rows, vec![Some(1), Some(2), Some(3), None, None]);
+        rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Desc, Ord::cmp));
+        assert_eq!(rows, vec![Some(3), Some(2), Some(1), None, None]);
+    }
+
+    #[test]
     fn truncation_follows_the_sort_direction() {
         // The regression this helper exists to prevent: a truncation keyed to
         // a fixed descending metric would keep the LARGEST rows and then sort
@@ -398,5 +432,26 @@ mod test {
         sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
         assert_eq!(rows.len(), 100);
         assert_eq!(rows, (400..500).rev().collect::<Vec<_>>());
+    }
+
+    /// Same defect class as GlitchTip #7278 in `QueryButton`: this header
+    /// reads the location too, so it has to degrade rather than take the SSR
+    /// stream down with it.
+    #[test]
+    fn renders_a_relative_href_without_router_context() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let html = view! {
+                <SortHeader
+                    mode=Col::Cost
+                    label="Cost"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                />
+            }
+            .to_html();
+            assert!(html.contains("href=\"?sort=cost\""), "{html}");
+            assert!(html.contains("Cost"), "{html}");
+        });
     }
 }
