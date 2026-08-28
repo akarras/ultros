@@ -2562,14 +2562,16 @@ fn AnalyzerTable(
                                                 world_filter()
                                                     .map(|_filter| {
                                                         view! {
-                                                            <div
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
+                                                            <button
+                                                                type="button"
+                                                                aria-label=t_string!(i18n, aria_remove_filter)
+                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300"
                                                                 on:click=move |_| {
                                                                     set_world_filter(None);
                                                                 }
                                                             >
                                                                 <Icon icon=icondata::MdiFilterRemove />
-                                                            </div>
+                                                            </button>
                                                         }
                                                     })
                                             }}
@@ -2584,14 +2586,16 @@ fn AnalyzerTable(
                                                 datacenter_filter()
                                                     .map(|_filter| {
                                                         view! {
-                                                            <div
-                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300 cursor-pointer"
+                                                            <button
+                                                                type="button"
+                                                                aria-label=t_string!(i18n, aria_remove_filter)
+                                                                class="hover:text-brand-200 transition-colors rounded-sm p-2 text-brand-300"
                                                                 on:click=move |_| {
                                                                     set_datacenter_filter(None);
                                                                 }
                                                             >
                                                                 <Icon icon=icondata::MdiFilterRemove />
-                                                            </div>
+                                                            </button>
                                                         }
                                                     })
                                             }}

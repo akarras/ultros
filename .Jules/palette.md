@@ -1,0 +1,3 @@
+## 2024-05-18 - [Add aria-label to clear filter buttons]
+**Learning:** Found some clear filter buttons in the analyzer that were just div's with on:click handlers. These lack proper semantics and default keyboard accessibility. Replaced them with <button type="button"> and added an aria-label using the existing aria_remove_filter translation key. This is a common pattern in the app (seen in vendor_resale.rs and filter_chip.rs), so it is a good, reusable enhancement. Also, adding type="button" to non-submit buttons prevents accidental form submission.
+**Action:** Always prefer <button> elements over div with on:click for actions. If it's an icon-only button, ensure it has an aria-label.
