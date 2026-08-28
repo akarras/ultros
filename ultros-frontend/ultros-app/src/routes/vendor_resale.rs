@@ -11,7 +11,7 @@ use crate::{
         meta::*,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
-        sort_header::{SortColumn, SortDir, SortHeader},
+        sort_header::{SortColumn, SortDir, SortHeader, cmp_none_last},
         tool_help::*,
         toolbar::{Toolbar, ToolbarField, ToolbarPills},
         virtual_scroller::*,
@@ -32,7 +32,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
 };
-use std::{cmp::Reverse, collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -64,6 +64,9 @@ struct CalculatedVendorProfitData {
 enum SortMode {
     Roi,
     Profit,
+    VendorPrice,
+    MarketPrice,
+    SaleTime,
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +170,9 @@ impl FromStr for SortMode {
         match s {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
+            "vendor-price" => Ok(SortMode::VendorPrice),
+            "market-price" => Ok(SortMode::MarketPrice),
+            "sale-time" => Ok(SortMode::SaleTime),
             _ => Err(()),
         }
     }
@@ -177,17 +183,56 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
+            SortMode::VendorPrice => "vendor-price",
+            SortMode::MarketPrice => "market-price",
+            SortMode::SaleTime => "sale-time",
         };
         f.write_str(val)
     }
 }
 
-/// Both columns read best-first descending — the biggest margin, the biggest
-/// return — so the shared default direction applies unchanged.
+/// Profit, ROI and market price read best-first descending — the biggest
+/// margin, return, or payout. Vendor price is a cost and avg sale time a
+/// wait, so a fresh click on those starts ascending: cheapest to buy in,
+/// fastest to move out.
 impl SortColumn for SortMode {
     fn fallback() -> Self {
         SortMode::Roi
     }
+
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::Roi | SortMode::Profit | SortMode::MarketPrice => SortDir::Desc,
+            SortMode::VendorPrice | SortMode::SaleTime => SortDir::Asc,
+        }
+    }
+}
+
+/// Sort rows in place. Extracted from the `sorted_data` memo so the ordering
+/// is unit-testable without a reactive runtime. Rows without sale history
+/// sort last under Avg Sale Time in both directions.
+fn sort_rows(rows: &mut [CalculatedVendorProfitData], mode: SortMode, dir: SortDir) {
+    rows.sort_by(|a, b| {
+        let ord = |x: i32, y: i32| match dir {
+            SortDir::Asc => x.cmp(&y),
+            SortDir::Desc => y.cmp(&x),
+        };
+        match mode {
+            SortMode::Roi => ord(a.return_on_investment, b.return_on_investment),
+            SortMode::Profit => ord(a.profit, b.profit),
+            SortMode::VendorPrice => ord(a.inner.vendor_price, b.inner.vendor_price),
+            SortMode::MarketPrice => ord(a.inner.market_price, b.inner.market_price),
+            SortMode::SaleTime => {
+                let dur = |d: &CalculatedVendorProfitData| {
+                    d.inner
+                        .sale_summary
+                        .as_ref()
+                        .and_then(|s| s.avg_sale_duration)
+                };
+                cmp_none_last(dur(a), dur(b), dir, Ord::cmp)
+            }
+        }
+    });
 }
 
 impl VendorProfitTable {
@@ -380,15 +425,11 @@ fn VendorResaleTable(
         // descending arrow, so the one direction the table could produce was
         // also the only one it claimed. The shared header can now reach `asc`.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
-        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        let key = |data: &CalculatedVendorProfitData| match mode {
-            SortMode::Roi => data.return_on_investment,
-            SortMode::Profit => data.profit,
-        };
-        match dir {
-            SortDir::Desc => sorted_data.sort_by_key(|data| Reverse(key(data))),
-            SortDir::Asc => sorted_data.sort_by_key(key),
-        }
+        sort_rows(
+            &mut sorted_data,
+            mode,
+            sort_dir().unwrap_or_else(|| mode.default_dir()),
+        );
         sorted_data
             .into_iter()
             .enumerate()
@@ -662,13 +703,28 @@ fn VendorResaleTable(
                                     />
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    {t!(i18n, vendor_resale_vendor_price)}
+                                    <SortHeader
+                                        mode=SortMode::VendorPrice
+                                        label=t_string!(i18n, vendor_resale_vendor_price).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 <div role="columnheader" class="w-30 p-4">
-                                    {t!(i18n, vendor_resale_market_price)}
+                                    <SortHeader
+                                        mode=SortMode::MarketPrice
+                                        label=t_string!(i18n, vendor_resale_market_price).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                                 <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                    {t!(i18n, vendor_resale_avg_sale_time)}
+                                    <SortHeader
+                                        mode=SortMode::SaleTime
+                                        label=t_string!(i18n, vendor_resale_avg_sale_time).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
                                 </div>
                             </div>
                         }.into_any()
@@ -1006,9 +1062,135 @@ mod tests {
         // Valid states matching URL query parameters
         assert_eq!(SortMode::from_str("roi"), Ok(SortMode::Roi));
         assert_eq!(SortMode::from_str("profit"), Ok(SortMode::Profit));
+        assert_eq!(
+            SortMode::from_str("vendor-price"),
+            Ok(SortMode::VendorPrice)
+        );
+        assert_eq!(
+            SortMode::from_str("market-price"),
+            Ok(SortMode::MarketPrice)
+        );
+        assert_eq!(SortMode::from_str("sale-time"), Ok(SortMode::SaleTime));
         // Verify invalid options trigger fallback/error paths instead of parsing panic
         assert_eq!(SortMode::from_str("unknown"), Err(()));
         assert_eq!(SortMode::from_str(""), Err(()));
+    }
+
+    #[test]
+    fn every_sort_token_round_trips_through_display() {
+        // Display must emit exactly the token FromStr parses — that round
+        // trip through `?sort=` is the whole mechanism of the shared header.
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::VendorPrice,
+            SortMode::MarketPrice,
+            SortMode::SaleTime,
+        ] {
+            assert_eq!(SortMode::from_str(&mode.to_string()), Ok(mode));
+        }
+    }
+
+    #[test]
+    fn sort_defaults_keep_old_links_meaning() {
+        // The shared header omits `dir` when it matches the column's default,
+        // so bookmarked `?sort=` links resolve through these. Flipping one
+        // silently changes what old links mean.
+        for mode in [SortMode::Roi, SortMode::Profit, SortMode::MarketPrice] {
+            assert_eq!(mode.default_dir(), SortDir::Desc, "{mode}");
+        }
+        for mode in [SortMode::VendorPrice, SortMode::SaleTime] {
+            assert_eq!(mode.default_dir(), SortDir::Asc, "{mode}");
+        }
+        assert_eq!(<SortMode as SortColumn>::fallback(), SortMode::Roi);
+    }
+
+    fn calc(
+        vendor_price: i32,
+        market_price: i32,
+        avg_secs: Option<i64>,
+    ) -> CalculatedVendorProfitData {
+        CalculatedVendorProfitData {
+            inner: Arc::new(VendorProfitData {
+                item_id: 1,
+                vendor_price,
+                market_price,
+                sale_summary: avg_secs.map(|secs| SaleSummary {
+                    item_id: 1,
+                    hq: false,
+                    num_sold: 6,
+                    avg_sale_duration: Some(Duration::seconds(secs)),
+                    days_since_last_sale: None,
+                    max_price: 0,
+                    avg_price: 0,
+                    median_price: 0,
+                    min_price: 0,
+                }),
+            }),
+            profit: market_price - vendor_price,
+            return_on_investment: 0,
+        }
+    }
+
+    #[test]
+    fn vendor_price_sorts_cheapest_first_by_default() {
+        let mut rows = vec![calc(30, 0, None), calc(10, 0, None), calc(20, 0, None)];
+        sort_rows(
+            &mut rows,
+            SortMode::VendorPrice,
+            SortMode::VendorPrice.default_dir(),
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.inner.vendor_price)
+                .collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn market_price_sorts_both_directions() {
+        let mut rows = vec![calc(0, 10, None), calc(0, 30, None), calc(0, 20, None)];
+        sort_rows(&mut rows, SortMode::MarketPrice, SortDir::Desc);
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.inner.market_price)
+                .collect::<Vec<_>>(),
+            vec![30, 20, 10]
+        );
+        sort_rows(&mut rows, SortMode::MarketPrice, SortDir::Asc);
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.inner.market_price)
+                .collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn sale_time_sorts_rows_without_history_last_in_both_directions() {
+        // A row with no sales has no avg sale time; whichever direction is
+        // asked for, it must never displace a row that has real data.
+        let mut rows = vec![
+            calc(0, 0, Some(300)),
+            calc(0, 0, None),
+            calc(0, 0, Some(100)),
+        ];
+        sort_rows(&mut rows, SortMode::SaleTime, SortDir::Asc);
+        let times = |rows: &[CalculatedVendorProfitData]| {
+            rows.iter()
+                .map(|r| {
+                    r.inner
+                        .sale_summary
+                        .as_ref()
+                        .and_then(|s| s.avg_sale_duration)
+                        .map(|d| d.num_seconds())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(times(&rows), vec![Some(100), Some(300), None]);
+        sort_rows(&mut rows, SortMode::SaleTime, SortDir::Desc);
+        assert_eq!(times(&rows), vec![Some(300), Some(100), None]);
     }
 
     /// Builds just the fields `is_suspicious_market_price` reads.

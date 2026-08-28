@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-08-28",
+        title: "Sort by any column that has a number",
+        blurb: "Vendor resale now sorts by vendor price, market price, and average sale time, and Flip Finder by buy price, price drift, and last sold. Cost and time columns start best-first: cheapest buy-in, most recent sale.",
+        link: Some("/vendor-resale"),
+    },
+    ChangelogEntry {
         date: "2026-08-23",
         title: "Gear sets without the Ornate outliers",
         blurb: "Ornate crafted pieces cost many times more than the regular version of the same gear, so they no longer get averaged into a job's gear set. They are still listed, just on their own.",
