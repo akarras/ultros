@@ -160,6 +160,28 @@ pub fn sort_and_truncate<T>(
     rows.sort_unstable_by(oriented);
 }
 
+/// Compare two optional sort keys so rows without a value sort last in
+/// *both* directions. The direction flip applies only between two present
+/// values — reversing the whole comparator instead would drag the
+/// value-less rows to the top exactly when the user asks for best-first.
+pub fn cmp_none_last<T>(
+    a: Option<T>,
+    b: Option<T>,
+    dir: SortDir,
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(x), Some(y)) => match dir {
+            SortDir::Asc => cmp(&x, &y),
+            SortDir::Desc => cmp(&x, &y).reverse(),
+        },
+    }
+}
+
 /// A complete sortable header cell: the `role="columnheader"` div with a live
 /// `aria-sort`, wrapping a [`SortHeader`] link. Tables that own their cell
 /// markup (responsive classes on the cell, grids) can keep composing
@@ -384,6 +406,15 @@ mod test {
         assert_eq!(rows, vec![1, 2, 3]);
         sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
         assert_eq!(rows, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn cmp_none_last_keeps_missing_values_last_in_both_directions() {
+        let mut rows = vec![Some(2), None, Some(1), Some(3), None];
+        rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Asc, Ord::cmp));
+        assert_eq!(rows, vec![Some(1), Some(2), Some(3), None, None]);
+        rows.sort_by(|a, b| cmp_none_last(*a, *b, SortDir::Desc, Ord::cmp));
+        assert_eq!(rows, vec![Some(3), Some(2), Some(1), None, None]);
     }
 
     #[test]
