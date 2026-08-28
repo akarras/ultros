@@ -165,6 +165,67 @@ pub struct SaleView {
     pub total: i32,
 }
 
+/// Response of `/api/v2/aggregated/{world}/{ids}` — Universalis' cached
+/// per-item market summary (served straight from their Redis, so it reflects
+/// the same state their listing boards are built from). Only the fields the
+/// drift probe needs are modeled; the endpoint also carries recent-purchase,
+/// average-price and sale-velocity blocks that are ignored here.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedView {
+    #[serde(default)]
+    pub results: Vec<AggregatedItemView>,
+    /// Item ids Universalis could not answer for (unknown/unmarketable items).
+    #[serde(default)]
+    pub failed_items: Vec<i32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedItemView {
+    pub item_id: i32,
+    #[serde(default)]
+    pub nq: AggregatedQualityView,
+    #[serde(default)]
+    pub hq: AggregatedQualityView,
+}
+
+/// A quality (NQ or HQ) block. When an item has no listings of that quality
+/// the block is present but empty (`"hq": {"minListing": {}}`), hence the
+/// defaults all the way down.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedQualityView {
+    #[serde(default)]
+    pub min_listing: AggregatedScopesView,
+}
+
+/// Scope breakdown of an aggregated statistic. Requests scoped to a world get
+/// a `world` entry only when that world has data; `dc`/`region` are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedScopesView {
+    #[serde(default)]
+    pub world: Option<AggregatedPriceView>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedPriceView {
+    pub price: i64,
+}
+
+impl AggregatedItemView {
+    /// Cheapest listed price on the queried world as (nq, hq), `None` where
+    /// that quality has no listings.
+    pub fn world_min_prices(&self) -> (Option<i64>, Option<i64>) {
+        (
+            self.nq.min_listing.world.as_ref().map(|p| p.price),
+            self.hq.min_listing.world.as_ref().map(|p| p.price),
+        )
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum MarketView {
@@ -442,6 +503,30 @@ impl UniversalisClient {
         })
     }
 
+    /// `/aggregated/{world_or_datacenter}/{ids}` — cached per-item min prices
+    /// and market stats. Far cheaper for Universalis to serve than the full
+    /// board endpoint (pure cache read), so it is the right primitive for
+    /// checking whether our stored boards have drifted from theirs. At most
+    /// 100 ids per request, like the other item-list endpoints.
+    pub async fn aggregated_market_data(
+        &self,
+        world_or_datacenter: &str,
+        item_ids: &[i32],
+    ) -> Result<AggregatedView, Error> {
+        if item_ids.is_empty() {
+            return Err(Error::NoItems);
+        }
+        let id_str = Self::ids_to_string(item_ids);
+        let url = format!(
+            "{}/aggregated/{world_or_datacenter}/{id_str}",
+            Self::UNIVERSALIS_BASE_URL
+        );
+        let request = Request::new(Method::GET, Url::parse(&url)?);
+        info!("Getting aggregated marketboard data: {}", request.url());
+        let response = self.client.execute(request).await?;
+        checked_json(&url, response).await
+    }
+
     pub async fn get_item_history(
         &self,
         world_or_datacenter: &str,
@@ -484,6 +569,64 @@ impl UniversalisClient {
     fn ids_to_string(item_ids: &[i32]) -> String {
         let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
         id_strs.join(",")
+    }
+}
+
+#[cfg(test)]
+mod aggregated_test {
+    use crate::AggregatedView;
+
+    /// Trimmed from a live `/api/v2/aggregated/Jenova/13708,4650,99999999`
+    /// response (2026-08-27): item 13708 has NQ listings only (empty `hq`
+    /// block), 4650 has both qualities, and the unknown id lands in
+    /// `failedItems`. The unmodeled blocks (recentPurchase etc.) stay in the
+    /// body to prove they are tolerated.
+    const BODY: &str = r#"{
+      "results": [
+        {
+          "itemId": 13708,
+          "nq": {
+            "minListing": {
+              "world": {"price": 33997},
+              "dc": {"price": 33997, "worldId": 40},
+              "region": {"price": 22222, "worldId": 78}
+            },
+            "recentPurchase": {"world": {"price": 33999, "timestamp": 1787889646000}},
+            "averageSalePrice": {"world": {"price": 30790.766169154227}},
+            "dailySaleVelocity": {"world": {"quantity": 62.58118970983941}}
+          },
+          "hq": {"minListing": {}, "recentPurchase": {}, "averageSalePrice": {}, "dailySaleVelocity": {}},
+          "worldUploadTimes": [{"worldId": 40, "timestamp": 1787892994191}]
+        },
+        {
+          "itemId": 4650,
+          "nq": {"minListing": {"world": {"price": 138}}},
+          "hq": {"minListing": {"world": {"price": 690420}}}
+        }
+      ],
+      "failedItems": [99999999]
+    }"#;
+
+    #[test]
+    fn parses_live_shape_and_reads_world_min_prices() {
+        let view: AggregatedView = serde_json::from_str(BODY).unwrap();
+        assert_eq!(view.failed_items, [99999999]);
+        assert_eq!(view.results.len(), 2);
+        assert_eq!(view.results[0].item_id, 13708);
+        assert_eq!(view.results[0].world_min_prices(), (Some(33997), None));
+        assert_eq!(
+            view.results[1].world_min_prices(),
+            (Some(138), Some(690420))
+        );
+    }
+
+    /// A world request for an item with no listings at all still returns the
+    /// item, with both quality blocks empty.
+    #[test]
+    fn empty_market_is_none_none() {
+        let body = r#"{"results": [{"itemId": 7, "nq": {"minListing": {}}, "hq": {"minListing": {}}}], "failedItems": []}"#;
+        let view: AggregatedView = serde_json::from_str(body).unwrap();
+        assert_eq!(view.results[0].world_min_prices(), (None, None));
     }
 }
 
