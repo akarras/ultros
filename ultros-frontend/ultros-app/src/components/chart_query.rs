@@ -10,25 +10,34 @@ use std::str::FromStr;
 
 /// A quick-range button. Anchored to *now*, not to the newest data point, so
 /// a shared `?range=7d` link means the same thing to every viewer.
+///
+/// `All` is a real preset rather than "no params": since the default range
+/// became dynamic (see [`dynamic_default_preset`]), the absence of range
+/// params means "let the chart decide", so pinning the full-history view
+/// needs an explicit `?range=all`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RangePreset {
     Week,
     Month,
     Year,
+    All,
 }
 
 impl RangePreset {
-    /// Display order for the button row.
-    pub const ALL: [RangePreset; 3] = [Self::Week, Self::Month, Self::Year];
+    /// Display order for the windowed-preset button row. `All` renders as
+    /// its own button after these.
+    pub const WINDOWS: [RangePreset; 3] = [Self::Week, Self::Month, Self::Year];
 
-    /// Window length in seconds. A month is 30 days and a year 365; these
-    /// are button labels, not calendar arithmetic.
-    pub fn seconds(self) -> i64 {
+    /// Window length in seconds, or `None` for full history. A month is 30
+    /// days and a year 365; these are button labels, not calendar
+    /// arithmetic.
+    pub fn window_seconds(self) -> Option<i64> {
         const DAY: i64 = 86_400;
         match self {
-            Self::Week => 7 * DAY,
-            Self::Month => 30 * DAY,
-            Self::Year => 365 * DAY,
+            Self::Week => Some(7 * DAY),
+            Self::Month => Some(30 * DAY),
+            Self::Year => Some(365 * DAY),
+            Self::All => None,
         }
     }
 }
@@ -40,6 +49,7 @@ impl std::fmt::Display for RangePreset {
             Self::Week => "7d",
             Self::Month => "1mo",
             Self::Year => "1y",
+            Self::All => "all",
         })
     }
 }
@@ -52,6 +62,7 @@ impl FromStr for RangePreset {
             "7d" => Ok(Self::Week),
             "1mo" => Ok(Self::Month),
             "1y" => Ok(Self::Year),
+            "all" => Ok(Self::All),
             _ => Err(()),
         }
     }
@@ -71,7 +82,9 @@ pub fn resolve_range(
     now: i64,
 ) -> Option<(i64, i64)> {
     match preset {
-        Some(preset) => Some((now - preset.seconds(), now)),
+        // `All` is explicit full history — the same shape as "no params"
+        // used to mean before the default became dynamic.
+        Some(preset) => preset.window_seconds().map(|seconds| (now - seconds, now)),
         // An inverted pair (e.g. a hand-edited `?from` > `?to`) would make
         // the server 400, leaving `series`/`available_domain` `None` and
         // hiding the whole slicer — including the "All" button — so the
@@ -85,9 +98,100 @@ pub fn resolve_range(
 ///
 /// False means the newest sale predates the whole window, so clicking the
 /// button would blank the chart — the button is disabled with a reason
-/// instead.
+/// instead. Full history always has whatever data exists.
 pub fn preset_has_data(preset: RangePreset, domain_end: i64, now: i64) -> bool {
-    domain_end >= now - preset.seconds()
+    match preset.window_seconds() {
+        Some(seconds) => domain_end >= now - seconds,
+        None => true,
+    }
+}
+
+// ── Dynamic default range ────────────────────────────────────────────────
+//
+// With no range params in the URL, the chart used to show full history.
+// For frequently-traded items that buries the recent market under years of
+// coarse buckets, so the default is now decided from the item's newest sale
+// — data the item page has already fetched for its listings panel.
+
+/// What is known about the item's newest sale when the default is decided.
+///
+/// `Pending` while the listings payload is still in flight — the fetch
+/// layer must *wait* rather than guess, or a hot item would fetch (and
+/// flash) the misleading full-history view before narrowing to a week.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaleProbe {
+    Pending,
+    /// The newest sale's epoch seconds, or `None` for an item with no
+    /// recorded sales at all.
+    Known(Option<i64>),
+}
+
+/// The chart's effective time window once every input is considered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeDecision {
+    /// Don't fetch yet — the dynamic default is still waiting on the
+    /// listings payload.
+    Pending,
+    /// Fetch this window (`None` = full history).
+    Resolved(Option<(i64, i64)>),
+}
+
+/// The preset an item defaults to when the URL doesn't say: the last week
+/// if the newest sale is that recent, otherwise full history.
+pub fn dynamic_default_preset(newest_sale: Option<i64>, now: i64) -> RangePreset {
+    let week = RangePreset::Week
+        .window_seconds()
+        .expect("Week is a windowed preset");
+    match newest_sale {
+        Some(ts) if ts >= now - week => RangePreset::Week,
+        _ => RangePreset::All,
+    }
+}
+
+/// Resolve every range input into what the chart should fetch.
+///
+/// Explicit URL params always win (same precedence as [`resolve_range`]);
+/// the dynamic default only fills their absence, and is `Pending` until the
+/// newest-sale probe resolves.
+pub fn decide_range(
+    preset: Option<RangePreset>,
+    from_to: Option<(i64, i64)>,
+    probe: SaleProbe,
+    now: i64,
+) -> RangeDecision {
+    if preset.is_some() || from_to.is_some() {
+        return RangeDecision::Resolved(resolve_range(preset, from_to, now));
+    }
+    match probe {
+        SaleProbe::Pending => RangeDecision::Pending,
+        SaleProbe::Known(newest_sale) => RangeDecision::Resolved(resolve_range(
+            Some(dynamic_default_preset(newest_sale, now)),
+            None,
+            now,
+        )),
+    }
+}
+
+/// The preset button that should render pressed, dynamic default included.
+///
+/// `None` while the probe is pending or while an absolute `?from`/`?to`
+/// selection is active — a dragged window is no preset.
+pub fn effective_preset(
+    preset: Option<RangePreset>,
+    from_to: Option<(i64, i64)>,
+    probe: SaleProbe,
+    now: i64,
+) -> Option<RangePreset> {
+    if preset.is_some() {
+        return preset;
+    }
+    if from_to.is_some() {
+        return None;
+    }
+    match probe {
+        SaleProbe::Pending => None,
+        SaleProbe::Known(newest_sale) => Some(dynamic_default_preset(newest_sale, now)),
+    }
 }
 
 // ── `show`: a visibility expression ──────────────────────────────────────
@@ -324,12 +428,13 @@ mod tests {
 
     #[test]
     fn range_preset_wire_format_round_trips() {
-        for preset in RangePreset::ALL {
+        for preset in RangePreset::WINDOWS.into_iter().chain([RangePreset::All]) {
             assert_eq!(preset.to_string().parse::<RangePreset>(), Ok(preset));
         }
         assert_eq!(RangePreset::Week.to_string(), "7d");
         assert_eq!(RangePreset::Month.to_string(), "1mo");
         assert_eq!(RangePreset::Year.to_string(), "1y");
+        assert_eq!(RangePreset::All.to_string(), "all");
     }
 
     #[test]
@@ -388,6 +493,121 @@ mod tests {
     #[test]
     fn a_domain_ending_exactly_at_the_window_start_is_available() {
         assert!(preset_has_data(RangePreset::Week, NOW - 7 * DAY, NOW));
+    }
+
+    // ── Dynamic default ──────────────────────────────────────────────────
+
+    // The explicit full-history preset: the URL shape the All button writes
+    // now that "no params" means "let the chart decide".
+    #[test]
+    fn the_all_preset_resolves_to_full_history() {
+        assert_eq!(resolve_range(Some(RangePreset::All), None, NOW), None);
+        // ...and beats absolute bounds like every other preset.
+        assert_eq!(
+            resolve_range(Some(RangePreset::All), Some((1, 2)), NOW),
+            None
+        );
+        assert!(preset_has_data(RangePreset::All, NOW - 3650 * DAY, NOW));
+    }
+
+    #[test]
+    fn a_recent_sale_defaults_to_the_week_window() {
+        assert_eq!(
+            dynamic_default_preset(Some(NOW - 1), NOW),
+            RangePreset::Week
+        );
+        // Exactly seven days old still counts as within the window, matching
+        // `preset_has_data`'s inclusive boundary.
+        assert_eq!(
+            dynamic_default_preset(Some(NOW - 7 * DAY), NOW),
+            RangePreset::Week
+        );
+    }
+
+    #[test]
+    fn a_stale_or_absent_newest_sale_defaults_to_full_history() {
+        assert_eq!(
+            dynamic_default_preset(Some(NOW - 7 * DAY - 1), NOW),
+            RangePreset::All
+        );
+        assert_eq!(dynamic_default_preset(None, NOW), RangePreset::All);
+    }
+
+    // Explicit params must never wait on (or be overridden by) the probe.
+    #[test]
+    fn explicit_params_resolve_without_waiting_for_the_probe() {
+        assert_eq!(
+            decide_range(Some(RangePreset::Month), None, SaleProbe::Pending, NOW),
+            RangeDecision::Resolved(Some((NOW - 30 * DAY, NOW)))
+        );
+        assert_eq!(
+            decide_range(None, Some((1, 2)), SaleProbe::Pending, NOW),
+            RangeDecision::Resolved(Some((1, 2)))
+        );
+        assert_eq!(
+            decide_range(
+                Some(RangePreset::All),
+                None,
+                SaleProbe::Known(Some(NOW)),
+                NOW
+            ),
+            RangeDecision::Resolved(None)
+        );
+    }
+
+    // The no-flash rule: with nothing in the URL, the fetch waits for the
+    // probe rather than fetching full history and narrowing after.
+    #[test]
+    fn an_undecided_default_is_pending_not_full_history() {
+        assert_eq!(
+            decide_range(None, None, SaleProbe::Pending, NOW),
+            RangeDecision::Pending
+        );
+    }
+
+    #[test]
+    fn the_dynamic_default_resolves_from_the_probe() {
+        assert_eq!(
+            decide_range(None, None, SaleProbe::Known(Some(NOW - DAY)), NOW),
+            RangeDecision::Resolved(Some((NOW - 7 * DAY, NOW)))
+        );
+        assert_eq!(
+            decide_range(None, None, SaleProbe::Known(Some(NOW - 30 * DAY)), NOW),
+            RangeDecision::Resolved(None)
+        );
+        assert_eq!(
+            decide_range(None, None, SaleProbe::Known(None), NOW),
+            RangeDecision::Resolved(None)
+        );
+    }
+
+    // The pressed button mirrors the decision: 7d lights up for a hot item's
+    // dynamic default, All for a slow item's, nothing while pending or while
+    // a dragged absolute window is active.
+    #[test]
+    fn effective_preset_reflects_the_dynamic_default() {
+        assert_eq!(
+            effective_preset(None, None, SaleProbe::Known(Some(NOW - DAY)), NOW),
+            Some(RangePreset::Week)
+        );
+        assert_eq!(
+            effective_preset(None, None, SaleProbe::Known(None), NOW),
+            Some(RangePreset::All)
+        );
+        assert_eq!(effective_preset(None, None, SaleProbe::Pending, NOW), None);
+        assert_eq!(
+            effective_preset(None, Some((1, 2)), SaleProbe::Known(Some(NOW)), NOW),
+            None
+        );
+        assert_eq!(
+            effective_preset(
+                Some(RangePreset::Year),
+                None,
+                SaleProbe::Known(Some(NOW)),
+                NOW
+            ),
+            Some(RangePreset::Year)
+        );
     }
 
     fn series() -> Vec<String> {
