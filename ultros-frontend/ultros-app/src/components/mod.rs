@@ -18,6 +18,7 @@ pub mod confidence_badge;
 pub mod control_bar;
 pub mod crafter_settings;
 pub mod crafting_cost;
+pub mod data_table;
 pub mod datacenter_name;
 pub mod dismissable;
 pub(crate) mod endpoint_picker;
