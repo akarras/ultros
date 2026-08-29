@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Venture, leve, recipe, and FC crafting analyzers get filter chips",
+        blurb: "The four crafting/gathering analyzers now use the same sticky filter bar as Flip Finder: only the filters you've set take up space, each shown as an editable chip, with a Clear all button. Every filter still works from the same bookmark links as before.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "You can now leave a group you've joined",
         blurb: "Members can leave a group from its member list instead of asking the owner to remove them. The owner still manages the group itself.",
         link: Some("/groups"),
