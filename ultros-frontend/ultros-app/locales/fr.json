@@ -1418,7 +1418,7 @@
     "vendor_resale_filter_sales_min_label": "Ventes (Min, sur 6)",
     "vendor_resale_filter_category_label": "Catégorie",
     "vendor_resale_filter_prices_label": "Prix",
-    "vendor_resale_tax_post": "Apres taxe",
+    "vendor_resale_tax_post": "Après taxe",
     "vendor_resale_tax_pre": "Avant taxe",
     "vendor_resale_filter_max_sale_time_label": "Durée de vente max.",
     "vendor_resale_tool_summary_v2": "Trouvez les objets vendus par les PNJ susceptibles d'être rentables en NQ pour la revente sur le monde sélectionné.",

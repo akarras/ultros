@@ -1,9 +1,10 @@
 //! Sticky control bar: the filter surface every tool page shares.
 //!
-//! Grew up inline in the Flip Finder and is the target look for the rest of
-//! the tools (#1133), which still use the older `Toolbar` idiom — a stack of
-//! labelled fields that renders every filter whether it is in use or not, and
-//! then echoes the active ones in a second hand-rolled chip row.
+//! Grew up inline in the Flip Finder and is now the standard filter surface
+//! across the tools (#1133, #1127). It replaced the older `Toolbar` idiom —
+//! a stack of labelled fields that rendered every filter whether it was in
+//! use or not, and then echoed the active ones in a second hand-rolled chip
+//! row — which is deleted.
 //!
 //! The shape here is the opposite: **only active filters take space.** Row 1
 //! is the result count plus view-level controls; row 2 is one [`FilterChip`]
