@@ -202,18 +202,50 @@ async fn init_db(
     Ok(())
 }
 
+/// Resolve the environment name Sentry will actually stamp on every event.
+///
+/// This must mirror `sentry::init`'s own defaulting, because that is what
+/// decides the `environment` tag we see in Glitchtip. `apply_defaults`
+/// (sentry-0.49 `defaults.rs:88`) fills an unset `ClientOptions::environment`
+/// from `SENTRY_ENVIRONMENT`, and failing that from the build profile:
+/// `"development"` for a debug build, `"production"` for a release build.
+///
+/// So an unset `GLITCHTIP_ENVIRONMENT` does **not** mean "unknown". A local
+/// `cargo run` with the DSN in `.env` is already reporting as `development` —
+/// it just never told us, which is exactly how the guard below was bypassed.
+fn resolve_environment(
+    glitchtip_environment: Option<&str>,
+    sentry_environment: Option<&str>,
+    debug_build: bool,
+) -> String {
+    glitchtip_environment
+        .or(sentry_environment)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if debug_build {
+                "development"
+            } else {
+                "production"
+            }
+            .to_owned()
+        })
+}
+
 /// Whether Glitchtip/Sentry error reporting should be suppressed for this
-/// process based on the configured environment.
+/// process, given the *resolved* environment from [`resolve_environment`].
 ///
 /// We deliberately *never* ship events from a `development` environment to the
 /// shared production Glitchtip: a local dev box that has `GLITCHTIP_DSN` set
 /// would otherwise pollute prod with cold-start noise (see the init site in
 /// `main`). This is an allow-list-shaped check — only the exact `development`
-/// value is suppressed, so production (`production`) and any unset/other value
-/// still report, which fails safe if `GLITCHTIP_ENVIRONMENT` is ever
-/// misconfigured on the real deployment.
-fn error_reporting_disabled(environment: Option<&str>) -> bool {
-    environment == Some("development")
+/// value is suppressed, so `production` and any other value still report,
+/// which fails safe if the environment is ever misconfigured on the real
+/// deployment.
+///
+/// Takes `&str` rather than `Option<&str>` on purpose: resolving first is what
+/// keeps this decision and Sentry's `environment` tag from disagreeing.
+fn error_reporting_disabled(environment: &str) -> bool {
+    environment == "development"
 }
 
 /// Format a panic's `#[track_caller]` source location as `file:line:column`.
@@ -312,10 +344,20 @@ async fn main() -> Result<()> {
     // GLITCHTIP_TRACES_SAMPLE_RATE controls performance/transaction sampling:
     // 0.0 disables (default — matches prior behavior), 1.0 sends every request.
     // Glitchtip 4.x and Sentry both accept transaction envelopes.
-    let environment = std::env::var("GLITCHTIP_ENVIRONMENT").ok();
+    //
+    // Resolve the environment the same way Sentry would *before* gating on it:
+    // gating on the raw `GLITCHTIP_ENVIRONMENT` alone let an unset value
+    // through, and Sentry then stamped those very events `development` itself
+    // (Glitchtip #6868/#6869 and the whole `ClickHouse … (unavailable)`
+    // cluster — ~22k events from `Bahamut`, a debug build with the prod DSN).
+    let environment = resolve_environment(
+        std::env::var("GLITCHTIP_ENVIRONMENT").ok().as_deref(),
+        std::env::var("SENTRY_ENVIRONMENT").ok().as_deref(),
+        cfg!(debug_assertions),
+    );
     let _sentry_guard = std::env::var("GLITCHTIP_DSN")
         .ok()
-        .filter(|_| !error_reporting_disabled(environment.as_deref()))
+        .filter(|_| !error_reporting_disabled(&environment))
         .map(|dsn| {
             // Clamped rather than passed through: 0.48 took this as a plain
             // struct field and tolerated anything, but 0.49's setter *panics*
@@ -336,7 +378,7 @@ async fn main() -> Result<()> {
             // The remaining fields are still public and assignable directly.
             let mut options = sentry::ClientOptions::new().traces_sample_rate(traces_sample_rate);
             options.release = sentry::release_name!();
-            options.environment = environment.clone().map(Into::into);
+            options.environment = Some(environment.clone().into());
             options.attach_stacktrace = true;
             options.send_default_pii = false;
             sentry::init((dsn, options))
@@ -558,24 +600,70 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::error_reporting_disabled;
+    use super::{error_reporting_disabled, resolve_environment};
 
     #[test]
     fn development_environment_suppresses_reporting() {
         // A dev box (GLITCHTIP_ENVIRONMENT=development) must never reach the
         // shared production Glitchtip, even with GLITCHTIP_DSN set. Regression
         // guard for the #2214-#2217 cold-start pool-timeout flood.
-        assert!(error_reporting_disabled(Some("development")));
+        assert!(error_reporting_disabled("development"));
     }
 
     #[test]
     fn production_and_other_environments_still_report() {
         // Fail safe: anything that isn't exactly "development" reports, so a
-        // misconfigured / unset GLITCHTIP_ENVIRONMENT on the real deploy never
-        // silently drops production errors.
-        assert!(!error_reporting_disabled(Some("production")));
-        assert!(!error_reporting_disabled(Some("staging")));
-        assert!(!error_reporting_disabled(None));
+        // misconfigured environment on the real deploy never silently drops
+        // production errors.
+        assert!(!error_reporting_disabled("production"));
+        assert!(!error_reporting_disabled("staging"));
+    }
+
+    #[test]
+    fn an_explicit_glitchtip_environment_always_wins() {
+        assert_eq!(
+            resolve_environment(Some("production"), Some("staging"), true),
+            "production"
+        );
+        assert_eq!(
+            resolve_environment(Some("development"), None, false),
+            "development"
+        );
+    }
+
+    #[test]
+    fn sentry_environment_is_the_next_fallback() {
+        // `sentry::init` honors SENTRY_ENVIRONMENT when its option is unset, so
+        // we have to read it too or we would gate on a different value than the
+        // one that ends up tagged on the event.
+        assert_eq!(resolve_environment(None, Some("staging"), true), "staging");
+    }
+
+    #[test]
+    fn an_unset_environment_on_a_debug_build_is_development() {
+        // THE BUG: `GLITCHTIP_ENVIRONMENT` unset used to read as "not
+        // development" and report, but sentry-0.49's `apply_defaults`
+        // (`defaults.rs:88`) stamps a debug build `development` regardless.
+        // A local `cargo run` with the prod DSN in `.env` therefore flooded
+        // production Glitchtip with `Bahamut` events that were *labelled*
+        // development — ~22k of them across #6868/#6869 and the ClickHouse
+        // "(unavailable)" cluster.
+        assert_eq!(resolve_environment(None, None, true), "development");
+        assert!(error_reporting_disabled(&resolve_environment(
+            None, None, true
+        )));
+    }
+
+    #[test]
+    fn an_unset_environment_on_a_release_build_still_reports() {
+        // The prod container is a release build. Suppressing an unset
+        // environment outright would have silenced real production errors, so
+        // the profile — not merely the presence of the variable — is what
+        // decides.
+        assert_eq!(resolve_environment(None, None, false), "production");
+        assert!(!error_reporting_disabled(&resolve_environment(
+            None, None, false
+        )));
     }
 
     /// `panic_location_string` is what makes a server panic attributable at
