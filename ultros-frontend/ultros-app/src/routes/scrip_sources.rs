@@ -1,16 +1,18 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::xiv_data::tracked_data;
+use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
 use crate::{
     api::get_cheapest_listings,
     components::{
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
@@ -298,6 +300,16 @@ impl SortColumn for SortMode {
 /// Maximum rows rendered by the table.
 const ROW_LIMIT: usize = 100;
 
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_SCRIP: &str = "scrip";
+const FILTER_JOB: &str = "job";
+
+/// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
+/// order.
+const ADDABLE_FILTERS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
+
 /// Rank the collected rows, collapse repeated items, and cap the list.
 ///
 /// The ranking has to be a *total* order. Rows are collected by iterating
@@ -376,8 +388,18 @@ fn ScripSourceTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    let (scrip_filter, set_scrip_filter) = query_signal::<String>("scrip");
-    let (job_filter, set_job_filter) = query_signal::<String>("job");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // typing into a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (scrip_filter, set_scrip_filter) = filter_query_signal::<String>(FILTER_SCRIP);
+    let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). Neither select has an "obviously correct"
+    // default value, so both mount blank rather than seeding one.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     // Global websocket health, same wiring as the other sales-driven tools —
     // the prices here come from the realtime-fed cheapest-listings store.
@@ -526,75 +548,169 @@ fn ScripSourceTable(
             .is_some_and(|s| s.is_gatherer())
     });
 
+    let scrip_options = move || {
+        vec![
+            (
+                "OrangeCrafters",
+                t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+            ),
+            (
+                "OrangeGatherers",
+                t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+            ),
+            (
+                "PurpleCrafters",
+                t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+            ),
+            (
+                "WhiteCrafters",
+                t_string!(i18n, scrip_sources_white_crafters).to_string(),
+            ),
+            (
+                "PurpleGatherers",
+                t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+            ),
+            (
+                "WhiteGatherers",
+                t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+            ),
+        ]
+    };
+    let job_options = move || {
+        vec![
+            ("Carpenter", t_string!(i18n, carpenter).to_string()),
+            ("Blacksmith", t_string!(i18n, blacksmith).to_string()),
+            ("Armorer", t_string!(i18n, armorer).to_string()),
+            ("Goldsmith", t_string!(i18n, goldsmith).to_string()),
+            ("Leatherworker", t_string!(i18n, leatherworker).to_string()),
+            ("Weaver", t_string!(i18n, weaver).to_string()),
+            ("Alchemist", t_string!(i18n, alchemist).to_string()),
+            ("Culinarian", t_string!(i18n, culinarian).to_string()),
+        ]
+    };
+
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP) {
+            active.push(FILTER_SCRIP);
+        }
+        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
+            active.push(FILTER_JOB);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_SCRIP => t_string!(i18n, scrip_sources_scrip_type).to_string(),
+            FILTER_JOB => t_string!(i18n, scrip_sources_job_filter).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_SCRIP => pending_filter.set(Some(FILTER_SCRIP)),
+        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_scrip_filter(None);
+        set_job_filter(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, scrip_sources_scrip_type).to_string()>
-                    <select
-                        class="input input-sm w-48"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if val.is_empty() {
-                                set_scrip_filter(None);
-                            } else {
-                                set_scrip_filter(Some(val));
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
+                        </span>
+                        <Show when=move || { total_count() > ROW_LIMIT }>
+                            <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                                {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
+                            </span>
+                        </Show>
+                        <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                            {move || t!(i18n, scrip_sources_region_pricing, region = world())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, scrip_sources_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, scrip_sources_scrip_type).to_string()
+                                    value=Signal::derive(scrip_filter)
+                                    options=scrip_options()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_scrip_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    >
-                        <option value="">{t!(i18n, scrip_sources_all_scrips)}</option>
-                        <option value="OrangeCrafters" selected=move || scrip_filter() == Some("OrangeCrafters".to_string())>{t!(i18n, scrip_sources_orange_crafters)}</option>
-                        <option value="OrangeGatherers" selected=move || scrip_filter() == Some("OrangeGatherers".to_string())>{t!(i18n, scrip_sources_orange_gatherers)}</option>
-                        <option value="PurpleCrafters" selected=move || scrip_filter() == Some("PurpleCrafters".to_string())>{t!(i18n, scrip_sources_purple_crafters)}</option>
-                        <option value="WhiteCrafters" selected=move || scrip_filter() == Some("WhiteCrafters".to_string())>{t!(i18n, scrip_sources_white_crafters)}</option>
-                        <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>{t!(i18n, scrip_sources_purple_gatherers)}</option>
-                        <option value="WhiteGatherers" selected=move || scrip_filter() == Some("WhiteGatherers".to_string())>{t!(i18n, scrip_sources_white_gatherers)}</option>
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, scrip_sources_job_filter).to_string()>
-                    <select
-                        class="input input-sm w-40"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if val.is_empty() {
-                                set_job_filter(None);
-                            } else {
-                                set_job_filter(Some(val));
+                        })
+                }}
+                {move || {
+                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, scrip_sources_job_filter).to_string()
+                                    value=Signal::derive(job_filter)
+                                    options=job_options()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_job_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    >
-                        <option value="">{t!(i18n, all_jobs)}</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, carpenter)}</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, blacksmith)}</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, armorer)}</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, goldsmith)}</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leatherworker)}</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, weaver)}</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
-                    </select>
-                </ToolbarField>
-            </Toolbar>
-
-            // Results summary: count, truncation note, pricing scope, and
-            // realtime health. The world picker resolves to a *region* and
-            // the fetch is region-cheapest, so say so — a "Gilgamesh"
-            // selection otherwise silently produces NA-wide prices.
-            <div class="panel px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                <div>
-                    <span class="text-brand-300 font-semibold">{move || total_count()}</span>
-                    " "
-                    {t!(i18n, scrip_sources_results)}
-                </div>
-                <Show when=move || { total_count() > ROW_LIMIT }>
-                    <div class="text-[color:var(--color-text-muted)]">
-                        {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
-                    </div>
-                </Show>
-                <div class="text-[color:var(--color-text-muted)]">
-                    {move || t!(i18n, scrip_sources_region_pricing, region = world())}
-                </div>
-                <RealtimeStatus status=realtime_status last_update=last_update />
-            </div>
+                        })
+                }}
+            </ControlBar>
 
             // Empty states render as *siblings* of the scroller container,
             // never by unmounting it in a <Show>: the VirtualScroller wires
@@ -823,14 +939,17 @@ pub fn ScripSources() -> impl IntoView {
                     help_body=t_string!(i18n, scrip_sources_help_body).to_string()
                 />
 
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, scrip_sources_select_world).to_string()>
+                <div class="flex flex-col md:flex-row items-center gap-2">
+                    <label class="text-[color:var(--brand-fg)] font-semibold">
+                        {t!(i18n, scrip_sources_select_world)}
+                    </label>
+                    <div class="w-full md:w-auto">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
                             set_current_world=set_selected_world.into()
                         />
-                    </ToolbarField>
-                </Toolbar>
+                    </div>
+                </div>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, scrip_sources_description)}

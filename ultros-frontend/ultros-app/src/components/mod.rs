@@ -81,7 +81,6 @@ pub mod theme_picker;
 pub mod toast;
 pub mod toggle;
 pub mod tool_help;
-pub mod toolbar;
 pub mod tooltip;
 pub mod top_opportunity;
 pub mod ui_text;
