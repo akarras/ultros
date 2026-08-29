@@ -569,4 +569,74 @@ mod test {
         assert_eq!(grid_template(&cols, |w| w.lg), "1fr 3rem");
         assert_eq!(grid_template(&cols, |w| w.xl), "1fr 3rem");
     }
+
+    /// The end-to-end shape: what actually reaches the DOM. Asserted here
+    /// rather than only on the pure derivation, because the thing that broke
+    /// tables before was the *rendered* class string, not the arithmetic.
+    #[test]
+    fn the_rendered_rows_carry_the_derived_template() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let columns = vec![
+                Column::new(
+                    TrackWidths::everywhere("2.5rem"),
+                    ColumnHeader::Empty,
+                    |_: &u32| ().into_any(),
+                ),
+                Column::new(
+                    TrackWidths::responsive(
+                        Some("minmax(0,1fr)"),
+                        Some("minmax(6rem,1fr)"),
+                        Some("minmax(6rem,1fr)"),
+                    ),
+                    ColumnHeader::content(|| view! { "Name" }.into_any()),
+                    |n: &u32| view! { <div role="cell">{*n}</div> }.into_any(),
+                ),
+                // Off, the way the explorer's world column is on a
+                // single-world scope.
+                Column::new(
+                    TrackWidths::from_xl("6.5rem"),
+                    ColumnHeader::Empty,
+                    |_: &u32| ().into_any(),
+                )
+                .header_class("hidden xl:block")
+                .visible(Signal::derive(|| false)),
+            ];
+            let html = view! {
+                <DataTableGrid
+                    columns=columns
+                    rows=Signal::derive(|| vec![7u32])
+                    key=|n: &u32| *n
+                    class="panel"
+                    header_class="text-xs"
+                    row_class="hover:bg-white/5"
+                />
+            }
+            .to_html();
+            assert!(
+                html.contains(
+                    r#"class="grid dt-grid-row items-center gap-x-3 px-3 py-2 hover:bg-white/5""#
+                ),
+                "{html}"
+            );
+            assert!(
+                html.contains(
+                    r#"class="hidden lg:grid dt-grid-row items-center gap-x-3 px-3 py-2 text-xs""#
+                ),
+                "{html}"
+            );
+            // The off column contributes no track at any breakpoint...
+            assert!(html.contains("--dt-cols:2.5rem minmax(0,1fr);"), "{html}");
+            assert!(
+                html.contains("--dt-cols-xl:2.5rem minmax(6rem,1fr);"),
+                "{html}"
+            );
+            // ...but keeps its header cell, so element count does not depend
+            // on the flag. That is the hydration-safety property.
+            assert!(
+                html.contains(r#"role="columnheader" class="hidden""#),
+                "{html}"
+            );
+        });
+    }
 }
