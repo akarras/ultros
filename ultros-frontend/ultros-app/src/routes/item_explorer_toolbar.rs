@@ -2,7 +2,6 @@
 //! strip. Replaces the page-local sidebar that pre-dated the AppShell.
 
 use crate::components::grouped_nav_accordion::{GroupedNavAccordion, NavIcon, NavLink};
-use crate::components::toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer};
 use crate::components::world_picker::WorldPicker;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
@@ -210,22 +209,30 @@ pub fn ItemExplorerToolbar() -> impl IntoView {
 
     view! {
         <div class="flex flex-col gap-3 mb-4">
-            <Toolbar>
-                <ToolbarPills>
+            // Inlined `Toolbar`/`ToolbarPills`/`ToolbarSpacer`/`ToolbarField`
+            // markup (issue #1127): this is a persistent category-group +
+            // world-scope selector, not a set of add/remove filters, so it
+            // doesn't fit the ControlBar/FilterChip shape the other routes
+            // moved to. It keeps the same `toolbar`/`toolbar-pills`/
+            // `toolbar-spacer`/`toolbar-field*` CSS classes those shared
+            // components rendered, so nothing here changes visually.
+            <div class="toolbar" role="toolbar">
+                <div class="toolbar-pills" role="group">
                     {pill(1, view! { {t!(i18n, item_explorer_weapons)} }.into_any())}
                     {pill(2, view! { {t!(i18n, item_explorer_armor)} }.into_any())}
                     {pill(3, view! { {t!(i18n, item_explorer_items)} }.into_any())}
                     {pill(4, view! { {t!(i18n, item_explorer_housing)} }.into_any())}
                     {pill(5, view! { {t!(i18n, item_explorer_job_sets)} }.into_any())}
-                </ToolbarPills>
-                <ToolbarSpacer />
-                <ToolbarField label=t_string!(i18n, item_explorer_world_picker_label).to_string()>
+                </div>
+                <div class="toolbar-spacer" />
+                <div class="toolbar-field">
+                    <span class="toolbar-field-label">{t_string!(i18n, item_explorer_world_picker_label).to_string()}</span>
                     <WorldPicker
                         current_world=scope.picker_value
                         set_current_world=scope.picker_setter
                     />
-                </ToolbarField>
-            </Toolbar>
+                </div>
+            </div>
 
             <div
                 role="navigation"

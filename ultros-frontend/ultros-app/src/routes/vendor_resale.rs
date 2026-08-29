@@ -5,6 +5,8 @@ use crate::{
     components::{
         add_to_list::AddToList,
         clipboard::*,
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -13,7 +15,6 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader, cmp_none_last},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills},
         virtual_scroller::*,
         world_picker::*,
     },
@@ -25,7 +26,7 @@ use crate::{
     ws::realtime::use_realtime,
 };
 use chrono::{Duration, Utc};
-use humantime::{format_duration, parse_duration};
+use humantime::parse_duration;
 use icondata as i;
 use leptos::{either::Either, prelude::*};
 use leptos_router::{
@@ -38,6 +39,24 @@ use ultros_api_types::{
     recent_sales::{RecentSales, SaleData},
 };
 use xiv_gen::ItemId;
+
+/// Intern a category id as a `&'static str` token for
+/// [`FilterChip`](crate::components::filter_chip::FilterChip)'s
+/// `(&'static str, String)` options contract.
+///
+/// `item_search_categorys` is a small, fixed-size table read from the
+/// process-lifetime game data (`xiv_gen_db::data()`), so the set of ids ever
+/// asked for here is bounded — each one is leaked exactly once and cached,
+/// never per-render, so this cannot grow unbounded over a long session.
+fn category_id_token(id: i32) -> &'static str {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<i32, &'static str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().expect("category token cache poisoned");
+    guard
+        .entry(id)
+        .or_insert_with(|| Box::leak(id.to_string().into_boxed_str()))
+}
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 struct VendorProfitKey {
@@ -144,6 +163,29 @@ fn compute_summary(sale: SaleData) -> SaleSummary {
 /// five times normal variation intact while dropping 2.1% of rows, and the
 /// junk actually observed on the page ran 1,000x-150,000x.
 const SUSPICIOUS_PRICE_MULTIPLE: i64 = 50;
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_ROI: &str = "roi";
+const FILTER_SALES: &str = "sales";
+const FILTER_NEXT_SALE: &str = "next-sale";
+const FILTER_CATEGORY: &str = "category";
+const FILTER_TAX: &str = "tax";
+const FILTER_SUSPICIOUS: &str = "show-suspicious";
+
+/// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
+/// order.
+const ADDABLE_FILTERS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_ROI,
+    FILTER_SALES,
+    FILTER_NEXT_SALE,
+    FILTER_CATEGORY,
+    FILTER_TAX,
+    FILTER_SUSPICIOUS,
+];
 
 /// Whether a row's market price is implausible relative to what the item
 /// actually sells for.
@@ -323,28 +365,34 @@ fn VendorResaleTable(
     let items = &tracked_data().items;
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // typing into a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
+    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>(FILTER_ROI);
     // Seeded to 1d by VendorWorldView so a first-time visitor isn't shown items
-    // that sell once a month. The field sits in the primary toolbar and the
+    // that sell once a month. The field sits in the ControlBar and the
     // chip has an X, so the default is visible and one click from gone.
-    let (max_predicted_time, set_max_predicted_time) = filter_query_signal::<String>("next-sale");
-    let (tax_enabled, set_tax_enabled) = query_signal::<bool>("tax");
-    let (minimum_sales, set_minimum_sales) = query_signal::<usize>("sales");
-    let (category_filter, set_category_filter) = query_signal::<i32>("category");
+    let (max_predicted_time, set_max_predicted_time) =
+        filter_query_signal::<String>(FILTER_NEXT_SALE);
+    let (tax_enabled, set_tax_enabled) = filter_query_signal::<bool>(FILTER_TAX);
+    let (minimum_sales, set_minimum_sales) = filter_query_signal::<usize>(FILTER_SALES);
+    let (category_filter, set_category_filter) = filter_query_signal::<i32>(FILTER_CATEGORY);
     // Hidden by default, like the Flip Finder and Trends toggles of the same
     // name — an unachievable listing is worse than no row at all here, because
     // it inflates ROI and therefore sorts to the top.
-    let (show_suspicious, set_show_suspicious) = query_signal::<bool>("show-suspicious");
+    let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>(FILTER_SUSPICIOUS);
     let show_suspicious_active = Signal::derive(move || show_suspicious().unwrap_or(false));
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). Booleans and the category select commit a
+    // sensible value immediately instead (see `add_filter` below).
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let predicted_time =
         Memo::new(move |_| max_predicted_time().and_then(|d| parse_duration(d.as_str()).ok()));
-    let predicted_time_string = Memo::new(move |_| {
-        predicted_time()
-            .map(|duration| format_duration(duration).to_string())
-            .unwrap_or("---".to_string())
-    });
 
     let sorted_data = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
@@ -436,239 +484,278 @@ fn VendorResaleTable(
             .collect::<Vec<(usize, CalculatedVendorProfitData)>>()
     });
 
+    let category_options = move || {
+        let mut categories = tracked_data()
+            .item_search_categorys
+            .iter()
+            .filter(|(_, cat)| !cat.name.is_empty())
+            .map(|(id, cat)| (id.0, cat.name.clone()))
+            .collect::<Vec<_>>();
+        categories.sort_by(|a, b| a.1.cmp(&b.1));
+        categories
+            .into_iter()
+            .map(|(id, name)| (category_id_token(id), name))
+            .collect::<Vec<_>>()
+    };
+    let on_off_options = move || {
+        vec![
+            ("true", t_string!(i18n, vendor_resale_tax_post).to_string()),
+            ("false", t_string!(i18n, vendor_resale_tax_pre).to_string()),
+        ]
+    };
+
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
+            active.push(FILTER_PROFIT);
+        }
+        if minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI) {
+            active.push(FILTER_ROI);
+        }
+        if minimum_sales().is_some() || pending_filter.get() == Some(FILTER_SALES) {
+            active.push(FILTER_SALES);
+        }
+        if max_predicted_time().is_some() || pending_filter.get() == Some(FILTER_NEXT_SALE) {
+            active.push(FILTER_NEXT_SALE);
+        }
+        if category_filter().is_some() || pending_filter.get() == Some(FILTER_CATEGORY) {
+            active.push(FILTER_CATEGORY);
+        }
+        if tax_enabled().is_some() {
+            active.push(FILTER_TAX);
+        }
+        if show_suspicious_active() {
+            active.push(FILTER_SUSPICIOUS);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, vendor_resale_filter_profit_min_label).to_string(),
+            FILTER_ROI => t_string!(i18n, vendor_resale_filter_roi_min_label).to_string(),
+            FILTER_SALES => t_string!(i18n, vendor_resale_filter_sales_min_label).to_string(),
+            FILTER_NEXT_SALE => {
+                t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()
+            }
+            FILTER_CATEGORY => t_string!(i18n, vendor_resale_filter_category_label).to_string(),
+            FILTER_TAX => t_string!(i18n, vendor_resale_filter_prices_label).to_string(),
+            FILTER_SUSPICIOUS => t_string!(i18n, vendor_resale_suspicious_label).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // Adding a filter seeds it with a value the user can see and edit
+    // straight away, rather than mounting a select with nothing chosen —
+    // except `FILTER_CATEGORY`, where there is no "obviously correct"
+    // default. That one mounts blank via `pending_filter`, same as the three
+    // free-typed filters. `FILTER_TAX` seeds `false` (pre-tax) — the
+    // non-default action, since post-tax is already the silent default.
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
+        FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
+        FILTER_SALES => pending_filter.set(Some(FILTER_SALES)),
+        FILTER_NEXT_SALE => pending_filter.set(Some(FILTER_NEXT_SALE)),
+        FILTER_CATEGORY => pending_filter.set(Some(FILTER_CATEGORY)),
+        FILTER_TAX => set_tax_enabled(Some(false)),
+        // Boolean toggle: the chip's presence *is* the value, so it commits
+        // straight to `true` rather than mounting an editable chip.
+        FILTER_SUSPICIOUS => set_show_suspicious(Some(true)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_minimum_profit(None);
+        set_minimum_roi(None);
+        set_minimum_sales(None);
+        set_max_predicted_time(None);
+        set_category_filter(None);
+        set_tax_enabled(None);
+        set_show_suspicious(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
-            // Primary filter toolbar
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, vendor_resale_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        max=100000
-                        step=1000
-                        placeholder="e.g. 10000"
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit))
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, vendor_resale_results_count, n = move || sorted_data().len())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, vendor_resale_no_active_filters).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_filter_profit_min_label).to_string()
+                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    max="100000"
+                                    step="1000"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, vendor_resale_filter_roi_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        max=100000
-                        step=10
-                        placeholder="e.g. 50"
-                        type="number"
-                        prop:value=minimum_roi
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(roi) = value.parse::<i32>() {
-                                set_minimum_roi(Some(roi));
-                            } else if value.is_empty() {
-                                set_minimum_roi(None);
+                        })
+                }}
+                {move || {
+                    (minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_ROI);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_filter_roi_min_label).to_string()
+                                    value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    max="100000"
+                                    step="10"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_roi(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_ROI) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, vendor_resale_filter_sales_min_label).to_string()>
-                    <input
-                        class="input input-sm w-24"
-                        min=0
-                        max=6
-                        step=1
-                        placeholder="0–6"
-                        title=t_string!(i18n, analyzer_tooltip_sales_min)
-                        type="number"
-                        prop:value=minimum_sales
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(sales) = value.parse::<usize>() {
-                                set_minimum_sales(Some(sales.min(6)));
-                            } else if value.is_empty() {
-                                set_minimum_sales(None);
+                        })
+                }}
+                {move || {
+                    (minimum_sales().is_some() || pending_filter.get() == Some(FILTER_SALES))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_SALES);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_filter_sales_min_label).to_string()
+                                    value=Signal::derive(move || minimum_sales().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    max="6"
+                                    step="1"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_sales(
+                                            v.and_then(|v| v.parse::<usize>().ok()).map(|s| s.min(6)),
+                                        );
+                                        if pending_filter.get_untracked() == Some(FILTER_SALES) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        placeholder=t_string!(i18n, analyzer_placeholder_7d_12h)
-                        title=t_string!(i18n, analyzer_tooltip_duration_format)
-                        prop:value=move || max_predicted_time().unwrap_or_default()
-                        on:input=move |input| {
-                            set_max_predicted_time(Some(event_target_value(&input)))
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, vendor_resale_filter_category_label).to_string()>
-                    <select
-                        class="input input-sm w-48"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if let Ok(id) = val.parse::<i32>() {
-                                set_category_filter(Some(id));
-                            } else {
-                                set_category_filter(None);
+                        })
+                }}
+                {move || {
+                    (max_predicted_time().is_some() || pending_filter.get() == Some(FILTER_NEXT_SALE))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_NEXT_SALE);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_filter_max_sale_time_label).to_string()
+                                    value=Signal::derive(max_predicted_time)
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_max_predicted_time(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_NEXT_SALE) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                        prop:value=move || category_filter().map(|c| c.to_string()).unwrap_or_default()
-                    >
-                        <option value="">{t!(i18n, vendor_resale_all_categories)}</option>
-                        {
-                            let mut categories = tracked_data().item_search_categorys
-                                .iter()
-                                .filter(|(_, cat)| !cat.name.is_empty())
-                                .map(|(id, cat)| (id.0, cat.name.clone()))
-                                .collect::<Vec<_>>();
-                            categories.sort_by(|a, b| a.1.cmp(&b.1));
-                            categories.into_iter().map(|(id, name)| {
-                                view! { <option value=id.to_string() selected=move || category_filter() == Some(id)>{name}</option> }
-                            }).collect_view()
-                        }
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, vendor_resale_filter_prices_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "false" } else { "true" }
-                            on:click=move |_| set_tax_enabled(Some(false))
-                        >
-                            "Pre-tax"
-                        </button>
-                        <button
-                            aria-pressed=move || if tax_enabled().unwrap_or(true) { "true" } else { "false" }
-                            on:click=move |_| set_tax_enabled(Some(true))
-                        >
-                            "Post-tax"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, vendor_resale_suspicious_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            title=t_string!(i18n, vendor_resale_suspicious_help)
-                            aria-pressed=move || if show_suspicious_active() { "false" } else { "true" }
-                            on:click=move |_| set_show_suspicious(None)
-                        >
-                            {t!(i18n, vendor_resale_suspicious_hidden)}
-                        </button>
-                        <button
-                            title=t_string!(i18n, vendor_resale_suspicious_help)
-                            aria-pressed=move || if show_suspicious_active() { "true" } else { "false" }
-                            on:click=move |_| set_show_suspicious(Some(true))
-                        >
-                            {t!(i18n, vendor_resale_suspicious_shown)}
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-            </Toolbar>
-
-            // Results summary
-            <div class="panel px-4 py-3 flex flex-col md:flex-row md:items-center gap-3 md:gap-0 md:justify-between">
-                <div class="text-sm text-[color:var(--color-text)] flex flex-wrap items-center gap-3">
-                    <div>
-                        <span class="text-brand-300 font-semibold">{move || sorted_data().len()}</span> " " {t!(i18n, vendor_resale_results)}
-                    </div>
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                    />
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    {move || {
-                        let mut chips: Vec<_> = Vec::new();
-                        if let Some(p) = minimum_profit() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, vendor_resale_profit_gte)} <Gil amount=p />
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_profit(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(cat_id) = category_filter() {
-                             let cat_name = tracked_data()
-                                .item_search_categorys
-                                .get(&xiv_gen::ItemSearchCategoryId(cat_id))
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| format!("Category {}", cat_id));
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, vendor_resale_category_colon)} {cat_name}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_category_filter(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(sales) = minimum_sales() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, vendor_resale_sales_gte)} {sales}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_sales(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(roi) = minimum_roi() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, vendor_resale_roi_gte)} {format!("{roi}%")}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_minimum_roi(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if let Some(_ns) = max_predicted_time() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, vendor_resale_next_sale_lte)} {predicted_time_string()}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_max_predicted_time(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if show_suspicious_active() {
-                            chips.push(view! {
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm text-[color:var(--color-text)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)] border-[color:var(--color-outline)]">
-                                    {t!(i18n, vendor_resale_suspicious_chip)}
-                                    <button aria-label=t_string!(i18n, aria_remove_filter) class="ml-1 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]" on:click=move |_| set_show_suspicious(None)>
-                                        <Icon icon=icondata::MdiClose />
-                                    </button>
-                                </span>
-                            }.into_any());
-                        }
-                        if chips.is_empty() {
-                            Either::Left(view! { <span class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, vendor_resale_no_active_filters)}</span> })
-                        } else {
-                            Either::Right(view! { <>{chips}</> })
-                        }
-                    }}
-                </div>
-                <button aria-label=t_string!(i18n, aria_clear_all_filters) class="text-sm text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] self-start md:self-auto" on:click=move |_| {
-                    set_minimum_profit(None);
-                    set_minimum_roi(None);
-                    set_max_predicted_time(None);
-                    set_minimum_sales(None);
-                    set_category_filter(None);
-                    set_show_suspicious(None);
-                }>
-                    {t!(i18n, clear_all)}
-                </button>
-            </div>
+                        })
+                }}
+                {move || {
+                    (category_filter().is_some() || pending_filter.get() == Some(FILTER_CATEGORY))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_CATEGORY);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_filter_category_label).to_string()
+                                    value=Signal::derive(move || category_filter().map(|c| category_id_token(c).to_string()))
+                                    options=category_options()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_category_filter(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_CATEGORY) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    tax_enabled()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_filter_prices_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=on_off_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_tax_enabled(v.and_then(|v| v.parse().ok()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    show_suspicious_active()
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, vendor_resale_suspicious_chip).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_show_suspicious(None))
+                                />
+                            }
+                        })
+                }}
+            </ControlBar>
 
             // Results table
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
