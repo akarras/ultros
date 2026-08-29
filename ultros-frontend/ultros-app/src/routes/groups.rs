@@ -39,6 +39,13 @@ pub fn Groups() -> impl IntoView {
     let delete_group_action = Action::new(move |id: &i32| delete_group(*id));
     let create_from_guild_action =
         Action::new(move |guild_id: &i64| create_group_from_guild(*guild_id));
+    // Wired into `groups_resource` below (unlike the owner's per-member
+    // remove action, which lives entirely inside `GroupCard`) because leaving
+    // a group changes which groups belong to *this* viewer's list, not just
+    // one card's member list.
+    let leave_group_action = Action::new(move |(group_id, user_id): &(i32, u64)| {
+        remove_group_member(*group_id, *user_id)
+    });
 
     Effect::new(move |_| {
         if let (Some(res), Some(toasts)) = (create_group_action.value().get(), toasts) {
@@ -67,12 +74,22 @@ pub fn Groups() -> impl IntoView {
         }
     });
 
+    Effect::new(move |_| {
+        if let (Some(res), Some(toasts)) = (leave_group_action.value().get(), toasts) {
+            match res {
+                Ok(_) => toasts.success(t_string!(i18n, groups_left_group)),
+                Err(e) => toasts.error(format!("Failed to leave group: {e}")),
+            }
+        }
+    });
+
     let groups_resource = Resource::new(
         move || {
             (
                 create_group_action.version().get(),
                 delete_group_action.version().get(),
                 create_from_guild_action.version().get(),
+                leave_group_action.version().get(),
             )
         },
         move |_| get_groups(),
@@ -265,6 +282,7 @@ pub fn Groups() -> impl IntoView {
                                                                         <GroupCard
                                                                             group=group
                                                                             delete_group_action=delete_group_action
+                                                                            leave_group_action=leave_group_action
                                                                             user_id=Signal::derive(move || user_resource.get().flatten().map(|u| u.id))
                                                                         />
                                                                     }
@@ -431,6 +449,7 @@ fn GuildIcon(icon_url: Option<String>, name: String) -> impl IntoView {
 fn GroupCard(
     group: UserGroup,
     delete_group_action: Action<i32, Result<(), crate::error::AppError>>,
+    leave_group_action: Action<(i32, u64), Result<(), crate::error::AppError>>,
     user_id: Signal<Option<u64>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -516,7 +535,7 @@ fn GroupCard(
 
             <div class="flex flex-col gap-2">
                 <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">{t!(i18n, groups_members_heading)}</h4>
-                <Suspense fallback=move || view! { <div class="animate-pulse h-8 bg-gray-700/50 rounded" /> }>
+                <Suspense fallback=move || view! { <div class="skeleton-block skeleton-shimmer h-8 rounded" /> }>
                     {move || {
                         members_resource.get().map(|res| {
                             match res {
@@ -529,6 +548,7 @@ fn GroupCard(
                                                 children=move |member| {
                                                     let member_id = member.user_id;
                                                     let is_owner = group.owner_id == member_id;
+                                                    let (confirm_leave, set_confirm_leave) = signal(false);
                                                     view! {
                                                         <div class="flex justify-between items-center p-2 rounded bg-black/20 group">
                                                             <div class="flex items-center gap-2">
@@ -549,6 +569,25 @@ fn GroupCard(
                                                                     }
                                                                 >
                                                                     <Icon icon=i::BiXRegular />
+                                                                </button>
+                                                            </Show>
+                                                            <Show when=move || {
+                                                                !is_owner && user_id().map(|uid| uid as i64 == member_id).unwrap_or(false)
+                                                            }>
+                                                                <button
+                                                                    class=move || if confirm_leave() { "btn-danger btn-xs" } else { "btn-ghost btn-xs text-red-400 hover:text-red-300" }
+                                                                    aria-label=move || if confirm_leave() { t_string!(i18n, groups_leave_group_confirm).to_string() } else { t_string!(i18n, groups_leave_group).to_string() }
+                                                                    on:click=move |_| {
+                                                                        if confirm_leave() {
+                                                                            leave_group_action
+                                                                                .dispatch((group.id, member_id as u64));
+                                                                        } else {
+                                                                            set_confirm_leave(true);
+                                                                        }
+                                                                    }
+                                                                >
+                                                                    <Icon icon=i::BiExitRegular />
+                                                                    {move || confirm_leave().then_some(t!(i18n, groups_leave_group_confirm))}
                                                                 </button>
                                                             </Show>
                                                         </div>
@@ -691,7 +730,7 @@ fn GroupInvitePanel(group_id: i32) -> impl IntoView {
                     <span>{t!(i18n, groups_invite_create_button)}</span>
                 </button>
             </div>
-            <Suspense fallback=move || view! { <div class="animate-pulse h-6 bg-gray-700/50 rounded" /> }>
+            <Suspense fallback=move || view! { <div class="skeleton-block skeleton-shimmer h-6 rounded" /> }>
                 {move || {
                     invites.get().map(|res| {
                         match res {
