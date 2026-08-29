@@ -1309,3 +1309,109 @@ mod tests {
         assert_ne!(first, second);
     }
 }
+
+/// Covers `remove_group_member`'s self-removal permission: the owner OR the
+/// member themselves may remove a membership row, but no one else may.
+///
+/// Same situation as `alerts.rs`'s `endpoint_tests`: no `test_helpers::test_db`
+/// convention exists in this crate yet, so these are `#[ignore]`d and only
+/// exercised against a disposable database with:
+///
+/// ```bash
+/// cargo test -p ultros-db group_member_tests -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod group_member_tests {
+    use super::*;
+
+    async fn test_db() -> UltrosDb {
+        UltrosDb::connect().await.expect("connect to test DB")
+    }
+
+    /// Checks membership directly against the join table rather than through
+    /// `get_group_members`, which joins on `discord_user` and would silently
+    /// drop these synthetic test user ids (they have no matching row there).
+    async fn is_member(db: &UltrosDb, group_id: i32, user_id: i64) -> bool {
+        user_group_member::Entity::find_by_id((group_id, user_id))
+            .one(&db.db)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn member_can_remove_themselves() {
+        let db = test_db().await;
+        let owner_id = 9001;
+        let member_id = 9002;
+        let group = db
+            .create_group("Self-removal test group".to_string(), owner_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+
+        // The member removes themselves: `owner_id` param is the requester,
+        // and it's the member's own id here, not the group's actual owner.
+        db.remove_group_member(group.id, member_id, member_id)
+            .await
+            .unwrap();
+
+        assert!(
+            !is_member(&db, group.id, member_id).await,
+            "member should no longer be in the group after leaving"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn owner_can_remove_another_member() {
+        let db = test_db().await;
+        let owner_id = 9003;
+        let member_id = 9004;
+        let group = db
+            .create_group("Owner-removal test group".to_string(), owner_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+
+        db.remove_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+
+        assert!(!is_member(&db, group.id, member_id).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn non_owner_cannot_remove_another_member() {
+        let db = test_db().await;
+        let owner_id = 9005;
+        let member_id = 9006;
+        let bystander_id = 9007;
+        let group = db
+            .create_group("Forbidden-removal test group".to_string(), owner_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, bystander_id)
+            .await
+            .unwrap();
+
+        let err = db
+            .remove_group_member(group.id, bystander_id, member_id)
+            .await;
+        assert!(
+            err.is_err(),
+            "a non-owner should not be able to remove someone else"
+        );
+
+        assert!(is_member(&db, group.id, member_id).await);
+    }
+}

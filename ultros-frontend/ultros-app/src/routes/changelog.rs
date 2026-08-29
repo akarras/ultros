@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-08-29",
+        title: "You can now leave a group you've joined",
+        blurb: "Members can leave a group from its member list instead of asking the owner to remove them. The owner still manages the group itself.",
+        link: Some("/groups"),
+    },
+    ChangelogEntry {
         date: "2026-08-28",
         title: "Sale history opens on the part you care about",
         blurb: "An item that has sold in the last week now opens its price chart on the week view instead of years of history. Quiet items still open on full history, and the All button pins it whenever you want the long view.",
