@@ -6,22 +6,22 @@ use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
+    query_defaults::filter_query_signal,
 };
-use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos_router::{
@@ -94,6 +94,15 @@ impl SortColumn for SortMode {
     }
 }
 
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_OUTLIERS: &str = "filter-outliers";
+
+/// Filters the `+ Filter` menu can add, in menu order.
+const ADDABLE_FILTERS: &[&str] = &[FILTER_PROFIT, FILTER_OUTLIERS];
+
 fn compare_ventures(mode: SortMode, a: &VentureProfitData, b: &VentureProfitData) -> Ordering {
     match mode {
         SortMode::Profit => a.profit.cmp(&b.profit),
@@ -132,11 +141,21 @@ fn VentureAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // typing into a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
+    let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
     let query = use_query_map();
     let location = use_location();
     let nav = use_navigate();
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). Booleans commit immediately on add instead, so
+    // this only ever holds `FILTER_PROFIT`.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let categories = Memo::new(move |_| {
         retainer_tasks
@@ -299,49 +318,118 @@ fn VentureAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
+            active.push(FILTER_PROFIT);
+        }
+        if filter_outliers().unwrap_or(false) {
+            active.push(FILTER_OUTLIERS);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, venture_analyzer_filter_profit_min_label).to_string(),
+            FILTER_OUTLIERS => t_string!(i18n, venture_analyzer_filter_outliers).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
+        // Boolean toggle: the chip's presence *is* the value, so it commits
+        // straight to `true` rather than mounting an editable chip.
+        FILTER_OUTLIERS => set_filter_outliers(Some(true)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_minimum_profit(None);
+        set_filter_outliers(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
-            // Simple scalar filters in a Toolbar row
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, venture_analyzer_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-36"
-                        min=0
-                        step=1000
-                        placeholder="e.g. 50000"
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit))
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, venture_analyzer_result_count, n = move || computed_data().len())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, venture_analyzer_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, venture_analyzer_chip_profit_min).to_string()
+                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="1000"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
-                    <div class="flex flex-row gap-2 items-center">
-                        <input
-                            type="checkbox"
-                            id="filter-outliers"
-                            class="checkbox"
-                            prop:checked=move || filter_outliers().unwrap_or(false)
-                            on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
-                        />
-                        <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, venture_analyzer_filter_outliers_tooltip).to_string()>
-                            <Icon icon=i::AiQuestionCircleOutlined />
-                        </div>
-                    </div>
-                </ToolbarField>
-                <div class="flex-1 flex justify-end">
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                    />
-                </div>
-            </Toolbar>
+                        })
+                }}
+                {move || {
+                    filter_outliers()
+                        .unwrap_or(false)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, venture_analyzer_filter_outliers).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_filter_outliers(None))
+                                />
+                            }
+                        })
+                }}
+            </ControlBar>
 
             // Job category multi-select: complex tag-cloud widget, kept as panel
             <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
@@ -581,14 +669,15 @@ pub fn VentureAnalyzer() -> impl IntoView {
                     </div>
                 </div>
 
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, world).to_string()>
+                <div class="flex flex-col md:flex-row items-center gap-2">
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, world)}</label>
+                    <div class="w-full md:w-auto">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
                             set_current_world=set_selected_world.into()
                         />
-                    </ToolbarField>
-                </Toolbar>
+                    </div>
+                </div>
                 <CalculationSummary
                     title=t_string!(i18n, venture_analyzer_calc_title).to_string()
                     formula=t_string!(i18n, venture_analyzer_calc_formula).to_string()

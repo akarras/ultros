@@ -16,7 +16,9 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats},
     components::{
         add_recipe_to_list::AddRecipeToList,
+        control_bar::{ControlBar, FilterOption},
         crafter_settings::CrafterSettings,
+        filter_chip::FilterChip,
         gil::*,
         icon::Icon,
         item_icon::*,
@@ -24,7 +26,6 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         tooltip::Tooltip,
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
@@ -100,6 +101,39 @@ fn level_for_job_code(levels: &CrafterLevels, code: &str) -> Option<i32> {
 
 /// Every crafter acronym, in `CraftType` order.
 const JOB_CODES: [&str; 8] = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_ROI: &str = "roi";
+const FILTER_MIN_SALES: &str = "min-sales";
+const FILTER_JOB: &str = "job";
+const FILTER_COST_BASIS: &str = "cost-basis";
+const FILTER_REVENUE: &str = "revenue";
+const FILTER_SCOPE: &str = "scope";
+const FILTER_SUBCRAFTS: &str = "subcrafts";
+const FILTER_REQUIRE_HQ: &str = "require-hq";
+const FILTER_OUTLIERS: &str = "filter-outliers";
+const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
+const FILTER_USE_ON_HAND: &str = "on-hand";
+
+/// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
+/// order.
+const ADDABLE_FILTERS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_ROI,
+    FILTER_MIN_SALES,
+    FILTER_JOB,
+    FILTER_COST_BASIS,
+    FILTER_REVENUE,
+    FILTER_SCOPE,
+    FILTER_SUBCRAFTS,
+    FILTER_REQUIRE_HQ,
+    FILTER_OUTLIERS,
+    FILTER_EXCLUDE_SHARDS,
+    FILTER_USE_ON_HAND,
+];
 
 /// Trailing sale-history window backing the sale-stat cost/revenue bases.
 /// Matches the `/api/v1/sale_stats` default.
@@ -270,21 +304,32 @@ fn RecipeAnalyzerTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
-    let (job_filter, set_job_filter) = query_signal::<String>("job");
-    let (use_subcrafts, set_use_subcrafts) = query_signal::<bool>("subcrafts");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // editing a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
+    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>(FILTER_ROI);
+    let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
+    let (use_subcrafts, set_use_subcrafts) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
     // Seeded by RecipeAnalyzer so a first-time visitor isn't shown recipes
     // whose output sells once a month. Same velocity floor as the analyzer's
     // 1d default.
-    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
-    let (require_hq, set_require_hq) = query_signal::<bool>("require-hq");
-    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
-    let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
-    let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
-    let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>("cost-basis");
-    let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>("revenue");
-    let (scope, set_scope) = filter_query_signal::<MarketScope>("scope");
+    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>(FILTER_MIN_SALES);
+    let (require_hq, set_require_hq) = filter_query_signal::<bool>(FILTER_REQUIRE_HQ);
+    let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+    let (exclude_shards_url, set_exclude_shards) =
+        filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
+    let (use_on_hand_url, set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
+    let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
+    let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
+    let (scope, set_scope) = filter_query_signal::<MarketScope>(FILTER_SCOPE);
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). Only the three free-typed numeric filters use
+    // this; selects and toggles commit a sensible value immediately.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let cookies = use_context::<Cookies>().unwrap();
     let (crafter_levels, _) = cookies.use_cookie_typed::<_, CrafterLevels>("CRAFTER_LEVELS");
@@ -539,6 +584,183 @@ fn RecipeAnalyzerTable(
     });
     let clear_job_filter = Callback::new(move |()| set_job_filter(None));
 
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
+            active.push(FILTER_PROFIT);
+        }
+        if minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI) {
+            active.push(FILTER_ROI);
+        }
+        if min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES) {
+            active.push(FILTER_MIN_SALES);
+        }
+        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
+            active.push(FILTER_JOB);
+        }
+        if cost_basis().is_some() {
+            active.push(FILTER_COST_BASIS);
+        }
+        if revenue_metric().is_some() {
+            active.push(FILTER_REVENUE);
+        }
+        if scope().is_some() {
+            active.push(FILTER_SCOPE);
+        }
+        if use_subcrafts().unwrap_or(false) {
+            active.push(FILTER_SUBCRAFTS);
+        }
+        if require_hq().unwrap_or(false) {
+            active.push(FILTER_REQUIRE_HQ);
+        }
+        if filter_outliers().unwrap_or(false) {
+            active.push(FILTER_OUTLIERS);
+        }
+        // These two only show a chip once the URL explicitly overrides the
+        // cookie default — otherwise the page is silently using the user's
+        // saved crafting-cost preference, not filtering anything.
+        if exclude_shards_url().is_some() {
+            active.push(FILTER_EXCLUDE_SHARDS);
+        }
+        if use_on_hand_url().is_some() {
+            active.push(FILTER_USE_ON_HAND);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, recipe_analyzer_filter_profit_min_label).to_string(),
+            FILTER_ROI => t_string!(i18n, recipe_analyzer_filter_roi_min_label).to_string(),
+            FILTER_MIN_SALES => {
+                t_string!(i18n, recipe_analyzer_filter_daily_sales_min_label).to_string()
+            }
+            FILTER_JOB => t_string!(i18n, recipe_analyzer_filter_job_label).to_string(),
+            FILTER_COST_BASIS => t_string!(i18n, recipe_analyzer_cost_basis_label).to_string(),
+            FILTER_REVENUE => t_string!(i18n, recipe_analyzer_revenue_label).to_string(),
+            FILTER_SCOPE => t_string!(i18n, recipe_analyzer_scope_label).to_string(),
+            FILTER_SUBCRAFTS => t_string!(i18n, recipe_analyzer_filter_subcrafts_label).to_string(),
+            FILTER_REQUIRE_HQ => {
+                t_string!(i18n, recipe_analyzer_filter_require_hq_label).to_string()
+            }
+            FILTER_OUTLIERS => t_string!(i18n, filter_outliers).to_string(),
+            FILTER_EXCLUDE_SHARDS => {
+                t_string!(i18n, recipe_analyzer_filter_exclude_shards_label).to_string()
+            }
+            FILTER_USE_ON_HAND => {
+                t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string()
+            }
+            _ => String::new(),
+        }
+    };
+
+    let cost_basis_options = move || {
+        vec![
+            (
+                "listing-min",
+                t_string!(i18n, price_basis_listing_min).to_string(),
+            ),
+            (
+                "sale-median",
+                t_string!(i18n, price_basis_sale_median).to_string(),
+            ),
+            (
+                "sale-min",
+                t_string!(i18n, price_basis_sale_min).to_string(),
+            ),
+            (
+                "sale-avg",
+                t_string!(i18n, price_basis_sale_avg).to_string(),
+            ),
+        ]
+    };
+    let revenue_options = move || {
+        let mut opts = cost_basis_options();
+        opts.push((
+            "world-min",
+            t_string!(i18n, price_basis_world_min).to_string(),
+        ));
+        opts
+    };
+    let scope_options = move || {
+        vec![
+            ("region", t_string!(i18n, region).to_string()),
+            ("datacenter", t_string!(i18n, datacenter).to_string()),
+        ]
+    };
+    let job_chip_options = move || {
+        JOB_CODES
+            .iter()
+            .map(|code| (*code, job_name(code)))
+            .collect::<Vec<_>>()
+    };
+    let on_off_options = move || {
+        vec![
+            ("true", t_string!(i18n, toolbar_pill_on).to_string()),
+            ("false", t_string!(i18n, toolbar_pill_off).to_string()),
+        ]
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // Adding a filter seeds it with a value the user can see and edit
+    // straight away, rather than mounting a select with nothing chosen —
+    // except `FILTER_JOB`, where "seeding" would mean silently narrowing the
+    // whole table to one crafter before the user has picked anything (a
+    // regression vs. the old "All Jobs" default). That one mounts blank via
+    // `pending_filter`, same as the three free-typed numeric filters and
+    // leve_analyzer's identical job filter. Every other select commits a
+    // sensible non-default value immediately, same as the flip finder's
+    // select-type filters.
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
+        FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
+        FILTER_MIN_SALES => pending_filter.set(Some(FILTER_MIN_SALES)),
+        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
+        FILTER_COST_BASIS => set_cost_basis(Some(CostBasis::SaleMedian)),
+        FILTER_REVENUE => set_revenue_metric(Some(RevenueMetric::SaleMedian)),
+        FILTER_SCOPE => set_scope(Some(MarketScope::Datacenter)),
+        FILTER_SUBCRAFTS => set_use_subcrafts(Some(true)),
+        FILTER_REQUIRE_HQ => set_require_hq(Some(true)),
+        FILTER_OUTLIERS => set_filter_outliers(Some(true)),
+        FILTER_EXCLUDE_SHARDS => set_exclude_shards(Some(true)),
+        FILTER_USE_ON_HAND => set_use_on_hand(Some(true)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_minimum_profit(None);
+        set_minimum_roi(None);
+        set_min_daily_sales(None);
+        set_job_filter(None);
+        set_cost_basis(None);
+        set_revenue_metric(None);
+        set_scope(None);
+        set_use_subcrafts(None);
+        set_require_hq(None);
+        set_filter_outliers(None);
+        set_exclude_shards(None);
+        set_use_on_hand(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
             <ActiveListBanner />
@@ -548,230 +770,238 @@ fn RecipeAnalyzerTable(
                         {t!(i18n, recipe_analyzer_sale_stats_unavailable)}
                     </div>
                 })}
-            // Primary filter toolbar
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        step=1000
-                        placeholder=t_string!(i18n, placeholder_eg_10000)
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit));
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
+            // Primary filter bar
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, recipe_analyzer_result_count, n = move || computed_data().len())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, recipe_analyzer_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_chip_profit_min).to_string()
+                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="1000"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_roi_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        step=10
-                        placeholder=t_string!(i18n, placeholder_eg_200)
-                        type="number"
-                        prop:value=minimum_roi
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(roi) = value.parse::<i32>() {
-                                set_minimum_roi(Some(roi));
-                            } else if value.is_empty() {
-                                set_minimum_roi(None);
+                        })
+                }}
+                {move || {
+                    (minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_ROI);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_chip_roi_min).to_string()
+                                    value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="10"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_roi(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_ROI) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_daily_sales_min_label).to_string()>
-                    <input
-                        class="input input-sm w-24"
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        placeholder="e.g. 1.0"
-                        prop:value=min_daily_sales
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(s) = value.parse::<f32>() {
-                                set_min_daily_sales(Some(s));
-                            } else if value.is_empty() {
-                                set_min_daily_sales(None);
+                        })
+                }}
+                {move || {
+                    (min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked()
+                                == Some(FILTER_MIN_SALES);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_chip_daily_sales_min).to_string()
+                                    value=Signal::derive(move || min_daily_sales().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="0.1"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_min_daily_sales(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_MIN_SALES) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_job_label).to_string()>
-                    <select
-                        class="input input-sm w-40"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if val.is_empty() {
-                                set_job_filter(None);
-                            } else {
-                                set_job_filter(Some(val));
+                        })
+                }}
+                {move || {
+                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_filter_job_label).to_string()
+                                    value=Signal::derive(job_filter)
+                                    options=job_chip_options()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_job_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    >
-                        <option value="">{t!(i18n, all_jobs)}</option>
-                        <option value="CRP" selected=move || job_filter() == Some("CRP".to_string())>{t!(i18n, carpenter)}</option>
-                        <option value="BSM" selected=move || job_filter() == Some("BSM".to_string())>{t!(i18n, blacksmith)}</option>
-                        <option value="ARM" selected=move || job_filter() == Some("ARM".to_string())>{t!(i18n, armorer)}</option>
-                        <option value="GSM" selected=move || job_filter() == Some("GSM".to_string())>{t!(i18n, goldsmith)}</option>
-                        <option value="LTW" selected=move || job_filter() == Some("LTW".to_string())>{t!(i18n, leatherworker)}</option>
-                        <option value="WVR" selected=move || job_filter() == Some("WVR".to_string())>{t!(i18n, weaver)}</option>
-                        <option value="ALC" selected=move || job_filter() == Some("ALC".to_string())>{t!(i18n, alchemist)}</option>
-                        <option value="CUL" selected=move || job_filter() == Some("CUL".to_string())>{t!(i18n, culinarian)}</option>
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()>
-                    <select
-                        class="input input-sm w-44"
-                        title=t_string!(i18n, recipe_analyzer_cost_basis_tooltip)
-                        on:change=move |ev| {
-                            let parsed = event_target_value(&ev).parse::<CostBasis>().ok();
-                            set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
-                        }
-                    >
-                        <option value="listing-min" selected=move || cost_basis().unwrap_or_default() == CostBasis::ListingMin>{t!(i18n, price_basis_listing_min)}</option>
-                        <option value="sale-median" selected=move || cost_basis().unwrap_or_default() == CostBasis::SaleMedian>{t!(i18n, price_basis_sale_median)}</option>
-                        <option value="sale-min" selected=move || cost_basis().unwrap_or_default() == CostBasis::SaleMin>{t!(i18n, price_basis_sale_min)}</option>
-                        <option value="sale-avg" selected=move || cost_basis().unwrap_or_default() == CostBasis::SaleAvg>{t!(i18n, price_basis_sale_avg)}</option>
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()>
-                    <select
-                        class="input input-sm w-44"
-                        title=t_string!(i18n, recipe_analyzer_revenue_tooltip)
-                        on:change=move |ev| {
-                            let parsed = event_target_value(&ev).parse::<RevenueMetric>().ok();
-                            set_revenue_metric(parsed.filter(|m| *m != RevenueMetric::default()));
-                        }
-                    >
-                        <option value="listing-min" selected=move || revenue_metric().unwrap_or_default() == RevenueMetric::ListingMin>{t!(i18n, price_basis_listing_min)}</option>
-                        <option value="sale-median" selected=move || revenue_metric().unwrap_or_default() == RevenueMetric::SaleMedian>{t!(i18n, price_basis_sale_median)}</option>
-                        <option value="sale-min" selected=move || revenue_metric().unwrap_or_default() == RevenueMetric::SaleMin>{t!(i18n, price_basis_sale_min)}</option>
-                        <option value="sale-avg" selected=move || revenue_metric().unwrap_or_default() == RevenueMetric::SaleAvg>{t!(i18n, price_basis_sale_avg)}</option>
-                        <option value="world-min" selected=move || revenue_metric().unwrap_or_default() == RevenueMetric::WorldMin>{t!(i18n, price_basis_world_min)}</option>
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_scope_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if scope().unwrap_or_default() == MarketScope::Region { "true" } else { "false" }
-                            title=t_string!(i18n, recipe_analyzer_scope_tooltip)
-                            on:click=move |_| set_scope(None)
-                        >
-                            {t!(i18n, region)}
-                        </button>
-                        <button
-                            aria-pressed=move || if scope().unwrap_or_default() == MarketScope::Datacenter { "true" } else { "false" }
-                            title=t_string!(i18n, recipe_analyzer_scope_tooltip)
-                            on:click=move |_| set_scope(Some(MarketScope::Datacenter))
-                        >
-                            {t!(i18n, datacenter)}
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_subcrafts_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if use_subcrafts().unwrap_or(false) { "false" } else { "true" }
-                            title=t_string!(i18n, recipe_analyzer_subcrafts_tooltip)
-                            on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if use_subcrafts().unwrap_or(false) { "true" } else { "false" }
-                            title=t_string!(i18n, recipe_analyzer_subcrafts_tooltip)
-                            on:click=move |_| set_use_subcrafts(Some(!use_subcrafts().unwrap_or(false)))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_require_hq_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if require_hq().unwrap_or(false) { "false" } else { "true" }
-                            title=t_string!(i18n, recipe_analyzer_require_hq_tooltip)
-                            on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if require_hq().unwrap_or(false) { "true" } else { "false" }
-                            title=t_string!(i18n, recipe_analyzer_require_hq_tooltip)
-                            on:click=move |_| set_require_hq(Some(!require_hq().unwrap_or(false)))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if filter_outliers().unwrap_or(false) { "false" } else { "true" }
-                            title=t_string!(i18n, venture_analyzer_filter_outliers_tooltip)
-                            on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if filter_outliers().unwrap_or(false) { "true" } else { "false" }
-                            title=t_string!(i18n, venture_analyzer_filter_outliers_tooltip)
-                            on:click=move |_| set_filter_outliers(Some(!filter_outliers().unwrap_or(false)))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_exclude_shards_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if exclude_shards_enabled() { "false" } else { "true" }
-                            title=t_string!(i18n, tooltip_exclude_shards)
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if exclude_shards_enabled() { "true" } else { "false" }
-                            title=t_string!(i18n, tooltip_exclude_shards)
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if use_on_hand_enabled() { "false" } else { "true" }
-                            title=t_string!(i18n, tooltip_use_on_hand)
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if use_on_hand_enabled() { "true" } else { "false" }
-                            title=t_string!(i18n, tooltip_use_on_hand)
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarSpacer />
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                    />
-            </Toolbar>
+                        })
+                }}
+                {move || {
+                    cost_basis()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=cost_basis_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        let parsed = v.and_then(|v| v.parse::<CostBasis>().ok());
+                                        set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    revenue_metric()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=revenue_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        let parsed = v.and_then(|v| v.parse::<RevenueMetric>().ok());
+                                        set_revenue_metric(
+                                            parsed.filter(|m| *m != RevenueMetric::default()),
+                                        );
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    scope()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_scope_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=scope_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        let parsed = v.and_then(|v| v.parse::<MarketScope>().ok());
+                                        set_scope(parsed.filter(|s| *s != MarketScope::default()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    use_subcrafts()
+                        .unwrap_or(false)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_filter_subcrafts_label).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_use_subcrafts(None))
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    require_hq()
+                        .unwrap_or(false)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_filter_require_hq_label).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_require_hq(None))
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    filter_outliers()
+                        .unwrap_or(false)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, filter_outliers).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_filter_outliers(None))
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    exclude_shards_url()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_filter_exclude_shards_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=on_off_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_exclude_shards(v.and_then(|v| v.parse().ok()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    use_on_hand_url()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, recipe_analyzer_filter_use_on_hand_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=on_off_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_use_on_hand(v.and_then(|v| v.parse().ok()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+            </ControlBar>
 
             {move || match empty_state.get() {
                 None => ().into_any(),
@@ -1233,6 +1463,61 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 mod test {
     use super::*;
     use xiv_gen::ClassJobId;
+
+    /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
+    /// Toolbar wrote verbatim — a drifted id here silently breaks every
+    /// bookmarked filter deep link (same contract currency_exchange.rs pins
+    /// for its `RANGE_FILTERS`).
+    #[test]
+    fn filter_registry_keys_are_a_stable_url_contract() {
+        assert_eq!(
+            ADDABLE_FILTERS,
+            &[
+                FILTER_PROFIT,
+                FILTER_ROI,
+                FILTER_MIN_SALES,
+                FILTER_JOB,
+                FILTER_COST_BASIS,
+                FILTER_REVENUE,
+                FILTER_SCOPE,
+                FILTER_SUBCRAFTS,
+                FILTER_REQUIRE_HQ,
+                FILTER_OUTLIERS,
+                FILTER_EXCLUDE_SHARDS,
+                FILTER_USE_ON_HAND,
+            ]
+        );
+        assert_eq!(
+            [
+                FILTER_PROFIT,
+                FILTER_ROI,
+                FILTER_MIN_SALES,
+                FILTER_JOB,
+                FILTER_COST_BASIS,
+                FILTER_REVENUE,
+                FILTER_SCOPE,
+                FILTER_SUBCRAFTS,
+                FILTER_REQUIRE_HQ,
+                FILTER_OUTLIERS,
+                FILTER_EXCLUDE_SHARDS,
+                FILTER_USE_ON_HAND,
+            ],
+            [
+                "profit",
+                "roi",
+                "min-sales",
+                "job",
+                "cost-basis",
+                "revenue",
+                "scope",
+                "subcrafts",
+                "require-hq",
+                "filter-outliers",
+                "shards-exclude",
+                "on-hand",
+            ]
+        );
+    }
 
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.
