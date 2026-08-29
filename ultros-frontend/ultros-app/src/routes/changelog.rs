@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Scrip sources, trends, and vendor resale get filter chips too",
+        blurb: "The last three tools still on the old filter bar now use the same sticky filter bar as the others: only the filters you've set take up space, each shown as an editable chip, with a Clear all button. Vendor resale's filters also stopped jumping the page to the top on every keystroke.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "Venture, leve, recipe, and FC crafting analyzers get filter chips",
         blurb: "The four crafting/gathering analyzers now use the same sticky filter bar as Flip Finder: only the filters you've set take up space, each shown as an editable chip, with a Clear all button. Every filter still works from the same bookmark links as before.",
         link: None,
