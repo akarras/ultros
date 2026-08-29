@@ -27,10 +27,11 @@
 //! toggled by the user rather than by the viewport (the Currency Exchange's
 //! `?cols=`): `<table>` auto-layout sizes those columns to their content, a
 //! grid template cannot without inventing widths, and the empty state's
-//! `colspan` has no grid equivalent. So [`Column`] is deliberately
-//! substrate-neutral: a page can keep its `<table>` and still describe its
-//! columns once. That is the *only* sanctioned second substrate; new tables
-//! should use [`DataTableGrid`].
+//! `colspan` has no grid equivalent. So [`Column`] is substrate-neutral, and
+//! [`header_cells`] / [`body_cells`] / [`visible_column_count`] let such a
+//! page keep its `<table>` while still describing its columns once. That is
+//! the *only* sanctioned second substrate; new tables should use
+//! [`DataTableGrid`].
 //!
 //! # Why the grid template is a CSS variable, not a Tailwind class
 //!
@@ -299,6 +300,54 @@ fn cells_for_header<T>(columns: &[Column<T>]) -> AnyView {
         })
         .collect::<Vec<_>>()
         .into_any()
+}
+
+/// Header cells for a page that keeps its own `<table>`: the caller supplies
+/// the `<tr>` and the `<th>` classes, this supplies the cells in column order
+/// with the invisible columns dropped.
+///
+/// Dropping rather than hiding is right here and wrong on the grid: on a
+/// `<table>` an invisible column is one the visitor switched off with
+/// `?cols=`, a URL-borne flag that reads the same on the server and the
+/// client, and a `<td>` left behind would still occupy a column and throw the
+/// empty state's `colspan` off.
+pub fn header_cells<T>(columns: &[Column<T>]) -> AnyView {
+    columns
+        .iter()
+        .filter(|column| column.visible.get())
+        .map(|column| match &column.header {
+            ColumnHeader::Cell(render) => render(header_cell_class(column, true)),
+            ColumnHeader::Empty => {
+                view! { <th scope="col" class=header_cell_class(column, true)></th> }.into_any()
+            }
+            ColumnHeader::Content(render) => {
+                let content = render();
+                view! { <th scope="col" class=header_cell_class(column, true)>{content}</th> }
+                    .into_any()
+            }
+        })
+        .collect::<Vec<_>>()
+        .into_any()
+}
+
+/// Body cells for one row of a page that keeps its own `<table>`, in the same
+/// order and with the same columns dropped as [`header_cells`] — which is the
+/// point: the header and the body can no longer disagree about which columns
+/// are on, or about what order they come in.
+pub fn body_cells<T>(columns: &[Column<T>], row: &T) -> AnyView {
+    columns
+        .iter()
+        .filter(|column| column.visible.get())
+        .map(|column| (column.cell)(row))
+        .collect::<Vec<_>>()
+        .into_any()
+}
+
+/// How many columns a `<table>` row spans right now — the `colspan` of an
+/// empty-state row, which has to track the header or the message sits under
+/// the wrong columns.
+pub fn visible_column_count<T>(columns: &[Column<T>]) -> usize {
+    columns.iter().filter(|column| column.visible.get()).count()
 }
 
 /// A sortable data table on the `role="table"` div-grid substrate.
