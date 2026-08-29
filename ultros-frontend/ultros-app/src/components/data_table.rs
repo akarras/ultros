@@ -350,6 +350,63 @@ pub fn visible_column_count<T>(columns: &[Column<T>]) -> usize {
     columns.iter().filter(|column| column.visible.get()).count()
 }
 
+/// Does `class` re-show an otherwise-`hidden` element at `prefix`?
+///
+/// Only display utilities count. `xl:text-sm` does not un-hide anything, and
+/// treating it as though it did is how a header cell ends up silently visible
+/// in a breakpoint where it owns no grid track.
+#[cfg(test)]
+fn unhides_at(class: &str, prefix: &str) -> bool {
+    class.split_whitespace().any(|c| {
+        matches!(
+            c.strip_prefix(prefix),
+            Some(
+                "block"
+                    | "flex"
+                    | "grid"
+                    | "inline"
+                    | "inline-block"
+                    | "inline-flex"
+                    | "table-cell"
+            )
+        )
+    })
+}
+
+/// Check one column's header class against its tracks, for the grid
+/// substrate's header row.
+///
+/// The invariant: a header cell must be visible at exactly the breakpoints
+/// where its column owns a grid track. Get it wrong in the permissive
+/// direction and the header row has more unhidden cells than it has tracks —
+/// every header from that column rightwards slides one track over and the last
+/// one wraps to an implicit second row, while the body rows (whose cells carry
+/// their own classes) stay correct. There is no compile error and no visual
+/// symptom until you look at the one breakpoint band where it happens.
+///
+/// The header row itself is `hidden lg:grid`, so only `lg` and `xl` are
+/// checked; `base` is never rendered.
+#[cfg(test)]
+pub fn check_header_class(widths: &TrackWidths, header_class: &str) -> Result<(), String> {
+    let hidden = header_class.split_whitespace().any(|c| c == "hidden");
+    // `lg:` utilities keep applying at `xl` unless `xl:` overrides them.
+    let shown_at_lg = !hidden || unhides_at(header_class, "lg:");
+    let shown_at_xl = shown_at_lg || unhides_at(header_class, "xl:");
+    for (breakpoint, tracked, shown) in [
+        ("lg", widths.lg.is_some(), shown_at_lg),
+        ("xl", widths.xl.is_some(), shown_at_xl),
+    ] {
+        if tracked != shown {
+            return Err(format!(
+                "header class {header_class:?} is {} at `{breakpoint}` but the column {} a track there",
+                if shown { "shown" } else { "hidden" },
+                if tracked { "owns" } else { "owns no" },
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A sortable data table on the `role="table"` div-grid substrate.
 ///
 /// The header row is `hidden` below `lg`: a responsive grid's narrow tier

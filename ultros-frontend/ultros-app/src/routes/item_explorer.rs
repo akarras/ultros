@@ -563,6 +563,53 @@ const RESET_ON_SORT: &[&str] = &["page"];
 /// One row of the explorer's table.
 type ExplorerRow = (&'static ItemId, &'static Item);
 
+/// Grid tracks and header-cell classes for the explorer's nine columns, in
+/// DOM order.
+///
+/// Kept as plain data, and read by both the column list below and
+/// `header_classes_match_their_tracks`, so the two can never drift: a header
+/// cell that is visible at a breakpoint where its column owns no track pushes
+/// every header to its right one track over and wraps the last one onto an
+/// implicit second row, with the body rows still correct. The `xl`-only
+/// columns are exactly where that is easy to get wrong.
+type ExplorerColumn = (TrackWidths, &'static str);
+
+const COL_ICON: ExplorerColumn = (TrackWidths::everywhere("2.5rem"), "");
+const COL_NAME: ExplorerColumn = (
+    TrackWidths::responsive(
+        Some("minmax(0,1fr)"),
+        Some("minmax(6rem,1fr)"),
+        Some("minmax(6rem,1fr)"),
+    ),
+    "",
+);
+const COL_ITEM_LEVEL: ExplorerColumn = (TrackWidths::from_lg("3.5rem"), "");
+const COL_EQUIP_LEVEL: ExplorerColumn = (TrackWidths::from_lg("3rem"), "");
+const COL_NQ: ExplorerColumn = (
+    TrackWidths::responsive(Some("auto"), Some("6.5rem"), Some("6.5rem")),
+    "",
+);
+const COL_HQ: ExplorerColumn = (TrackWidths::from_lg("6.5rem"), "");
+const COL_VENDOR: ExplorerColumn = (TrackWidths::from_xl("6rem"), "hidden xl:block");
+const COL_WORLD: ExplorerColumn = (TrackWidths::from_xl("6.5rem"), "hidden xl:block");
+const COL_ACTIONS: ExplorerColumn = (
+    TrackWidths::responsive(Some("auto"), Some("5rem"), Some("5rem")),
+    "",
+);
+
+#[cfg(test)]
+const EXPLORER_COLUMNS: [ExplorerColumn; 9] = [
+    COL_ICON,
+    COL_NAME,
+    COL_ITEM_LEVEL,
+    COL_EQUIP_LEVEL,
+    COL_NQ,
+    COL_HQ,
+    COL_VENDOR,
+    COL_WORLD,
+    COL_ACTIONS,
+];
+
 #[component]
 fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
     let i18n = use_i18n();
@@ -711,7 +758,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
     let columns: Vec<Column<ExplorerRow>> = vec![
         // Item icon.
         Column::new(
-            TrackWidths::everywhere("2.5rem"),
+            COL_ICON.0,
             ColumnHeader::Empty,
             move |(id, _item): &ExplorerRow| {
                 let item_id = id.0;
@@ -728,11 +775,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         // Name, plus the compact metadata line that stands in for the
         // iLvl/Lv columns below `lg`.
         Column::new(
-            TrackWidths::responsive(
-                Some("minmax(0,1fr)"),
-                Some("minmax(6rem,1fr)"),
-                Some("minmax(6rem,1fr)"),
-            ),
+            COL_NAME.0,
             ColumnHeader::cell(move |class| {
                 view! {
                     <SortableHeaderCell
@@ -780,7 +823,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         ),
         // Item level.
         Column::new(
-            TrackWidths::from_lg("3.5rem"),
+            COL_ITEM_LEVEL.0,
             ColumnHeader::cell(move |class| {
                 view! {
                     <SortableHeaderCell
@@ -806,7 +849,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         ),
         // Equip level.
         Column::new(
-            TrackWidths::from_lg("3rem"),
+            COL_EQUIP_LEVEL.0,
             ColumnHeader::content(move || {
                 view! { {t!(i18n, item_explorer_col_equip_level)} }.into_any()
             }),
@@ -826,7 +869,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         ),
         // Cheapest NQ price.
         Column::new(
-            TrackWidths::responsive(Some("auto"), Some("6.5rem"), Some("6.5rem")),
+            COL_NQ.0,
             ColumnHeader::cell(move |class| {
                 view! {
                     <SortableHeaderCell
@@ -854,7 +897,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         // CSR view trees agree on element shape/count for this slot (same
         // tachys-hydration reasoning as the old card layout).
         Column::new(
-            TrackWidths::from_lg("6.5rem"),
+            COL_HQ.0,
             ColumnHeader::content(move || view! { {t!(i18n, hq)} }.into_any()),
             move |(id, item): &ExplorerRow| {
                 let id = **id;
@@ -875,7 +918,7 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
         ),
         // Vendor price.
         Column::new(
-            TrackWidths::from_xl("6rem"),
+            COL_VENDOR.0,
             ColumnHeader::content(move || view! { {t!(i18n, item_explorer_vendor)} }.into_any()),
             move |(id, _item): &ExplorerRow| {
                 let item_id = id.0;
@@ -890,13 +933,14 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                 }
                 .into_any()
             },
-        ),
+        )
+        .header_class(COL_VENDOR.1),
         // World holding the cheapest listing. Only exists when the scope
         // spans more than one world; when it doesn't, the cell stays in the
         // DOM as `hidden` and the column simply drops out of the derived
         // template, exactly as the two class-string variants did.
         Column::new(
-            TrackWidths::from_xl("6.5rem"),
+            COL_WORLD.0,
             ColumnHeader::content(move || view! { {t!(i18n, item_explorer_col_world)} }.into_any()),
             move |(id, _item): &ExplorerRow| {
                 let item_id = id.0;
@@ -946,11 +990,11 @@ fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
                 .into_any()
             },
         )
-        .header_class("hidden xl:block")
+        .header_class(COL_WORLD.1)
         .visible(Signal::derive(move || !is_single_world.get())),
         // Row actions.
         Column::new(
-            TrackWidths::responsive(Some("auto"), Some("5rem"), Some("5rem")),
+            COL_ACTIONS.0,
             ColumnHeader::Empty,
             move |(id, item): &ExplorerRow| {
                 let item_id = id.0;
@@ -1199,12 +1243,32 @@ pub fn ItemExplorer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_job_acronym, collect_job_items_sorted, resolve_category_param,
+        EXPLORER_COLUMNS, canonical_job_acronym, collect_job_items_sorted, resolve_category_param,
         resolve_jobset_param,
     };
+    use crate::components::data_table::check_header_class;
     use crate::routes::item_explorer_toolbar::{job_chip_slug, job_chips_sorted_in};
     use paginate::Pages;
     use xiv_gen::Language;
+
+    /// Every header cell must be visible at exactly the breakpoints where its
+    /// column owns a grid track.
+    ///
+    /// Counting tracks is not enough: the vendor column shipped for one commit
+    /// with its tracks right (`xl` only) and its header class dropped, so at
+    /// `lg` the header row had seven tracks and eight unhidden cells. VENDOR
+    /// took the actions track, the actions header wrapped to an implicit
+    /// second row, and the body rows — whose cells carry their own
+    /// `hidden xl:block` — stayed correct, so header and body disagreed with
+    /// nothing to catch it.
+    #[test]
+    fn header_classes_match_their_tracks() {
+        for (index, (widths, header_class)) in EXPLORER_COLUMNS.iter().enumerate() {
+            if let Err(problem) = check_header_class(widths, header_class) {
+                panic!("column {index}: {problem}");
+            }
+        }
+    }
 
     const ALL_LOCALES: [Language; 7] = [
         Language::En,
