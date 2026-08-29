@@ -598,7 +598,7 @@ fn RecipeAnalyzerTable(
         if min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES) {
             active.push(FILTER_MIN_SALES);
         }
-        if job_filter().is_some() {
+        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
             active.push(FILTER_JOB);
         }
         if cost_basis().is_some() {
@@ -721,15 +721,19 @@ fn RecipeAnalyzerTable(
     });
 
     // Adding a filter seeds it with a value the user can see and edit
-    // straight away, rather than mounting a select with nothing chosen.
-    // Only the three free-typed numeric filters mount blank via
-    // `pending_filter` — everything else commits a sensible non-default
-    // value immediately, same as the flip finder's select-type filters.
+    // straight away, rather than mounting a select with nothing chosen —
+    // except `FILTER_JOB`, where "seeding" would mean silently narrowing the
+    // whole table to one crafter before the user has picked anything (a
+    // regression vs. the old "All Jobs" default). That one mounts blank via
+    // `pending_filter`, same as the three free-typed numeric filters and
+    // leve_analyzer's identical job filter. Every other select commits a
+    // sensible non-default value immediately, same as the flip finder's
+    // select-type filters.
     let add_filter = Callback::new(move |id: &'static str| match id {
         FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
         FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
         FILTER_MIN_SALES => pending_filter.set(Some(FILTER_MIN_SALES)),
-        FILTER_JOB => set_job_filter(Some(JOB_CODES[0].to_string())),
+        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
         FILTER_COST_BASIS => set_cost_basis(Some(CostBasis::SaleMedian)),
         FILTER_REVENUE => set_revenue_metric(Some(RevenueMetric::SaleMedian)),
         FILTER_SCOPE => set_scope(Some(MarketScope::Datacenter)),
@@ -856,14 +860,21 @@ fn RecipeAnalyzerTable(
                         })
                 }}
                 {move || {
-                    job_filter()
-                        .map(|current| {
+                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
                             view! {
                                 <FilterChip
                                     label=t_string!(i18n, recipe_analyzer_filter_job_label).to_string()
-                                    value=Signal::derive(move || Some(current.clone()))
+                                    value=Signal::derive(job_filter)
                                     options=job_chip_options()
-                                    on_commit=Callback::new(move |v: Option<String>| set_job_filter(v))
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_job_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
                                 />
                             }
                         })
