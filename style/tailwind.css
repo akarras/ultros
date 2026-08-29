@@ -2531,6 +2531,33 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     min-width: var(--tool-row-min-width, 0px);
 }
 
+/* ----- components/data_table.rs: derived grid template -----
+   The header row and every body row of a `DataTableGrid` carry the same
+   derived `grid-template-columns`, written inline as these variables because
+   Tailwind only generates rules for `grid-cols-[…]` candidates it can find by
+   scanning the source — a template assembled at runtime would produce no rule
+   at all and the table would collapse to one column. Same precedent as
+   `--tool-optional-cols` above.
+
+   The breakpoints are Tailwind's `lg` and `xl`, and the fallback chain means a
+   table whose columns all start at `lg` (or `xl`) simply omits the narrower
+   variables rather than computing an empty template. `display` still comes
+   from the utilities on the row (`grid`, `hidden lg:grid`), so a row that is
+   hidden at a breakpoint never consults the template there. */
+.dt-grid-row {
+    grid-template-columns: var(--dt-cols);
+}
+@media (min-width: 1024px) {
+    .dt-grid-row {
+        grid-template-columns: var(--dt-cols-lg, var(--dt-cols));
+    }
+}
+@media (min-width: 1280px) {
+    .dt-grid-row {
+        grid-template-columns: var(--dt-cols-xl, var(--dt-cols-lg, var(--dt-cols)));
+    }
+}
+
 /* Compact control-bar button. Sized to fit the bar's 32px rows — the
    standard .btn-secondary padding would overflow them. */
 .sticky-bar-button {

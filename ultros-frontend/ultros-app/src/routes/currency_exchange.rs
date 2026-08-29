@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::hash::Hasher;
+use std::sync::Arc;
 
 use crate::api::get_cheapest_listings;
 use crate::api::get_recent_sales_for_world;
@@ -10,6 +11,9 @@ use crate::components::ad::Ad;
 use crate::components::add_to_list::AddToList;
 use crate::components::clipboard::Clipboard;
 use crate::components::control_bar::{ColumnOption, ControlBar, FilterOption};
+use crate::components::data_table::{
+    Column, ColumnHeader, TrackWidths, body_cells, header_cells, visible_column_count,
+};
 use crate::components::filter_chip::FilterChip;
 use crate::components::icon::Icon;
 use crate::components::item_icon::ItemIcon;
@@ -447,6 +451,157 @@ fn ExchangeItemContent() -> impl IntoView {
     let sort_dir = Memo::new(move |_| dir_param().and_then(|s| s.parse::<SortDir>().ok()));
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
     let visible_cols = Memo::new(move |_| parse_visible_cols(cols_param().as_deref()));
+
+    // The results table's seven columns, described once. The header cells,
+    // every body row and the empty state's `colspan` all read this one
+    // ordered list, so they can no longer disagree about which `?cols=`
+    // columns are on or what order they come in — that hand-matching was the
+    // other half of the debt #1080 tracked.
+    //
+    // The list is a `Vec`, never keyed off `visible_cols`' `HashSet`: a set's
+    // iteration order reaching the DOM is an SSR/CSR hydration mismatch. The
+    // set is only ever *queried*, exactly as the inline `.contains(…)` guards
+    // did.
+    //
+    // This table keeps its real `<table>` rather than moving to
+    // `DataTableGrid`'s div grid (see the substrate note in
+    // `components/data_table.rs`): its columns are sized to their content by
+    // table auto-layout, and its empty state spans them with `colspan`.
+    // `TrackWidths` is therefore unused here.
+    const TH: &str = "px-3 py-2 font-bold whitespace-nowrap";
+    let sortable_th = move |mode: SortMode, label: String| {
+        ColumnHeader::cell(move |class| {
+            let label = label.clone();
+            view! {
+                <th scope="col" class=class>
+                    <div class="flex justify-end">
+                        <SortHeader mode=mode label=label sort_mode=sort_mode sort_dir=sort_dir />
+                    </div>
+                </th>
+            }
+            .into_any()
+        })
+    };
+    let toggled = move |col: &'static str| Signal::derive(move || visible_cols.get().contains(col));
+    let columns: Arc<Vec<Column<CurrencyTrade>>> = Arc::new(vec![
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || {
+                view! { {t!(i18n, currency_exchange_table_item)} }.into_any()
+            }),
+            |trade: &CurrencyTrade| {
+                let receive_item = trade.receive_item;
+                view! {
+                    <td class="px-3 py-2">
+                        <ItemAmount item_amount=receive_item />
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            sortable_th(
+                SortMode::QtyReceived,
+                t_string!(i18n, currency_exchange_table_qty_recv).to_string(),
+            ),
+            |trade: &CurrencyTrade| {
+                let number_received = trade.number_received;
+                view! {
+                    <td class="px-3 py-2 text-right tabular-nums">{number_received}</td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            sortable_th(
+                SortMode::Profit,
+                t_string!(i18n, currency_exchange_table_profit).to_string(),
+            ),
+            |trade: &CurrencyTrade| {
+                let total_profit = trade.total_profit;
+                view! {
+                    <td class="px-3 py-2 text-right tabular-nums font-medium text-[color:var(--color-text)]">
+                        {total_profit}
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            sortable_th(
+                SortMode::PricePerItem,
+                t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
+            ),
+            |trade: &CurrencyTrade| {
+                let price_per_item = trade.price_per_item;
+                view! {
+                    <td class="px-3 py-2 text-right tabular-nums">{price_per_item}</td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH)
+        .visible(toggled(COL_PRICE_PER_ITEM)),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || {
+                view! { {t!(i18n, currency_exchange_table_shops)} }.into_any()
+            }),
+            |trade: &CurrencyTrade| {
+                let shop_names = trade.shop_names.clone();
+                view! {
+                    <td class="px-3 py-2 text-[color:var(--color-text-muted)]">
+                        <ShopNames shop_names=shop_names />
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH)
+        .visible(toggled(COL_SHOPS)),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || {
+                view! { {t!(i18n, currency_exchange_table_cost)} }.into_any()
+            }),
+            |trade: &CurrencyTrade| {
+                let cost_item = trade.cost_item;
+                view! {
+                    <td class="px-3 py-2">
+                        <ItemAmount item_amount=cost_item />
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH)
+        .visible(toggled(COL_COST)),
+        Column::new(
+            TrackWidths::default(),
+            sortable_th(
+                SortMode::HoursBetweenSales,
+                t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
+            ),
+            |trade: &CurrencyTrade| {
+                let hours_between_sales = trade.hours_between_sales;
+                view! {
+                    <td class="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-muted)]">
+                        {hours_between_sales}
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH)
+        .visible(toggled(COL_HOURS)),
+    ]);
+
     let list_scroll = NodeRef::<leptos::html::Div>::new();
     let item_name = move || item().map(|i| i.name.as_str()).unwrap_or_default();
 
@@ -848,6 +1003,7 @@ fn ExchangeItemContent() -> impl IntoView {
             </ControlBar>
             <div>
                 {move || {
+                    let columns = columns.clone();
                     if home_world().is_none() {
                         let left = view! {
                             <div class="bg-red-900/50 p-4 rounded-lg text-white">
@@ -879,6 +1035,7 @@ fn ExchangeItemContent() -> impl IntoView {
                                     }
                                 }>
                                     {move || {
+                                    let columns = columns.clone();
                                     let s_res = s_getter_2.get();
                                     let l_res = l_getter_2.get();
                                     let s = s_res.as_ref().and_then(|r| r.as_ref().ok());
@@ -886,6 +1043,9 @@ fn ExchangeItemContent() -> impl IntoView {
                                     let q = currency_quantity.get();
                                     compute_prices(s, l, q)
                                         .map(|p: Vec<CurrencyTrade>| {
+                                            let row_columns = columns.clone();
+                                            let header_columns = columns.clone();
+                                            let empty_columns = columns.clone();
                                             let sorted_and_filtered_rows = move || {
                                                 let query = query();
                                                 let mut p = p
@@ -929,7 +1089,10 @@ fn ExchangeItemContent() -> impl IntoView {
                                                 if p.is_empty() && !active_filters.get().is_empty() {
                                                     return view! {
                                                         <tr>
-                                                            <td colspan="7" class="px-3 py-8 text-center text-[color:var(--color-text-muted)]">
+                                                            <td
+                                                                colspan=visible_column_count(&empty_columns).to_string()
+                                                                class="px-3 py-8 text-center text-[color:var(--color-text-muted)]"
+                                                            >
                                                                 <div class="flex flex-col items-center gap-2">
                                                                     {t!(i18n, currency_exchange_no_matches)}
                                                                     <button class="btn-secondary" on:click=move |_| clear_all.run(())>
@@ -941,36 +1104,12 @@ fn ExchangeItemContent() -> impl IntoView {
                                                     }
                                                     .into_any();
                                                 }
-                                                let visible = visible_cols.get();
                                                 p.into_iter()
                                                     .map(|p| {
+                                                        let cells = body_cells(&row_columns, &p);
                                                         view! {
                                                             <tr class="hover:bg-white/5 transition-colors">
-                                                                <td class="px-3 py-2">
-                                                                    <ItemAmount item_amount=p.receive_item />
-                                                                </td>
-                                                                <td class="px-3 py-2 text-right tabular-nums">{p.number_received}</td>
-                                                                <td class="px-3 py-2 text-right tabular-nums font-medium text-[color:var(--color-text)]">
-                                                                    {p.total_profit}
-                                                                </td>
-                                                                {visible.contains(COL_PRICE_PER_ITEM).then(|| view! {
-                                                                    <td class="px-3 py-2 text-right tabular-nums">{p.price_per_item}</td>
-                                                                })}
-                                                                {visible.contains(COL_SHOPS).then(|| view! {
-                                                                    <td class="px-3 py-2 text-[color:var(--color-text-muted)]">
-                                                                        <ShopNames shop_names=p.shop_names.clone() />
-                                                                    </td>
-                                                                })}
-                                                                {visible.contains(COL_COST).then(|| view! {
-                                                                    <td class="px-3 py-2">
-                                                                        <ItemAmount item_amount=p.cost_item />
-                                                                    </td>
-                                                                })}
-                                                                {visible.contains(COL_HOURS).then(|| view! {
-                                                                    <td class="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-muted)]">
-                                                                        {p.hours_between_sales}
-                                                                    </td>
-                                                                })}
+                                                                {cells}
                                                             </tr>
                                                         }
                                                     })
@@ -986,63 +1125,7 @@ fn ExchangeItemContent() -> impl IntoView {
                                                 <table class="w-full text-sm text-left">
                                                     <thead class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]">
                                                         <tr class="border-b border-white/5">
-                                                            <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                {t!(i18n, currency_exchange_table_item)}
-                                                            </th>
-                                                            <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                <div class="flex justify-end">
-                                                                    <SortHeader
-                                                                        mode=SortMode::QtyReceived
-                                                                        label=t_string!(i18n, currency_exchange_table_qty_recv).to_string()
-                                                                        sort_mode=sort_mode
-                                                                        sort_dir=sort_dir
-                                                                    />
-                                                                </div>
-                                                            </th>
-                                                            <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                <div class="flex justify-end">
-                                                                    <SortHeader
-                                                                        mode=SortMode::Profit
-                                                                        label=t_string!(i18n, currency_exchange_table_profit).to_string()
-                                                                        sort_mode=sort_mode
-                                                                        sort_dir=sort_dir
-                                                                    />
-                                                                </div>
-                                                            </th>
-                                                            {move || visible_cols.get().contains(COL_PRICE_PER_ITEM).then(|| view! {
-                                                                <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                    <div class="flex justify-end">
-                                                                        <SortHeader
-                                                                            mode=SortMode::PricePerItem
-                                                                            label=t_string!(i18n, currency_exchange_table_price_per_item).to_string()
-                                                                            sort_mode=sort_mode
-                                                                            sort_dir=sort_dir
-                                                                        />
-                                                                    </div>
-                                                                </th>
-                                                            })}
-                                                            {move || visible_cols.get().contains(COL_SHOPS).then(|| view! {
-                                                                <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                    {t!(i18n, currency_exchange_table_shops)}
-                                                                </th>
-                                                            })}
-                                                            {move || visible_cols.get().contains(COL_COST).then(|| view! {
-                                                                <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                    {t!(i18n, currency_exchange_table_cost)}
-                                                                </th>
-                                                            })}
-                                                            {move || visible_cols.get().contains(COL_HOURS).then(|| view! {
-                                                                <th scope="col" class="px-3 py-2 font-bold whitespace-nowrap">
-                                                                    <div class="flex justify-end">
-                                                                        <SortHeader
-                                                                            mode=SortMode::HoursBetweenSales
-                                                                            label=t_string!(i18n, currency_exchange_table_hours_per_sale).to_string()
-                                                                            sort_mode=sort_mode
-                                                                            sort_dir=sort_dir
-                                                                        />
-                                                                    </div>
-                                                                </th>
-                                                            })}
+                                                            {move || header_cells(&header_columns)}
                                                         </tr>
                                                     </thead>
                                                     <tbody class="divide-y divide-white/5">
