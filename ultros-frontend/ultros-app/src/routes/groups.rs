@@ -535,7 +535,7 @@ fn GroupCard(
 
             <div class="flex flex-col gap-2">
                 <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">{t!(i18n, groups_members_heading)}</h4>
-                <Suspense fallback=move || view! { <div class="animate-pulse h-8 bg-gray-700/50 rounded" /> }>
+                <Suspense fallback=move || view! { <div class="skeleton-block skeleton-shimmer h-8 rounded" /> }>
                     {move || {
                         members_resource.get().map(|res| {
                             match res {
@@ -730,7 +730,7 @@ fn GroupInvitePanel(group_id: i32) -> impl IntoView {
                     <span>{t!(i18n, groups_invite_create_button)}</span>
                 </button>
             </div>
-            <Suspense fallback=move || view! { <div class="animate-pulse h-6 bg-gray-700/50 rounded" /> }>
+            <Suspense fallback=move || view! { <div class="skeleton-block skeleton-shimmer h-6 rounded" /> }>
                 {move || {
                     invites.get().map(|res| {
                         match res {
