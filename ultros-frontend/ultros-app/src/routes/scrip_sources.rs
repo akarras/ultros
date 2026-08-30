@@ -937,19 +937,15 @@ pub fn ScripSources() -> impl IntoView {
                     context=t_string!(i18n, scrip_sources_context).to_string()
                     help_href="/help/scrip-sources"
                     help_body=t_string!(i18n, scrip_sources_help_body).to_string()
-                />
-
-                <div class="flex flex-col md:flex-row items-center gap-2">
+                >
                     <label class="text-[color:var(--brand-fg)] font-semibold">
                         {t!(i18n, scrip_sources_select_world)}
                     </label>
-                    <div class="w-full md:w-auto">
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
-                    </div>
-                </div>
+                    <WorldOnlyPicker
+                        current_world=selected_world.into()
+                        set_current_world=set_selected_world.into()
+                    />
+                </ToolHeader>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, scrip_sources_description)}

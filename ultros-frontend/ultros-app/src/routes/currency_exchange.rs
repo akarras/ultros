@@ -913,8 +913,7 @@ fn ExchangeItemContent() -> impl IntoView {
                 context=t_string!(i18n, currency_exchange_tool_context).to_string()
                 help_href="/help"
                 help_body=t_string!(i18n, currency_exchange_tool_help).to_string()
-            />
-            <div class="flex flex-row justify-end items-center gap-3 my-3">
+            >
                 <label for="currency-quantity" class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, currency_exchange_how_many)}
                 </label>
@@ -929,7 +928,7 @@ fn ExchangeItemContent() -> impl IntoView {
                         }
                     }
                 />
-            </div>
+            </ToolHeader>
             <ControlBar
                 summary=move || {
                     view! {
