@@ -39,6 +39,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Slimmer tool headers",
+        blurb: "Every analyzer's big title card is now a single compact row: the tool name, an info icon, and the world picker sit together, so the results start higher on the page. The tool description that used to be behind the About this tool button now lives behind the info icon.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "A few more loading spinners became skeletons",
         blurb: "The last few pulsing-text loading states in the crafting/gathering analyzers, and the item page's sale-history chart, now show skeletons shaped like the content they load into instead of a spinner or a plain pulsing line.",
         link: None,

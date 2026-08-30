@@ -3251,17 +3251,17 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     // ToolHeader carries the tool's h1 plus the expandable
                     // "About this tool" summary and the link to
                     // `/help/flip-finder`, matching every other analyzer
-                    // (see vendor_resale.rs).
+                    // (see vendor_resale.rs). The world picker rides in the
+                    // header's controls slot so title and picker share a row.
                     <ToolHeader
                         title=t_string!(i18n, flip_finder).to_string()
                         summary=t_string!(i18n, flip_finder_tool_summary).to_string()
                         context=t_string!(i18n, flip_finder_tool_context).to_string()
                         help_href="/help/flip-finder"
                         help_body=t_string!(i18n, flip_finder_tool_help).to_string()
-                    />
-                    <div class="flex flex-wrap items-center justify-end gap-3">
+                    >
                         <AnalyzerWorldNavigator />
-                    </div>
+                    </ToolHeader>
 
                     // Main Content. No `min-h-screen` and no scroll container:
                     // the table virtualizes against the window, so the page

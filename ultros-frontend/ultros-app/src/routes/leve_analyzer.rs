@@ -773,29 +773,21 @@ pub fn LeveAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, leve_analyzer_tool_context).to_string()
                     help_href="/help/leve-analyzer"
                     help_body=t_string!(i18n, leve_analyzer_tool_help).to_string()
-                />
-                <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=InlineStatusSkeleton>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, leve_analyzer_error_sales)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-
-                <div class="flex flex-col md:flex-row items-center gap-2">
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, leve_analyzer_error_sales)}</div> })
+                        }}
+                    </Suspense>
                     <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, leve_analyzer_select_world)}</label>
-                    <div class="w-full md:w-auto">
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
-                    </div>
-                </div>
+                    <WorldOnlyPicker
+                        current_world=selected_world.into()
+                        set_current_world=set_selected_world.into()
+                    />
+                </ToolHeader>
                 <CalculationSummary
                     title=t_string!(i18n, leve_analyzer_calc_title).to_string()
                     formula=t_string!(i18n, leve_analyzer_calc_formula).to_string()
