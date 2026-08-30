@@ -301,6 +301,115 @@ async function main() {
       }
     }
 
+    // ===== Step 2b: Auto-mark purchases modal =====
+    console.log("[step] owner opens the auto-mark purchases modal");
+    const autoMarkClicked = await ownerPage.evaluate(() => {
+      const b = document.querySelector('[data-testid="list-auto-mark-btn"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    if (!autoMarkClicked) {
+      fail(failures, "auto-mark toolbar button not found");
+    } else {
+      const modalShown = await ownerPage
+        .waitForFunction(
+          () => {
+            const dialog = document.querySelector('[role="dialog"]');
+            return !!dialog && (dialog.innerText || "").includes("Auto-mark Purchases");
+          },
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!modalShown) {
+        fail(failures, "auto-mark modal did not open");
+      } else {
+        const hasNameInput = await ownerPage.evaluate(() => {
+          const dialog = document.querySelector('[role="dialog"]');
+          return (
+            !!dialog &&
+            !!Array.from(dialog.querySelectorAll("input[placeholder]")).find((i) =>
+              /character name/i.test(i.placeholder),
+            )
+          );
+        });
+        if (!hasNameInput) {
+          fail(failures, "auto-mark modal missing character-name input");
+        } else {
+          pass("auto-mark modal opens with character-name input");
+        }
+        await ownerPage.keyboard.press("Escape");
+        await ownerPage
+          .waitForFunction(() => !document.querySelector('[role="dialog"]'), {
+            timeout: 5000,
+          })
+          .catch(() => {});
+      }
+    }
+
+    // ===== Step 2c: Datacenter exclusion round-trips =====
+    console.log("[step] owner excludes the datacenter");
+    // The test list is single-world, so excluding its DC must empty every
+    // price cell ("No listing data") and write the query param; un-excluding
+    // must clear the param again.
+    const dcChipClicked = await ownerPage.evaluate(() => {
+      const row = document.querySelector('[data-testid="list-filter-row"]');
+      if (!row) return null;
+      const chip = Array.from(row.querySelectorAll("button[data-datacenter]"))[0];
+      if (!chip) return null;
+      const name = chip.getAttribute("data-datacenter");
+      chip.click();
+      return name;
+    });
+    if (!dcChipClicked) {
+      fail(failures, "no datacenter chip found in the filter row");
+    } else {
+      const paramSet = await ownerPage
+        .waitForFunction(
+          () => window.location.search.includes("excluded-datacenters="),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!paramSet) {
+        fail(failures, "excluded-datacenters query param not written");
+      } else {
+        pass(`excluded datacenter ${dcChipClicked} writes the query param`);
+      }
+      // Give the table re-render a moment, then check the price column.
+      await new Promise((r) => setTimeout(r, 1500));
+      const pricesEmptied = await ownerPage.evaluate(() => {
+        const table = document.querySelector("table");
+        return !!table && table.innerText.includes("No listing data");
+      });
+      if (!pricesEmptied) {
+        fail(failures, "excluding the list's DC did not empty the price column");
+      } else {
+        pass("excluding the list's DC empties the price column");
+      }
+      // Toggle back off and confirm the param clears.
+      await ownerPage.evaluate((name) => {
+        const row = document.querySelector('[data-testid="list-filter-row"]');
+        const chip = row
+          ? row.querySelector(`button[data-datacenter="${name}"]`)
+          : null;
+        if (chip) chip.click();
+      }, dcChipClicked);
+      const paramCleared = await ownerPage
+        .waitForFunction(
+          () => !window.location.search.includes("excluded-datacenters="),
+          { timeout: 10000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      if (!paramCleared) {
+        fail(failures, "excluded-datacenters query param did not clear");
+      } else {
+        pass("un-excluding the DC clears the query param");
+      }
+    }
+
     // ===== Step 3: Mark an item acquired via the row toggle =====
     console.log("[step] owner marks an item acquired");
     // Aria-label is "Mark as acquired" (from list_item_row_mark_acquired in en.json).
