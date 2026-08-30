@@ -53,6 +53,24 @@ impl Error {
     pub fn is_not_found(&self) -> bool {
         matches!(self, Error::Status { status: 404, .. })
     }
+
+    /// True when the request failed for a reason that is expected to clear on
+    /// its own: Universalis rate-limiting us (`429`), a server-side failure or
+    /// gateway timeout (`5xx` — their aggregated cache in particular sheds load
+    /// with `502`/`504` under congestion), or the request never completing at
+    /// all (connect/timeout).
+    ///
+    /// Callers use this to decide whether a failure is worth reporting. Ultros
+    /// re-runs every catch-up path on a fixed cadence, so a transient failure
+    /// costs one skipped cycle and nothing more; treating it as an application
+    /// error just buries the real ones.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Error::Status { status, .. } => *status == 429 || (500..600).contains(status),
+            Error::HttpError(e) => e.is_timeout() || e.is_connect() || e.is_request(),
+            _ => false,
+        }
+    }
 }
 
 impl From<async_tungstenite::tungstenite::Error> for Error {
@@ -668,6 +686,34 @@ mod status_test {
                 .unwrap_err()
                 .is_not_found()
         );
+    }
+
+    /// The aggregated endpoint sheds load with `504` under congestion (issue
+    /// GlitchTip-7283: 115 reports in five hours, all upstream gateway
+    /// timeouts). Those must classify as transient so the caller can log
+    /// rather than report them.
+    #[test]
+    fn transient_statuses_are_recognized() {
+        for status in [429, 500, 502, 503, 504] {
+            let err = check_status(status, URL, b"upstream sad").unwrap_err();
+            assert!(err.is_transient(), "{status} should be transient: {err}");
+            assert!(!err.is_not_found(), "{status} is not a 404: {err}");
+        }
+    }
+
+    /// A permanent answer — the entity does not exist, or the body did not
+    /// parse — is not something another pass will fix.
+    #[test]
+    fn permanent_failures_are_not_transient() {
+        for status in [400, 404, 410, 422] {
+            let err = check_status(status, URL, NOT_FOUND_BODY).unwrap_err();
+            assert!(!err.is_transient(), "{status} should be permanent: {err}");
+        }
+        let schema_err: Error = serde_json::from_str::<MostRecentlyUpdatedItemsView>("{}")
+            .unwrap_err()
+            .into();
+        assert!(!schema_err.is_transient(), "{schema_err}");
+        assert!(!schema_err.is_not_found(), "{schema_err}");
     }
 
     #[test]
