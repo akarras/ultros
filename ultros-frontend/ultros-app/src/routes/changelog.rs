@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-30",
+        title: "List filters actually exclude datacenters now",
+        blurb: "Excluding a datacenter on a list only used to affect the purchasing view - the item table's prices and sorting quietly ignored it. It now filters everything, same as excluding a world. The filters also moved into one tidy row (exclusions, sort, hide-acquired), and Auto-mark Purchases left its box at the top of the page for a toolbar button that opens a dialog. Very tall dialogs (like list settings on a short window) now scroll instead of hiding their bottom buttons off-screen.",
+        link: Some("/list"),
+    },
+    ChangelogEntry {
+        date: "2026-08-30",
         title: "Recipe Analyzer: profit math overhaul",
         blurb: "Multi-yield recipes are now costed per unit, NPC vendor prices floor ingredient costs, the 5% market board tax is deducted from profit, and revenue now defaults to your selected world's price instead of the region-wide minimum.",
         link: Some("/recipe-analyzer"),
