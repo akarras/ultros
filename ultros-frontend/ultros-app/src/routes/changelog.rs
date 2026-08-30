@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Item pages put the market first",
+        blurb: "Active listings and recent sales now sit right under the price summary — side by side on wide screens — with the chart below them. Item stats moved into a collapsible Item details section, and the price summary got more compact, so the tables you came for are on screen sooner.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "Scrip sources, trends, and vendor resale get filter chips too",
         blurb: "The last three tools still on the old filter bar now use the same sticky filter bar as the others: only the filters you've set take up space, each shown as an editable chip, with a Clear all button. Vendor resale's filters also stopped jumping the page to the top on every keystroke.",
         link: None,
