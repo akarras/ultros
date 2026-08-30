@@ -28,6 +28,7 @@ pub mod freshness_badge;
 pub mod gil;
 pub mod grouped_nav_accordion;
 pub mod history_panel;
+pub mod home_world_menu;
 pub mod hover_card;
 pub mod icon;
 pub(crate) mod invite_link;

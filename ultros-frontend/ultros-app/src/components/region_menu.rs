@@ -81,11 +81,19 @@ fn MenuRow(
 /// The region → datacenter → world accordion inside the panel. One branch
 /// open per level, seeded from the current selection's ancestors so the
 /// panel opens showing where you already are.
+///
+/// Shared between the price-zone drop-up (any scope selectable) and the
+/// home-world drop-up (`worlds_only`, where region/datacenter rows only
+/// drill in — a home world is always a world).
 #[component]
-fn ZoneAccordion(
+pub(crate) fn ZoneAccordion(
     regions: Signal<Vec<Region>>,
     current: Signal<Option<AnySelector>>,
     on_select: Callback<AnySelector>,
+    /// When true, only world rows fire `on_select`; clicking a region or
+    /// datacenter name toggles its branch open instead, same as the chevron.
+    #[prop(optional)]
+    worlds_only: bool,
 ) -> impl IntoView {
     let ancestors = move || {
         regions.with_untracked(|regions| match current.get_untracked() {
@@ -130,12 +138,17 @@ fn ZoneAccordion(
                             });
                     });
                     let datacenters = region.datacenters;
+                    let region_select = if worlds_only {
+                        Callback::new(move |_| toggle_region.run(()))
+                    } else {
+                        on_select
+                    };
                     view! {
                         <MenuRow
                             selector=AnySelector::Region(region_id)
                             name=region.name
                             current=current
-                            on_select=on_select
+                            on_select=region_select
                             expand=(region_open, toggle_region)
                         />
                         <Show when=move || region_open.get()>
@@ -155,12 +168,17 @@ fn ZoneAccordion(
                                                 });
                                         });
                                         let worlds = dc.worlds;
+                                        let dc_select = if worlds_only {
+                                            Callback::new(move |_| toggle_dc.run(()))
+                                        } else {
+                                            on_select
+                                        };
                                         view! {
                                             <MenuRow
                                                 selector=AnySelector::Datacenter(dc_id)
                                                 name=dc.name
                                                 current=current
-                                                on_select=on_select
+                                                on_select=dc_select
                                                 expand=(dc_open, toggle_dc)
                                             />
                                             <Show when=move || dc_open.get()>
