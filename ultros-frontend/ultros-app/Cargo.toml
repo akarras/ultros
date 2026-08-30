@@ -141,3 +141,5 @@ ssr = [
 # Standing up a global executor is a prerequisite for building any reactive
 # effect outside of a running app — see `i18n_fallback`'s tests.
 any_spawner = { version = "0.3", features = ["futures-executor"] }
+# SSR render-to-string snapshots (list filter row, auto-mark modal).
+insta = "1"

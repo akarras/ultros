@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
@@ -16,7 +16,7 @@ use leptos_router::hooks::use_params_map;
 use ultros_api_types::{
     ActiveListing,
     list::{ListActivity, ListCapabilities, ListItem},
-    world_helper::{AnyResult, AnySelector, WorldHelper},
+    world_helper::WorldHelper,
 };
 
 use crate::api::{
@@ -27,8 +27,12 @@ use crate::components::{
     add_recipe_to_current_list::AddRecipeToCurrentListModal,
     item_icon::*,
     list::{
-        auto_mark_purchases::AutoMarkPurchases, buying_view::BuyingView,
-        list_item_row::ListItemRow, list_settings_drawer::ListSettingsDrawer, list_summary::*,
+        auto_mark_purchases::AutoMarkPurchases,
+        buying_view::BuyingView,
+        filter_row::{ListFilterRow, SortKey, SortSpec, worlds_in_listings},
+        list_item_row::ListItemRow,
+        list_settings_drawer::ListSettingsDrawer,
+        list_summary::*,
     },
     list_subscribe_drawer::ListSubscribeDrawer,
     listing_filters::filter_active_listings,
@@ -166,54 +170,6 @@ impl fmt::Display for NameList {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SortKey {
-    Name,
-    Price,
-    Acquired,
-}
-
-/// Sort order for the list item table, encoded in the `sort` query param as
-/// `name`, `name-desc`, `price`, `price-desc`, `acquired`, or `acquired-desc`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SortSpec {
-    key: SortKey,
-    descending: bool,
-}
-
-impl FromStr for SortSpec {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (base, descending) = match s.strip_suffix("-desc") {
-            Some(base) => (base, true),
-            None => (s, false),
-        };
-        let key = match base {
-            "name" => SortKey::Name,
-            "price" => SortKey::Price,
-            "acquired" => SortKey::Acquired,
-            _ => return Err(()),
-        };
-        Ok(SortSpec { key, descending })
-    }
-}
-
-impl fmt::Display for SortSpec {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let base = match self.key {
-            SortKey::Name => "name",
-            SortKey::Price => "price",
-            SortKey::Acquired => "acquired",
-        };
-        write!(f, "{base}")?;
-        if self.descending {
-            write!(f, "-desc")?;
-        }
-        Ok(())
-    }
-}
-
 fn remaining_quantity(item: &ListItem) -> i32 {
     let quantity = item.quantity.unwrap_or(1).max(1);
     quantity.saturating_sub(item.acquired.unwrap_or(0).clamp(0, quantity))
@@ -256,125 +212,6 @@ fn sort_list_items<'a>(
         };
         ordering.then_with(|| a.id.cmp(&b.id))
     });
-}
-
-#[component]
-fn WorldExclusionControl(
-    items: Vec<(ListItem, Vec<ActiveListing>)>,
-    #[prop(into)] excluded_worlds: Signal<HashSet<i32>>,
-    #[prop(into)] set_excluded_worlds: Callback<HashSet<i32>>,
-) -> impl IntoView {
-    let i18n = use_i18n();
-    let world_data = use_context::<LocalWorldData>()
-        .expect("LocalWorldData should be available")
-        .0
-        .expect("LocalWorldData should be loaded");
-
-    let worlds = Memo::new(move |_| {
-        let mut worlds = BTreeMap::new();
-        for (_, listings) in &items {
-            for listing in listings {
-                worlds.entry(listing.world_id).or_insert_with(|| {
-                    world_data
-                        .lookup_selector(AnySelector::World(listing.world_id))
-                        .and_then(|result| match result {
-                            AnyResult::World(world) => Some(world.name.clone()),
-                            _ => None,
-                        })
-                        .unwrap_or_else(|| format!("World {}", listing.world_id))
-                });
-            }
-        }
-        worlds.into_iter().collect::<Vec<_>>()
-    });
-
-    let available_to_add = Memo::new(move |_| {
-        let excluded = excluded_worlds.get();
-        worlds
-            .get()
-            .into_iter()
-            .filter(|(world_id, _)| !excluded.contains(world_id))
-            .collect::<Vec<_>>()
-    });
-
-    view! {
-        <div class="flex flex-wrap items-center gap-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:var(--color-background-panel)] px-3 py-2 text-sm">
-            <label class="font-semibold text-[color:var(--color-text-muted)]" for="list-world-exclusion">
-                {t!(i18n, list_view_exclude_worlds)}
-            </label>
-            <select
-                id="list-world-exclusion"
-                class="input h-9 min-w-40 py-1 text-sm"
-                on:change=move |event| {
-                    let value = event_target_value(&event);
-                    if let Ok(world_id) = value.parse::<i32>() {
-                        let mut set = excluded_worlds.get_untracked();
-                        set.insert(world_id);
-                        set_excluded_worlds.run(set);
-                    }
-                }
-            >
-                <option value="">{move || {
-                    if available_to_add.with(|worlds| worlds.is_empty()) {
-                        t_string!(i18n, list_view_no_worlds_left).to_string()
-                    } else {
-                        t_string!(i18n, list_view_add_world).to_string()
-                    }
-                }}</option>
-                <For
-                    each=move || available_to_add.get()
-                    key=|(world_id, _)| *world_id
-                    children=move |(world_id, name)| {
-                        view! {
-                            <option value=world_id.to_string()>{name}</option>
-                        }
-                    }
-                />
-            </select>
-            <Show when=move || !excluded_worlds.with(|set| set.is_empty())>
-                <div class="flex flex-wrap items-center gap-1">
-                    <For
-                        each=move || {
-                            let excluded = excluded_worlds.get();
-                            worlds
-                                .get()
-                                .into_iter()
-                                .filter(|(world_id, _)| excluded.contains(world_id))
-                                .collect::<Vec<_>>()
-                        }
-                        key=|(world_id, _)| *world_id
-                        children=move |(world_id, name)| {
-                            let aria_label =
-                                t_string!(i18n, list_view_remove_world_exclusion_aria, name = name.clone())
-                                    .to_string();
-                            view! {
-                                <button
-                                    type="button"
-                                    class="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-outline)] px-2 py-1 text-xs text-[color:var(--color-text)] hover:border-[color:var(--color-outline-strong)]"
-                                    aria-label=aria_label
-                                    on:click=move |_| {
-                                        let mut set = excluded_worlds.get_untracked();
-                                        set.remove(&world_id);
-                                        set_excluded_worlds.run(set);
-                                    }
-                                >
-                                    <span>{name}</span>
-                                    <Icon icon=i::BiXRegular />
-                                </button>
-                            }
-                        }
-                    />
-                    <button
-                        type="button"
-                        class="btn-ghost px-2 py-1 text-xs"
-                        on:click=move |_| set_excluded_worlds.run(HashSet::new())
-                    >
-                        {t!(i18n, list_view_clear_world_exclusions)}
-                    </button>
-                </div>
-            </Show>
-        </div>
-    }
 }
 
 /// Skeleton columns for the list-item table, in the same order as
@@ -753,8 +590,6 @@ pub fn ListView() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, list_view_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
-            <AutoMarkPurchases list_view=list_view />
-
             <div class="sticky-bar rounded-lg px-3 py-3">
                 // `list-toolbar` no longer carries any CSS (the compact
                 // button-sizing rule it used to scope moved to the shared
@@ -810,6 +645,11 @@ pub fn ListView() -> impl IntoView {
                     </div>
 
                     <div class="flex flex-wrap gap-2 self-start lg:self-auto">
+                        <Show when=move || view_caps.with(|c| c.can_write)>
+                            <Tooltip tooltip_text=t_string!(i18n, list_auto_mark_description).to_string()>
+                                <AutoMarkPurchases list_view=list_view />
+                            </Tooltip>
+                        </Show>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_subscribe_tooltip).to_string()>
                             <button
                                 class="sticky-bar-button sticky-bar-button-shrink"
@@ -849,118 +689,42 @@ pub fn ListView() -> impl IntoView {
                 </div>
             </div>
 
-            <div class="panel rounded-lg p-3">
-                <div class="flex flex-wrap items-center gap-3">
-                    {move || {
-                        list_view
-                            .get()
-                            .and_then(|result| {
-                                result
-                                    .ok()
-                                    .map(|(_, items)| {
-                                        view! {
-                                            <WorldExclusionControl
-                                                items=items
-                                                excluded_worlds=excluded_worlds
-                                                set_excluded_worlds=set_excluded_worlds
-                                            />
-                                        }
-                                    })
-                            })
-                    }}
-                    <div class="flex flex-wrap items-center gap-3">
-                        <span class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                            {t!(i18n, list_view_exclude_datacenters)}
-                        </span>
-                        <div class="flex flex-wrap gap-2">
-                            {move || {
-                                let world_data = use_context::<crate::global_state::LocalWorldData>();
-                                let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
-                                let list_data = list_view.get();
-                                match (helper, list_data) {
-                                    (Some(helper), Some(Ok((list, _)))) => {
-                                        let filter = list.list.wdr_filter;
-                                        let datacenters = helper
-                                            .lookup_selector(filter)
-                                            .map(|r| helper.get_datacenters(&r))
-                                            .unwrap_or_default();
-                                        datacenters
-                                            .into_iter()
-                                            .map(|dc| {
-                                                let name = dc.name.clone();
-                                                let is_excluded = Signal::derive(move || {
-                                                    excluded_datacenters.with(|set| set.contains(&name))
-                                                });
-                                                let toggle = {
-                                                    let name = dc.name.clone();
-                                                    move |_| {
-                                                        let mut set = excluded_datacenters.get_untracked();
-                                                        if !set.remove(&name) {
-                                                            set.insert(name.clone());
-                                                        }
-                                                        set_excluded_datacenters.run(set);
-                                                    }
-                                                };
-                                                view! {
-                                                    <button
-                                                        class="btn-secondary px-3 py-1 text-xs"
-                                                        class:bg-red-950=is_excluded
-                                                        class:text-red-200=is_excluded
-                                                        class:border-red-400=is_excluded
-                                                        on:click=toggle
-                                                    >
-                                                        {dc.name.clone()}
-                                                    </button>
-                                                }
-                                            })
-                                            .collect_view()
-                                            .into_any()
-                                    }
-                                    _ => ().into_any(),
-                                }
-                            }}
-                        </div>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <label
-                            class="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-muted)]"
-                            for="list-sort-select"
-                        >
-                            {t!(i18n, list_view_sort_label)}
-                        </label>
-                        <select
-                            id="list-sort-select"
-                            class="input h-9 py-1 text-sm"
-                            prop:value=move || {
-                                sort_spec.get().map(|s| s.to_string()).unwrap_or_default()
-                            }
-                            on:change=move |event| {
-                                set_sort_spec.set(event_target_value(&event).parse::<SortSpec>().ok());
-                            }
-                        >
-                            <option value="">{t!(i18n, list_view_sort_default)}</option>
-                            <option value="name">{t!(i18n, list_view_sort_name_asc)}</option>
-                            <option value="name-desc">{t!(i18n, list_view_sort_name_desc)}</option>
-                            <option value="price">{t!(i18n, list_view_sort_price_asc)}</option>
-                            <option value="price-desc">{t!(i18n, list_view_sort_price_desc)}</option>
-                            <option value="acquired">{t!(i18n, list_view_sort_acquired_asc)}</option>
-                            <option value="acquired-desc">{t!(i18n, list_view_sort_acquired_desc)}</option>
-                        </select>
-                        <button
-                            type="button"
-                            class="btn-secondary px-3 py-1 text-xs"
-                            class:bg-brand-950=hide_acquired
-                            class:active=hide_acquired
-                            on:click=move |_| {
-                                let next = !hide_acquired.get_untracked();
-                                set_hide_acquired_param.set(next.then_some(true));
-                            }
-                        >
-                            {t!(i18n, list_view_hide_acquired)}
-                        </button>
-                    </div>
-                </div>
-            </div>
+            {move || {
+                let world_data = use_context::<crate::global_state::LocalWorldData>();
+                let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
+                let Some(Ok((list, items))) = list_view.get() else {
+                    return ().into_any();
+                };
+                let datacenters = helper
+                    .and_then(|helper| helper.lookup_selector(list.list.wdr_filter))
+                    .map(|result| {
+                        helper
+                            .expect("helper is Some when lookup succeeded")
+                            .get_datacenters(&result)
+                            .into_iter()
+                            .map(|dc| dc.name.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let worlds = worlds_in_listings(&items, helper.map(|helper| helper.as_ref()));
+                view! {
+                    <ListFilterRow
+                        worlds=worlds
+                        datacenters=datacenters
+                        excluded_worlds=excluded_worlds
+                        set_excluded_worlds=set_excluded_worlds
+                        excluded_datacenters=excluded_datacenters
+                        set_excluded_datacenters=set_excluded_datacenters
+                        sort_spec=Signal::derive(move || sort_spec.get())
+                        set_sort_spec=Callback::new(move |spec| set_sort_spec.set(spec))
+                        hide_acquired=hide_acquired
+                        set_hide_acquired=Callback::new(move |hide: bool| {
+                            set_hide_acquired_param.set(hide.then_some(true));
+                        })
+                    />
+                }
+                .into_any()
+            }}
 
             <Show when=recipe_modal_open>
                 <AddRecipeToCurrentListModal
@@ -1831,23 +1595,6 @@ mod tests {
         );
         assert_eq!(parsed.to_string(), "Aether,Primal");
         assert_eq!(parsed.to_string().parse::<NameList>().unwrap(), parsed);
-    }
-
-    #[test]
-    fn sort_spec_round_trips_through_query_param_encoding() {
-        for encoded in [
-            "name",
-            "name-desc",
-            "price",
-            "price-desc",
-            "acquired",
-            "acquired-desc",
-        ] {
-            let spec: SortSpec = encoded.parse().unwrap();
-            assert_eq!(spec.to_string(), encoded);
-        }
-        assert!("bogus".parse::<SortSpec>().is_err());
-        assert!("".parse::<SortSpec>().is_err());
     }
 
     fn priced_item(id: i32, item_id: i32, prices: &[i32]) -> (ListItem, Vec<ActiveListing>) {
