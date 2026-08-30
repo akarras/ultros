@@ -1,5 +1,5 @@
 //! Modal that creates an `AlertTrigger::ListItemThreshold` for a given list.
-//! Mirrors `AlertConfigDrawer` but scoped to a whole list — the only inputs
+//! Mirrors `AlertDrawer`'s preset-item mode but scoped to a whole list — the only inputs
 //! are the endpoints to fan out to. Per-item `target_price` is set on the
 //! list page itself, so this drawer stays minimal.
 

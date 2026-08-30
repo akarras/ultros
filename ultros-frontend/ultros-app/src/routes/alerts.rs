@@ -6,7 +6,7 @@ use crate::components::endpoints_panel::EndpointsPanel;
 use crate::components::history_panel::HistoryPanel;
 use crate::components::loading::Loading;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
-use crate::components::tool_help::ActionableEmptyState;
+use crate::components::tool_help::{ActionableEmptyState, ToolHeader};
 use crate::i18n::{t, t_string, use_i18n};
 
 #[component]
@@ -31,7 +31,13 @@ pub fn Alerts() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, alerts_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="p-4 space-y-6">
-            <h1 class="text-2xl font-bold">{t!(i18n, alerts_page_heading)}</h1>
+            <ToolHeader
+                title=t_string!(i18n, alerts_page_heading).to_string()
+                summary=t_string!(i18n, alerts_tool_summary).to_string()
+                context=t_string!(i18n, alerts_tool_context).to_string()
+                help_href="/help"
+                help_body=t_string!(i18n, alerts_tool_help).to_string()
+            />
 
             <Suspense fallback=move || view! { <Loading /> }>
                 {move || match login.get() {

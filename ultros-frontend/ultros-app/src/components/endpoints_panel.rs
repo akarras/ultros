@@ -9,6 +9,7 @@ use crate::components::icon::Icon;
 use crate::components::push_subscribe::{
     disable_browser_notifications, enable_browser_notifications,
 };
+use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::toasts::use_toast;
 use crate::i18n::{t, t_string, use_i18n};
 
@@ -117,7 +118,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                 />
             </Show>
 
-            <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
+            <Suspense fallback=move || view! { <BoxSkeleton rows=3 /> }>
                 {move || endpoints.get().map(|r| match r {
                     Ok(rows) if rows.is_empty() => view! {
                         <p class="opacity-70">{t!(i18n, endpoints_empty_state)}</p>
