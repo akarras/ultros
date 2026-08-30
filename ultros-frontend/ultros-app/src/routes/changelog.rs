@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-30",
+        title: "Every page uses the same width and margins",
+        blurb: "Pages that had their own container width - settings, history, retainers, the item explorer, trends, lists, and the legal pages - now share the same full-width shell as the rest of the app, with margins that tighten on phones so tables get the screen back.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-30",
         title: "Market Trends stops repeating Market Movers",
         blurb: "The Market Movers strip at the top of Market Trends duplicated what the table below it already shows, so it is gone. It is still on the home page.",
         link: Some("/trends"),
