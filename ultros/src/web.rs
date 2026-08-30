@@ -87,8 +87,9 @@ use crate::web::api::endpoints::{
 };
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
-    cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
-    get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines, recent_sales,
+    cheapest_per_world, get_best_deals, get_character_purchases, get_item_stats, get_market_heat,
+    get_market_pulse, get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines,
+    recent_sales,
 };
 use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
@@ -2593,6 +2594,10 @@ pub(crate) async fn start_web(
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
         .route("/api/v1/characters", get(user_characters))
+        .route(
+            "/api/v1/characters/{id}/purchases",
+            get(get_character_purchases),
+        )
         .route("/api/v1/detectregion", get(detect_region))
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))

@@ -11,6 +11,7 @@ use ultros_api_types::{
         CreatePushSubscriptionRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint,
         ResendResult, UpdateAlertRequest, UpdateEndpointRequest, VapidPublicKey,
     },
+    character_purchases::CharacterPurchaseHistory,
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     item_stats::ItemStatsResponse,
     list::{
@@ -458,6 +459,18 @@ pub(crate) async fn claim_character(id: i32) -> AppResult<FfxivCharacter> {
 
 pub(crate) async fn unclaim_character(id: i32) -> AppResult<(i32, String)> {
     fetch_api(&format!("/api/v1/characters/unclaim/{id}")).await
+}
+
+/// Purchase history for one of the logged-in user's claimed characters.
+///
+/// Owned-characters only, enforced server-side: Ultros knows a buyer only by
+/// the bare character name Universalis reports, so the claim is what supplies
+/// the world that scopes the search — and aggregating a name's purchases is a
+/// spending profile, which is not something to hand out for arbitrary names.
+pub(crate) async fn get_character_purchases(
+    character_id: i32,
+) -> AppResult<CharacterPurchaseHistory> {
+    fetch_api(&format!("/api/v1/characters/{character_id}/purchases")).await
 }
 
 /// Searches for the given character with the given lodestone ID.

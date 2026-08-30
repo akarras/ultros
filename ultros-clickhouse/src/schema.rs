@@ -43,6 +43,22 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
 /// `total_gil` is a MATERIALIZED column computed on insert from
 /// `price_per_item * quantity` so consumers don't have to do the math and the
 /// value lives compressed on disk like any other column.
+///
+/// `idx_sales_buyer` is a bloom-filter skip index on `buying_character_id`,
+/// added for the owned-character purchase history
+/// ([`crate::queries::purchases_by_character`]). That query filters on a column
+/// the ORDER BY key doesn't mention, and the rows for one character are
+/// scattered across the whole table — one purchase per granule at best — so
+/// without it the lookup reads every granule in range. Postgres can't serve it
+/// either: `sale_history` has no index on `buying_character_id`, and
+/// `m20260811_000001_drop_unused_sale_history_full_index` is a standing
+/// argument against adding another btree to that table.
+///
+/// A skip index only covers parts written *after* it exists. Existing parts
+/// need a one-shot `ALTER TABLE sales MATERIALIZE INDEX idx_sales_buyer`,
+/// which the `clickhouse_materialize_buyer_index` binary runs — it is a
+/// mutation over the whole table, so it is deliberately not issued from
+/// startup DDL.
 async fn apply_sales_table(client: &Client) -> Result<(), ClickHouseError> {
     client
         .query(
@@ -58,12 +74,27 @@ async fn apply_sales_table(client: &Client) -> Result<(), ClickHouseError> {
                 quantity             UInt16,
                 total_gil            UInt64 MATERIALIZED toUInt64(price_per_item) * toUInt64(quantity),
                 buying_character_id  Int64,
-                buyer_name           LowCardinality(String) DEFAULT ''
+                buyer_name           LowCardinality(String) DEFAULT '',
+                INDEX idx_sales_buyer buying_character_id TYPE bloom_filter(0.01) GRANULARITY 4
             )
             ENGINE = ReplacingMergeTree(inserted_at)
             PARTITION BY toYYYYMM(sold_date)
             ORDER BY (item_id, hq, world_id, sold_date, pg_id)
             SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    // `CREATE TABLE IF NOT EXISTS` is a no-op on an already-created `sales`,
+    // so the index above never reaches an existing deployment. This ALTER is
+    // what adds it there; it is metadata-only (new parts get the index, old
+    // parts are untouched) and `IF NOT EXISTS` makes re-running it free.
+    client
+        .query(
+            r#"
+            ALTER TABLE sales
+                ADD INDEX IF NOT EXISTS idx_sales_buyer buying_character_id
+                TYPE bloom_filter(0.01) GRANULARITY 4
             "#,
         )
         .execute()

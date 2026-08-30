@@ -1050,10 +1050,174 @@ pub async fn bulk_sale_stats(
         .await?)
 }
 
+/// Hard ceiling on how many purchase rows one character-history request may
+/// return. The page is a scrollable table, not a paginated report, and the row
+/// budget is what keeps the JSON payload (and the SSR render) bounded for a
+/// character with years of trading behind them.
+pub const MAX_CHARACTER_PURCHASES: u32 = 2000;
+
+/// One purchase attributed to a character, as stored in `sales`.
+///
+/// This is the buy side of a sale row: the same event the item page renders
+/// with the buyer's name in it, read back by buyer instead of by item.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct CharacterPurchaseRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime")]
+    pub sold_date: chrono::DateTime<chrono::Utc>,
+    pub item_id: i32,
+    pub hq: u8,
+    pub world_id: i32,
+    pub price_per_item: u32,
+    pub quantity: u16,
+}
+
+/// Totals across a character's *whole* purchase history, not just the rows
+/// [`purchases_by_character`] returns.
+///
+/// Computing these client-side from the capped row list would quietly
+/// under-report every total the moment a character crosses
+/// [`MAX_CHARACTER_PURCHASES`], which is exactly the character the page is most
+/// interesting for.
+#[derive(Debug, Clone, Row, Deserialize, Default)]
+pub struct CharacterPurchaseSummaryRow {
+    pub total_purchases: u64,
+    pub total_gil: u64,
+    pub total_units: u64,
+    pub distinct_items: u64,
+    /// Unix seconds; `0` when there are no purchases at all — ClickHouse's
+    /// `min`/`max` over an empty set yield the `DateTime` epoch rather than
+    /// NULL, so callers must gate these on `total_purchases > 0`.
+    pub first_purchase: u32,
+    pub last_purchase: u32,
+}
+
+/// Build the shared `WHERE` for both character queries.
+///
+/// `world_ids` come from our own world table (never from the request), so
+/// inlining them is safe; the list is one region at most, so the SQL stays
+/// small. `LIMIT 1 BY pg_id` is applied by the callers rather than `FINAL`:
+/// `sales` is a `ReplacingMergeTree`, and an unmerged duplicate would show up
+/// here as a phantom second purchase and double its gil in the totals, but
+/// `FROM sales FINAL` would force a merge across the whole table to answer a
+/// few hundred rows. Deduping the already-filtered rows costs nothing by
+/// comparison.
+fn character_purchase_predicate(character_id: i64, world_ids: &[i32]) -> String {
+    let worlds = world_ids
+        .iter()
+        .map(|w| w.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("buying_character_id = {character_id} AND world_id IN ({worlds})")
+}
+
+/// Recent purchases made by one character, newest first.
+///
+/// Served by the `idx_sales_buyer` skip index (see
+/// [`crate::schema`]) — `buying_character_id` is not part of the `sales`
+/// ORDER BY key, so this is a granule-pruned scan rather than a key lookup.
+///
+/// `world_ids` scopes the search, and the caller is expected to pass the
+/// character's *region*: a sale row records the world the retainer sold on,
+/// never the buyer's home world, so anywhere the character could have
+/// data-center-travelled to is in play. It is also the only lever available
+/// against name collisions — see [`purchase_summary_for_character`].
+pub async fn purchases_by_character(
+    ch: &ClickHouseClient,
+    character_id: i64,
+    world_ids: &[i32],
+    limit: u32,
+) -> Result<Vec<CharacterPurchaseRow>, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.clamp(1, MAX_CHARACTER_PURCHASES);
+    let predicate = character_purchase_predicate(character_id, world_ids);
+    let sql = format!(
+        r#"
+        SELECT sold_date, item_id, hq, world_id, price_per_item, quantity
+        FROM sales
+        WHERE {predicate}
+        ORDER BY sold_date DESC
+        LIMIT 1 BY pg_id
+        LIMIT {limit}
+        "#
+    );
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<CharacterPurchaseRow>()
+        .await?)
+}
+
+/// Whole-history totals for one character, over the same scope
+/// [`purchases_by_character`] lists.
+///
+/// Both queries share a predicate and therefore a scan shape; they are kept
+/// separate so the row list can be capped without capping the totals.
+///
+/// A caveat that belongs with every number this returns: buyer identity in
+/// `sales` is a bare character *name*. Universalis reports no world for a
+/// buyer, and `unknown_final_fantasy_character.name` is `UNIQUE`, so two
+/// characters who share a name on different worlds already share one
+/// `buying_character_id` and their purchases are interleaved here with nothing
+/// to tell them apart. Region scoping narrows that; it does not close it.
+pub async fn purchase_summary_for_character(
+    ch: &ClickHouseClient,
+    character_id: i64,
+    world_ids: &[i32],
+) -> Result<CharacterPurchaseSummaryRow, ClickHouseError> {
+    if world_ids.is_empty() {
+        return Ok(CharacterPurchaseSummaryRow::default());
+    }
+    let predicate = character_purchase_predicate(character_id, world_ids);
+    let sql = format!(
+        r#"
+        SELECT
+            toUInt64(count())                  AS total_purchases,
+            toUInt64(sum(gil))                 AS total_gil,
+            toUInt64(sum(quantity))            AS total_units,
+            toUInt64(uniqExact(item_id))       AS distinct_items,
+            toUInt32(min(sold_date))           AS first_purchase,
+            toUInt32(max(sold_date))           AS last_purchase
+        FROM (
+            SELECT pg_id, item_id, quantity, total_gil AS gil, sold_date
+            FROM sales
+            WHERE {predicate}
+            LIMIT 1 BY pg_id
+        )
+        "#
+    );
+    let rows = ch
+        .client()
+        .query(&sql)
+        .fetch_all::<CharacterPurchaseSummaryRow>()
+        .await?;
+    Ok(rows.into_iter().next().unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ultros_api_types::price_series::SeriesGroup;
+
+    #[test]
+    fn character_predicate_scopes_to_the_supplied_worlds() {
+        assert_eq!(
+            character_purchase_predicate(42, &[10, 20, 30]),
+            "buying_character_id = 42 AND world_id IN (10,20,30)"
+        );
+    }
+
+    /// The row list is capped so one character with years of history can't
+    /// produce an unbounded payload.
+    #[test]
+    fn purchase_limit_is_clamped_to_the_ceiling() {
+        assert_eq!(
+            u32::MAX.clamp(1, MAX_CHARACTER_PURCHASES),
+            MAX_CHARACTER_PURCHASES
+        );
+        assert_eq!(0u32.clamp(1, MAX_CHARACTER_PURCHASES), 1);
+    }
 
     #[test]
     fn world_group_selects_the_column_directly() {

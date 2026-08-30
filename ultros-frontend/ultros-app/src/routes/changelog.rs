@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-08-30",
+        title: "See what your characters bought",
+        blurb: "Retainers has a new Purchases tab: pick a character you've registered and see what it bought off the market board, what it paid, and where. Ultros identifies a buyer by character name alone, so the page says plainly that a same-named character in your region shares the history, and that a purchase nobody uploaded to Universalis won't be there.",
+        link: Some("/retainers/purchases"),
+    },
+    ChangelogEntry {
         date: "2026-08-29",
         title: "A few more loading spinners became skeletons",
         blurb: "The last few pulsing-text loading states in the crafting/gathering analyzers, and the item page's sale-history chart, now show skeletons shaped like the content they load into instead of a spinner or a plain pulsing line.",

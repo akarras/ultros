@@ -141,4 +141,28 @@ impl UltrosDb {
             .await?;
         Ok(delete.rows_affected)
     }
+
+    /// Look up the buyer row Ultros files sales under for a given character
+    /// name, e.g. `"Warrior Oflight"`.
+    ///
+    /// `unknown_final_fantasy_character` is the buyer side of every ingested
+    /// sale. Universalis gives a buyer as a bare name — no world, no Lodestone
+    /// id — so this table is keyed on the name alone and the column is
+    /// `UNIQUE`. That means the id this returns can cover several real
+    /// characters who happen to share a name on different worlds; there is no
+    /// column here that could tell them apart, and none in the upstream data
+    /// either. Callers surfacing purchases to a user must say so.
+    ///
+    /// `None` simply means Ultros has never ingested a sale to that name,
+    /// which is ordinary rather than exceptional — coverage depends on someone
+    /// having uploaded the board.
+    pub async fn get_unknown_character_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<unknown_final_fantasy_character::Model>> {
+        Ok(unknown_final_fantasy_character::Entity::find()
+            .filter(unknown_final_fantasy_character::Column::Name.eq(name))
+            .one(&self.db)
+            .await?)
+    }
 }

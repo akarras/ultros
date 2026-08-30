@@ -36,6 +36,7 @@ use crate::{
         analyzer::*,
         bot::BotGuide,
         changelog::Changelog,
+        character_purchases::CharacterPurchases,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
@@ -517,6 +518,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <ParentRoute path=path!("retainers") view=Retainers>
                             <Route path=path!("edit") view=EditRetainers />
                             <Route path=path!("undercuts") view=RetainerUndercuts />
+                            <Route path=path!("purchases") view=CharacterPurchases />
                             <Route path=path!("listings") view=RetainerListings />
                             <Route path=path!("listings/:id") view=SingleRetainerListings />
                             <Route path=path!("") view=RetainersBasePath />

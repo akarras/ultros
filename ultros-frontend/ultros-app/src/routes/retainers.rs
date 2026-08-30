@@ -704,6 +704,10 @@ pub fn Retainers() -> impl IntoView {
                     <Icon height="1.25em" width="1.25em" icon=i::AiExclamationOutlined />
                     <span>{t!(i18n, retainers_undercuts_tab)}</span>
                 </AppLink>
+                <AppLink exact=true attr:class="nav-link" href="/retainers/purchases">
+                    <Icon height="1.25em" width="1.25em" icon=i::BsBagCheck />
+                    <span>{t!(i18n, character_purchases_tab)}</span>
+                </AppLink>
             </div>
             <div class="main-content">
                 <Outlet />
