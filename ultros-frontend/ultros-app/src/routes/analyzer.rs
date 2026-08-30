@@ -1,7 +1,7 @@
 use crate::analysis::{
     DerivedConfidence, SaleSummary, derived_confidence, flip_estimated_sale_price, flip_profit,
     get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct, profit_per_day,
-    return_on_investment, roi_badge_class, sniper_clamp, velocity_per_day,
+    return_on_investment, roi_badge_class, sale_tax, sniper_clamp, velocity_per_day,
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -81,7 +81,12 @@ impl EnrichmentMaps {
 /// DOM order — the markup interleaves the required columns — but with the
 /// default set the two coincide.
 const COL_PROFIT_PER_DAY: &str = "profit_per_day";
-const COL_VELOCITY: &str = "velocity";
+/// Gil the 5% market-board tax takes off the estimated sale. Always the
+/// full 5% figure, even with the Pre-tax chip active — with profit opted
+/// out of tax, this is exactly the number worth keeping visible. Shares
+/// the "tax" token with FILTER_PRE_TAX, but they live in different
+/// namespaces (`?cols=` vs the filter registry).
+const COL_TAX: &str = "tax";
 const COL_DRIFT: &str = "drift";
 const COL_CONFIDENCE: &str = "confidence";
 const COL_WORLD: &str = "world";
@@ -94,7 +99,7 @@ const COL_VOLUME_30D: &str = "volume_30d";
 
 const ALL_OPTIONAL_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
-    COL_VELOCITY,
+    COL_TAX,
     COL_DRIFT,
     COL_CONFIDENCE,
     COL_WORLD,
@@ -110,16 +115,20 @@ const ALL_OPTIONAL_COLS: &[&str] = &[
 /// user explicitly sets the param (even to ""), we respect that exact
 /// set instead of falling back to defaults.
 ///
-/// ClickHouse-only columns (trend, sales/day, 30d volume) are off because
-/// the rollup covers ~7% of traded items, so they would be blank on most
-/// rows. ROI is off because it ranks by ratio, which is the wrong
-/// objective when retainer slots are the scarce resource.
+/// Sales/Day is default-on even though the ClickHouse rollup doesn't cover
+/// every row: its cadence badge falls back to the buffer-derived rate, so it
+/// renders something on every row (it replaced the old numeric Velocity
+/// column, which showed the same rate less legibly). The remaining
+/// ClickHouse-only columns (trend, 30d volume) are off because they have no
+/// fallback and would be blank on uncovered rows. ROI is off because it
+/// ranks by ratio, which is the wrong objective when retainer slots are the
+/// scarce resource.
 const DEFAULT_VISIBLE_COLS: &[&str] = &[
     COL_PROFIT_PER_DAY,
-    COL_VELOCITY,
     COL_DRIFT,
     COL_CONFIDENCE,
     COL_WORLD,
+    COL_SALES_PER_DAY,
     COL_LAST_SOLD,
 ];
 
@@ -211,6 +220,7 @@ enum SortMode {
     Roi,
     Profit,
     ProfitPerDay,
+    Tax,
     BuyPrice,
     LastSold,
     Drift,
@@ -228,9 +238,14 @@ impl SortColumn for SortMode {
     fn default_dir(self) -> SortDir {
         match self {
             SortMode::BuyPrice | SortMode::LastSold => SortDir::Asc,
-            SortMode::Roi | SortMode::Profit | SortMode::ProfitPerDay | SortMode::Drift => {
-                SortDir::Desc
-            }
+            // Tax descends with the profit family: the big-tax rows are the
+            // big-ticket flips, which is what a click on the column wants
+            // surfaced (ascending would just be "cheapest items first").
+            SortMode::Roi
+            | SortMode::Profit
+            | SortMode::ProfitPerDay
+            | SortMode::Tax
+            | SortMode::Drift => SortDir::Desc,
         }
     }
 }
@@ -296,7 +311,7 @@ impl std::fmt::Display for ConfidenceFloor {
 /// ordering is unit-testable without a reactive runtime.
 ///
 /// Only row-local columns are sortable. The enrichment-backed columns —
-/// Velocity, Confidence, Sales/Day, 30d Volume — are fetched lazily for the
+/// Confidence, Sales/Day, 30d Volume — are fetched lazily for the
 /// *visible* rows only (see the visible-window effect below), so an order
 /// built on them would reshuffle under the cursor as the user scrolls and
 /// batches arrive, and would rank the ~93% of rows without coverage on a
@@ -314,6 +329,10 @@ fn sort_rows(rows: &mut [CalculatedProfitData], mode: SortMode, dir: SortDir) {
             SortMode::Roi => ord(a.return_on_investment, b.return_on_investment),
             SortMode::Profit => ord(a.profit, b.profit),
             SortMode::ProfitPerDay => ord(a.profit_per_day, b.profit_per_day),
+            SortMode::Tax => ord(
+                sale_tax(a.inner.estimated_sale_price),
+                sale_tax(b.inner.estimated_sale_price),
+            ),
             SortMode::BuyPrice => ord(a.inner.cheapest_price, b.inner.cheapest_price),
             SortMode::LastSold => cmp_none_last(
                 a.inner.sale_summary.days_since_last_sale,
@@ -474,6 +493,7 @@ impl FromStr for SortMode {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
             "profit-per-day" => Ok(SortMode::ProfitPerDay),
+            "tax" => Ok(SortMode::Tax),
             "buy-price" => Ok(SortMode::BuyPrice),
             // These two equal the FILTER_LAST_SOLD / FILTER_MIN_DRIFT query
             // *keys*, but they live in a different namespace — the value of
@@ -492,6 +512,7 @@ impl std::fmt::Display for SortMode {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
             SortMode::ProfitPerDay => "profit-per-day",
+            SortMode::Tax => "tax",
             SortMode::BuyPrice => "buy-price",
             SortMode::LastSold => "last-sold",
             SortMode::Drift => "drift",
@@ -611,8 +632,8 @@ fn normalize_velocity_floor(raw: Option<f32>) -> Option<f32> {
 
 /// Does a row clear an explicit velocity floor?
 ///
-/// Prefers the ClickHouse rate so the number the Velocity column displays
-/// is the number the filter evaluates, and falls back to the rate derived
+/// Prefers the ClickHouse rate so the rate the Sales/Day column displays
+/// is the rate the filter evaluates, and falls back to the rate derived
 /// from the 6-sale buffer for the ~93% of rows the rollup does not cover.
 /// A row with no rate at all cannot clear a floor.
 fn passes_velocity_floor(min: f32, ch_rate: Option<f32>, derived: Option<f32>) -> bool {
@@ -822,7 +843,7 @@ fn optional_column_width_px(visible: &std::collections::HashSet<&'static str>) -
     // in the view below.
     const WIDTHS: &[(&str, u32)] = &[
         (COL_PROFIT_PER_DAY, 112),
-        (COL_VELOCITY, 88),
+        (COL_TAX, 112),
         (COL_DRIFT, 88),
         (COL_CONFIDENCE, 72),
         (COL_ROI, 112),
@@ -875,8 +896,8 @@ fn analyzer_skeleton_columns(
             SkeletonCell::Number,
         ),
         (
-            Some(COL_VELOCITY),
-            "px-3 py-2 w-[88px] shrink-0 flex items-center justify-end",
+            Some(COL_TAX),
+            "px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end",
             SkeletonCell::Number,
         ),
         (
@@ -1351,7 +1372,7 @@ fn AnalyzerTable(
             c if c == COL_PROFIT_PER_DAY => {
                 t_string!(i18n, analyzer_col_profit_per_day).to_string()
             }
-            c if c == COL_VELOCITY => t_string!(i18n, analyzer_col_velocity).to_string(),
+            c if c == COL_TAX => t_string!(i18n, analyzer_col_tax).to_string(),
             c if c == COL_DRIFT => t_string!(i18n, analyzer_col_drift).to_string(),
             c if c == COL_CONFIDENCE => t_string!(i18n, analyzer_col_confidence).to_string(),
             c if c == COL_ROI => t_string!(i18n, analyzer_col_roi).to_string(),
@@ -1658,7 +1679,7 @@ fn AnalyzerTable(
                     .unwrap_or(true)
             })
             .filter(move |data| {
-                // Velocity floor. Mirrors the Velocity column's preference —
+                // Velocity floor. Mirrors the Sales/Day column's preference —
                 // ClickHouse rate first, derived rate as fallback — so the
                 // number shown is the number evaluated. Reading `enrichment`
                 // here is the same pattern the suspicious filter below uses;
@@ -2574,9 +2595,14 @@ fn AnalyzerTable(
                                         />
                                     </div>
                                 })}
-                                {move || visible_cols().contains(COL_VELOCITY).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_velocity)>
-                                        {t!(i18n, analyzer_col_velocity)}
+                                {move || visible_cols().contains(COL_TAX).then(|| view! {
+                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2" title=t_string!(i18n, analyzer_tooltip_tax)>
+                                        <SortHeader
+                                            mode=SortMode::Tax
+                                            label=t_string!(i18n, analyzer_col_tax).to_string()
+                                            sort_mode
+                                            sort_dir
+                                        />
                                     </div>
                                 })}
                                 {move || visible_cols().contains(COL_DRIFT).then(|| view! {
@@ -2715,6 +2741,7 @@ fn AnalyzerTable(
                             // `data.inner` (an Arc, and not Copy). `row_key` is bound
                             // below alongside `item_id`/`hq`.
                             let row_cheapest_price = data.inner.cheapest_price;
+                            let row_tax = sale_tax(data.inner.estimated_sale_price);
                             let row_days_since = data.inner.sale_summary.days_since_last_sale;
                             let row_roi = data.return_on_investment;
                             let row_velocity = velocity_per_day(&data.inner.sale_summary);
@@ -2804,26 +2831,10 @@ fn AnalyzerTable(
                                             <Gil amount=data.profit_per_day />
                                         </div>
                                     })}
-                                    {move || visible_cols().contains(COL_VELOCITY).then(|| {
-                                        // Prefer the ClickHouse 30d rate where the rollup
-                                        // covers the row; otherwise the derived rate off the
-                                        // 6-sale buffer, which every row has.
-                                        let maps = enrichment.get();
-                                        let v = maps
-                                            .quality_for(&row_key)
-                                            .map(|q| q.sales_per_day)
-                                            .or(row_velocity);
-                                        let text = match v {
-                                            Some(v) => t_string!(i18n, analyzer_velocity_per_day)
-                                                .to_string()
-                                                .replace("%count%", &format!("{v:.1}")),
-                                            None => "—".to_string(),
-                                        };
-                                        view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums">
-                                                {text}
-                                            </div>
-                                        }
+                                    {move || visible_cols().contains(COL_TAX).then(|| view! {
+                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                            <Gil amount=row_tax />
+                                        </div>
                                     })}
                                     {move || visible_cols().contains(COL_DRIFT).then(|| {
                                         // +/- 1% is inside the noise floor of a 6-sale window,
@@ -2939,10 +2950,10 @@ fn AnalyzerTable(
                                         }
                                     })}
                                     {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
-                                        // Cadence badge carried over from main. Where the
-                                        // rollup has no row this falls back to the same
-                                        // derived rate the Velocity column uses, so the two
-                                        // columns never contradict each other.
+                                        // Cadence badge. Where the rollup has no row this
+                                        // falls back to the buffer-derived rate — the same
+                                        // rate the velocity floor filter evaluates — so
+                                        // every row renders something.
                                         let maps = enrichment.get();
                                         let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
                                             (Some(q), _) => {
@@ -3997,7 +4008,7 @@ mod tests {
 
     #[test]
     fn velocity_floor_prefers_clickhouse_rate_over_derived() {
-        // The Velocity column shows the ClickHouse rate whenever the rollup
+        // The Sales/Day column shows the ClickHouse rate whenever the rollup
         // covers a row, so the filter has to evaluate that same number.
         // Otherwise a row displays "0.3/day", survives a floor of 5 on a
         // derived 6/day, and the filter looks broken.
@@ -4036,8 +4047,16 @@ mod tests {
     }
 
     #[test]
+    fn tax_is_optional_and_off_by_default() {
+        // Profit is already post-tax by default; the tax column is
+        // supplementary detail, so it ships opt-in.
+        assert!(ALL_OPTIONAL_COLS.contains(&COL_TAX));
+        assert!(!DEFAULT_VISIBLE_COLS.contains(&COL_TAX));
+    }
+
+    #[test]
     fn new_columns_are_on_by_default() {
-        for col in [COL_VELOCITY, COL_DRIFT, COL_CONFIDENCE] {
+        for col in [COL_DRIFT, COL_CONFIDENCE, COL_SALES_PER_DAY] {
             assert!(ALL_OPTIONAL_COLS.contains(&col), "{col} missing from ALL");
             assert!(DEFAULT_VISIBLE_COLS.contains(&col), "{col} not default-on");
         }
@@ -4045,17 +4064,19 @@ mod tests {
 
     #[test]
     fn ch_only_columns_are_off_by_default() {
-        for col in [COL_TREND, COL_VOLUME_30D, COL_SALES_PER_DAY, COL_DATACENTER] {
+        // Sales/Day is exempt: it falls back to the buffer-derived rate, so
+        // it renders on every row and ships default-on.
+        for col in [COL_TREND, COL_VOLUME_30D, COL_DATACENTER] {
             assert!(
                 !DEFAULT_VISIBLE_COLS.contains(&col),
-                "{col} should be opt-in (ClickHouse covers ~7% of items)"
+                "{col} should be opt-in (no fallback where ClickHouse lacks coverage)"
             );
         }
     }
 
     #[test]
     fn visible_cols_round_trip_with_new_ids() {
-        let set = parse_visible_cols(Some("velocity,drift,confidence"));
+        let set = parse_visible_cols(Some("sales_per_day,drift,confidence"));
         assert_eq!(set.len(), 3);
         let s = serialize_visible_cols(&set);
         assert_eq!(parse_visible_cols(Some(&s)), set);
@@ -4290,6 +4311,7 @@ mod tests {
             SortMode::Roi,
             SortMode::Profit,
             SortMode::ProfitPerDay,
+            SortMode::Tax,
             SortMode::Drift,
         ] {
             assert_eq!(mode.default_dir(), SortDir::Desc, "{mode}");
@@ -4308,6 +4330,7 @@ mod tests {
             SortMode::Roi,
             SortMode::Profit,
             SortMode::ProfitPerDay,
+            SortMode::Tax,
             SortMode::BuyPrice,
             SortMode::LastSold,
             SortMode::Drift,
