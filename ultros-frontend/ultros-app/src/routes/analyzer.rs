@@ -3454,14 +3454,14 @@ mod tests {
 
     #[test]
     fn test_parse_visible_cols() {
+        // No param at all means "the defaults", whatever they currently are —
+        // asserting the literal set here would just duplicate the
+        // `*_by_default` tests above and break on every column change.
         let default_cols = parse_visible_cols(None);
-        assert_eq!(default_cols.len(), 6);
-        assert!(default_cols.contains(COL_PROFIT_PER_DAY));
-        assert!(default_cols.contains(COL_VELOCITY));
-        assert!(default_cols.contains(COL_DRIFT));
-        assert!(default_cols.contains(COL_CONFIDENCE));
-        assert!(default_cols.contains(COL_WORLD));
-        assert!(default_cols.contains(COL_LAST_SOLD));
+        assert_eq!(default_cols.len(), DEFAULT_VISIBLE_COLS.len());
+        for col in DEFAULT_VISIBLE_COLS {
+            assert!(default_cols.contains(col), "{col} missing from defaults");
+        }
 
         let empty_cols = parse_visible_cols(Some(""));
         assert!(empty_cols.is_empty());
