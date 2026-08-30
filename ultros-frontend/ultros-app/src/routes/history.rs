@@ -22,12 +22,12 @@ pub fn History() -> impl IntoView {
     // tachys's hydrator surfaces as an unrecoverable panic.
     let local_items = LocalResource::new(move || async move { items() });
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, history_meta_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, history_meta_desc).to_string() />
             <MetaRobotsNoIndex />
 
-            <div class="container mx-auto max-w-7xl space-y-6">
+            <div class="space-y-6">
                 <div class="flex items-center justify-between">
                     <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, history_title)}</h1>
                     <button

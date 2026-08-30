@@ -26,7 +26,7 @@ pub fn Welcome() -> impl IntoView {
     let has_homeworld = Signal::derive(move || homeworld.with(|w| w.is_some()));
 
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, welcome_page_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, welcome_page_desc).to_string() />
 

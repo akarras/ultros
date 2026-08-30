@@ -8,7 +8,7 @@ pub fn BotGuide() -> impl IntoView {
     view! {
         <MetaTitle title=t_string!(i18n, bot_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, bot_meta_desc).to_string() />
-        <div class="container mx-auto max-w-4xl px-4 py-8 flex flex-col gap-12">
+        <div class="main-content container mx-auto max-w-4xl p-2 sm:p-6 flex flex-col gap-12">
             <header class="flex flex-col gap-3">
                 <h1 class="text-4xl font-bold text-brand-200">{t!(i18n, bot_heading)}</h1>
                 <p class="text-lg text-[color:var(--color-text-muted)]">

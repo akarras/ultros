@@ -1231,7 +1231,7 @@ pub fn ItemExplorer() -> impl IntoView {
     provide_context(scope);
     view! {
         <div class="flex flex-col min-h-screen">
-            <div class="p-4 lg:p-8 max-w-[1600px] mx-auto w-full">
+            <div class="main-content p-2 sm:p-6 w-full">
                 <crate::routes::item_explorer_toolbar::ItemExplorerToolbar />
                 <Outlet />
             </div>

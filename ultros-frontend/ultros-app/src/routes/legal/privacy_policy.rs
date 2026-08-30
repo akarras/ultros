@@ -6,7 +6,7 @@ use leptos::prelude::*;
 pub fn PrivacyPolicy() -> impl IntoView {
     let i18n = use_i18n();
     view! {
-        <div class="container mx-auto max-w-3xl space-y-4 p-4">
+        <div class="main-content container mx-auto max-w-3xl space-y-4 p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, privacy_policy_title).to_string() />
             <MetaDescription text=move || {
                 t_string!(i18n, privacy_policy_meta_description).to_string()
