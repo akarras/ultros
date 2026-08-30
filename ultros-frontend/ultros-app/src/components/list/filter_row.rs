@@ -161,6 +161,7 @@ pub(crate) fn ListFilterRow(
                             };
                             view! {
                                 <button
+                                    type="button"
                                     class="btn-secondary px-3 py-1 text-xs"
                                     class:bg-red-950=is_excluded
                                     class:text-red-200=is_excluded
