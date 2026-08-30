@@ -51,6 +51,7 @@ pub fn AddSetToList(
         <div class="inline-block">
             <Tooltip tooltip_text=tooltip>
                 <button
+                    type="button"
                     class="btn-primary"
                     attr:aria-label=move || tooltip.get()
                     on:click=move |_| {
@@ -136,7 +137,7 @@ fn AddSetToListModal(
                             {move || subject.get()}
                         </div>
                     </div>
-                    <button class="btn-secondary" on:click=move |_| set_visible(false)>
+                    <button type="button" class="btn-secondary" on:click=move |_| set_visible(false)>
                         {t!(i18n, add_recipe_close)}
                     </button>
                 </div>
@@ -149,6 +150,7 @@ fn AddSetToListModal(
                         unchecked_label=t_string!(i18n, add_to_list_normal_quality).to_string()
                     />
                     <button
+                        type="button"
                         class="btn-secondary text-xs"
                         on:click=move |_| reset_quantities()
                     >
