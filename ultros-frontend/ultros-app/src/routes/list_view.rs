@@ -5,11 +5,13 @@ use std::str::FromStr;
 
 use crate::global_state::xiv_data::tracked_data;
 
+use crate::components::data_table::{Column, ColumnHeader, TrackWidths, header_cells};
 use crate::components::icon::Icon;
 use crate::global_state::LocalWorldData;
 use icondata as i;
 use leptos::either::Either;
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_router::hooks::use_params_map;
 use ultros_api_types::{
     ActiveListing,
@@ -34,6 +36,7 @@ use crate::components::{
     meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
     modal::Modal,
     realtime_status::RealtimeStatus,
+    skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton},
     tooltip::*,
 };
 use crate::i18n::*;
@@ -366,6 +369,102 @@ fn WorldExclusionControl(
     }
 }
 
+/// Skeleton columns for the list-item table, in the same order as
+/// [`list_item_table_columns`] — HQ, item, quantity, price, options — so the
+/// loading state has the real table's rhythm. The select column is left out:
+/// it only shows in bulk-edit mode, which nobody is in while a list is still
+/// loading.
+fn list_item_table_skeleton_columns() -> Vec<SkeletonColumn> {
+    vec![
+        SkeletonColumn::new("w-16 px-3 py-3", SkeletonCell::Badge),
+        SkeletonColumn::new("flex-1 min-w-40 px-3 py-3", SkeletonCell::IconText),
+        SkeletonColumn::new("w-40 px-3 py-3", SkeletonCell::Number),
+        SkeletonColumn::new("flex-1 px-3 py-3", SkeletonCell::Text),
+        SkeletonColumn::new("w-44 px-3 py-3", SkeletonCell::Number),
+    ]
+}
+
+/// The list-item table's six columns, described once so the `<thead>` and
+/// [`ListItemRow`]'s own `<td>`s can no longer disagree about which columns
+/// exist or what order they come in (the debt #1080 retired for the item
+/// explorer and the retainer tables — see `components/data_table.rs`).
+///
+/// `ListItemRow` renders its own body cells rather than a per-column closure:
+/// its rows carry row-local editing state (`edit`, `temp_item`) that a
+/// column-at-a-time [`body_cells`](crate::components::data_table::body_cells)
+/// call has no way to share across columns. So only [`header_cells`] is used
+/// here — `T` is `()` because no body cell is ever rendered through these
+/// columns. The Select and Options columns keep the exact same
+/// `class:hidden` toggle `ListItemRow` uses for their `<td>`s (rather than
+/// the substrate's own visibility mechanism, which *omits* an invisible
+/// column's cell on the `<table>` substrate) specifically so the header and
+/// body element counts never diverge as `edit_list_mode` flips.
+fn list_item_table_columns(
+    i18n: I18nContext<Locale, I18nKeys>,
+    edit_list_mode: RwSignal<bool>,
+) -> Vec<Column<()>> {
+    vec![
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::cell(move |_class| {
+                view! {
+                    <th
+                        scope="col"
+                        class="w-12 px-3 py-3 text-left"
+                        class:hidden=move || !edit_list_mode.get()
+                    >
+                        {t!(i18n, list_view_select_column)}
+                    </th>
+                }
+                .into_any()
+            }),
+            |_: &()| ().into_any(),
+        ),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, list_view_hq)} }.into_any()),
+            |_: &()| ().into_any(),
+        )
+        .header_class("w-16 px-3 py-3 text-left"),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, list_view_item)} }.into_any()),
+            |_: &()| ().into_any(),
+        )
+        .header_class("px-3 py-3 text-left"),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || {
+                view! { {t!(i18n, list_view_acquired_quantity)} }.into_any()
+            }),
+            |_: &()| ().into_any(),
+        )
+        .header_class("w-40 px-3 py-3 text-left"),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, list_view_price)} }.into_any()),
+            |_: &()| ().into_any(),
+        )
+        .header_class("px-3 py-3 text-left"),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::cell(move |_class| {
+                view! {
+                    <th
+                        scope="col"
+                        class="w-44 px-3 py-3 text-right"
+                        class:hidden=edit_list_mode
+                    >
+                        {t!(i18n, list_view_options)}
+                    </th>
+                }
+                .into_any()
+            }),
+            |_: &()| ().into_any(),
+        ),
+    ]
+}
+
 #[component]
 pub fn ListView() -> impl IntoView {
     let i18n = use_i18n();
@@ -648,35 +747,45 @@ pub fn ListView() -> impl IntoView {
         <div class="flex flex-col gap-4">
             <AutoMarkPurchases list_view=list_view />
 
-            <div class="panel rounded-lg p-3">
+            <div class="sticky-bar rounded-lg px-3 py-3">
+                // `list-toolbar` no longer carries any CSS (the compact
+                // button-sizing rule it used to scope moved to the shared
+                // `.sticky-bar-button` class on each button below and was
+                // deleted from tailwind.css) — kept purely as a stable
+                // `querySelector(".list-toolbar")` hook for
+                // `integration/list-flow.cjs`, `screenshots.cjs` and
+                // `shared-list.cjs`, which locate this row by that class.
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between list-toolbar">
                     <div class="flex flex-wrap items-center gap-2">
                         <Show when=move || view_caps.with(|c| c.can_write)>
                             <>
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_item).to_string()>
                                     <button
-                                        class="btn-primary"
-                                        class:active=move || item_modal_open()
+                                        class="sticky-bar-button sticky-bar-button-shrink"
+                                        class:bg-brand-900=move || item_modal_open()
+                                        class:border-brand-500=move || item_modal_open()
                                         on:click=move |_| set_item_modal_open(true)
                                     >
                                         <Icon icon=i::BiPlusRegular />
-                                        <span>{t!(i18n, list_view_add_item)}</span>
+                                        <span class="sticky-bar-button-label">{t!(i18n, list_view_add_item)}</span>
                                     </button>
                                 </Tooltip>
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_add_recipe).to_string()>
                                     <button
-                                        class="btn-secondary"
-                                        class:active=move || recipe_modal_open()
+                                        class="sticky-bar-button sticky-bar-button-shrink"
+                                        class:bg-brand-900=move || recipe_modal_open()
+                                        class:border-brand-500=move || recipe_modal_open()
                                         on:click=move |_| set_recipe_modal_open(true)
                                     >
                                         <Icon icon=i::BiBookAddRegular />
-                                        <span>{t!(i18n, list_view_add_recipe)}</span>
+                                        <span class="sticky-bar-button-label">{t!(i18n, list_view_add_recipe)}</span>
                                     </button>
                                 </Tooltip>
                                 <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_import_item).to_string()>
                                     <button
-                                        class="btn-secondary"
-                                        class:active=move || menu() == MenuState::MakePlace
+                                        class="sticky-bar-button sticky-bar-button-shrink"
+                                        class:bg-brand-900=move || menu() == MenuState::MakePlace
+                                        class:border-brand-500=move || menu() == MenuState::MakePlace
                                         on:click=move |_| set_menu(
                                             match menu() {
                                                 MenuState::MakePlace => MenuState::None,
@@ -685,7 +794,7 @@ pub fn ListView() -> impl IntoView {
                                         )
                                     >
                                         <Icon icon=i::BiImportRegular />
-                                        <span>{t!(i18n, list_view_make_place)}</span>
+                                        <span class="sticky-bar-button-label">{t!(i18n, list_view_make_place)}</span>
                                     </button>
                                 </Tooltip>
                             </>
@@ -695,38 +804,37 @@ pub fn ListView() -> impl IntoView {
                     <div class="flex flex-wrap gap-2 self-start lg:self-auto">
                         <Tooltip tooltip_text=t_string!(i18n, list_view_subscribe_tooltip).to_string()>
                             <button
-                                class="btn-secondary"
+                                class="sticky-bar-button sticky-bar-button-shrink"
                                 aria-label=t_string!(i18n, list_view_subscribe_aria)
                                 on:click=move |_| set_subscribe_open(true)
                             >
                                 <Icon icon=i::BsBell />
-                                <span>{t!(i18n, list_view_subscribe_button)}</span>
+                                <span class="sticky-bar-button-label">{t!(i18n, list_view_subscribe_button)}</span>
                             </button>
                         </Tooltip>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_tooltip_purchasing_view).to_string()>
                             <button
-                                class="btn-secondary"
+                                class="sticky-bar-button sticky-bar-button-shrink"
                                 class:bg-brand-900=buying_view
                                 class:border-brand-500=buying_view
-                                class:active=buying_view
                                 on:click=move |_| {
                                     let next = !buying_view.get_untracked();
                                     set_buying_view_param.set(next.then_some(true));
                                 }
                             >
                                 <Icon icon=i::BiCartRegular />
-                                <span>{t!(i18n, list_view_purchasing_view)}</span>
+                                <span class="sticky-bar-button-label">{t!(i18n, list_view_purchasing_view)}</span>
                             </button>
                         </Tooltip>
                         <Tooltip tooltip_text=t_string!(i18n, list_view_settings_tooltip).to_string()>
                             <button
-                                class="btn-secondary"
+                                class="sticky-bar-button sticky-bar-button-shrink"
                                 aria-label=t_string!(i18n, list_view_settings)
                                 data-testid="list-settings-btn"
                                 on:click=move |_| set_settings_open(true)
                             >
                                 <Icon icon=i::BsGear />
-                                <span>{t!(i18n, list_view_settings)}</span>
+                                <span class="sticky-bar-button-label">{t!(i18n, list_view_settings)}</span>
                             </button>
                         </Tooltip>
                     </div>
@@ -1037,7 +1145,15 @@ pub fn ListView() -> impl IntoView {
             }}
 
             <Transition fallback=move || {
-                view! { <Loading /> }
+                view! {
+                    <section class="panel rounded-lg overflow-hidden">
+                        <TableSkeleton
+                            columns=list_item_table_skeleton_columns()
+                            rows=6
+                            row_class="px-1"
+                        />
+                    </section>
+                }
             }>
                 {move || {
                     list_view
@@ -1097,7 +1213,7 @@ pub fn ListView() -> impl IntoView {
                                                         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                                                             <div>
                                                                 <p class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, list_view_shopping_route)}</p>
-                                                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
+                                                                <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">{list_name.clone()}</h1>
                                                             </div>
                                                             <div class="flex flex-wrap gap-2 text-sm">
                                                                 <RealtimeStatus
@@ -1173,7 +1289,7 @@ pub fn ListView() -> impl IntoView {
                                                                                 let display_name = display_name.clone();
                                                                                 Either::Right(view! {
                                                                                     <>
-                                                                                        <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{display_name.clone()}</h1>
+                                                                                        <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">{display_name.clone()}</h1>
                                                                                         <Show when=move || view_caps.with(|c| c.can_admin)>
                                                                                             <button
                                                                                                 class="btn-ghost p-1"
@@ -1402,24 +1518,7 @@ pub fn ListView() -> impl IntoView {
                                                         <table class="w-full min-w-[760px] text-sm">
                                                             <thead>
                                                                 <tr class="border-b border-[color:var(--color-outline)] bg-[color:var(--color-background)]/80 text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">
-                                                                    <th
-                                                                        scope="col"
-                                                                        class="w-12 px-3 py-3 text-left"
-                                                                        class:hidden=move || !edit_list_mode()
-                                                                    >
-                                                                        {t!(i18n, list_view_select_column)}
-                                                                    </th>
-                                                                    <th scope="col" class="w-16 px-3 py-3 text-left">{t!(i18n, list_view_hq)}</th>
-                                                                    <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_item)}</th>
-                                                                    <th scope="col" class="w-40 px-3 py-3 text-left">{t!(i18n, list_view_acquired_quantity)}</th>
-                                                                    <th scope="col" class="px-3 py-3 text-left">{t!(i18n, list_view_price)}</th>
-                                                                    <th
-                                                                        scope="col"
-                                                                        class="w-44 px-3 py-3 text-right"
-                                                                        class:hidden=edit_list_mode
-                                                                    >
-                                                                        {t!(i18n, list_view_options)}
-                                                                    </th>
+                                                                    {header_cells(&list_item_table_columns(i18n, edit_list_mode))}
                                                                 </tr>
                                                             </thead>
                                                             <tbody class="divide-y divide-[color:var(--color-outline)]">

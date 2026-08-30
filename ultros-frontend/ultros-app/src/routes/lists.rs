@@ -16,8 +16,9 @@ use crate::api::{
 use crate::components::list::share_list_modal::ShareListModal;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::modal::Modal;
-use crate::components::tool_help::ActionableEmptyState;
-use crate::components::{loading::*, tooltip::*, world_name::*, world_picker::*};
+use crate::components::skeleton::BoxSkeleton;
+use crate::components::tool_help::{ActionableEmptyState, ToolHeader};
+use crate::components::{tooltip::*, world_name::*, world_picker::*};
 use crate::global_state::home_world::get_price_zone;
 use ultros_api_types::list::{
     CreateList, List, ListCapabilities, ListPermission, ListWithPermission,
@@ -65,9 +66,9 @@ pub fn ListInviteAccept() -> impl IntoView {
                     <p class="text-sm text-[color:var(--color-text-muted)]">{t!(i18n, lists_accept_invite_body)}</p>
                 </div>
 
-                <Suspense fallback=move || view! { <Loading /> }>
+                <Suspense fallback=move || view! { <BoxSkeleton rows=1 /> }>
                     {move || match login.get() {
-                        None => view! { <Loading /> }.into_any(),
+                        None => view! { <BoxSkeleton rows=1 /> }.into_any(),
                         Some(Err(e)) => {
                             if matches!(
                                 e,
@@ -399,9 +400,9 @@ pub fn EditLists() -> impl IntoView {
         <MetaDescription text=move || t_string!(i18n, lists_meta_desc).to_string() />
         <MetaRobotsNoIndex />
         <div class="flex flex-col gap-4">
-            <Suspense fallback=move || view! { <Loading /> }>
+            <Suspense fallback=move || view! { <BoxSkeleton rows=1 /> }>
                 {move || match user_resource.get() {
-                    None => view! { <Loading /> }.into_any(),
+                    None => view! { <BoxSkeleton rows=1 /> }.into_any(),
                     Some(None) => {
                         view! {
                             <ActionableEmptyState
@@ -415,18 +416,22 @@ pub fn EditLists() -> impl IntoView {
                     }
                     Some(Some(_)) => {
                         view! {
-                            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, lists_page_title)}</h1>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <button class="btn-secondary" on:click=move |_| set_redeem_open(true)>
-                                        <Icon icon=i::BiLinkRegular />
-                                        {t!(i18n, lists_redeem_invite_label)}
-                                    </button>
-                                    <button class="btn-primary" on:click=move |_| set_creating(!creating())>
-                                        <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
-                                        {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
-                                    </button>
-                                </div>
+                            <ToolHeader
+                                title=t_string!(i18n, lists_page_title).to_string()
+                                summary=t_string!(i18n, lists_tool_summary).to_string()
+                                context=t_string!(i18n, lists_tool_context).to_string()
+                                help_href="/help"
+                                help_body=t_string!(i18n, lists_tool_help).to_string()
+                            />
+                            <div class="flex flex-wrap items-center justify-end gap-2">
+                                <button class="btn-secondary" on:click=move |_| set_redeem_open(true)>
+                                    <Icon icon=i::BiLinkRegular />
+                                    {t!(i18n, lists_redeem_invite_label)}
+                                </button>
+                                <button class="btn-primary" on:click=move |_| set_creating(!creating())>
+                                    <Icon icon=if creating() { i::AiCloseOutlined } else { i::BiPlusRegular } />
+                                    {move || if creating() { Either::Left(t!(i18n, cancel_creation)) } else { Either::Right(t!(i18n, create_new_list)) }}
+                                </button>
                             </div>
 
                             {move || {
@@ -531,7 +536,7 @@ pub fn EditLists() -> impl IntoView {
                                 </Modal>
                             </Show>
 
-                            <Suspense fallback=move || view! { <Loading /> }>
+                            <Suspense fallback=move || view! { <BoxSkeleton rows=6 /> }>
                                 {move || {
                                     filtered_lists
                                         .get()
