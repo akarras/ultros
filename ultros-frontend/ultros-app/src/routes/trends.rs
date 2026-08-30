@@ -6,9 +6,9 @@
 //! sparkline. The user picks a window (7/30/90d), and FE filter/sort
 //! state lives in the URL so links are shareable.
 //!
-//! The MarketHeat band + MarketMovers strip from the home page are
-//! reused at the top of the page — they answer "what's hot right now"
-//! at a glance; the table below is the deep-dive.
+//! The MarketHeat band from the home page is reused at the top of the
+//! page — it answers "what's hot right now" at a glance; the table below
+//! is the deep-dive.
 
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -31,7 +31,6 @@ use crate::{
         gil::Gil,
         item_icon::ItemIcon,
         market_heat::MarketHeat,
-        market_movers::MarketMovers,
         meta::{MetaDescription, MetaTitle},
         skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton},
         sort_header::{SortColumn, SortDir, SortableHeaderCell},
@@ -669,13 +668,6 @@ pub fn Trends() -> impl IntoView {
                 // table.
                 {move || world_signal.with(|w| w.is_some()).then(|| view! {
                     <MarketHeat world=world_signal />
-                })}
-
-                // Market Movers — same component as the home page,
-                // complements the detail table below with the 24h
-                // rising/falling/units view.
-                {move || world_signal.with(|w| w.is_some()).then(|| view! {
-                    <MarketMovers world=world_signal />
                 })}
 
                 <ControlBar
