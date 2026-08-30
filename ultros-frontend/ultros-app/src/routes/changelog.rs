@@ -39,6 +39,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-08-29",
+        title: "A few more loading spinners became skeletons",
+        blurb: "The last few pulsing-text loading states in the crafting/gathering analyzers, and the item page's sale-history chart, now show skeletons shaped like the content they load into instead of a spinner or a plain pulsing line.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "Lists gets a visual refresh",
         blurb: "The Lists and list-detail pages now have a proper heading and an about-this-page panel, and the item table uses the same styled table as the rest of the app instead of unstyled HTML. The action toolbar switched to the same sticky bar the other tools use. Loading spinners were replaced with skeletons shaped like the cards and tables they load into.",
         link: Some("/list"),
