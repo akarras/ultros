@@ -3452,6 +3452,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_visible_cols() {
+        let default_cols = parse_visible_cols(None);
+        assert_eq!(default_cols.len(), 6);
+        assert!(default_cols.contains(COL_PROFIT_PER_DAY));
+        assert!(default_cols.contains(COL_VELOCITY));
+        assert!(default_cols.contains(COL_DRIFT));
+        assert!(default_cols.contains(COL_CONFIDENCE));
+        assert!(default_cols.contains(COL_WORLD));
+        assert!(default_cols.contains(COL_LAST_SOLD));
+
+        let empty_cols = parse_visible_cols(Some(""));
+        assert!(empty_cols.is_empty());
+
+        let some_cols = parse_visible_cols(Some("profit_per_day,world"));
+        assert_eq!(some_cols.len(), 2);
+        assert!(some_cols.contains(COL_PROFIT_PER_DAY));
+        assert!(some_cols.contains(COL_WORLD));
+
+        let unknown_cols = parse_visible_cols(Some("profit_per_day,unknown,world"));
+        assert_eq!(unknown_cols.len(), 2);
+        assert!(unknown_cols.contains(COL_PROFIT_PER_DAY));
+        assert!(unknown_cols.contains(COL_WORLD));
+    }
+
+    #[test]
+    fn test_format_velocity_floor() {
+        assert_eq!(format_velocity_floor(10.0), "10");
+        assert_eq!(format_velocity_floor(10.5), "10.5");
+        assert_eq!(format_velocity_floor(10.55), "10.55");
+        assert_eq!(format_velocity_floor(10.50), "10.5");
+        assert_eq!(format_velocity_floor(0.0), "0");
+        assert_eq!(format_velocity_floor(0.5), "0.5");
+        assert_eq!(format_velocity_floor(0.55), "0.55");
+        assert_eq!(format_velocity_floor(0.50), "0.5");
+        assert_eq!(format_velocity_floor(10.05), "10.05");
+    }
+
     mod market_scope {
         use super::*;
         use ultros_api_types::websocket::ListingEventData;
