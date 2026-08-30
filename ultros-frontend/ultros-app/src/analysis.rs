@@ -452,6 +452,12 @@ pub fn flip_profit(estimated_sale_price: i32, buy_price: i32, include_tax: bool)
     estimated - buy_price
 }
 
+/// Gil the 5% market-board tax takes off a sale at this price. Shares
+/// `flip_profit`'s truncating math so `buy + profit + tax == sale` exactly.
+pub fn sale_tax(estimated_sale_price: i32) -> i32 {
+    estimated_sale_price - (estimated_sale_price as f32 * 0.95) as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,6 +557,17 @@ mod tests {
     fn flip_profit_applies_five_percent_tax() {
         assert_eq!(flip_profit(1000, 500, true), 450); // 950 - 500
         assert_eq!(flip_profit(1000, 500, false), 500);
+    }
+
+    #[test]
+    fn sale_tax_reconciles_with_flip_profit() {
+        assert_eq!(sale_tax(100_000), 5_000);
+        // Truncation must land on the same side as flip_profit's, so the
+        // three columns always sum back to the sale price.
+        for sale in [999, 1000, 1001, 12_345, i32::MAX] {
+            let buy = sale / 2;
+            assert_eq!(buy + flip_profit(sale, buy, true) + sale_tax(sale), sale);
+        }
     }
 
     #[test]

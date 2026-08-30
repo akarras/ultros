@@ -75,6 +75,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Flip Finder: clearer sales rate, plus a tax column",
+        blurb: "The Velocity column is gone — the Sales/day badge shows the same rate more readably and is now on by default. A new optional, sortable Tax column shows the gil the 5% market board tax takes off each estimated sale; profit stays post-tax as before.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "Lists gets a visual refresh",
         blurb: "The Lists and list-detail pages now have a proper heading and an about-this-page panel, and the item table uses the same styled table as the rest of the app instead of unstyled HTML. The action toolbar switched to the same sticky bar the other tools use. Loading spinners were replaced with skeletons shaped like the cards and tables they load into.",
         link: Some("/list"),
