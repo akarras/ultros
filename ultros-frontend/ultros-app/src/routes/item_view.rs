@@ -1306,6 +1306,38 @@ fn WorldMarketShare(
     .into_any()
 }
 
+/// The sale-history panel's loading state: a placeholder title/badge row, a
+/// toggle+button row, and a large block standing in for the price chart.
+///
+/// Mirrors the panel `ChartWrapper` renders once its data arrives — same
+/// `panel h-[26rem]` frame — so the swap from loading to loaded is a content
+/// change, not a layout jump.
+#[component]
+fn ChartWrapperSkeleton() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
+    view! {
+        <div class="panel h-[26rem] flex flex-col gap-3 p-3 sm:p-4" role="status">
+            <div class="skeleton-shimmer flex flex-col gap-3 h-full flex-1 min-h-0" aria-hidden="true">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="flex flex-col gap-2">
+                        <div class="flex items-center gap-2">
+                            <div class="skeleton-block h-5 w-32 rounded"></div>
+                            <div class="skeleton-block h-4 w-16 rounded-full"></div>
+                        </div>
+                        <div class="skeleton-block h-3 w-40 rounded"></div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="skeleton-block h-6 w-24 rounded-lg"></div>
+                        <div class="skeleton-block h-6 w-20 rounded-lg"></div>
+                    </div>
+                </div>
+                <div class="skeleton-block flex-1 w-full rounded-lg"></div>
+            </div>
+            <span class="sr-only">{t!(i18n, loading)}</span>
+        </div>
+    }
+}
+
 #[component]
 pub fn ChartWrapper(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
@@ -1586,15 +1618,7 @@ pub fn ChartWrapper(
     let density = Signal::derive(move || density_resource.get().flatten());
 
     view! {
-        <Transition fallback=move || {
-            view! {
-                <div class="animate-pulse panel h-[26rem] text-[color:var(--color-text)]">
-                    <div class="h-full w-full flex items-center justify-center">
-                        <div class="w-16 h-16 border-4 border-brand-400/40 border-t-transparent rounded-full animate-spin" />
-                    </div>
-                </div>
-            }
-        }>
+        <Transition fallback=ChartWrapperSkeleton>
             {move || {
                 let error = listing_resource
                     .with(|l| l.as_ref().and_then(|r| r.as_ref().err()).map(|e| e.to_string()));

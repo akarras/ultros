@@ -271,6 +271,24 @@ pub fn BoxSkeleton(
     .into_any()
 }
 
+/// A short inline placeholder standing in for a status line next to a
+/// control — e.g. "Loading recent sales…" beside a world picker.
+///
+/// Unlike [`SingleLineSkeleton`] this does not stretch to fill its
+/// container: the analyzer pages that use it sit inside a `justify-end` row,
+/// where a full-width bar would blow out the layout the real text sits in.
+#[component]
+pub fn InlineStatusSkeleton() -> impl IntoView {
+    let i18n = use_i18n_or_default();
+    view! {
+        <div class="inline-flex items-center" role="status">
+            <div class="skeleton-block skeleton-shimmer h-3 w-28 rounded" aria-hidden="true"></div>
+            <span class="sr-only">{t!(i18n, loading)}</span>
+        </div>
+    }
+    .into_any()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

@@ -10,13 +10,23 @@ pub fn ToolHeader(
     #[prop(into)] title: Oco<'static, str>,
     #[prop(into)] summary: Oco<'static, str>,
     #[prop(optional, into)] context: Option<Oco<'static, str>>,
-    #[prop(into)] help_href: Oco<'static, str>,
-    #[prop(into)] help_body: Oco<'static, str>,
+    /// Link to a full help page. Omit on pages that have no dedicated help
+    /// doc (lists, alerts, settings) — the "open full help" link is only
+    /// rendered when both this and `help_body` are set.
+    #[prop(optional, into)]
+    help_href: Option<Oco<'static, str>>,
+    /// Extra detail shown below the summary when the info panel is expanded.
+    /// Optional for the same reason as `help_href`.
+    #[prop(optional, into)]
+    help_body: Option<Oco<'static, str>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (is_open, set_is_open) = signal(false);
     let context_text = context.clone();
-    let help_href_text = help_href.to_string();
+    let help_link = help_href
+        .clone()
+        .zip(help_body.clone())
+        .map(|(href, body)| (href.to_string(), body));
 
     view! {
         <section class="panel px-4 py-3 sm:px-6 sm:py-4 rounded-2xl flex flex-col gap-3">
@@ -49,13 +59,18 @@ pub fn ToolHeader(
                             <p class="text-sm text-[color:var(--color-text-muted)]">{context}</p>
                         })
                     }
-                    <p class="text-sm leading-relaxed text-[color:var(--color-text)]">
-                        {help_body.clone()}
-                    </p>
-                    <AppLink href=help_href_text.clone() attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] font-semibold inline-flex items-center gap-2">
-                        {t!(i18n, tool_help_open_full_help)}
-                        <Icon icon=i::FaArrowRightSolid width="0.85em" height="0.85em" />
-                    </AppLink>
+                    {
+                        let help_link = help_link.clone();
+                        move || help_link.clone().map(|(href, body)| view! {
+                            <p class="text-sm leading-relaxed text-[color:var(--color-text)]">
+                                {body}
+                            </p>
+                            <AppLink href=href attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] font-semibold inline-flex items-center gap-2">
+                                {t!(i18n, tool_help_open_full_help)}
+                                <Icon icon=i::FaArrowRightSolid width="0.85em" height="0.85em" />
+                            </AppLink>
+                        })
+                    }
                 </div>
             </Show>
         </section>

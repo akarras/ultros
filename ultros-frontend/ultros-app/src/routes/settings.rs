@@ -3,8 +3,8 @@ use crate::api::{
 };
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{
-    ad::*, crafter_settings::CrafterSettings, loading::*, toggle::Toggle, world_name::*,
-    world_picker::*,
+    ad::*, crafter_settings::CrafterSettings, loading::*, skeleton::BoxSkeleton, toggle::Toggle,
+    world_name::*, world_picker::*,
 };
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
@@ -391,13 +391,7 @@ pub fn Profile() -> impl IntoView {
                     </div>
 
                     // Character List
-                    <Suspense fallback=move || {
-                        view! {
-                            <div class="flex items-center justify-center p-8">
-                                <Loading />
-                            </div>
-                        }
-                    }>
+                    <Suspense fallback=move || view! { <BoxSkeleton rows=2 /> }>
                         {move || {
                             characters
                                 .get()

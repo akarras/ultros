@@ -23,7 +23,7 @@ use crate::{
         icon::Icon,
         item_icon::*,
         realtime_status::RealtimeStatus,
-        skeleton::BoxSkeleton,
+        skeleton::{BoxSkeleton, InlineStatusSkeleton},
         sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
         tooltip::Tooltip,
@@ -1357,7 +1357,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 />
                 <div class="flex flex-row justify-end items-center">
                     <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, loading_sales_data)}</div> }>
+                        <Suspense fallback=InlineStatusSkeleton>
                             {move || {
                                 recent_sales_clone
                                     .get()
