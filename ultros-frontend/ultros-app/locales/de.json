@@ -870,6 +870,7 @@
     "recipe_analyzer_subcraft_header": "Enthält Zwischen-Handwerke:\n",
     "recipe_analyzer_subcraft_row": "• {{count}}x {{name}} ({{gil}} Gil)\n",
     "recipe_analyzer_sub_suffix": "Zw.",
+    "recipe_analyzer_yield_note": "×{{ n }} pro Herstellung",
     "vendor_resale_n_sales": "{{count}} Verkäufe",
     "vendor_resale_category_fallback": "Kategorie {{id}}",
     "currency_exchange_quantity_x": "x",

@@ -870,6 +870,7 @@
     "recipe_analyzer_subcraft_header": "包含子制作：\n",
     "recipe_analyzer_subcraft_row": "• {{count}}x {{name}}（{{gil}} 金币）\n",
     "recipe_analyzer_sub_suffix": "子",
+    "recipe_analyzer_yield_note": "每次制作 ×{{ n }}",
     "vendor_resale_n_sales": "{{count}} 笔销售",
     "vendor_resale_category_fallback": "分类 {{id}}",
     "currency_exchange_quantity_x": "x",

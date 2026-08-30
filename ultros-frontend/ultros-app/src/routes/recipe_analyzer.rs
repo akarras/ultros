@@ -82,6 +82,12 @@ fn craft_type_acronym(craft_type: i32) -> &'static str {
     }
 }
 
+/// Cost of one unit of output: one craft costs `craft_cost` and yields
+/// `amount_result` units. Yields of 0 (bad sheet rows) are treated as 1.
+fn per_unit_cost(craft_cost: i32, amount_result: i32) -> i32 {
+    craft_cost / amount_result.max(1)
+}
+
 /// The user's level for a job acronym, or `None` if the acronym isn't a
 /// crafter. Shares one table with the recipe filter so the per-job empty state
 /// can never disagree with the rows the filter actually kept.
@@ -500,10 +506,9 @@ fn RecipeAnalyzerTable(
             let craft_cost = breakdown.cost;
             let sub_crafts = breakdown.sub_crafts.clone();
 
-            // craft_cost represents the cost to perform the recipe once.
-            // This is effectively a per-result-unit cost for recipes that yield a single item.
-            // If result quantities are exposed from xiv_gen in the future, divide by that quantity here.
-            let cost_per_unit = craft_cost;
+            // craft_cost is the cost of one execution of the recipe, which yields
+            // `amount_result` units; the market price is per unit, so compare per unit.
+            let cost_per_unit = per_unit_cost(craft_cost, recipe.amount_result);
 
             if cost_per_unit >= market_price {
                 continue;
@@ -1144,6 +1149,15 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                     <Gil amount=data.cost />
                                     {
+                                        let data_for_yield = data.clone();
+                                        (data.recipe.amount_result > 1)
+                                            .then(|| view! {
+                                                <div class="text-xs text-[color:var(--color-text-muted)]">
+                                                    {t!(i18n, recipe_analyzer_yield_note, n = move || data_for_yield.recipe.amount_result)}
+                                                </div>
+                                            })
+                                    }
+                                    {
                                         let has_sub_crafts = !data.sub_crafts.is_empty();
                                         let sub_crafts = data.sub_crafts.clone();
                                         view! {
@@ -1461,6 +1475,17 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 mod test {
     use super::*;
     use xiv_gen::ClassJobId;
+
+    /// A craft costs `craft_cost` and yields `amount_result` units; the table
+    /// prices everything per unit. Guards the degenerate `amount_result == 0`
+    /// rows some sheets carry.
+    #[test]
+    fn per_unit_cost_divides_by_yield() {
+        assert_eq!(per_unit_cost(300, 3), 100);
+        assert_eq!(per_unit_cost(300, 1), 300);
+        assert_eq!(per_unit_cost(300, 0), 300);
+        assert_eq!(per_unit_cost(100, 3), 33); // integer division, floor
+    }
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
     /// Toolbar wrote verbatim — a drifted id here silently breaks every

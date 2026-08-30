@@ -873,6 +873,7 @@
     "recipe_analyzer_subcraft_header": "Includes sub-crafts:\n",
     "recipe_analyzer_subcraft_row": "• {{count}}x {{name}} ({{gil}} gil)\n",
     "recipe_analyzer_sub_suffix": "sub",
+    "recipe_analyzer_yield_note": "×{{ n }} per craft",
     "vendor_resale_n_sales": "{{count}} sales",
     "vendor_resale_category_fallback": "Category {{id}}",
     "currency_exchange_quantity_x": "x",

@@ -870,6 +870,7 @@
     "recipe_analyzer_subcraft_header": "サブクラフトを含む:\n",
     "recipe_analyzer_subcraft_row": "• {{count}}x {{name}}（{{gil}} gil）\n",
     "recipe_analyzer_sub_suffix": "サブ",
+    "recipe_analyzer_yield_note": "1回の製作で ×{{ n }}",
     "vendor_resale_n_sales": "{{count}} 件の取引",
     "vendor_resale_category_fallback": "カテゴリ {{id}}",
     "currency_exchange_quantity_x": "x",

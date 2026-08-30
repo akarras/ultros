@@ -870,6 +870,7 @@
     "recipe_analyzer_subcraft_header": "하위 제작 포함:\n",
     "recipe_analyzer_subcraft_row": "• {{count}}x {{name}} ({{gil}} 길)\n",
     "recipe_analyzer_sub_suffix": "하위",
+    "recipe_analyzer_yield_note": "제작 1회당 ×{{ n }}",
     "vendor_resale_n_sales": "{{count}}건 판매",
     "vendor_resale_category_fallback": "카테고리 {{id}}",
     "currency_exchange_quantity_x": "x",
