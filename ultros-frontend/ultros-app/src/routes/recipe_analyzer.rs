@@ -1,5 +1,5 @@
 use crate::components::crafting_cost::{
-    CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost,
+    CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
@@ -493,6 +493,7 @@ fn RecipeAnalyzerTable(
                 max_subcraft_depth: if use_sub { 2 } else { 0 },
                 shards,
                 on_hand: active.as_ref(),
+                vendor_prices: Some(vendor_price_map()),
             };
             let breakdown =
                 compute_cost(recipe, &prices, &recipes_by_output, &opts, &is_shard_item);

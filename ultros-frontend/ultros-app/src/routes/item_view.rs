@@ -981,12 +981,14 @@ fn MarketStatsPanel(
                                                                         max_subcraft_depth: 0,
                                                                         shards: shards_mode,
                                                                         on_hand: &empty,
+                                                                        vendor_prices: Some(crate::components::crafting_cost::vendor_price_map()),
                                                                     };
                                                                     let hq_opts = crate::components::crafting_cost::CraftingCostOptions {
                                                                         require_hq: true,
                                                                         max_subcraft_depth: 0,
                                                                         shards: shards_mode,
                                                                         on_hand: &empty,
+                                                                        vendor_prices: Some(crate::components::crafting_cost::vendor_price_map()),
                                                                     };
                                                                     let is_shard = crate::components::related_items::is_shard_item;
                                                                     let lq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &lq_opts, &is_shard).cost;

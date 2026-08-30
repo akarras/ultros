@@ -15,6 +15,7 @@ use crate::{
         add_recipe_to_list::AddRecipeToList,
         crafting_cost::{
             CraftingCostOptions, EmptyOnHand, IngredientsIter, ShardsMode, compute_cost,
+            vendor_price_map,
         },
         icon::Icon,
         item_icon::ItemIcon,
@@ -204,6 +205,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                         max_subcraft_depth: 0,
                         shards,
                         on_hand: active_on_hand,
+                        vendor_prices: Some(vendor_price_map()),
                     };
                     let lq = compute_cost(recipe, prices, &recipes_by_output, &lq_opts, &is_shard_item);
 
@@ -218,6 +220,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                         max_subcraft_depth: 0,
                         shards,
                         on_hand: active_on_hand_hq,
+                        vendor_prices: Some(vendor_price_map()),
                     };
                     let hq = compute_cost(recipe, prices, &recipes_by_output, &hq_opts, &is_shard_item);
 
@@ -414,6 +417,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
 
                             let lq_opts = CraftingCostOptions {
                                 require_hq: false, max_subcraft_depth: 0, shards, on_hand: active,
+                                vendor_prices: Some(vendor_price_map()),
                             };
                             let lq = compute_cost(recipe, data, &recipes_by_output, &lq_opts, &is_shard_item);
 
@@ -424,6 +428,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                                 if opts_value.use_on_hand { &local_hq } else { &empty };
                             let hq_opts = CraftingCostOptions {
                                 require_hq: true, max_subcraft_depth: 0, shards, on_hand: active_hq,
+                                vendor_prices: Some(vendor_price_map()),
                             };
                             let hq = compute_cost(recipe, data, &recipes_by_output, &hq_opts, &is_shard_item);
 

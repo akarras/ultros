@@ -20,11 +20,24 @@ pub enum ShardsMode {
     IncludeMarket,
 }
 
+/// Where an ingredient line's `unit_price` came from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PriceSource {
+    /// Cheapest matching market listing.
+    Market,
+    /// NPC gil-shop price (always NQ; never used when `require_hq`).
+    Vendor,
+    /// Crafting the ingredient via a sub-recipe was cheaper than buying.
+    Subcraft,
+}
+
 pub struct CraftingCostOptions<'a> {
     pub require_hq: bool,
     pub max_subcraft_depth: u8,
     pub shards: ShardsMode,
     pub on_hand: &'a dyn OnHand,
+    /// item_id -> NPC gil-shop unit price. `None` disables the vendor floor.
+    pub vendor_prices: Option<&'a HashMap<i32, i32>>,
 }
 
 impl<'a> CraftingCostOptions<'a> {
@@ -36,6 +49,7 @@ impl<'a> CraftingCostOptions<'a> {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand,
+            vendor_prices: Some(vendor_price_map()),
         }
     }
 }
@@ -73,6 +87,7 @@ pub struct IngredientLine {
     pub used_from_market: i32,
     pub unit_price: i32,
     pub is_shard: bool,
+    pub source: PriceSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,13 +144,27 @@ pub fn compute_ingredient_cost(
 ) -> IngredientLine {
     // Look up price. HQ-preferred when require_hq, with LQ fallback.
     let summary = prices.find_matching_listings(item_id.0);
-    let unit_price = if opts.require_hq {
+    let market_price = if opts.require_hq {
         summary
             .price_preferring_hq()
             .or_else(|| summary.lowest_gil())
             .unwrap_or(0)
     } else {
         summary.lowest_gil().unwrap_or(0)
+    };
+
+    // Vendor floor: NPC gil-shop goods are always NQ, so never apply when the
+    // caller requires HQ. A vendor price of 0 (or missing) is ignored.
+    let vendor = if opts.require_hq {
+        None
+    } else {
+        opts.vendor_prices
+            .and_then(|m| m.get(&item_id.0).copied())
+            .filter(|p| *p > 0)
+    };
+    let (unit_price, source) = match vendor {
+        Some(v) if market_price == 0 || v < market_price => (v, PriceSource::Vendor),
+        _ => (market_price, PriceSource::Market),
     };
 
     // is_shard is set by the recipe-walking caller in Task 3 (which has
@@ -159,7 +188,31 @@ pub fn compute_ingredient_cost(
         used_from_market,
         unit_price,
         is_shard,
+        source,
     }
+}
+
+use std::sync::OnceLock;
+
+/// item_id -> NPC gil-shop unit price, for every gil-shop-sold item.
+/// Built once per process from game data (same construction as the
+/// vendor-resale page).
+pub fn vendor_price_map() -> &'static HashMap<i32, i32> {
+    static MAP: OnceLock<HashMap<i32, i32>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let data = crate::global_state::xiv_data::tracked_data();
+        let mut map = HashMap::new();
+        for items in data.gil_shop_items.values() {
+            for shop_item in items {
+                if let Some(item) = data.items.get(&xiv_gen::ItemId(shop_item.item))
+                    && item.price_mid > 0
+                {
+                    map.insert(shop_item.item, item.price_mid as i32);
+                }
+            }
+        }
+        map
+    })
 }
 
 #[cfg(test)]
@@ -227,8 +280,11 @@ fn compute_cost_inner(
                 }
             }
             // Promote the winning candidate (if any) and re-price the line.
+            if !best_sub_crafts.is_empty() {
+                line.unit_price = unit_cost;
+                line.source = PriceSource::Subcraft;
+            }
             sub_crafts.extend(best_sub_crafts.into_iter());
-            line.unit_price = unit_cost;
         }
 
         let line_market_cost = (line.used_from_market as i64) * (unit_cost as i64);
@@ -352,6 +408,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &on_hand,
+            vendor_prices: None,
         };
 
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
@@ -371,6 +428,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &on_hand,
+            vendor_prices: None,
         };
 
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
@@ -390,6 +448,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &on_hand,
+            vendor_prices: None,
         };
 
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
@@ -411,6 +470,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &on_hand,
+            vendor_prices: None,
         };
 
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
@@ -428,6 +488,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &on_hand,
+            vendor_prices: None,
         };
 
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
@@ -490,6 +551,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
         assert_eq!(line.needed_total, 10);
@@ -508,6 +570,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
         assert_eq!(line.used_from_on_hand, 10);
@@ -524,6 +587,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let line = compute_ingredient_cost(ItemId(100), 10, &prices, &opts);
         assert_eq!(line.used_from_on_hand, 3);
@@ -540,6 +604,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
         assert_eq!(line.unit_price, 100);
@@ -554,9 +619,101 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
         assert_eq!(line.unit_price, 50);
+    }
+
+    fn vendor_map(entries: &[(i32, i32)]) -> HashMap<i32, i32> {
+        entries.iter().copied().collect()
+    }
+
+    #[test]
+    fn vendor_price_undercuts_market() {
+        let prices = one_listing(100, false, 50, 1);
+        let vendors = vendor_map(&[(100, 20)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: Some(&vendors),
+        };
+        let line = compute_ingredient_cost(ItemId(100), 3, &prices, &opts);
+        assert_eq!(line.unit_price, 20);
+        assert_eq!(line.source, PriceSource::Vendor);
+    }
+
+    #[test]
+    fn market_price_undercuts_vendor() {
+        let prices = one_listing(100, false, 50, 1);
+        let vendors = vendor_map(&[(100, 80)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: Some(&vendors),
+        };
+        let line = compute_ingredient_cost(ItemId(100), 3, &prices, &opts);
+        assert_eq!(line.unit_price, 50);
+        assert_eq!(line.source, PriceSource::Market);
+    }
+
+    #[test]
+    fn vendor_price_used_when_no_listing() {
+        let prices = one_listing(999, false, 50, 1); // listing for a different item
+        let vendors = vendor_map(&[(100, 20)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: Some(&vendors),
+        };
+        let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
+        assert_eq!(line.unit_price, 20);
+        assert_eq!(line.source, PriceSource::Vendor);
+    }
+
+    #[test]
+    fn zero_vendor_price_is_ignored() {
+        let prices = one_listing(100, false, 50, 1);
+        let vendors = vendor_map(&[(100, 0)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: Some(&vendors),
+        };
+        let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
+        assert_eq!(line.unit_price, 50);
+        assert_eq!(line.source, PriceSource::Market);
+    }
+
+    #[test]
+    fn require_hq_ignores_vendor_floor() {
+        // HQ listing at 100, vendor at 20: an HQ-required ingredient must not be
+        // silently downgraded to the NQ vendor copy.
+        let prices = one_listing(100, true, 100, 1);
+        let vendors = vendor_map(&[(100, 20)]);
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: true,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: Some(&vendors),
+        };
+        let line = compute_ingredient_cost(ItemId(100), 1, &prices, &opts);
+        assert_eq!(line.unit_price, 100);
+        assert_eq!(line.source, PriceSource::Market);
     }
 
     use crate::components::crafting_cost::fixtures::*;
@@ -600,6 +757,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
@@ -619,6 +777,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
@@ -640,6 +799,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
@@ -659,6 +819,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::ExcludeShards,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
         let recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
@@ -693,6 +854,7 @@ mod tests {
             max_subcraft_depth: 2,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
@@ -736,6 +898,7 @@ mod tests {
             max_subcraft_depth: 2,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
@@ -777,6 +940,7 @@ mod tests {
             max_subcraft_depth: 0,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
@@ -822,6 +986,7 @@ mod tests {
             max_subcraft_depth: 2,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
@@ -866,6 +1031,7 @@ mod tests {
             max_subcraft_depth: 2,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
@@ -916,6 +1082,7 @@ mod tests {
             max_subcraft_depth: 2,
             shards: ShardsMode::IncludeMarket,
             on_hand: &oh,
+            vendor_prices: None,
         };
         let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
 
