@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-30",
+        title: "Recipe Analyzer: profit math overhaul",
+        blurb: "Multi-yield recipes are now costed per unit, NPC vendor prices floor ingredient costs, the 5% market board tax is deducted from profit, and revenue now defaults to your selected world's price instead of the region-wide minimum.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-08-30",
         title: "Change your home world from the sidebar",
         blurb: "Your home world now sits at the bottom of the sidebar, right above the price zone, and can be changed from any page: click it and pick a world from the same region \u{2192} datacenter \u{2192} world menu the price zone uses. Before, changing it meant a trip to the settings page.",
         link: None,
