@@ -829,31 +829,23 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, fc_crafting_tool_context).to_string()
                     help_href="/help/fc-crafting"
                     help_body=t_string!(i18n, fc_crafting_tool_help).to_string()
-                />
-                 <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=InlineStatusSkeleton>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-
-                <Show when=move || selected_world.get().is_some()>
-                    <div class="flex flex-col md:flex-row items-center gap-2">
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
+                        }}
+                    </Suspense>
+                    <Show when=move || selected_world.get().is_some()>
                         <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, fc_crafting_analyzer_select_world)}</label>
-                        <div class="w-full md:w-auto">
-                            <WorldOnlyPicker
-                                current_world=selected_world.into()
-                                set_current_world=set_selected_world.into()
-                            />
-                        </div>
-                    </div>
-                </Show>
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world.into()
+                        />
+                    </Show>
+                </ToolHeader>
                 <CalculationSummary
                     title=t_string!(i18n, fc_crafting_calc_title).to_string()
                     formula=t_string!(i18n, fc_crafting_calc_formula).to_string()

@@ -1354,19 +1354,16 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, recipe_analyzer_tool_context).to_string()
                     help_href="/help/recipe-analyzer"
                     help_body=t_string!(i18n, recipe_analyzer_tool_help).to_string()
-                />
-                <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=InlineStatusSkeleton>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
+                        }}
+                    </Suspense>
+                </ToolHeader>
                 {
                     let (show_settings, set_show_settings) = signal(false);
                     view! {

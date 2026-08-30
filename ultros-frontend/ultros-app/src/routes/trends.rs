@@ -630,15 +630,12 @@ pub fn Trends() -> impl IntoView {
                     context=t_string!(i18n, trends_tool_context).to_string()
                     help_href="/help/market-trends"
                     help_body=t_string!(i18n, trends_tool_help).to_string()
-                />
+                >
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, world)}</label>
+                    <TrendsWorldNavigator />
+                </ToolHeader>
 
                 <div class="flex flex-col md:flex-row md:items-center gap-3">
-                    <div class="flex flex-col md:flex-row items-center gap-2">
-                        <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, world)}</label>
-                        <div class="w-full md:w-auto">
-                            <TrendsWorldNavigator />
-                        </div>
-                    </div>
                     <div class="flex flex-col gap-1">
                         <span class="toolbar-field-label">{t!(i18n, trends_window_label)}</span>
                         <div class="toolbar-pills">
