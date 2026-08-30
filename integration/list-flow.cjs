@@ -599,14 +599,24 @@ async function main() {
         fail(failures, "delete button not found");
       } else {
         await deleteBtn.click(); // first click: confirm prompt
-        await new Promise((r) => setTimeout(r, 500));
+        // Wait for the button to re-render into its confirm state rather
+        // than sleeping — the dev-build WASM can take >500ms to apply it.
+        await ownerPage
+          .waitForFunction(
+            () =>
+              /confirm/i.test(
+                document.querySelector('[data-testid="list-delete-btn"]')?.innerText || "",
+              ),
+            { timeout: 10000 },
+          )
+          .catch(() => {});
         const deleteBtn2 = await ownerPage.$('[data-testid="list-delete-btn"]');
         if (!deleteBtn2) {
           fail(failures, "delete confirm button not found");
         } else {
           await deleteBtn2.click();
           await ownerPage
-            .waitForFunction(() => window.location.pathname === "/list", { timeout: 5000 })
+            .waitForFunction(() => window.location.pathname === "/list", { timeout: 15000 })
             .catch(() => {});
           if (ownerPage.url().endsWith("/list")) {
             pass("owner returned to /list after delete");
