@@ -403,6 +403,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                     <Show when=move || !search.get().is_empty()>
                         <Tooltip tooltip_text=t_string!(i18n, search_box_clear_tooltip)>
                             <button
+                                type="button"
                                 class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none rounded-full"
                                 // Keep focus on the input so the focusout timer
                                 // never fires and collapses the panel mid-click.
@@ -441,6 +442,7 @@ pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
                         .map(|job| {
                             view! {
                                 <button
+                                    type="button"
                                     class="px-2 py-0.5 rounded-full text-xs border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] hover:border-[color:var(--brand-ring)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none"
                                     on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
                                     on:click=move |_| {
