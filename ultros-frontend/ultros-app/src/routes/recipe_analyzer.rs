@@ -88,6 +88,14 @@ fn per_unit_cost(craft_cost: i32, amount_result: i32) -> i32 {
     craft_cost / amount_result.max(1)
 }
 
+/// The market board's cut of every sale.
+const MARKET_TAX_PERCENT: i64 = 5;
+
+/// What the seller actually receives from a sale listed at `gross`.
+fn net_after_tax(gross: i32) -> i32 {
+    (gross as i64 * (100 - MARKET_TAX_PERCENT) / 100) as i32
+}
+
 /// The user's level for a job acronym, or `None` if the acronym isn't a
 /// crafter. Shares one table with the recipe filter so the per-job empty state
 /// can never disagree with the rows the filter actually kept.
@@ -510,11 +518,11 @@ fn RecipeAnalyzerTable(
             // `amount_result` units; the market price is per unit, so compare per unit.
             let cost_per_unit = per_unit_cost(craft_cost, recipe.amount_result);
 
-            if cost_per_unit >= market_price {
+            let net_revenue = net_after_tax(market_price);
+            if cost_per_unit >= net_revenue {
                 continue;
             }
-
-            let profit = market_price - cost_per_unit;
+            let profit = net_revenue - cost_per_unit;
             let roi = if cost_per_unit > 0 {
                 (profit as f64 / cost_per_unit as f64 * 100.0) as i32
             } else {
@@ -1485,6 +1493,16 @@ mod test {
         assert_eq!(per_unit_cost(300, 1), 300);
         assert_eq!(per_unit_cost(300, 0), 300);
         assert_eq!(per_unit_cost(100, 3), 33); // integer division, floor
+    }
+
+    /// The market board takes 5% of every sale; profit must be computed on the
+    /// 95% the seller actually receives, rounded down.
+    #[test]
+    fn net_after_tax_takes_five_percent() {
+        assert_eq!(net_after_tax(100), 95);
+        assert_eq!(net_after_tax(1), 0); // floor, not round
+        assert_eq!(net_after_tax(0), 0);
+        assert_eq!(net_after_tax(1_999_999_999), 1_899_999_999); // no i32 overflow
     }
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
