@@ -21,6 +21,6 @@
 ## 2026-08-28 - Clear-filter controls must be real buttons
 **Learning:** The analyzer's world/datacenter clear-filter controls were `div`s with `on:click`, so they were unfocusable and did not respond to Space/Enter. Replaced with `<button type="button">` plus the existing `aria_remove_filter` label, matching `vendor_resale.rs`. Note that Tailwind v4's preflight sets `button { cursor: default }`, so a `div` converted to a `button` must keep its `cursor-pointer` class or it silently loses the pointer affordance.
 **Action:** Prefer `<button type="button">` over `div` + `on:click`, give icon-only buttons an `aria-label`, and keep `cursor-pointer` when converting a `div` to a `button` under Tailwind v4.
-## 2024-05-18 - Always specify type="button" for JS interactive buttons
+## 2026-08-30 - Always specify type="button" for JS interactive buttons
 **Learning:** By default, HTML `<button>` elements act as `type="submit"`. If a generic interactive component (like a modal close button or a search clear button) is placed inside a form, it will unintentionally trigger a form submission and page reload.
 **Action:** Always add `type="button"` to buttons that are solely meant to trigger client-side JavaScript actions (via `on:click`), ensuring they don't cause side-effects if nested in a form.
