@@ -1,5 +1,5 @@
 use crate::components::crafting_cost::{
-    CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost,
+    CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
 };
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
@@ -80,6 +80,20 @@ fn craft_type_acronym(craft_type: i32) -> &'static str {
         7 => "CUL",
         _ => "",
     }
+}
+
+/// Cost of one unit of output: one craft costs `craft_cost` and yields
+/// `amount_result` units. Yields of 0 (bad sheet rows) are treated as 1.
+fn per_unit_cost(craft_cost: i32, amount_result: i32) -> i32 {
+    craft_cost / amount_result.max(1)
+}
+
+/// The market board's cut of every sale.
+const MARKET_TAX_PERCENT: i64 = 5;
+
+/// What the seller actually receives from a sale listed at `gross`.
+fn net_after_tax(gross: i32) -> i32 {
+    (gross as i64 * (100 - MARKET_TAX_PERCENT) / 100) as i32
 }
 
 /// The user's level for a job acronym, or `None` if the acronym isn't a
@@ -493,22 +507,22 @@ fn RecipeAnalyzerTable(
                 max_subcraft_depth: if use_sub { 2 } else { 0 },
                 shards,
                 on_hand: active.as_ref(),
+                vendor_prices: Some(vendor_price_map()),
             };
             let breakdown =
                 compute_cost(recipe, &prices, &recipes_by_output, &opts, &is_shard_item);
             let craft_cost = breakdown.cost;
             let sub_crafts = breakdown.sub_crafts.clone();
 
-            // craft_cost represents the cost to perform the recipe once.
-            // This is effectively a per-result-unit cost for recipes that yield a single item.
-            // If result quantities are exposed from xiv_gen in the future, divide by that quantity here.
-            let cost_per_unit = craft_cost;
+            // craft_cost is the cost of one execution of the recipe, which yields
+            // `amount_result` units; the market price is per unit, so compare per unit.
+            let cost_per_unit = per_unit_cost(craft_cost, recipe.amount_result);
 
-            if cost_per_unit >= market_price {
+            let net_revenue = net_after_tax(market_price);
+            if cost_per_unit >= net_revenue {
                 continue;
             }
-
-            let profit = market_price - cost_per_unit;
+            let profit = net_revenue - cost_per_unit;
             let roi = if cost_per_unit > 0 {
                 (profit as f64 / cost_per_unit as f64 * 100.0) as i32
             } else {
@@ -1143,6 +1157,15 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
                                     <Gil amount=data.cost />
                                     {
+                                        let data_for_yield = data.clone();
+                                        (data.recipe.amount_result > 1)
+                                            .then(|| view! {
+                                                <div class="text-xs text-[color:var(--color-text-muted)]">
+                                                    {t!(i18n, recipe_analyzer_yield_note, n = move || data_for_yield.recipe.amount_result)}
+                                                </div>
+                                            })
+                                    }
+                                    {
                                         let has_sub_crafts = !data.sub_crafts.is_empty();
                                         let sub_crafts = data.sub_crafts.clone();
                                         view! {
@@ -1460,6 +1483,27 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 mod test {
     use super::*;
     use xiv_gen::ClassJobId;
+
+    /// A craft costs `craft_cost` and yields `amount_result` units; the table
+    /// prices everything per unit. Guards the degenerate `amount_result == 0`
+    /// rows some sheets carry.
+    #[test]
+    fn per_unit_cost_divides_by_yield() {
+        assert_eq!(per_unit_cost(300, 3), 100);
+        assert_eq!(per_unit_cost(300, 1), 300);
+        assert_eq!(per_unit_cost(300, 0), 300);
+        assert_eq!(per_unit_cost(100, 3), 33); // integer division, floor
+    }
+
+    /// The market board takes 5% of every sale; profit must be computed on the
+    /// 95% the seller actually receives, rounded down.
+    #[test]
+    fn net_after_tax_takes_five_percent() {
+        assert_eq!(net_after_tax(100), 95);
+        assert_eq!(net_after_tax(1), 0); // floor, not round
+        assert_eq!(net_after_tax(0), 0);
+        assert_eq!(net_after_tax(1_999_999_999), 1_899_999_999); // no i32 overflow
+    }
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
     /// Toolbar wrote verbatim — a drifted id here silently breaks every

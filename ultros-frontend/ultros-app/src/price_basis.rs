@@ -7,8 +7,9 @@
 //! both to the datacenter instead of the whole region.
 //!
 //! All three enums round-trip through `FromStr`/`Display` so they can live
-//! in the URL via `filter_query_signal`. Defaults reproduce the analyzer's
-//! historical behavior exactly.
+//! in the URL via `filter_query_signal`. Cost and scope defaults reproduce
+//! historical behavior exactly; as of 2026-08-29, revenue defaults to
+//! `WorldMin` to price items on the analyzer's selected world.
 
 use std::fmt::{self, Display};
 use std::str::FromStr;
@@ -77,13 +78,15 @@ impl Display for CostBasis {
 /// How the crafted item's sale price is estimated.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum RevenueMetric {
-    /// Cheapest current listing in scope (historical behavior).
-    #[default]
+    /// Cheapest current listing in scope.
     ListingMin,
     SaleMedian,
     SaleMin,
     SaleAvg,
-    /// Cheapest current listing on the analyzer's selected world.
+    /// Cheapest current listing on the analyzer's selected world — the
+    /// price you'd actually list at. Falls back to the scope-wide listing
+    /// when the world has none up.
+    #[default]
     WorldMin,
 }
 
@@ -256,13 +259,14 @@ mod tests {
     }
 
     #[test]
-    fn defaults_reproduce_historical_behavior() {
+    fn defaults() {
         assert_eq!(CostBasis::default(), CostBasis::ListingMin);
-        assert_eq!(RevenueMetric::default(), RevenueMetric::ListingMin);
+        // Revenue defaults to the selected world's cheapest listing — you sell
+        // on your own world, not wherever the region-wide minimum happens to be.
+        assert_eq!(RevenueMetric::default(), RevenueMetric::WorldMin);
         assert_eq!(MarketScope::default(), MarketScope::Region);
         assert_eq!(CostBasis::default().sale_stat(), None);
         assert_eq!(RevenueMetric::default().sale_stat(), None);
-        assert_eq!(RevenueMetric::WorldMin.sale_stat(), None);
     }
 
     #[test]

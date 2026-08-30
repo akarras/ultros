@@ -1,7 +1,7 @@
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
-    compute_ingredient_cost,
+    compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::global_state::cookies::Cookies;
@@ -374,6 +374,7 @@ fn FCCraftingAnalyzerTable(
                 max_subcraft_depth: 0,
                 shards,
                 on_hand: active.as_ref(),
+                vendor_prices: Some(vendor_price_map()),
             };
 
             let (cost, materials, shard_cost, on_hand_savings) =
