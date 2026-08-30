@@ -6,9 +6,22 @@ use xiv_gen::ItemId;
 use crate::api::{get_alert_events, resend_alert_event};
 use crate::components::icon::Icon;
 use crate::components::loading::Loading;
+use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::{t, t_string, use_i18n};
+
+/// Skeleton columns matching the table below's five columns, in the same
+/// order, so the loading state has the real table's rhythm.
+fn history_skeleton_columns() -> Vec<SkeletonColumn> {
+    vec![
+        SkeletonColumn::new("w-32 p-1", SkeletonCell::Text),
+        SkeletonColumn::new("flex-1 min-w-32 p-1", SkeletonCell::IconText),
+        SkeletonColumn::new("w-24 p-1", SkeletonCell::Number),
+        SkeletonColumn::new("w-16 p-1", SkeletonCell::Badge),
+        SkeletonColumn::new("w-20 p-1", SkeletonCell::Blank),
+    ]
+}
 
 #[component]
 pub fn HistoryPanel() -> impl IntoView {
@@ -18,7 +31,9 @@ pub fn HistoryPanel() -> impl IntoView {
     let toasts = use_toast();
 
     view! {
-        <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
+        <Suspense fallback=move || {
+            view! { <TableSkeleton columns=history_skeleton_columns() rows=4 /> }
+        }>
             {move || events.get().map(|r| match r {
                 Ok(rows) if rows.is_empty() => view! {
                     <p class="opacity-70">{t!(i18n, history_no_fires)}</p>
@@ -73,13 +88,15 @@ pub fn HistoryPanel() -> impl IntoView {
                                                                             match resend_alert_event(event_id).await {
                                                                                 Ok(r) if r.delivered => {
                                                                                     if let Some(t) = toasts {
-                                                                                        t.success("Resent");
+                                                                                        t.success(t_string!(i18n, history_resend_success_toast).to_string());
                                                                                     }
                                                                                     version.update(|v| *v += 1);
                                                                                 }
                                                                                 Ok(r) => {
                                                                                     if let Some(t) = toasts {
-                                                                                        t.error(r.error.unwrap_or_else(|| "Resend failed".into()));
+                                                                                        t.error(r.error.unwrap_or_else(|| {
+                                                                                            t_string!(i18n, history_resend_failed_toast).to_string()
+                                                                                        }));
                                                                                     }
                                                                                     set_is_resending.set(false);
                                                                                 }

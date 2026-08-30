@@ -1,4 +1,4 @@
-use crate::components::alert_config_drawer::AlertConfigDrawer;
+use crate::components::alert_drawer::AlertDrawer;
 use crate::components::icon::Icon;
 use crate::components::{clipboard::*, item_icon::*, price_viewer::*, tooltip::*};
 use crate::global_state::xiv_data::tracked_data;
@@ -457,14 +457,14 @@ pub fn ListItemRow(
             }}
         </tr>
         <Show when=alert_drawer_open>
-            <AlertConfigDrawer
-                item_id=item.with(|i| i.item_id)
-                item_name={
+            <AlertDrawer
+                preset_item={
                     let id = item.with(|i| i.item_id);
-                    game_items
+                    let name = game_items
                         .get(&ItemId(id))
                         .map(|i| i.name.as_str().to_string())
-                        .unwrap_or_default()
+                        .unwrap_or_default();
+                    (id, name)
                 }
                 default_world=Signal::derive(|| None)
                 set_visible=set_alert_drawer_open.into()

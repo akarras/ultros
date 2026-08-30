@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Alerts gets a visual refresh, one add-alert dialog",
+        blurb: "The Alerts page now has a proper heading and an about-this-tool panel, and its rules table uses the same styled table as the rest of the app instead of unstyled HTML. Loading spinners were replaced with skeletons shaped like the panels they load into. The two near-identical \"add alert\" dialogs used across the app are now one dialog.",
+        link: Some("/alerts"),
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "Retainers gets a visual refresh",
         blurb: "The Retainers pages now have a proper heading and an about-this-tool panel, and their listing tables use the same styled table as the rest of the app instead of unstyled HTML. Loading spinners were replaced with skeletons shaped like the tables and cards they load into.",
         link: Some("/retainers"),

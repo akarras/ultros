@@ -1,8 +1,16 @@
-//! Unified "Add alert" modal shared by the /alerts rules panel and the
-//! /retainers/undercuts page. A type toggle switches between the two alert
-//! shapes (item price threshold vs retainer undercut), and the same surface
-//! lists the user's existing alerts of the selected type with a remove
-//! button, so pages embedding this drawer don't need their own manager UI.
+//! Unified "Add alert" modal shared by the /alerts rules panel, the
+//! /retainers/undercuts page, and per-item entry points (list rows). A type
+//! toggle switches between the two alert shapes (item price threshold vs
+//! retainer undercut), and the same surface lists the user's existing alerts
+//! of the selected type with a remove button, so pages embedding this drawer
+//! don't need their own manager UI.
+//!
+//! When opened with a `preset_item` (a specific item id/name already known,
+//! e.g. from a list row) the item search UI and the item/undercut kind
+//! toggle are both hidden — the drawer is locked to an item-price alert for
+//! that one item, mirroring the old, now-deleted `AlertConfigDrawer`. This
+//! merges that component into this one (#1130): same `<Modal>`, same fields,
+//! same `alert_drawer_*` i18n keys, previously duplicated across two files.
 
 use icondata as i;
 use leptos::{prelude::*, reactive::wrappers::write::SignalSetter, task::spawn_local};
@@ -46,10 +54,27 @@ fn trigger_matches_kind(trigger: &AlertTrigger, kind: AlertKind) -> bool {
 #[component]
 pub fn AlertDrawer(
     #[prop(optional)] initial_kind: AlertKind,
+    /// An item already chosen by the caller (id, display name) — e.g. a list
+    /// row's own item. When set, the item search UI and the item/undercut
+    /// kind toggle are hidden and the drawer is locked to an item-price
+    /// alert for this item (the old `AlertConfigDrawer` shape).
+    #[prop(optional)]
+    preset_item: Option<(i32, String)>,
+    /// Default world selector for the form. When omitted, defaults to the
+    /// user's home world (if set). Pass `Signal::derive(|| None)` explicitly
+    /// to opt out of the home-world default — used by callers that don't
+    /// want to presume a world for an item-scoped alert.
+    #[prop(optional, into)]
+    default_world: Option<Signal<Option<AnySelector>>>,
     set_visible: SignalSetter<bool>,
 ) -> impl IntoView {
     let i18n = use_i18n();
-    let kind = RwSignal::new(initial_kind);
+    let locked_to_preset_item = preset_item.is_some();
+    let kind = RwSignal::new(if locked_to_preset_item {
+        AlertKind::ItemPrice
+    } else {
+        initial_kind
+    });
     // Cache-buster bumped after a delete so the active list refreshes without
     // closing the drawer.
     let version = RwSignal::new(0u64);
@@ -59,13 +84,15 @@ pub fn AlertDrawer(
     let (error, set_error) = signal::<Option<String>>(None);
     let toasts = use_toast();
 
-    // Item-price form state. Default the world picker to the user's home world
-    // when set, mirroring how AlertConfigDrawer is opened from item pages.
+    // Item-price form state. Default the world picker to the caller-supplied
+    // default, falling back to the user's home world when set.
     let (home_world, _) = use_home_world();
     let (search, set_search) = signal::<String>("".into());
-    let selected_item = RwSignal::<Option<(i32, String)>>::new(None);
-    let (world, set_world) =
-        signal::<Option<AnySelector>>(home_world.get_untracked().map(|w| AnySelector::World(w.id)));
+    let selected_item = RwSignal::<Option<(i32, String)>>::new(preset_item.clone());
+    let initial_world = default_world
+        .map(|s| s.get_untracked())
+        .unwrap_or_else(|| home_world.get_untracked().map(|w| AnySelector::World(w.id)));
+    let (world, set_world) = signal::<Option<AnySelector>>(initial_world);
     let (price_threshold, set_price_threshold) = signal::<String>("".into());
     let (hq_only, set_hq_only) = signal(false);
 
@@ -202,6 +229,14 @@ pub fn AlertDrawer(
         });
     };
 
+    // Fixed at mount (the preset item never changes for the lifetime of one
+    // drawer instance), so this is computed once as a plain value rather
+    // than a reactive closure.
+    let title = match &preset_item {
+        Some((_, name)) => format!("{}{}", t_string!(i18n, alert_drawer_title), name),
+        None => t_string!(i18n, add_alert_button).to_string(),
+    };
+
     let kind_btn = move |target: AlertKind, label: String| {
         view! {
             <button
@@ -221,83 +256,87 @@ pub fn AlertDrawer(
     view! {
         <Modal set_visible>
             <div class="p-4 space-y-4 w-[28rem] max-h-[80vh] overflow-y-auto">
-                <h2 class="text-xl font-bold">{t!(i18n, add_alert_button)}</h2>
+                <h2 class="text-xl font-bold">{title.clone()}</h2>
 
-                <div class="space-y-1">
-                    <label class="text-sm font-semibold">{t!(i18n, alert_kind_label)}</label>
-                    <div class="grid grid-cols-2 gap-2">
-                        {kind_btn(AlertKind::ItemPrice, t_string!(i18n, alert_kind_item_price).to_string())}
-                        {kind_btn(AlertKind::Undercut, t_string!(i18n, alert_kind_undercut).to_string())}
+                <Show when=move || !locked_to_preset_item>
+                    <div class="space-y-1">
+                        <label class="text-sm font-semibold">{t!(i18n, alert_kind_label)}</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            {kind_btn(AlertKind::ItemPrice, t_string!(i18n, alert_kind_item_price).to_string())}
+                            {kind_btn(AlertKind::Undercut, t_string!(i18n, alert_kind_undercut).to_string())}
+                        </div>
                     </div>
-                </div>
+                </Show>
 
-                <Show when=move || kind.get() == AlertKind::Undercut>
+                <Show when=move || !locked_to_preset_item && kind.get() == AlertKind::Undercut>
                     <p class="text-sm opacity-80">{t!(i18n, undercut_alert_description)}</p>
                 </Show>
 
                 <Show when=move || kind.get() == AlertKind::ItemPrice>
                     <div class="space-y-4">
-                        <div class="space-y-1">
-                            <label class="text-sm font-semibold" for="create-alert-search">{t!(i18n, create_alert_item_label)}</label>
-                            {move || match selected_item.get() {
-                                Some((id, name)) => view! {
-                                    <div class="flex items-center justify-between gap-2 rounded border border-[color:var(--color-outline)] p-2">
-                                        <div class="flex items-center gap-2 min-w-0">
-                                            <ItemIcon item_id=id icon_size=IconSize::Small />
-                                            <span class="truncate font-medium">{name}</span>
+                        <Show when=move || !locked_to_preset_item>
+                            <div class="space-y-1">
+                                <label class="text-sm font-semibold" for="create-alert-search">{t!(i18n, create_alert_item_label)}</label>
+                                {move || match selected_item.get() {
+                                    Some((id, name)) => view! {
+                                        <div class="flex items-center justify-between gap-2 rounded border border-[color:var(--color-outline)] p-2">
+                                            <div class="flex items-center gap-2 min-w-0">
+                                                <ItemIcon item_id=id icon_size=IconSize::Small />
+                                                <span class="truncate font-medium">{name}</span>
+                                            </div>
+                                            <button class="btn-ghost text-xs"
+                                                on:click=move |_| {
+                                                    selected_item.set(None);
+                                                    set_search.set("".into());
+                                                }>
+                                                {t!(i18n, create_alert_change_item)}
+                                            </button>
                                         </div>
-                                        <button class="btn-ghost text-xs"
-                                            on:click=move |_| {
-                                                selected_item.set(None);
-                                                set_search.set("".into());
-                                            }>
-                                            {t!(i18n, create_alert_change_item)}
-                                        </button>
-                                    </div>
-                                }.into_any(),
-                                None => view! {
-                                    <div class="space-y-1">
-                                        <input
-                                            id="create-alert-search"
-                                            class="input w-full"
-                                            placeholder=t_string!(i18n, create_alert_search_placeholder)
-                                            prop:value=search
-                                            on:input=move |e| set_search.set(event_target_value(&e))
-                                        />
-                                        {move || {
-                                            let results = item_results();
-                                            if results.is_empty() {
-                                                view! { <div class="text-xs opacity-60 px-1">""</div> }.into_any()
-                                            } else {
-                                                view! {
-                                                    <ul class="max-h-48 overflow-y-auto rounded border border-[color:var(--color-outline)] divide-y divide-[color:var(--color-outline)]">
-                                                        {results.into_iter().map(|(id, item)| {
-                                                            let item_id = id.0;
-                                                            let item_name = item.name.as_str().to_string();
-                                                            let item_name_for_button = item_name.clone();
-                                                            view! {
-                                                                <li>
-                                                                    <button
-                                                                        type="button"
-                                                                        class="flex items-center gap-2 w-full text-left p-2 hover:bg-[color:var(--color-background-panel)]"
-                                                                        on:click=move |_| {
-                                                                            selected_item.set(Some((item_id, item_name_for_button.clone())));
-                                                                        }
-                                                                    >
-                                                                        <ItemIcon item_id=item_id icon_size=IconSize::Small />
-                                                                        <span class="truncate">{item_name}</span>
-                                                                    </button>
-                                                                </li>
-                                                            }
-                                                        }).collect_view()}
-                                                    </ul>
-                                                }.into_any()
-                                            }
-                                        }}
-                                    </div>
-                                }.into_any(),
-                            }}
-                        </div>
+                                    }.into_any(),
+                                    None => view! {
+                                        <div class="space-y-1">
+                                            <input
+                                                id="create-alert-search"
+                                                class="input w-full"
+                                                placeholder=t_string!(i18n, create_alert_search_placeholder)
+                                                prop:value=search
+                                                on:input=move |e| set_search.set(event_target_value(&e))
+                                            />
+                                            {move || {
+                                                let results = item_results();
+                                                if results.is_empty() {
+                                                    view! { <div class="text-xs opacity-60 px-1">""</div> }.into_any()
+                                                } else {
+                                                    view! {
+                                                        <ul class="max-h-48 overflow-y-auto rounded border border-[color:var(--color-outline)] divide-y divide-[color:var(--color-outline)]">
+                                                            {results.into_iter().map(|(id, item)| {
+                                                                let item_id = id.0;
+                                                                let item_name = item.name.as_str().to_string();
+                                                                let item_name_for_button = item_name.clone();
+                                                                view! {
+                                                                    <li>
+                                                                        <button
+                                                                            type="button"
+                                                                            class="flex items-center gap-2 w-full text-left p-2 hover:bg-[color:var(--color-background-panel)]"
+                                                                            on:click=move |_| {
+                                                                                selected_item.set(Some((item_id, item_name_for_button.clone())));
+                                                                            }
+                                                                        >
+                                                                            <ItemIcon item_id=item_id icon_size=IconSize::Small />
+                                                                            <span class="truncate">{item_name}</span>
+                                                                        </button>
+                                                                    </li>
+                                                                }
+                                                            }).collect_view()}
+                                                        </ul>
+                                                    }.into_any()
+                                                }
+                                            }}
+                                        </div>
+                                    }.into_any(),
+                                }}
+                            </div>
+                        </Show>
 
                         <div class="space-y-1">
                             <label class="text-sm font-semibold">{t!(i18n, alert_drawer_world_label)}</label>
