@@ -1036,18 +1036,18 @@ fn MarketStatsPanel(
 
                                     Some(
                                         view! {
+                                            // Inline chip, not a block card — the callout is a
+                                            // pointer to another section, not a stat of its own.
                                             <a
                                                 href=href
                                                 class=format!(
-                                                    "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors hover:border-[color:var(--brand-ring)] {}",
+                                                    "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors hover:border-[color:var(--brand-ring)] {}",
                                                     accent_class,
                                                 )
                                             >
-                                                <Icon icon=icon attr:class="text-lg shrink-0" />
-                                                <span class="min-w-0">
-                                                    <span class="block font-semibold leading-tight">{title}</span>
-                                                    <span class="block text-[color:var(--color-text)] leading-tight">{summary}</span>
-                                                </span>
+                                                <Icon icon=icon attr:class="shrink-0" />
+                                                <span class="font-semibold">{title}</span>
+                                                <span class="text-[color:var(--color-text)]">{summary}</span>
                                             </a>
                                         }
                                         .into_any(),
@@ -1059,7 +1059,7 @@ fn MarketStatsPanel(
 
                             view! {
                                 <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                                    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2 sm:mb-3">
+                                    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
                                         <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                             {t!(i18n, cheapest_found)}
                                         </h2>
@@ -1075,13 +1075,13 @@ fn MarketStatsPanel(
                                     // Flat stat strip: 2x2 grid with hairline separators on
                                     // mobile, one row of 4 with left dividers at lg+.
                                     <div class="grid grid-cols-2 lg:grid-cols-4 [&>a]:border-[color:var(--color-outline)] [&>a:nth-child(even)]:border-l lg:[&>a:not(:first-child)]:border-l [&>a:nth-child(n+3)]:border-t lg:[&>a]:border-t-0">
-                                        <a href="#listings" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
                                             {if let Some((listing, _)) = cheapest_nq.clone() {
                                                 view! {
                                                     <div>
-                                                        <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-2 flex items-center gap-1">
+                                                        <div class="text-lg sm:text-xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
                                                             <WorldName id=AnySelector::World(listing.world_id) />
                                                         </div>
@@ -1093,7 +1093,7 @@ fn MarketStatsPanel(
                                             }}
                                         </a>
 
-                                        <a href="#listings" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
                                                 {t!(i18n, hq)}
@@ -1101,8 +1101,8 @@ fn MarketStatsPanel(
                                             {if let Some((listing, _)) = cheapest_hq.clone() {
                                                 view! {
                                                     <div>
-                                                        <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-2 flex items-center gap-1">
+                                                        <div class="text-lg sm:text-xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
                                                             <WorldName id=AnySelector::World(listing.world_id) />
                                                         </div>
@@ -1114,7 +1114,7 @@ fn MarketStatsPanel(
                                             }}
                                         </a>
 
-                                        <a href="#history" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#history" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-blue-300 mb-1 flex items-center gap-1">
                                                 {t!(i18n, real_price)}
                                                 {real_primary
@@ -1127,7 +1127,7 @@ fn MarketStatsPanel(
                                                     })
                                                     .unwrap_or_else(|| ().into_any())}
                                             </div>
-                                            <div class="text-xl sm:text-2xl font-bold leading-none">
+                                            <div class="text-lg sm:text-xl font-bold leading-none">
                                                 {match real_primary {
                                                     Some((_, est)) => view! { <Gil amount=est.value /> }.into_any(),
                                                     None => view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any(),
@@ -1177,16 +1177,16 @@ fn MarketStatsPanel(
                                             </div>
                                         </a>
 
-                                        <a href="#listings" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-emerald-300 mb-1">{t!(i18n, active_listings)}</div>
-                                            <div class="text-xl sm:text-2xl font-bold leading-none">{listings_count}</div>
-                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
+                                            <div class="text-lg sm:text-xl font-bold leading-none">{listings_count}</div>
+                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-1">
                                                 {sales_cadence}
                                             </div>
                                         </a>
                                     </div>
 
-                                    <div class="mt-3 sm:mt-4 space-y-2">
+                                    <div class="mt-2 flex flex-wrap items-center gap-2">
                                         {source_callout}
                                         {if listings_count == 0 {
                                             view! {
@@ -1262,7 +1262,7 @@ fn WorldMarketShare(
                         class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
                         class:hidden=move || shares.with(|s| s.is_empty())
                     >
-                        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2 sm:mb-3">
+                        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
                             <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                 {t!(i18n, market_share_title)}
                             </h2>
@@ -1944,20 +1944,28 @@ fn ListingsContent(
                     last_update_at=last_update_at.into()
                 />
             </div>
-            <div id="history" class="scroll-mt-16 mt-4 sm:mt-6">
-                <ChartWrapper listing_resource filtered_listings item_id world />
-            </div>
-            <div id="listings" class="scroll-mt-16 mt-6">
-                <ListingsPanel
-                    listing_resource
-                    filtered_listings
-                    world
-                    excluded_datacenters
-                />
+            // Tables before the chart: the listings and recent sales are what
+            // most visitors came for, so they come right after the overview.
+            // Side by side only from xl up — the sidebar makes a 1024px (lg)
+            // viewport no wider than 768px of content, and two half-width
+            // tables there would both scroll horizontally. `minmax(0,1fr)`
+            // keeps a wide table from blowing the grid past the viewport.
+            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 mt-6">
+                <div id="listings" class="scroll-mt-16 min-w-0">
+                    <ListingsPanel
+                        listing_resource
+                        filtered_listings
+                        world
+                        excluded_datacenters
+                    />
+                </div>
+                <div id="history" class="scroll-mt-16 min-w-0">
+                    <SalesDetails listing_resource />
+                </div>
             </div>
 
-            <div class="grid grid-cols-1 gap-6 mt-8">
-                <SalesDetails listing_resource />
+            <div class="mt-6">
+                <ChartWrapper listing_resource filtered_listings item_id world />
             </div>
 
             // Per-world supply distribution answers a research question, not
@@ -1973,39 +1981,6 @@ fn ListingsContent(
         </div>
     }
     .into_any()
-}
-
-#[component]
-fn DiscordCommandChip(
-    #[prop(into)] item_name: Signal<String>,
-    #[prop(into)] item_id: Signal<i32>,
-    #[prop(into)] world_name: Signal<String>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    // The `item` slash-command parameter is typed as an INTEGER on the Discord side,
-    // so a pasted command needs the item id, not a name. We show the name in the chip
-    // for human readability and put the id in the clipboard payload.
-    let display_command = Signal::derive(move || {
-        format!(
-            "/ffxiv prices current item:{} world:{}",
-            item_name.get(),
-            world_name.get(),
-        )
-    });
-    let clipboard_command = Signal::derive(move || {
-        format!(
-            "/ffxiv prices current item:{} world:{}",
-            item_id.get(),
-            world_name.get(),
-        )
-    });
-    view! {
-        <div class="inline-flex items-center gap-2 rounded-md border border-brand-500/30 bg-black/30 px-2.5 py-1 text-xs">
-            <span class="text-[color:var(--color-text-muted)]">{t!(i18n, item_view_discord_label)}</span>
-            <code class="font-mono">{move || display_command.get()}</code>
-            <Clipboard clipboard_text=clipboard_command />
-        </div>
-    }
 }
 
 /// Builds the item page's `BreadcrumbList` JSON-LD.
@@ -2221,13 +2196,6 @@ fn ItemViewContent() -> impl IntoView {
                                             })
                                     }}
                                 </div>
-                                <div class="mt-1.5">
-                                    <DiscordCommandChip
-                                        item_name=Signal::derive(move || item_name().to_string())
-                                        item_id=Signal::derive(move || item_id.get())
-                                        world_name=Signal::derive(move || world.get())
-                                    />
-                                </div>
                             </div>
                         </div>
 
@@ -2254,15 +2222,24 @@ fn ItemViewContent() -> impl IntoView {
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.8fr)_minmax(320px,1.2fr)] gap-3 pt-3 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="text-brand-300 font-medium tracking-wide text-xs uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
-                            <span class="text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-400/50">
-                                {move || item().map(|item| item.level_item).unwrap_or_default()}
-                            </span>
+                    // Stats are reference material, not market data — collapsed by
+                    // default so listings and sales start higher on the page. Native
+                    // <details> keeps the default state static and SSR-deterministic.
+                    <details class="group pt-3 border-t border-[color:var(--color-outline)]">
+                        <summary class="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-brand-300 hover:text-[color:var(--brand-fg)]">
+                            <Icon icon=icondata::BiChevronDownRegular attr:class="shrink-0 transition-transform group-open:rotate-180" />
+                            {t!(i18n, item_view_item_details)}
+                        </summary>
+                        <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.8fr)_minmax(320px,1.2fr)] gap-3 pt-3 text-[color:var(--color-text)]/90">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-brand-300 font-medium tracking-wide text-xs uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
+                                <span class="text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-400/50">
+                                    {move || item().map(|item| item.level_item).unwrap_or_default()}
+                                </span>
+                            </div>
+                            <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
                         </div>
-                        <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
-                    </div>
+                    </details>
                 </div>
             </div>
 

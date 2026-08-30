@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-29",
+        title: "Item pages put the market first",
+        blurb: "Active listings and recent sales now sit right under the price summary — side by side on wide screens — with the chart below them. Item stats moved into a collapsible Item details section, and the price summary got more compact, so the tables you came for are on screen sooner.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-29",
         title: "Slimmer tool headers",
         blurb: "Every analyzer's big title card is now a single compact row: the tool name, an info icon, and the world picker sit together, so the results start higher on the page. The tool description that used to be behind the About this tool button now lives behind the info icon.",
         link: None,
