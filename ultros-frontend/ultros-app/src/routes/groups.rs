@@ -8,6 +8,7 @@ use crate::components::icon::Icon;
 use crate::components::invite_link;
 use crate::components::loading::Loading;
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
+use crate::components::skeleton::BoxSkeleton;
 use crate::components::tool_help::ActionableEmptyState;
 use crate::global_state::clipboard_text::GlobalLastCopiedText;
 use crate::global_state::toasts::use_toast;
@@ -259,7 +260,7 @@ pub fn Groups() -> impl IntoView {
                                 </div>
                             </Show>
 
-                            <Suspense fallback=move || view! { <Loading /> }>
+                            <Suspense fallback=move || view! { <BoxSkeleton rows=3 /> }>
                                 {move || {
                                     groups_resource.get().map(|res| {
                                         match res {
