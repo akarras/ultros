@@ -902,7 +902,7 @@ fn ExchangeItemContent() -> impl IntoView {
     let l_getter_2 = Signal::derive(move || listings_2.get());
 
     view! {
-        <div class="container mx-auto p-4">
+        <div>
             <MetaTitle title=move || t_string!(i18n, currency_exchange_meta_title).replace("%item%", item_name()) />
             <MetaDescription text=move || {
                 t_string!(i18n, currency_exchange_meta_desc).replace("%item%", item_name())
@@ -1267,7 +1267,7 @@ pub fn CurrencySelection() -> impl IntoView {
     });
 
     view! {
-        <div class="container mx-auto space-y-4">
+        <div class="space-y-4">
             <MetaTitle title=t_string!(i18n, currency_exchange_meta_title_ultros) />
             <MetaDescription text=t_string!(i18n, currency_exchange_meta_desc_default) />
 
@@ -1362,7 +1362,7 @@ pub fn CurrencyExchange() -> impl IntoView {
         <div class="app-inline-ad">
             <Ad class="w-full h-[100px]" />
         </div>
-        <div class="main-content">
+        <div class="main-content p-2 sm:p-6">
             <Outlet />
         </div>
     }

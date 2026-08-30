@@ -680,7 +680,7 @@ pub fn Retainers() -> impl IntoView {
     let i18n = use_i18n();
     view! {
         <MetaRobotsNoIndex />
-        <div class="container mx-auto p-4">
+        <div class="main-content p-2 sm:p-6">
             // The three sub-routes below (Edit / All Listings / Undercuts) had
             // no page `<h1>` at all before this rebuild — this `ToolHeader`,
             // shared by the tab shell rather than repeated per tab, is it.
@@ -705,9 +705,7 @@ pub fn Retainers() -> impl IntoView {
                     <span>{t!(i18n, retainers_undercuts_tab)}</span>
                 </AppLink>
             </div>
-            <div class="main-content">
-                <Outlet />
-            </div>
+            <Outlet />
         </div>
     }
     .into_any()

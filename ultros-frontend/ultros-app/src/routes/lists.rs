@@ -645,11 +645,9 @@ pub fn EditLists() -> impl IntoView {
 #[component]
 pub fn Lists() -> impl IntoView {
     view! {
-        <div class="mx-auto">
-            <div class="main-content">
-                <div class="container mx-auto flex flex-col w-full">
-                    <Outlet />
-                </div>
+        <div class="main-content p-2 sm:p-6">
+            <div class="flex flex-col w-full">
+                <Outlet />
             </div>
         </div>
     }

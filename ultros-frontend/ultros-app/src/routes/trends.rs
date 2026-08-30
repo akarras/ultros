@@ -621,8 +621,8 @@ pub fn Trends() -> impl IntoView {
         <MetaTitle title=t_string!(i18n, trends_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, trends_meta_desc).to_string() />
 
-        <div class="main-content p-6">
-            <div class="flex flex-col gap-6 max-w-7xl mx-auto">
+        <div class="main-content p-2 sm:p-6">
+            <div class="flex flex-col gap-6">
                 <ToolHeader
                     title=t_string!(i18n, market_trends).to_string()
                     summary=t_string!(i18n, trends_tool_summary).to_string()

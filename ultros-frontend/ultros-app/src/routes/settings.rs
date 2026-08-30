@@ -342,12 +342,12 @@ pub fn Settings() -> impl IntoView {
     use crate::components::theme_picker::ThemePicker;
     let i18n = use_i18n();
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, settings_page_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, settings_page_desc).to_string() />
             <MetaRobotsNoIndex />
 
-            <div class="container mx-auto max-w-7xl space-y-6">
+            <div class="space-y-6">
                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, settings)}</h1>
                 <LanguageSettings />
                 <HomeWorldPicker />
@@ -373,8 +373,8 @@ pub fn Profile() -> impl IntoView {
     view! {
         <MetaTitle title=move || t_string!(i18n, profile_meta_title).to_string() />
         <MetaRobotsNoIndex />
-        <div class="main-content p-6">
-            <div class="container mx-auto max-w-7xl space-y-6">
+        <div class="main-content p-2 sm:p-6">
+            <div class="space-y-6">
                 <div class="flex items-center justify-between">
                     <h1 class="text-3xl font-bold text-brand-300">{t!(i18n, profile_settings)}</h1>
                 </div>
