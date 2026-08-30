@@ -33,6 +33,18 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-30",
+        title: "Change your home world from the sidebar",
+        blurb: "Your home world now sits at the bottom of the sidebar, right above the price zone, and can be changed from any page: click it and pick a world from the same region \u{2192} datacenter \u{2192} world menu the price zone uses. Before, changing it meant a trip to the settings page.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-30",
+        title: "Discord bot, help, and changelog moved down the sidebar",
+        blurb: "The three informational links no longer sit in the tool list \u{2014} they now live in their own group at the bottom of the sidebar, just above the Discord and GitHub icons. When the sidebar is collapsed to icons, expand it to reach them. Retainers also got its own icon instead of sharing one with Groups.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-30",
         title: "Every page uses the same width and margins",
         blurb: "Pages that had their own container width - settings, history, retainers, the item explorer, trends, lists, and the legal pages - now share the same full-width shell as the rest of the app, with margins that tighten on phones so tables get the screen back.",
         link: None,
@@ -46,7 +58,7 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-29",
         title: "Item pages put the market first",
-        blurb: "Active listings and recent sales now sit right under the price summary — side by side on wide screens — with the chart below them. Item stats moved into a collapsible Item details section, and the price summary got more compact, so the tables you came for are on screen sooner.",
+        blurb: "Active listings and recent sales now sit right under the price summary \u{2014} side by side on wide screens \u{2014} with the chart below them. Item stats moved into a collapsible Item details section, and the price summary got more compact, so the tables you came for are on screen sooner.",
         link: None,
     },
     ChangelogEntry {
