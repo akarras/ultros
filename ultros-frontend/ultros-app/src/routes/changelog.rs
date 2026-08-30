@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-08-30",
+        title: "Market Trends stops repeating Market Movers",
+        blurb: "The Market Movers strip at the top of Market Trends duplicated what the table below it already shows, so it is gone. It is still on the home page.",
+        link: Some("/trends"),
+    },
+    ChangelogEntry {
         date: "2026-08-29",
         title: "Item pages put the market first",
         blurb: "Active listings and recent sales now sit right under the price summary — side by side on wide screens — with the chart below them. Item stats moved into a collapsible Item details section, and the price summary got more compact, so the tables you came for are on screen sooner.",
