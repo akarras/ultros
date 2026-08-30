@@ -55,10 +55,10 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
 /// argument against adding another btree to that table.
 ///
 /// A skip index only covers parts written *after* it exists. Existing parts
-/// need a one-shot `ALTER TABLE sales MATERIALIZE INDEX idx_sales_buyer`,
-/// which the `clickhouse_materialize_buyer_index` binary runs — it is a
-/// mutation over the whole table, so it is deliberately not issued from
-/// startup DDL.
+/// need `ALTER TABLE sales MATERIALIZE INDEX idx_sales_buyer`, which is a
+/// mutation over the whole table and therefore cannot be re-issued on every
+/// boot the way the DDL here can. It is registered as a tracked run-once
+/// migration instead — see [`crate::migrations`].
 async fn apply_sales_table(client: &Client) -> Result<(), ClickHouseError> {
     client
         .query(

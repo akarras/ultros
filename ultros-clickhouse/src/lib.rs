@@ -14,6 +14,7 @@
 //! Analyzer, FC Crafting). CH backs the deeper trend/historical math.
 
 pub mod backfill;
+pub mod migrations;
 pub mod quality_filter;
 pub mod queries;
 pub mod rollups;
@@ -341,8 +342,23 @@ impl ClickHouseClient {
         &self.inner
     }
 
-    /// Apply DDL. Idempotent — safe to run on every startup.
+    /// Apply DDL, then any run-once migrations the ledger hasn't recorded.
+    /// Safe to run on every startup, and run on every startup — the deployment
+    /// has no release-command hook, so this is the only thing that applies
+    /// them (see [`migrations`]).
     pub async fn migrate(&self) -> Result<(), ClickHouseError> {
-        schema::apply(&self.inner).await
+        schema::apply(&self.inner).await?;
+        // Deliberately not allowed to fail `migrate`. A failure here would
+        // otherwise disable the sale dual-write and the rollup scheduler for
+        // the whole boot (see `main.rs`), which is a wildly disproportionate
+        // response to, say, a mutation that could not be submitted. Anything
+        // that doesn't get recorded is retried on the next boot.
+        if let Err(e) = migrations::run(&self.inner).await {
+            tracing::warn!(
+                error = ?e,
+                "ClickHouse run-once migrations failed; retrying on next startup"
+            );
+        }
+        Ok(())
     }
 }
