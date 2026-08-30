@@ -689,43 +689,6 @@ pub fn ListView() -> impl IntoView {
                 </div>
             </div>
 
-            {move || {
-                let world_data = use_context::<crate::global_state::LocalWorldData>();
-                let helper = world_data.as_ref().and_then(|d| d.0.as_ref().ok());
-                let Some(Ok((list, items))) = list_view.get() else {
-                    return ().into_any();
-                };
-                let datacenters = helper
-                    .and_then(|helper| helper.lookup_selector(list.list.wdr_filter))
-                    .map(|result| {
-                        helper
-                            .expect("helper is Some when lookup succeeded")
-                            .get_datacenters(&result)
-                            .into_iter()
-                            .map(|dc| dc.name.clone())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let worlds = worlds_in_listings(&items, helper.map(|helper| helper.as_ref()));
-                view! {
-                    <ListFilterRow
-                        worlds=worlds
-                        datacenters=datacenters
-                        excluded_worlds=excluded_worlds
-                        set_excluded_worlds=set_excluded_worlds
-                        excluded_datacenters=excluded_datacenters
-                        set_excluded_datacenters=set_excluded_datacenters
-                        sort_spec=Signal::derive(move || sort_spec.get())
-                        set_sort_spec=Callback::new(move |spec| set_sort_spec.set(spec))
-                        hide_acquired=hide_acquired
-                        set_hide_acquired=Callback::new(move |hide: bool| {
-                            set_hide_acquired_param.set(hide.then_some(true));
-                        })
-                    />
-                }
-                .into_any()
-            }}
-
             <Show when=recipe_modal_open>
                 <AddRecipeToCurrentListModal
                     list_id=list_id
@@ -981,9 +944,52 @@ pub fn ListView() -> impl IntoView {
                                     }
                                     let filtered_items_for_summary = filtered_item_snapshot.clone();
 
+                                    // Built here, inside the Transition, so its SSR render
+                                    // comes from the resolved resource — a read of
+                                    // `list_view` outside a suspense boundary doesn't
+                                    // register, and the shell/first-client-render disagree
+                                    // when the resource resolves after the shell flushes
+                                    // (an unrecoverable hydration mismatch).
+                                    let datacenters = world_helper
+                                        .as_deref()
+                                        .and_then(|helper| {
+                                            helper.lookup_selector(list.list.wdr_filter).map(
+                                                |result| {
+                                                    helper
+                                                        .get_datacenters(&result)
+                                                        .into_iter()
+                                                        .map(|dc| dc.name.clone())
+                                                        .collect::<Vec<_>>()
+                                                },
+                                            )
+                                        })
+                                        .unwrap_or_default();
+                                    let filter_row = view! {
+                                        <ListFilterRow
+                                            worlds=worlds_in_listings(
+                                                &item_snapshot,
+                                                world_helper.as_deref(),
+                                            )
+                                            datacenters=datacenters
+                                            excluded_worlds=excluded_worlds
+                                            set_excluded_worlds=set_excluded_worlds
+                                            excluded_datacenters=excluded_datacenters
+                                            set_excluded_datacenters=set_excluded_datacenters
+                                            sort_spec=Signal::derive(move || sort_spec.get())
+                                            set_sort_spec=Callback::new(move |spec| {
+                                                set_sort_spec.set(spec)
+                                            })
+                                            hide_acquired=hide_acquired
+                                            set_hide_acquired=Callback::new(move |hide: bool| {
+                                                set_hide_acquired_param.set(hide.then_some(true));
+                                            })
+                                        />
+                                    };
+
                                     if buying_view() {
                                         Either::Left(
                                             view! {
+                                                {filter_row}
                                                 <section class="panel rounded-lg overflow-hidden">
                                                     <div class="border-b border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -1015,6 +1021,7 @@ pub fn ListView() -> impl IntoView {
                                     } else {
                                         Either::Right(
                                             view! {
+                                                {filter_row}
                                                 <section class="panel rounded-lg overflow-hidden">
                                                     <div class="border-b border-[color:var(--color-outline)] p-4 sm:p-5">
                                                         <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
