@@ -52,6 +52,14 @@ fn universalis_not_found(error: &anyhow::Error) -> bool {
         .is_some_and(|e| e.is_not_found())
 }
 
+/// True when `error` is a Universalis failure that is expected to clear on its
+/// own (429, 5xx, connect/timeout) — see [`universalis::Error::is_transient`].
+fn universalis_transient(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<universalis::Error>()
+        .is_some_and(|e| e.is_transient())
+}
+
 /// How one item's catch-up fetch turned out, used to label
 /// `ultros_catchup_items_recovered`.
 ///
@@ -148,9 +156,17 @@ impl UpdateService {
                 let next_interval = Instant::now() + tokio::time::Duration::from_secs(60 * 5);
                 for world in service.world_cache.get_all_worlds() {
                     info!("{world:?}");
-                    let world = service.check_for_missed_items_on_world(world).await;
-                    if let Err(w) = world {
-                        error!(error = ?w, "check_for_missed_items_on_world failed");
+                    let result = service.check_for_missed_items_on_world(world).await;
+                    if let Err(e) = result {
+                        // Same reasoning as the price-drift probe below: this
+                        // sweep re-runs every five minutes, so Universalis
+                        // shedding one request is a skipped cycle, not an
+                        // application error worth reporting.
+                        if universalis_transient(&e) {
+                            warn!(error = ?e, world = %world.name, "catch-up sweep skipped: universalis unavailable");
+                        } else {
+                            error!(error = ?e, world = %world.name, "check_for_missed_items_on_world failed");
+                        }
                     }
                 }
                 tokio::time::sleep_until(next_interval).await;
@@ -281,7 +297,29 @@ impl UpdateService {
             Ok(_) => {}
             // The probe is an extra safety net on top of the normal sweep — a
             // failed probe cycle must not fail the world's catch-up pass.
-            Err(e) => error!(error = ?e, world = %world.name, "price-drift probe failed"),
+            //
+            // Nor is it worth *reporting* when Universalis simply shed the
+            // request: the aggregated cache answers 429/5xx under congestion,
+            // and the probe re-runs for every world every five minutes, so one
+            // lost cycle changes nothing. Reporting those drowned the real
+            // errors in this path (115 reports in five hours, every one an
+            // upstream 504). Warnings still reach the log and ride along as
+            // breadcrumbs; the metric makes the rate visible without paging.
+            Err(e) => {
+                let kind = if universalis_transient(&e) {
+                    warn!(error = ?e, world = %world.name, "price-drift probe skipped: universalis unavailable");
+                    "transient"
+                } else {
+                    error!(error = ?e, world = %world.name, "price-drift probe failed");
+                    "error"
+                };
+                metrics::counter!(
+                    "ultros_catchup_price_drift_probe_failed",
+                    "world" => world.name.clone(),
+                    "kind" => kind,
+                )
+                .increment(1);
+            }
         }
         Ok(())
     }
@@ -487,6 +525,29 @@ mod tests {
     use chrono::{DateTime, Local};
 
     const WORLD_ID: i32 = 34;
+
+    fn universalis_status(status: u16) -> anyhow::Error {
+        anyhow::Error::new(universalis::Error::Status {
+            status,
+            url: "https://universalis.app/api/v2/aggregated/Ravana/5".to_string(),
+            body: String::new(),
+        })
+    }
+
+    /// The probe's failure arm classifies through `anyhow`, which erases the
+    /// concrete type — the downcast has to survive that or every upstream
+    /// hiccup is reported as an application error again.
+    #[test]
+    fn transient_universalis_failures_are_classified_through_anyhow() {
+        assert!(universalis_transient(&universalis_status(504)));
+        assert!(universalis_transient(&universalis_status(429)));
+        assert!(!universalis_transient(&universalis_status(404)));
+        assert!(universalis_not_found(&universalis_status(404)));
+        // A database failure in the same arm is a real error, not upstream noise.
+        assert!(!universalis_transient(&anyhow::anyhow!(
+            "connection pool closed"
+        )));
+    }
 
     fn ours(item_id: i32, ingested_at: i64) -> Model {
         Model {
