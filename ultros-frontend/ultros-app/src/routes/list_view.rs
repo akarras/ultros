@@ -16,7 +16,7 @@ use leptos_router::hooks::use_params_map;
 use ultros_api_types::{
     ActiveListing,
     list::{ListActivity, ListCapabilities, ListItem},
-    world_helper::{AnyResult, AnySelector},
+    world_helper::{AnyResult, AnySelector, WorldHelper},
 };
 
 use crate::api::{
@@ -31,6 +31,7 @@ use crate::components::{
         list_item_row::ListItemRow, list_settings_drawer::ListSettingsDrawer, list_summary::*,
     },
     list_subscribe_drawer::ListSubscribeDrawer,
+    listing_filters::filter_active_listings,
     loading::*,
     make_place_importer::*,
     meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle},
@@ -54,25 +55,32 @@ enum MenuState {
     MakePlace,
 }
 
-fn filter_excluded_worlds(
+/// Drop every listing whose world *or* datacenter is excluded, for every
+/// item. This is the one place exclusion is applied to the list view's data —
+/// the table rows, summary, price sort, and buying view all consume its
+/// output, so a DC exclusion can't be honored by one surface and ignored by
+/// another (the pre-redesign bug: only `BuyingView` and `PriceViewer` looked
+/// at `excluded-datacenters`, so the sort order and row listings never did).
+fn filter_excluded(
     items: &[(ListItem, Vec<ActiveListing>)],
     excluded_worlds: &HashSet<i32>,
+    excluded_datacenters: &HashSet<String>,
+    world_helper: Option<&WorldHelper>,
 ) -> Vec<(ListItem, Vec<ActiveListing>)> {
-    if excluded_worlds.is_empty() {
+    if excluded_worlds.is_empty() && excluded_datacenters.is_empty() {
         return items.to_vec();
     }
-    let excluded_worlds = excluded_worlds.iter().copied().collect::<Vec<_>>();
-
     items
         .iter()
         .map(|(item, listings)| {
             (
                 item.clone(),
-                listings
-                    .iter()
-                    .filter(|listing| !listing.is_excluded(&excluded_worlds))
-                    .cloned()
-                    .collect(),
+                filter_active_listings(
+                    listings.clone(),
+                    world_helper,
+                    excluded_worlds,
+                    excluded_datacenters,
+                ),
             )
         })
         .collect()
@@ -1189,9 +1197,13 @@ pub fn ListView() -> impl IntoView {
                                         0
                                     };
                                     let list_name = list.list.name.clone();
-                                    let filtered_item_snapshot = filter_excluded_worlds(
+                                    let world_helper = use_context::<LocalWorldData>()
+                                        .and_then(|world_data| world_data.0.ok());
+                                    let filtered_item_snapshot = filter_excluded(
                                         &item_snapshot,
                                         &excluded_worlds.get(),
+                                        &excluded_datacenters.get(),
+                                        world_helper.as_deref(),
                                     );
                                     let filtered_items_for_buying = filtered_item_snapshot.clone();
                                     let mut filtered_items_for_rows = filtered_item_snapshot.clone();
@@ -1683,46 +1695,110 @@ mod tests {
         }
     }
 
+    /// Aether (dc 10) holds world 100 Adamantoise; Primal (dc 11) holds
+    /// world 110 Behemoth — the same fixture `components/listing_filters.rs`
+    /// uses, so exclusion semantics are asserted against identical data.
+    fn world_helper() -> ultros_api_types::world_helper::WorldHelper {
+        use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+        WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".into(),
+                datacenters: vec![
+                    Datacenter {
+                        id: 10,
+                        name: "Aether".into(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 100,
+                            name: "Adamantoise".into(),
+                            datacenter_id: 10,
+                        }],
+                    },
+                    Datacenter {
+                        id: 11,
+                        name: "Primal".into(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 110,
+                            name: "Behemoth".into(),
+                            datacenter_id: 11,
+                        }],
+                    },
+                ],
+            }],
+        }
+        .into()
+    }
+
     #[test]
-    fn world_exclusion_filter_preserves_current_behavior_when_empty() {
+    fn filter_excluded_with_empty_sets_is_identity() {
+        let helper = world_helper();
         let items = vec![(
             list_item(1),
-            vec![listing(1, 100), listing(2, 101), listing(3, 102)],
+            vec![listing(1, 100), listing(2, 110), listing(3, 102)],
         )];
 
-        let filtered = filter_excluded_worlds(&items, &HashSet::new());
+        let filtered = filter_excluded(&items, &HashSet::new(), &HashSet::new(), Some(&helper));
 
-        assert_eq!(filtered[0].1.len(), 3);
+        assert_eq!(filtered, items);
+    }
+
+    #[test]
+    fn filter_excluded_removes_datacenter_listings_from_every_item() {
+        let helper = world_helper();
+        let items = vec![
+            (list_item(1), vec![listing(1, 100), listing(2, 110)]),
+            (list_item(2), vec![listing(3, 110)]),
+        ];
+        let excluded_dcs = HashSet::from(["Primal".to_string()]);
+
+        let filtered = filter_excluded(&items, &HashSet::new(), &excluded_dcs, Some(&helper));
+
+        // Behemoth (world 110, on Primal) listings vanish; the items stay.
+        assert_eq!(
+            filtered
+                .iter()
+                .flat_map(|(_, listings)| listings.iter().map(|listing| listing.world_id))
+                .collect::<Vec<_>>(),
+            vec![100]
+        );
+        assert_eq!(
+            filtered.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn filter_excluded_applies_worlds_and_datacenters_together() {
+        let helper = world_helper();
+        let items = vec![(list_item(1), vec![listing(1, 100), listing(2, 110)])];
+        let excluded_worlds = HashSet::from([100]);
+        let excluded_dcs = HashSet::from(["Primal".to_string()]);
+
+        let filtered = filter_excluded(&items, &excluded_worlds, &excluded_dcs, Some(&helper));
+
+        assert!(filtered[0].1.is_empty());
+        assert_eq!(filtered[0].0.id, 1);
+    }
+
+    #[test]
+    fn filter_excluded_without_world_data_still_applies_world_exclusions() {
+        let items = vec![(list_item(1), vec![listing(1, 100), listing(2, 110)])];
+        let excluded_worlds = HashSet::from([100]);
+        // DC exclusions can't resolve without world data — they must degrade
+        // to a no-op rather than dropping everything or panicking.
+        let excluded_dcs = HashSet::from(["Primal".to_string()]);
+
+        let filtered = filter_excluded(&items, &excluded_worlds, &excluded_dcs, None);
+
         assert_eq!(
             filtered[0]
                 .1
                 .iter()
                 .map(|listing| listing.world_id)
                 .collect::<Vec<_>>(),
-            vec![100, 101, 102]
-        );
-    }
-
-    #[test]
-    fn world_exclusion_filter_removes_only_matching_listing_worlds() {
-        let items = vec![
-            (list_item(1), vec![listing(1, 100), listing(2, 101)]),
-            (list_item(2), vec![listing(3, 101), listing(4, 102)]),
-        ];
-        let excluded = HashSet::from([101]);
-
-        let filtered = filter_excluded_worlds(&items, &excluded);
-
-        assert_eq!(
-            filtered
-                .iter()
-                .flat_map(|(_, listings)| listings.iter().map(|listing| listing.world_id))
-                .collect::<Vec<_>>(),
-            vec![100, 102]
-        );
-        assert_eq!(
-            filtered.iter().map(|(item, _)| item.id).collect::<Vec<_>>(),
-            vec![1, 2]
+            vec![110]
         );
     }
 
