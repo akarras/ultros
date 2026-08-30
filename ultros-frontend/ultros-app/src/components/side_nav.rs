@@ -1,5 +1,6 @@
 use crate::components::account_menu::AccountMenu;
 use crate::components::app_link::AppLink;
+use crate::components::home_world_menu::HomeWorldMenu;
 use crate::components::icon::Icon;
 use crate::components::region_menu::RegionMenu;
 use crate::global_state::changelog::use_whats_new_indicator;
@@ -240,16 +241,21 @@ pub fn SideNav() -> impl IntoView {
                 <SideNavItem
                     href="/retainers/listings".to_string()
                     section="retainers"
-                    icon=i::BiGroupSolid
+                    icon=i::FaUserTieSolid
                 >
                     {t!(i18n, retainers)}
                 </SideNavItem>
                 <SideNavItem href="/alerts".to_string() section="alerts" icon=i::BsBell>
                     {t!(i18n, alerts)}
                 </SideNavItem>
+            </nav>
 
-                <div class="side-nav-section-header">{t!(i18n, help_label)}</div>
-
+            // Informational links (Discord bot, help, changelog) live in the
+            // bottom cluster rather than the tool list — they're reference
+            // material, not somewhere you work. Hidden in the collapsed rail
+            // along with the footer (see `.app-shell-collapsed .side-nav-info`);
+            // expand the sidebar to reach them.
+            <nav class="side-nav-info" aria-label=t_string!(i18n, help_label)>
                 <SideNavItem href="/bot".to_string() section="bot" icon=i::BsDiscord>
                     {t!(i18n, discord_bot)}
                 </SideNavItem>
@@ -267,13 +273,13 @@ pub fn SideNav() -> impl IntoView {
                 </SideNavItem>
             </nav>
 
-            // Footer sits ABOVE the region + account rows so those two
-            // controls are bottom-most. Collapsed, the 56px sidebar has no
-            // room for the Discord + GitHub pair (GitHub was clipped by the
+            // Footer sits ABOVE the home-world + region + account rows so
+            // those controls are bottom-most. Collapsed, the 56px sidebar has
+            // no room for the Discord + GitHub pair (GitHub was clipped by the
             // right edge) and the version hash is hidden anyway, so the whole
             // footer is hidden at that width — see
-            // `.app-shell-collapsed .side-nav-footer`. The region and account
-            // rows survive collapse as icon-only triggers.
+            // `.app-shell-collapsed .side-nav-footer`. The home-world, region
+            // and account rows survive collapse as icon-only triggers.
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />
@@ -290,6 +296,7 @@ pub fn SideNav() -> impl IntoView {
                 </a>
             </div>
 
+            <HomeWorldMenu />
             <RegionMenu />
             <AccountMenu />
         </aside>

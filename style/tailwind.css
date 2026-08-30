@@ -1915,6 +1915,16 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     overflow: hidden;
     text-overflow: ellipsis;
 }
+/* Informational links (Discord bot, help, changelog) pinned to the bottom
+   cluster, above the footer. Same row styling as the main nav, but grouped
+   with the other chrome instead of the tool list. */
+.side-nav-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.5rem;
+    border-top: 1px solid var(--color-outline);
+}
 .side-nav-footer {
     display: flex;
     align-items: center;
@@ -1949,6 +1959,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
        overflows — GitHub was clipped by the sidebar's right edge. Both links
        are reachable again the moment the sidebar is expanded. */
     .app-shell-collapsed .side-nav-footer {
+        display: none;
+    }
+    /* Informational links are reference material; in the 56px rail they'd be
+       three unlabeled icons competing with the tools, so they only exist in
+       the expanded sidebar. */
+    .app-shell-collapsed .side-nav-info {
         display: none;
     }
     .app-shell-collapsed .side-nav-item {
@@ -2151,6 +2167,12 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
        (~3.1rem) plus its own trigger row (~2.3rem) plus the shared gap. */
     .app-shell-collapsed .side-nav-region-panel {
         bottom: 6rem;
+    }
+    /* The home-world row sits one row above the region row again, so its
+       panel clears one more ~2.3rem trigger. Declared after
+       `.side-nav-region-panel` (which it also carries) so this bottom wins. */
+    .app-shell-collapsed .side-nav-home-world-panel {
+        bottom: 8.3rem;
     }
 }
 
