@@ -5,6 +5,11 @@ use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 
+/// Slim single-row tool header: the tool's `h1`, an icon-only About toggle,
+/// and an optional right-aligned slot for the page's controls (world picker,
+/// small filters). Pages pass controls as children so the title and controls
+/// share one row instead of stacking two full-width bars. Must stay outside
+/// any Suspense/Transition boundary so the controls survive loading states.
 #[component]
 pub fn ToolHeader(
     #[prop(into)] title: Oco<'static, str>,
@@ -19,6 +24,7 @@ pub fn ToolHeader(
     /// Optional for the same reason as `help_href`.
     #[prop(optional, into)]
     help_body: Option<Oco<'static, str>>,
+    #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (is_open, set_is_open) = signal(false);
@@ -27,26 +33,37 @@ pub fn ToolHeader(
         .clone()
         .zip(help_body.clone())
         .map(|(href, body)| (href.to_string(), body));
+    let toggle_label = move || {
+        if is_open() {
+            t_string!(i18n, tool_help_hide_info).to_string()
+        } else {
+            t_string!(i18n, tool_help_about_tool).to_string()
+        }
+    };
 
     view! {
-        <section class="panel px-4 py-3 sm:px-6 sm:py-4 rounded-2xl flex flex-col gap-3">
-            <div class="flex flex-row items-center justify-between gap-3">
-                <h1 class="text-xl sm:text-2xl font-bold text-[color:var(--brand-fg)]">
+        <section class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <h1 class="text-lg sm:text-xl font-bold text-[color:var(--brand-fg)]">
                     {title.clone()}
                 </h1>
                 <button
                     type="button"
-                    class="btn-secondary self-center"
+                    class="btn-ghost p-2 rounded-full"
+                    title=toggle_label
+                    aria-label=toggle_label
                     aria-expanded=move || if is_open() { "true" } else { "false" }
                     on:click=move |_| set_is_open.update(|open| *open = !*open)
                 >
-                    <Icon icon=i::BsInfoCircle width="1em" height="1em" />
-                    <span>{move || if is_open() {
-                        t_string!(i18n, tool_help_hide_info).to_string()
-                    } else {
-                        t_string!(i18n, tool_help_about_tool).to_string()
-                    }}</span>
+                    <Icon icon=i::BsInfoCircle width="1.1em" height="1.1em" />
                 </button>
+                {children.map(|children| {
+                    view! {
+                        <div class="ms-auto flex flex-wrap items-center gap-3">
+                            {children()}
+                        </div>
+                    }
+                })}
             </div>
             <Show when=move || is_open()>
                 <div class="rounded-xl border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] p-4 flex flex-col gap-3 max-w-3xl">
