@@ -126,6 +126,8 @@ struct CatchupTally {
     changed: u64,
     noop: u64,
     failed: u64,
+    /// Fetch chunks skipped after retries — see `ultros_sweep_chunks_failed`.
+    chunks_failed: u64,
 }
 
 impl CatchupTally {
@@ -218,7 +220,7 @@ impl UpdateService {
         let all_marketable_items = Self::all_marketable_items();
         for world in self.world_cache.get_all_worlds() {
             tracing::info!("scanning items");
-            self.check_items(world, &all_marketable_items).await?;
+            let _ = self.check_items(world, &all_marketable_items).await;
         }
         Ok(())
     }
@@ -273,7 +275,7 @@ impl UpdateService {
             Err(e) => return Err(e),
         };
         let item_ids: Box<[i32]> = updates.into_iter().map(|i| i.item_id).collect();
-        let tally = self.check_items(world, &item_ids).await?;
+        let tally = self.check_items(world, &item_ids).await;
         tally.record(&world.name);
         if item_ids.len() >= usize::from(RECENTLY_UPDATED_WINDOW) {
             // Every entry in the recency window was one we missed, so more
@@ -283,8 +285,8 @@ impl UpdateService {
                 .increment(1);
             if self.claim_full_sweep_slot(world.id) {
                 warn!(world = %world.name, "recency window saturated, running full item sweep");
-                self.check_items(world, &Self::all_marketable_items())
-                    .await?;
+                let tally = self.check_items(world, &Self::all_marketable_items()).await;
+                tally.record(&world.name);
             } else {
                 warn!(world = %world.name, "recency window saturated, full sweep on cooldown");
             }
@@ -319,7 +321,7 @@ impl UpdateService {
                 );
                 metrics::counter!("ultros_catchup_price_drift_items", "world" => world.name.clone())
                     .increment(drifted.len() as u64);
-                let tally = self.check_items(world, &drifted).await?;
+                let tally = self.check_items(world, &drifted).await;
                 tally.record(&world.name);
             }
             Ok(_) => {}
@@ -415,22 +417,50 @@ impl UpdateService {
         ))
     }
 
-    async fn check_items(
-        &self,
-        world::Model {
-            id,
-            name: world_name,
-            ..
-        }: &world::Model,
-        item_ids: &[i32],
-    ) -> Result<CatchupTally, anyhow::Error> {
-        let world_id = WorldId(*id);
+    async fn check_items(&self, world: &world::Model, item_ids: &[i32]) -> CatchupTally {
+        let world_id = WorldId(world.id);
+        let world_name = &world.name;
         let mut tally = CatchupTally::default();
-        for item_ids in item_ids.chunks(100) {
-            let market_data = self
-                .universalis
-                .marketboard_current_data(world_name, item_ids)
-                .await?;
+        let total_chunks = item_ids.chunks(100).len();
+        for (chunk_index, item_ids) in item_ids.chunks(100).enumerate() {
+            let market_data = match retry_transient(|| {
+                self.universalis
+                    .marketboard_current_data(world_name, item_ids)
+            })
+            .await
+            {
+                Ok(data) => data,
+                Err(e) if e.is_transient() => {
+                    // Universalis kept shedding this chunk through the whole
+                    // backoff schedule. The items' ingest markers are untouched,
+                    // so the five-minute catch-up loop will re-flag them.
+                    warn!(error = ?e, world = %world_name, items = item_ids.len(), "sweep chunk skipped after retries");
+                    metrics::counter!(
+                        "ultros_sweep_chunks_failed",
+                        "world" => world_name.clone(),
+                        "kind" => "transient",
+                    )
+                    .increment(1);
+                    tally.chunks_failed += 1;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                Err(e) => {
+                    // A non-transient answer (404 world, malformed response) will
+                    // repeat for every remaining chunk of this world — one warning
+                    // and a bulk count beat ~150 identical ones.
+                    let remaining = (total_chunks - chunk_index) as u64;
+                    warn!(error = ?e, world = %world_name, remaining_chunks = remaining, "sweep aborted for world: universalis fetch failed");
+                    metrics::counter!(
+                        "ultros_sweep_chunks_failed",
+                        "world" => world_name.clone(),
+                        "kind" => "error",
+                    )
+                    .increment(remaining);
+                    tally.chunks_failed += remaining;
+                    break;
+                }
+            };
             info!("missing data {item_ids:?}");
 
             let outcomes = stream::iter(
@@ -491,7 +521,7 @@ impl UpdateService {
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        Ok(tally)
+        tally
     }
 }
 
@@ -793,8 +823,18 @@ mod tests {
                 changed: 1,
                 noop: 2,
                 failed: 1,
+                chunks_failed: 0,
             }
         );
+    }
+
+    /// `chunks_failed` counts whole skipped fetch chunks (up to 100 items each),
+    /// not items — it rides the tally for aggregation but is emitted through
+    /// `ultros_sweep_chunks_failed`, never `ultros_catchup_items_recovered`.
+    #[test]
+    fn tally_default_has_no_failed_chunks() {
+        let tally = CatchupTally::default();
+        assert_eq!(tally.chunks_failed, 0);
     }
 
     #[test]
