@@ -92,10 +92,11 @@ fn confirm_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant
 /// Frees a claimed-but-unfinished slot. A confirmed cooldown is left alone.
 ///
 /// No production call site exists yet: the only legitimate caller is the
-/// "a full sweep is already running elsewhere" branch that Task 4's global
-/// concurrency guard (`try_begin_full_sweep`) introduces around the claim in
-/// `check_for_missed_items_on_world`. Exercised directly by `mod tests` until
-/// that guard lands.
+/// "a full sweep is already running elsewhere" branch that the saturation
+/// branch introduces around the claim in `check_for_missed_items_on_world`.
+/// Exercised directly by `mod tests` until then.
+// TODO(task-5): remove this allow — `release_slot` gets its caller (via
+// `release_full_sweep_slot`) when the saturation branch's else-arm lands.
 #[allow(dead_code)]
 fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
     if let Some(SweepSlot::Running) = slots.get(&world_id) {
@@ -106,14 +107,28 @@ fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
 /// Serializes full sweeps (manual and saturation-triggered): a full sweep
 /// fetches every marketable item for a world, and two at once doubles the
 /// load on Universalis for zero extra coverage.
+///
+/// No production caller yet: only `try_begin_full_sweep` claims it, and
+/// nothing calls that until Task 5 wires it into the saturation branch's
+/// "already running elsewhere" check and Task 6 wires it into
+/// `/rescan_market`. Exercised directly by `mod tests` until then.
+// TODO(task-5): remove this allow — `try_begin_full_sweep` gets its first
+// caller when the saturation branch's else-arm lands.
+#[allow(dead_code)]
 #[derive(Default)]
 pub(crate) struct SweepLock(AtomicBool);
 
 /// Held for the duration of a full sweep; frees the lock on drop (including
 /// panics, so a crashed sweep never wedges the command).
+// TODO(task-5): remove this allow — constructed once `try_begin_full_sweep`
+// has a caller (see `SweepLock`).
+#[allow(dead_code)]
 pub(crate) struct SweepLockGuard(Arc<SweepLock>);
 
 impl SweepLock {
+    // TODO(task-5): remove this allow — called from `try_begin_full_sweep`
+    // once the saturation branch wires that in.
+    #[allow(dead_code)]
     pub(crate) fn try_claim(self: &Arc<Self>) -> Option<SweepLockGuard> {
         self.0
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -144,6 +159,9 @@ pub(crate) struct UpdateService {
     /// [`UpdateService::note_world_uncovered`].
     pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
     /// Serializes full sweeps — see [`SweepLock`].
+    // TODO(task-5): remove this allow — read once `try_begin_full_sweep` has
+    // a caller (the saturation branch's else-arm).
+    #[allow(dead_code)]
     pub(crate) sweep_lock: Arc<SweepLock>,
 }
 
@@ -237,6 +255,8 @@ impl CatchupTally {
 /// `duration` isn't read by [`SweepReport::summary_text`] today — it's kept
 /// per-world for Task 6's richer Discord report (e.g. flagging an
 /// unusually slow world). No production reader exists until then.
+// TODO(task-6): remove this allow — `duration` gets a reader when
+// `/rescan_market`'s rewrite reads per-world timing.
 #[allow(dead_code)]
 pub(crate) struct WorldSweepSummary {
     world_name: String,
@@ -250,6 +270,8 @@ pub(crate) struct WorldSweepSummary {
 /// replaces that command wholesale), so nothing reads these fields or calls
 /// `summary_text` in production yet — exercised directly by `mod tests`
 /// until Task 6 wires a real progress callback.
+// TODO(task-6): remove this allow — these fields get a reader when
+// `/rescan_market`'s rewrite passes a real progress callback instead of `|_| {}`.
 #[allow(dead_code)]
 pub(crate) struct SweepProgress {
     worlds_done: usize,
@@ -261,6 +283,8 @@ pub(crate) struct SweepProgress {
 impl SweepProgress {
     /// See the struct doc-comment: no production caller until Task 6 wires a
     /// real progress callback.
+    // TODO(task-6): remove this allow — called once `/rescan_market`'s
+    // rewrite has a real progress callback that formats interim status.
     #[allow(dead_code)]
     pub(crate) fn summary_text(&self) -> String {
         format!(
@@ -370,6 +394,10 @@ impl UpdateService {
 
     /// Claims the global full-sweep lock. `None` when a sweep (manual or
     /// saturation-triggered) is already running. See [`SweepLock`].
+    // TODO(task-5): remove this allow — called from the saturation branch's
+    // else-arm in `check_for_missed_items_on_world` once Task 5 wires it in
+    // (Task 6 adds a second caller from `/rescan_market`).
+    #[allow(dead_code)]
     pub(crate) fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
         self.sweep_lock.try_claim()
     }
@@ -456,9 +484,11 @@ impl UpdateService {
     /// cycle can retry immediately instead of waiting out a cooldown that
     /// was never earned.
     ///
-    /// Not yet called in this task: its call site is the "a full sweep is
-    /// already running elsewhere" branch that Task 4's global concurrency
-    /// guard adds around the claim below. See `release_slot`.
+    /// Not yet called: its call site is the "a full sweep is already running
+    /// elsewhere" branch that the saturation branch adds around the claim
+    /// below. See `release_slot`.
+    // TODO(task-5): remove this allow — this gets its caller when the
+    // saturation branch's else-arm lands.
     #[allow(dead_code)]
     fn release_full_sweep_slot(&self, world_id: i32) {
         release_slot(
@@ -504,9 +534,11 @@ impl UpdateService {
             metrics::counter!("ultros_catchup_window_saturated", "world" => world.name.clone())
                 .increment(1);
             if self.claim_full_sweep_slot(world.id) {
-                // Task 4 adds a global concurrency guard (`try_begin_full_sweep`)
-                // around this claim; until then the claim/confirm pair alone
-                // still fixes the cooldown-on-failure bug this task targets.
+                // TODO(task-5): wrap this claim with the global concurrency
+                // guard (`try_begin_full_sweep`) and call `release_full_sweep_slot`
+                // in the "already running elsewhere" branch below; until then
+                // the claim/confirm pair alone still fixes the
+                // cooldown-on-failure bug Task 3 targeted.
                 warn!(world = %world.name, "recency window saturated, running full item sweep");
                 let tally = self.check_items(world, &Self::all_marketable_items()).await;
                 tally.record(&world.name);
