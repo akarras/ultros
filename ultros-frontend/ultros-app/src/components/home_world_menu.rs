@@ -11,7 +11,6 @@
 use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::components::region_menu::ZoneAccordion;
-use crate::components::world_picker::SelectorKind;
 use crate::global_state::home_world::{locale_preferred_region, use_home_world};
 use crate::global_state::use_world_helper;
 use crate::i18n::{t, t_string, use_i18n};
@@ -89,23 +88,22 @@ pub fn HomeWorldMenu() -> impl IntoView {
                 aria-expanded=move || if open.get() { "true" } else { "false" }
                 on:click=move |_| set_open.update(|v| *v = !*v)
             >
-                <span class="sr-only">{t!(i18n, home_world)}</span>
-                {move || match current.get() {
-                    Some(selector) => view! { <SelectorKind selector=selector /> }.into_any(),
-                    None => {
-                        view! {
-                            <span class="shrink-0 flex items-center text-[color:var(--color-text-muted)]">
-                                <Icon icon=i::BsGeoAltFill aria_hidden=true />
-                            </span>
-                        }
-                            .into_any()
-                    }
-                }}
-                <span class="side-nav-label ml-2">
-                    {move || match homeworld.get() {
-                        Some(world) => world.name,
-                        None => t_string!(i18n, set_home_world).to_string(),
-                    }}
+                // Purpose icon, not `SelectorKind`: a home world is always a
+                // world, so the kind icon carried no information here — and
+                // rendered identically to the price-zone row whenever that
+                // zone was also a world (#1235). The house says "home" even
+                // in the collapsed icon-only rail.
+                <span class="shrink-0 flex items-center text-[color:var(--color-text-muted)]">
+                    <Icon icon=i::BsHouseDoorFill aria_hidden=true />
+                </span>
+                <span class="side-nav-label side-nav-zone-text ml-2">
+                    <span class="side-nav-zone-overline">{t!(i18n, home_world)}</span>
+                    <span class="side-nav-zone-value">
+                        {move || match homeworld.get() {
+                            Some(world) => world.name,
+                            None => t_string!(i18n, set_home_world).to_string(),
+                        }}
+                    </span>
                 </span>
                 <Icon
                     icon=i::BiChevronUpSolid
