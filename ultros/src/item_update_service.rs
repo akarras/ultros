@@ -248,27 +248,18 @@ impl CatchupTally {
 
 /// One world's outcome from a full sweep, folded into a [`SweepReport`].
 ///
-/// `duration` isn't read by [`SweepReport::summary_text`] today — it's kept
-/// per-world for Task 6's richer Discord report (e.g. flagging an
-/// unusually slow world). No production reader exists until then.
+/// `duration` feeds [`SweepReport::summary_text`]'s "slowest world" line —
+/// see there.
 pub(crate) struct WorldSweepSummary {
     world_name: String,
     tally: CatchupTally,
-    // TODO(task-6): remove this allow — gets a reader when `/rescan_market`'s
-    // rewrite reads per-world timing.
-    #[allow(dead_code)]
     duration: std::time::Duration,
 }
 
 /// Fired after each world completes during [`UpdateService::do_full_world_sweep`]
-/// so a long-running sweep can report interim status (e.g. edit a Discord
-/// reply). This task's `admin.rs` caller passes a no-op `|_| {}` (Task 6
-/// replaces that command wholesale), so nothing reads these fields or calls
-/// `summary_text` in production yet — exercised directly by `mod tests`
-/// until Task 6 wires a real progress callback.
-// TODO(task-6): remove this allow — these fields get a reader when
-// `/rescan_market`'s rewrite passes a real progress callback instead of `|_| {}`.
-#[allow(dead_code)]
+/// so a long-running sweep can report interim status. `/rescan_market`
+/// (`admin.rs`) forwards these through a throttled channel into a Discord
+/// message via [`SweepProgress::summary_text`].
 pub(crate) struct SweepProgress {
     worlds_done: usize,
     worlds_total: usize,
@@ -277,11 +268,6 @@ pub(crate) struct SweepProgress {
 }
 
 impl SweepProgress {
-    /// See the struct doc-comment: no production caller until Task 6 wires a
-    /// real progress callback.
-    // TODO(task-6): remove this allow — called once `/rescan_market`'s
-    // rewrite has a real progress callback that formats interim status.
-    #[allow(dead_code)]
     pub(crate) fn summary_text(&self) -> String {
         format!(
             "Sweep progress: {}/{} worlds — {} items updated, {} chunks skipped.",
@@ -311,6 +297,17 @@ impl SweepReport {
             "Full market sweep finished: {} worlds in {minutes} min — {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped.",
             self.worlds.len()
         );
+        // Flags the single slowest world so an operator can spot one world
+        // dragging out the whole sweep (e.g. Universalis rate-limiting it
+        // harder than the rest) without having to dig through server logs.
+        if let Some(slowest) = self.worlds.iter().max_by_key(|w| w.duration) {
+            let slowest_minutes = slowest.duration.as_secs() / 60;
+            let slowest_seconds = slowest.duration.as_secs() % 60;
+            text.push_str(&format!(
+                "\nSlowest world: {} ({slowest_minutes}m{slowest_seconds:02}s).",
+                slowest.world_name
+            ));
+        }
         let incomplete: Vec<&str> = self
             .worlds
             .iter()
@@ -1229,6 +1226,15 @@ mod tests {
     }
 
     fn world_summary(name: &str, changed: u64, chunks_failed: u64) -> WorldSweepSummary {
+        world_summary_with_duration(name, changed, chunks_failed, Duration::from_secs(60))
+    }
+
+    fn world_summary_with_duration(
+        name: &str,
+        changed: u64,
+        chunks_failed: u64,
+        duration: Duration,
+    ) -> WorldSweepSummary {
         WorldSweepSummary {
             world_name: name.to_string(),
             tally: CatchupTally {
@@ -1237,8 +1243,22 @@ mod tests {
                 failed: 0,
                 chunks_failed,
             },
-            duration: Duration::from_secs(60),
+            duration,
         }
+    }
+
+    #[test]
+    fn sweep_report_summary_flags_the_slowest_world() {
+        let report = SweepReport {
+            worlds: vec![
+                world_summary_with_duration("Sargatanas", 1, 0, Duration::from_secs(30)),
+                world_summary_with_duration("Ravana", 1, 0, Duration::from_secs(150)),
+                world_summary_with_duration("Cerberus", 1, 0, Duration::from_secs(45)),
+            ],
+            duration: Duration::from_secs(225),
+        };
+        let text = report.summary_text();
+        assert!(text.contains("Slowest world: Ravana (2m30s)"), "{text}");
     }
 
     #[test]
