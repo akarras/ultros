@@ -7,11 +7,13 @@
 //!
 //! Consumed by the recipe analyzer's selectable cost basis (#1202): sale
 //! statistics are a far more robust ingredient/revenue estimate than the
-//! single cheapest current listing. No in-process cache — the response is
-//! edge/browser cacheable for 5 minutes, which bounds how often the
-//! ClickHouse scan reruns per selector.
+//! single cheapest current listing. Also carries the stats-column fields
+//! (last sold, unit volume, vwap, sales/day) and — for single-world scopes
+//! only — the per-world confidence band. No in-process cache — the
+//! response is edge/browser cacheable for 5 minutes, which bounds how
+//! often the ClickHouse scans rerun per selector.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use axum::{
     Json,
@@ -21,6 +23,7 @@ use axum::{
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use serde::Deserialize;
 use ultros_api_types::sale_stats::{BulkSaleStats, ItemSaleStats};
+use ultros_api_types::trends::ConfidenceBand;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::world_data::world_cache::WorldCache;
 
@@ -55,6 +58,19 @@ pub(crate) async fn get_sale_stats(
         .await
         .map_err(|e| ClickHouseQueryError::new("bulk_sale_stats", e))?;
 
+    // Confidence bands are stored per world and don't compose across
+    // worlds, so only a single-world scope carries them; datacenter and
+    // region scopes report `Unknown`.
+    let confidence: HashMap<(i32, bool), ConfidenceBand> = match world_ids.as_slice() {
+        [only] => ultros_clickhouse::queries::bulk_confidence(&ch, *only)
+            .await
+            .map_err(|e| ClickHouseQueryError::new("bulk_confidence", e))?
+            .into_iter()
+            .map(|r| ((r.item_id, r.hq != 0), r.confidence_band()))
+            .collect(),
+        _ => HashMap::new(),
+    };
+
     let stats = rows
         .into_iter()
         .map(|r| ItemSaleStats {
@@ -64,6 +80,14 @@ pub(crate) async fn get_sale_stats(
             median_price: r.median_price,
             avg_price: r.avg_price,
             num_sold: r.num_sold,
+            last_sold_unix: r.last_sold_unix,
+            units_sold: r.units_sold,
+            vwap: r.vwap,
+            sales_per_day: r.num_sold as f32 / window_days as f32,
+            confidence: confidence
+                .get(&(r.item_id, r.hq != 0))
+                .copied()
+                .unwrap_or_default(),
         })
         .collect();
 
