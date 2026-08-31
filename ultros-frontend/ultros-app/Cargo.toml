@@ -83,7 +83,6 @@ gloo-timers = { version = "0.4.0", features = ["futures"] }
 cfg-if.workspace = true
 paginate = "1.1.11"
 percent-encoding = "2.3.2"
-linregress = "0.5.4"
 field-iterator = { path = "../../field-iterator" }
 # leptos_animation = "0.5.0"
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }

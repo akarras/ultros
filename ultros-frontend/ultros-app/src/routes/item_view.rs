@@ -1766,17 +1766,11 @@ fn SalesDetails(
                 });
 
                 view! {
-                    <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 flex-1">
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, sale_history).to_string()}
-                            </h2>
-                            <SaleHistoryTable sales=sales.into() />
-                        </div>
-
-                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                            <SalesInsights sales=sales.into() />
-                        </div>
+                    <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
+                        <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
+                            {move || t_string!(i18n, sale_history).to_string()}
+                        </h2>
+                        <SaleHistoryTable sales=sales.into() />
                     </div>
                 }
                     .into_any()

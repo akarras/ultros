@@ -1,30 +1,25 @@
 // Regression probe for the item page's wide-viewport layout (issue #1234).
 //
-// Three bugs shipped together when listings and sale history went side by
-// side at xl (#1220), all invisible to the runner's 1280px desktop pass:
+// Bugs shipped together when listings and sale history went side by side at
+// xl (#1220), all invisible to the runner's 1280px desktop pass:
 //
 //  - Both tables force `min-w-[720px]`, so a half-width column gave each of
 //    them a horizontal scrollport, and the sale history's "Show more" button
 //    (then a <td> spanning the 720px table) scrolled and clipped with it.
-//  - The "Sales at a glance" tiles were sized by *viewport* breakpoints
-//    (xl:grid-cols-5) while living in a half-width column, leaving 38px
-//    tiles holding 113px numbers — overlapping their neighbours.
 //  - The ad rail's fixed-width slot overflowed the document by 16px at
 //    >=1660px, giving every page a horizontal scrollbar.
 //
 // The fix sizes everything with container queries: the two-column split only
-// happens when the tables' container is >= 94rem (1504px), and the glance
-// tiles track the card they are in. This probe asserts the *outcomes* at
-// three widths spanning stacked -> split, so it stays valid whatever
+// happens when the tables' container is >= 94rem (1504px). This probe
+// asserts the *outcomes* at three widths spanning stacked -> split, so it stays valid whatever
 // mechanism the layout uses next:
 //
 //  1. the sale-history table never actually scrolls horizontally (its
 //     min-width fits the column it was given),
 //  2. "Show more", when present, sits inside the viewport and is hittable,
-//  3. no glance tile's content is wider than the tile,
-//  4. the sections stack or split according to the width their container
+//  3. the sections stack or split according to the width their container
 //     actually has,
-//  5. the crafting-recipes grid spans its panel (no half-empty panel), when
+//  4. the crafting-recipes grid spans its panel (no half-empty panel), when
 //     the item has recipes.
 //
 // Document-level overflow (the ad rail bug) is the generic runner's job —
@@ -92,31 +87,14 @@ function measure() {
     };
   }
 
-  // (3): every stat tile inside the two glance window cards. The tiles are
-  // the grid children two levels under the "Sales at a glance" heading's
-  // section; `scrollWidth > clientWidth` means the number does not fit even
-  // though overflow-hidden keeps it from visibly invading the neighbour.
-  const glanceHeading = byHeading('h3', 'Sales at a glance');
-  let tiles = [];
-  if (glanceHeading) {
-    const section = glanceHeading.closest('.\\@container') || glanceHeading.parentElement.parentElement;
-    tiles = [...section.querySelectorAll('.grid .grid > div')]
-      .filter((t) => t.getBoundingClientRect().width > 0)
-      .map((t) => ({
-        label: (t.querySelector('div')?.textContent || '').trim().slice(0, 24),
-        tileW: Math.round(t.clientWidth),
-        contentW: Math.round(t.scrollWidth),
-      }));
-  }
-
-  // (4): stacked vs split, judged against the width the grid actually has.
+  // (3): stacked vs split, judged against the width the grid actually has.
   const grid = listings.parentElement;
   const gridW = grid.getBoundingClientRect().width;
   const lRect = listings.getBoundingClientRect();
   const hRect = history.getBoundingClientRect();
   const sideBySide = hRect.top < lRect.bottom && hRect.left > lRect.left;
 
-  // (5): the recipes grid should span its panel. Skipped when the item has
+  // (4): the recipes grid should span its panel. Skipped when the item has
   // no recipes (the panel is `hidden`).
   const recipesPanel = document.getElementById('crafting-recipes');
   let recipes = null;
@@ -144,7 +122,6 @@ function measure() {
       : null,
     hasTable: Boolean(table),
     showMore: showMoreInfo,
-    tiles,
     gridW: Math.round(gridW),
     sideBySide,
     recipes,
@@ -199,14 +176,6 @@ async function main() {
         }
       }
 
-      for (const t of m.tiles) {
-        if (t.contentW > t.tileW + 1) {
-          failures.push(
-            `${width}px: glance tile "${t.label}" holds ${t.contentW}px of content in a ` +
-              `${t.tileW}px box`,
-          );
-        }
-      }
 
       const expectSplit = m.gridW >= SPLIT_MIN_CONTAINER_PX;
       if (m.sideBySide !== expectSplit) {
@@ -226,7 +195,7 @@ async function main() {
 
       console.log(
         `[info] ${width}px: ${m.sideBySide ? 'split' : 'stacked'} (grid ${m.gridW}px), ` +
-          `table surplus ${m.tableScrollSurplus}px, ${m.tiles.length} tile(s), ` +
+          `table surplus ${m.tableScrollSurplus}px, ` +
           `show-more ${m.showMore ? 'present' : 'absent'}, recipes ${m.recipes ? 'measured' : 'absent'}`,
       );
     }
