@@ -38,6 +38,24 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
         link: Some("/recipe-analyzer"),
     },
     ChangelogEntry {
+        date: "2026-08-31",
+        title: "Claiming a Viera or Hrothgar character works again",
+        blurb: "Claiming a character read its Lodestone profile through a parser that only knew the races the game shipped with in 2013, so claiming any Viera or Hrothgar failed outright with a server error. Claims now read just the name and home world off the profile, so every race works - and a character id the Lodestone doesn't know says so instead of erroring.",
+        link: Some("/profile"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
+        title: "The sidebar says which world is which",
+        blurb: "The home-world and price-zone rows in the sidebar looked identical whenever the price zone was set to a world. Each row now carries a small label saying what it is, plus its own icon - a house for your home world, a price tag for where prices are read from. The Discord and GitHub links moved back to the very bottom, below the controls.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-30",
+        title: "Item page layout fixes",
+        blurb: "Listings and sale history now sit side by side only on displays wide enough to show both tables in full (roughly 1440p and up) - everywhere else they stack, so neither table needs a horizontal scrollbar. The sale history's Show More button no longer scrolls out of view with the table, the Sales at a Glance tiles size themselves to the space they actually have instead of overlapping, the Crafting Recipes panel hugs its content instead of trailing empty space, and a sliver of page-wide horizontal scroll caused by the ad rail is gone.",
+        link: None,
+    },
+    ChangelogEntry {
         date: "2026-08-30",
         title: "List filters actually exclude datacenters now",
         blurb: "Excluding a datacenter on a list only used to affect the purchasing view - the item table's prices and sorting quietly ignored it. It now filters everything, same as excluding a world. The filters also moved into one tidy row (exclusions, sort, hide-acquired), and Auto-mark Purchases left its box at the top of the page for a toolbar button that opens a dialog. Very tall dialogs (like list settings on a short window) now scroll instead of hiding their bottom buttons off-screen.",

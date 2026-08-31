@@ -83,27 +83,25 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                     }
                 />
 
-                {move || {
-                    (!show_more() && sales.with(|sales| sales.len() > 10))
-                        .then(|| {
-                            view! {
-                                <tr>
-                                    <td colspan="8">
-                                        <button
-                                            class="btn btn-primary w-full"
-                                            on:click=move |_| set_show_more(true)
-                                        >
-                                            {t!(i18n, sale_history_show_more)}
-                                        </button>
-                                    </td>
-                                </tr>
-                            }
-                        })
-                }}
-
             </tbody>
         </table>
         </div>
+        // Outside the overflow-x-auto container on purpose: as a table row the
+        // button was as wide as the 720px-min table and scrolled (and clipped)
+        // with it whenever the container was narrower than the table.
+        {move || {
+            (!show_more() && sales.with(|sales| sales.len() > 10))
+                .then(|| {
+                    view! {
+                        <button
+                            class="btn btn-primary w-full mt-2"
+                            on:click=move |_| set_show_more(true)
+                        >
+                            {t!(i18n, sale_history_show_more)}
+                        </button>
+                    }
+                })
+        }}
     }
 }
 
@@ -297,42 +295,42 @@ fn WindowStats(#[prop(into)] sales: Signal<SalesWindow>) -> impl IntoView {
     let time_between_sales = Signal::derive(move || sales.with(|s| s.time_between_sales));
     let hq_percent = Signal::derive(move || sales.with(|s| s.hq_percent));
     view! {
-        <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-            <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
+        <div class="grid grid-cols-2 gap-2 @md:grid-cols-3 @xl:grid-cols-5">
+            <div class="col-span-2 min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_12%,_transparent)] px-3 py-2 @md:col-span-1 @xl:col-span-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_gil_sold)}</div>
                 <div class="mt-1 text-lg font-bold tabular-nums text-[color:var(--brand-fg)]">
                     <GenericGil<u64> amount=total_gil />
                 </div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_avg_price)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=average_unit_price /></div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_median_price)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=median_unit_price /></div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_min)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=min_unit_price /></div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_max)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=max_unit_price /></div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_typical_stack)}</div>
                 <div class="mt-1 font-semibold tabular-nums">{median_stack_size}</div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_5%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_hq_percent)}</div>
                 <div class="mt-1 font-semibold tabular-nums">{move || hq_percent()} "%"</div>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2">
+            <div class="min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_next_sale)}</div>
                 <div class="mt-1 font-semibold tabular-nums"><Gil amount=guessed_next_sale_price /></div>
             </div>
-            <div class="col-span-2 rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2 sm:col-span-1 xl:col-span-2">
+            <div class="col-span-2 min-w-0 overflow-hidden rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--brand-ring)_10%,_transparent)] px-3 py-2 @md:col-span-1 @xl:col-span-2">
                 <div class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_stat_time_between_sales)}</div>
                 <div class="mt-1 font-semibold tabular-nums">
                     {move || {
@@ -391,18 +389,25 @@ pub fn SalesInsights(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
     let day_sales = Signal::derive(move || sales.with(|s| s.past_day.clone()).unwrap_or_default());
     let month_sales = Signal::derive(move || sales.with(|s| s.month.clone()).unwrap_or_default());
     view! {
-        <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
-            <h3 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, sale_history_insights_title)}</h3>
-            <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_insights_subtitle)}</span>
-        </div>
-        <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.past_day.is_none())>
-                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_24h)}</h4>
-                <WindowStats sales=day_sales />
+        // Sized with container queries, not viewport breakpoints: this section
+        // has lived at full width, in a half-width column, and inside cards of
+        // three different widths across recent layout changes, and viewport
+        // breakpoints can't see any of that. Each window card is a container
+        // of its own so WindowStats' tile grid tracks the card it's in.
+        <div class="@container">
+            <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
+                <h3 class="text-xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, sale_history_insights_title)}</h3>
+                <span class="text-xs uppercase tracking-wide text-[color:var(--color-text-muted)]">{t!(i18n, sale_history_insights_subtitle)}</span>
             </div>
-            <div class="rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.month.is_none())>
-                <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_30d)}</h4>
-                <WindowStats sales=month_sales />
+            <div class="grid grid-cols-1 gap-4 @min-[56rem]:grid-cols-2">
+                <div class="@container rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.past_day.is_none())>
+                    <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_24h)}</h4>
+                    <WindowStats sales=day_sales />
+                </div>
+                <div class="@container rounded-lg border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,_var(--color-text)_3%,_transparent)] p-3" class:hidden=move || sales.with(|s| s.month.is_none())>
+                    <h4 class="mb-3 text-sm font-semibold text-[color:var(--color-text)]">{t!(i18n, sale_history_last_30d)}</h4>
+                    <WindowStats sales=month_sales />
+                </div>
             </div>
         </div>
     }
