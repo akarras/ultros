@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Sales at a Glance is gone from the item page",
+        blurb: "The item page's sale history no longer carries the Sales at a Glance panel - the 24 hour and 30 day stat tiles, and the projected next sale price that was extrapolated from them. The projection in particular read as a prediction while being a straight line fit through a handful of recent sales, which is not something to trade on. The sale history table itself is unchanged and now has the full panel to itself; the same numbers, computed over a real sample, live on the analyzer pages.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Recipe Analyzer: see and filter by where the cheapest listing is",
         blurb: "Two more optional columns show which world and datacenter currently hold the cheapest listing of the item you'd craft. Clicking either one filters the table down to that world or datacenter, the same way the flip finder does, and the filter shows as a chip you can remove.",
         link: Some("/recipe-analyzer"),
