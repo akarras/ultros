@@ -1648,8 +1648,11 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     display: block;
 }
 
+/* Fill the rail's grid track instead of naming a width. A fixed 18.75rem here
+   used to exceed the ≥1660px track (300px minus the rail's own padding) and
+   gave the whole document a 16px horizontal scrollbar. */
 .ad-rail-slot {
-    width: 10rem;
+    width: 100%;
 }
 
 @media (min-width: 1536px) {
@@ -1664,12 +1667,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 
     .app-inline-ad {
         display: none;
-    }
-}
-
-@media (min-width: 1660px) {
-    .ad-rail-slot {
-        width: 18.75rem;
     }
 }
 

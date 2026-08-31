@@ -1132,9 +1132,11 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 <LeveSources item_id />
             </div>
 
+            // max-w on the panel, not the inner grid: capping only the grid
+            // left the full-width panel with a large empty region to its right.
             <div
                 id="crafting-recipes"
-                class="panel p-4 sm:p-6"
+                class="panel p-4 sm:p-6 max-w-6xl"
                 class:hidden=move || recipes.with(|recipes| recipes.is_empty())
             >
                 <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
@@ -1142,7 +1144,9 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     <CraftOptionsToggleRow />
                 </div>
                 <ActiveListBanner />
-                <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 max-w-6xl">
+                // auto-fit so a lone recipe spans the panel instead of
+                // occupying one of two fixed columns; two or more still split.
+                <div class="grid grid-cols-[repeat(auto-fit,minmax(min(30rem,100%),1fr))] gap-4">
                     <For
                         each=Signal::derive(move || {
                             let mut r = recipes();

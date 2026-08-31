@@ -16,7 +16,9 @@
 #                  wait out the analyzer service's cold-start warmup; set to
 #                  empty to skip)
 #   ANALYZER_READY_TIMEOUT  default 180       (seconds to wait for analyzer)
-#   DEVICE         desktop | mobile | both (default both)
+#   DEVICE         desktop | mobile | wide | both (default both; "both" runs
+#                  all three passes — desktop, mobile, and the 2560px wide
+#                  pass that guards ad-rail-width layouts)
 #   SKIP_BUILD     1 to skip `cargo leptos build` before serve
 #   LEPTOS_FEATURES extra leptos-bin-features (space-separated). Set to an
 #                  explicit empty string to override metadata bin-features.
@@ -148,6 +150,7 @@ fi
 case "$DEVICE" in
     desktop) test_script="test:desktop" ;;
     mobile)  test_script="test:mobile" ;;
+    wide)    test_script="test:wide" ;;
     both|*)  test_script="test" ;;
 esac
 
@@ -158,6 +161,15 @@ else
     log "running npm run $test_script in integration/ against $BASE_URL"
     # `|| test_exit=$?` captures the npm exit code without triggering set -e.
     ( cd integration && BASE_URL="$BASE_URL" npm run "$test_script" ) || test_exit=$?
+fi
+
+if [ "${RUN_ITEM_VIEW_LAYOUT:-1}" != "0" ]; then
+    log "running item-view wide-layout E2E (issue #1234)"
+    item_view_layout_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:item-view-layout ) || item_view_layout_exit=$?
+    if [ "$item_view_layout_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$item_view_layout_exit"
+    fi
 fi
 
 if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then

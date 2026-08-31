@@ -5,7 +5,10 @@
  *
  * Env:
  *  - BASE_URL: base address of the running server (default http://127.0.0.1:8080)
- *  - DEVICE:   "mobile" or "desktop" (default "desktop")
+ *  - DEVICE:   "mobile", "desktop", or "wide" (default "desktop"). "wide" is a
+ *              2560px pass: the ad rail only mounts at >=1536px and its slot
+ *              once overflowed the document at >=1660px (issue #1234), which
+ *              the 1280px desktop pass could never see.
  *  - ROUTES:   comma-separated list of routes to visit (default built-in list)
  *  - TIMEOUT_MS: navigation timeout in ms (default 60000)
  *  - HEADLESS: "new" | "true" | "false" (default "new")
@@ -270,13 +273,14 @@ async function main() {
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const DEVICE = (process.env.DEVICE || "desktop").toLowerCase();
   const isMobile = DEVICE.startsWith("m");
+  const isWide = DEVICE.startsWith("w");
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 60000);
   const STRICT_CONSOLE = envFlag("STRICT_CONSOLE", true);
   const SKIP_ASSERTS = envFlag("SKIP_ASSERTS", false);
   const SKIP_OVERFLOW = envFlag("SKIP_OVERFLOW", false);
-  // Both device passes share this runner, and the same route can fit at one
+  // All device passes share this runner, and the same route can fit at one
   // width and not the other, so failures name the width they were seen at.
-  const DEVICE_LABEL = isMobile ? "mobile" : "desktop";
+  const DEVICE_LABEL = isMobile ? "mobile" : isWide ? "wide" : "desktop";
   const userAllow = (process.env.CONSOLE_ALLOW || "")
     .split(",")
     .map((s) => s.trim())
@@ -285,7 +289,9 @@ async function main() {
 
   const viewport = isMobile
     ? { width: 390, height: 844, isMobile: true, deviceScaleFactor: 2 }
-    : { width: 1280, height: 800, deviceScaleFactor: 1 };
+    : isWide
+      ? { width: 2560, height: 1200, deviceScaleFactor: 1 }
+      : { width: 1280, height: 800, deviceScaleFactor: 1 };
 
   const headless = parseHeadless(process.env.HEADLESS);
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
@@ -296,7 +302,7 @@ async function main() {
   fs.mkdirSync(outdir, { recursive: true });
 
   console.log(`[info] BASE_URL=${BASE_URL}`);
-  console.log(`[info] DEVICE=${isMobile ? "mobile" : "desktop"}`);
+  console.log(`[info] DEVICE=${DEVICE_LABEL}`);
   console.log(`[info] OUTPUT_DIR=${outdir}`);
   console.log(`[info] HEADLESS=${headless}`);
   console.log(
@@ -371,6 +377,19 @@ async function main() {
 
         // Applies to every route, not just the ones with content assertions.
         if (!SKIP_OVERFLOW) {
+          // AdSense never fills in headless Chrome, so the Ad component marks
+          // itself `.ad.hidden` and `:has(.ad.hidden)` collapses the whole ad
+          // rail — which once overflowed the document by 16px at >=1660px
+          // (issue #1234) while looking fine to this check. Un-hide the
+          // placeholder so the rail lays out the way it does for a real
+          // viewer with a served ad, then measure.
+          if (isWide) {
+            await page.evaluate(() => {
+              for (const ad of document.querySelectorAll(".ad.hidden")) {
+                ad.classList.remove("hidden");
+              }
+            });
+          }
           const fails = await checkHorizontalOverflow(page, r, DEVICE_LABEL);
           for (const f of fails) failures.push(`${r} [${DEVICE_LABEL}]: ${f}`);
         }
@@ -383,7 +402,7 @@ async function main() {
         }
 
         const safe = sanitizeFileComponent(r);
-        const filename = `${safe}-${isMobile ? "mobile" : "desktop"}.png`;
+        const filename = `${safe}-${DEVICE_LABEL}.png`;
         const file = path.join(outdir, filename);
 
         // Chrome refuses to capture past an internal bitmap limit, and a route
