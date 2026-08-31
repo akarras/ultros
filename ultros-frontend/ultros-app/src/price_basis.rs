@@ -251,6 +251,7 @@ mod tests {
                         median_price,
                         avg_price,
                         num_sold: 10,
+                        ..Default::default()
                     },
                 )
                 .collect(),

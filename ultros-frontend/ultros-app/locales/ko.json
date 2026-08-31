@@ -1380,6 +1380,8 @@
     "recipe_analyzer_calc_formula": "이익 = (시장 가격 − 세금 5%) − 개당 비용",
     "recipe_analyzer_calc_details": "재료 비용은 가장 저렴한 판매 목록을 사용하며, NPC 상점 가격이 더 싸면 상점 가격을 사용합니다. 여러 개가 만들어지는 제작법은 개당 비용으로 계산합니다. 수익은 선택한 서버에서의 판매를 가정하고 시장 세금 5%를 차감합니다. 중간 재료 모드는 중간 재료를 직접 제작하는 것이 구매보다 저렴한지 확인합니다.",
     "recipe_analyzer_market_button": "시장 설정",
+    "recipe_analyzer_col_volume": "거래량 (7일)",
+    "recipe_analyzer_col_vwap": "VWAP (7일)",
     "recipe_analyzer_buy_from_label": "구매 범위",
     "recipe_analyzer_sell_world_label": "판매 서버",
     "buy_scope_home_world": "이 서버만",

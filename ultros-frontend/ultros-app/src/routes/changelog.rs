@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Recipe Analyzer: pick your columns",
+        blurb: "The analyzer gets the flip finder's Columns picker. Alongside the existing table you can now show a confidence chip (on by default), when the item last sold, how many units moved in the last 7 days, the volume-weighted average price with how far the current price sits from it, and the 5% market board tax. Every new column sorts, and your choice is kept in the page's address so you can bookmark it.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Recipe Analyzer: a Market menu for where you buy and sell",
         blurb: "The pricing controls had ended up hidden behind the + Filter menu. They now have their own Market button in the toolbar, reworked around a buy/sell split: choose whether ingredients are priced from your world, your datacenter, or the whole region, pick the cost basis, and revenue is always your sell world's price. Buying now defaults to your datacenter rather than the whole region, so profit estimates no longer assume you fly across the region for every ingredient.",
         link: Some("/recipe-analyzer"),

@@ -1380,6 +1380,8 @@
     "recipe_analyzer_calc_formula": "Gewinn = (Marktpreis − 5 % Steuer) − Kosten pro Einheit",
     "recipe_analyzer_calc_details": "Die Zutatenkosten verwenden die günstigsten Angebote oder den NPC-Händlerpreis, wenn dieser niedriger ist. Rezepte mit mehreren Ergebnissen werden pro Einheit berechnet. Der Erlös geht vom Verkauf auf deiner gewählten Welt aus und zieht die 5 % Marktbrett-Steuer ab. Der Zwischenprodukt-Modus prüft, ob das Herstellen von Zwischenmaterialien günstiger ist als der Kauf.",
     "recipe_analyzer_market_button": "Markt",
+    "recipe_analyzer_col_volume": "Volumen (7T)",
+    "recipe_analyzer_col_vwap": "VWAP (7T)",
     "recipe_analyzer_buy_from_label": "Einkaufen aus",
     "recipe_analyzer_sell_world_label": "Verkaufen auf",
     "buy_scope_home_world": "Nur diese Welt",
