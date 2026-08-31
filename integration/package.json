@@ -7,9 +7,11 @@
   "scripts": {
     "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",
     "run": "node ./runner.cjs",
-    "test": "npm run test:desktop && npm run test:mobile",
+    "test": "npm run test:desktop && npm run test:mobile && npm run test:wide",
     "test:mobile": "cross-env CONCURRENCY=16 DEVICE=mobile npm run run",
     "test:desktop": "cross-env CONCURRENCY=16 DEVICE=desktop npm run run",
+    "test:wide": "cross-env CONCURRENCY=16 DEVICE=wide npm run run",
+    "test:item-view-layout": "node ./item-view-layout.cjs",
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
     "test:shared-list": "node ./shared-list.cjs",
