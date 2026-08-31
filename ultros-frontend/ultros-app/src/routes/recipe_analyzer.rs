@@ -45,6 +45,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
+use percent_encoding::utf8_percent_encode;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
@@ -1414,9 +1415,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     .collect()
             });
             if let Some(migrated) = migrate_legacy_params(&pairs) {
+                // `query` hands back decoded values, so they have to be
+                // re-encoded on the way out - `world` is a bare world name
+                // today, but a raw `format!` here would silently corrupt any
+                // value that ever grows a space, `&`, or `=`.
                 let qs = migrated
                     .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
+                    .map(|(k, v)| {
+                        format!(
+                            "{k}={}",
+                            utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC)
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("&");
                 nav(

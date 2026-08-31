@@ -164,18 +164,6 @@ impl Display for BuyScope {
     }
 }
 
-/// Re-price a [`CheapestListingsMap`] from sale statistics.
-///
-/// Starts from the current-listings map and overrides each `(item, hq)`
-/// entry that has sale history with the chosen statistic. Items with no
-/// sales in the window keep their current-listing price — falling through
-/// to 0 would fake "free" ingredients and corrupt the profit ranking.
-/// Items with sales but no current listing gain an entry (they are still
-/// buyable in practice; a missing entry would price them at 0 too).
-///
-/// `world_id` is preserved from the listing entry where one exists (it
-/// feeds "cheapest world" UI); stat-only entries get `0`, which no UI
-/// resolves to a world link.
 /// Base map with every entry the override map carries replacing the base's.
 /// Used for revenue: the sell world's own listing wins even when it is
 /// higher than the buy-scope minimum (it is the price you would list at);
@@ -192,6 +180,18 @@ pub fn override_listings(
     CheapestListingsMap { map }
 }
 
+/// Re-price a [`CheapestListingsMap`] from sale statistics.
+///
+/// Starts from the current-listings map and overrides each `(item, hq)`
+/// entry that has sale history with the chosen statistic. Items with no
+/// sales in the window keep their current-listing price — falling through
+/// to 0 would fake "free" ingredients and corrupt the profit ranking.
+/// Items with sales but no current listing gain an entry (they are still
+/// buyable in practice; a missing entry would price them at 0 too).
+///
+/// `world_id` is preserved from the listing entry where one exists (it
+/// feeds "cheapest world" UI); stat-only entries get `0`, which no UI
+/// resolves to a world link.
 pub fn overlay_sale_stats(
     listings: &CheapestListingsMap,
     stats: &BulkSaleStats,
