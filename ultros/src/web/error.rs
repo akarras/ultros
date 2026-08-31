@@ -26,6 +26,7 @@ use ultros_db::{
 use crate::{analyzer_service::AnalyzerError, event};
 
 use crate::character_claim::ClaimError;
+use crate::lodestone_profile::ProfileError;
 
 /// A ClickHouse call that failed, tagged with which query it was and why it
 /// failed.
@@ -167,6 +168,12 @@ impl ApiError {
             // failure at error level (the GlitchTip 2218/2210 lineage).
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            // A character id that the Lodestone doesn't know is a bad request
+            // parameter, not a server fault - answering 500 both lied to the
+            // caller and reported the typo to GlitchTip.
+            ApiError::CharacterClaimError(ClaimError::Lodestone(
+                ProfileError::CharacterNotFound(_),
+            )) => StatusCode::NOT_FOUND,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
                 Some(ListError::NotFound | ListError::InviteNotFound) => StatusCode::NOT_FOUND,
@@ -184,6 +191,9 @@ impl ApiError {
         match self {
             ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
+            ApiError::CharacterClaimError(ClaimError::Lodestone(
+                ProfileError::CharacterNotFound(_),
+            )) => ultros_api_types::result::ApiError::NotFound,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => ultros_api_types::result::ApiError::Forbidden,
                 Some(ListError::NotFound | ListError::InviteNotFound) => {

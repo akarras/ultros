@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Claiming a Viera or Hrothgar character works again",
+        blurb: "Claiming a character read its Lodestone profile through a parser that only knew the races the game shipped with in 2013, so claiming any Viera or Hrothgar failed outright with a server error. Claims now read just the name and home world off the profile, so every race works - and a character id the Lodestone doesn't know says so instead of erroring.",
+        link: Some("/profile"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "The sidebar says which world is which",
         blurb: "The home-world and price-zone rows in the sidebar looked identical whenever the price zone was set to a world. Each row now carries a small label saying what it is, plus its own icon - a house for your home world, a price tag for where prices are read from. The Discord and GitHub links moved back to the very bottom, below the controls.",
         link: None,

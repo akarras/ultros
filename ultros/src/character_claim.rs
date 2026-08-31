@@ -11,13 +11,14 @@
 
 use std::sync::Arc;
 
-use lodestone::{LodestoneError, model::profile::Profile};
 use thiserror::Error;
 use ultros_db::{
     UltrosDb,
     entity::final_fantasy_character,
     world_data::world_cache::{self, WorldCacheError},
 };
+
+use crate::lodestone_profile::{ProfileError, get_character_summary};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CharacterClaimService {
@@ -29,7 +30,7 @@ pub(crate) struct CharacterClaimService {
 #[derive(Debug, Error)]
 pub enum ClaimError {
     #[error("Error reading from lodestone {0}")]
-    Lodestone(#[from] LodestoneError),
+    Lodestone(#[from] ProfileError),
     #[error("Generic DB error {0}")]
     DbError(#[from] anyhow::Error),
     #[error("World error {0}")]
@@ -49,14 +50,14 @@ impl CharacterClaimService {
         character_id: u32,
         discord_user_id: i64,
     ) -> Result<final_fantasy_character::Model, ClaimError> {
-        let profile = Profile::get_async(&self.client, character_id).await?;
-        let (first_name, last_name) = profile
+        let character_summary = get_character_summary(&self.client, character_id).await?;
+        let (first_name, last_name) = character_summary
             .name
             .split_once(' ')
-            .ok_or_else(|| ClaimError::UnsplittableName(profile.name.clone()))?;
+            .ok_or_else(|| ClaimError::UnsplittableName(character_summary.name.clone()))?;
         let world_id = self
             .world_cache
-            .lookup_value_by_name(&profile.server.to_string())?
+            .lookup_value_by_name(&character_summary.home_world)?
             .as_world()?
             .id;
 
