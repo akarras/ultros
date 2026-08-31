@@ -489,6 +489,7 @@ async fn main() -> Result<()> {
         sales: senders.history.clone(),
         full_sweep_cooldowns: Default::default(),
         uncovered_worlds: Default::default(),
+        sweep_lock: Default::default(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
     // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest

@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -100,6 +103,31 @@ fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
     }
 }
 
+/// Serializes full sweeps (manual and saturation-triggered): a full sweep
+/// fetches every marketable item for a world, and two at once doubles the
+/// load on Universalis for zero extra coverage.
+#[derive(Default)]
+pub(crate) struct SweepLock(AtomicBool);
+
+/// Held for the duration of a full sweep; frees the lock on drop (including
+/// panics, so a crashed sweep never wedges the command).
+pub(crate) struct SweepLockGuard(Arc<SweepLock>);
+
+impl SweepLock {
+    pub(crate) fn try_claim(self: &Arc<Self>) -> Option<SweepLockGuard> {
+        self.0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| SweepLockGuard(self.clone()))
+    }
+}
+
+impl Drop for SweepLockGuard {
+    fn drop(&mut self) {
+        self.0.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
 pub(crate) struct UpdateService {
@@ -115,6 +143,8 @@ pub(crate) struct UpdateService {
     /// Worlds Universalis 404s on. Purely a log de-duplicator — see
     /// [`UpdateService::note_world_uncovered`].
     pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
+    /// Serializes full sweeps — see [`SweepLock`].
+    pub(crate) sweep_lock: Arc<SweepLock>,
 }
 
 /// True when `error` is a Universalis `404`, i.e. it does not know the entity
@@ -202,6 +232,84 @@ impl CatchupTally {
     }
 }
 
+/// One world's outcome from a full sweep, folded into a [`SweepReport`].
+///
+/// `duration` isn't read by [`SweepReport::summary_text`] today — it's kept
+/// per-world for Task 6's richer Discord report (e.g. flagging an
+/// unusually slow world). No production reader exists until then.
+#[allow(dead_code)]
+pub(crate) struct WorldSweepSummary {
+    world_name: String,
+    tally: CatchupTally,
+    duration: std::time::Duration,
+}
+
+/// Fired after each world completes during [`UpdateService::do_full_world_sweep`]
+/// so a long-running sweep can report interim status (e.g. edit a Discord
+/// reply). This task's `admin.rs` caller passes a no-op `|_| {}` (Task 6
+/// replaces that command wholesale), so nothing reads these fields or calls
+/// `summary_text` in production yet — exercised directly by `mod tests`
+/// until Task 6 wires a real progress callback.
+#[allow(dead_code)]
+pub(crate) struct SweepProgress {
+    worlds_done: usize,
+    worlds_total: usize,
+    items_changed: u64,
+    chunks_failed: u64,
+}
+
+impl SweepProgress {
+    /// See the struct doc-comment: no production caller until Task 6 wires a
+    /// real progress callback.
+    #[allow(dead_code)]
+    pub(crate) fn summary_text(&self) -> String {
+        format!(
+            "Sweep progress: {}/{} worlds — {} items updated, {} chunks skipped.",
+            self.worlds_done, self.worlds_total, self.items_changed, self.chunks_failed
+        )
+    }
+}
+
+/// Worlds listed by name before the count collapses to "+N more" — keeps the
+/// summary safely under Discord's 2000-character message cap.
+const REPORT_MAX_LISTED_WORLDS: usize = 10;
+
+/// Result of a completed full sweep across every world, returned by
+/// [`UpdateService::do_full_world_sweep`].
+pub(crate) struct SweepReport {
+    worlds: Vec<WorldSweepSummary>,
+    duration: std::time::Duration,
+}
+
+impl SweepReport {
+    pub(crate) fn summary_text(&self) -> String {
+        let changed: u64 = self.worlds.iter().map(|w| w.tally.changed).sum();
+        let failed: u64 = self.worlds.iter().map(|w| w.tally.failed).sum();
+        let chunks_failed: u64 = self.worlds.iter().map(|w| w.tally.chunks_failed).sum();
+        let minutes = self.duration.as_secs() / 60;
+        let mut text = format!(
+            "Full market sweep finished: {} worlds in {minutes} min — {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped.",
+            self.worlds.len()
+        );
+        let incomplete: Vec<&str> = self
+            .worlds
+            .iter()
+            .filter(|w| w.tally.chunks_failed > 0)
+            .map(|w| w.world_name.as_str())
+            .collect();
+        if !incomplete.is_empty() {
+            let listed = incomplete[..incomplete.len().min(REPORT_MAX_LISTED_WORLDS)].join(", ");
+            let overflow = incomplete.len().saturating_sub(REPORT_MAX_LISTED_WORLDS);
+            text.push_str(&format!("\nIncomplete worlds: {listed}"));
+            if overflow > 0 {
+                text.push_str(&format!(" (+{overflow} more)"));
+            }
+            text.push_str(" — the 5-minute catch-up loop will recover the skipped items.");
+        }
+        text
+    }
+}
+
 struct CmpListing(Model);
 
 impl PartialOrd<WorldItemRecencyView> for CmpListing {
@@ -251,7 +359,7 @@ impl UpdateService {
         });
     }
 
-    fn all_marketable_items() -> Box<[i32]> {
+    pub(crate) fn all_marketable_items() -> Box<[i32]> {
         xiv_gen_db::data()
             .items
             .values()
@@ -260,14 +368,55 @@ impl UpdateService {
             .collect()
     }
 
-    /// Sweeps over every single marketable item in the game, ignoring the recency cache. Only should be used if data is known to be lost.
-    pub(crate) async fn do_full_world_sweep(&self) -> Result<(), anyhow::Error> {
+    /// Claims the global full-sweep lock. `None` when a sweep (manual or
+    /// saturation-triggered) is already running. See [`SweepLock`].
+    pub(crate) fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
+        self.sweep_lock.try_claim()
+    }
+
+    /// Sweeps over every single marketable item in the game, ignoring the
+    /// recency cache. Only should be used if data is known to be lost. Never
+    /// aborts: failed chunks are skipped and reported via the returned
+    /// [`SweepReport`]. `progress` fires after each world completes.
+    ///
+    /// Callers must hold a [`SweepLockGuard`] (see
+    /// [`UpdateService::try_begin_full_sweep`]) so only one full sweep runs.
+    pub(crate) async fn do_full_world_sweep(
+        &self,
+        mut progress: impl FnMut(SweepProgress),
+    ) -> SweepReport {
         let all_marketable_items = Self::all_marketable_items();
-        for world in self.world_cache.get_all_worlds() {
-            tracing::info!("scanning items");
-            let _ = self.check_items(world, &all_marketable_items).await;
+        let worlds: Vec<&world::Model> = self.world_cache.get_all_worlds().copied().collect();
+        let worlds_total = worlds.len();
+        let started = Instant::now();
+        let mut summaries = Vec::with_capacity(worlds_total);
+        let (mut items_changed, mut chunks_failed) = (0u64, 0u64);
+        for world in worlds {
+            let world_started = Instant::now();
+            info!(world = %world.name, "full sweep: scanning world");
+            let tally = self.check_items(world, &all_marketable_items).await;
+            tally.record(&world.name);
+            // This world just got a full refetch — a saturation-triggered sweep
+            // inside the cooldown window would be pure duplication.
+            self.confirm_full_sweep(world.id);
+            items_changed += tally.changed;
+            chunks_failed += tally.chunks_failed;
+            summaries.push(WorldSweepSummary {
+                world_name: world.name.clone(),
+                tally,
+                duration: world_started.elapsed(),
+            });
+            progress(SweepProgress {
+                worlds_done: summaries.len(),
+                worlds_total,
+                items_changed,
+                chunks_failed,
+            });
         }
-        Ok(())
+        SweepReport {
+            worlds: summaries,
+            duration: started.elapsed(),
+        }
     }
 
     /// Records that Universalis does not cover `world_id`. Returns `true` the
@@ -973,5 +1122,83 @@ mod tests {
             vec![theirs(3, 500), theirs(7, 1_000), theirs(1, 9_999)],
         );
         assert_eq!(missed.iter().map(|i| i.item_id).collect::<Vec<_>>(), [1, 7]);
+    }
+
+    #[test]
+    fn sweep_lock_is_exclusive_and_releases_on_drop() {
+        let lock = Arc::new(SweepLock::default());
+        let guard = lock.try_claim().expect("free lock claims");
+        assert!(
+            lock.try_claim().is_none(),
+            "held lock refuses a second sweep"
+        );
+        drop(guard);
+        assert!(lock.try_claim().is_some(), "dropped guard frees the lock");
+    }
+
+    fn world_summary(name: &str, changed: u64, chunks_failed: u64) -> WorldSweepSummary {
+        WorldSweepSummary {
+            world_name: name.to_string(),
+            tally: CatchupTally {
+                changed,
+                noop: 0,
+                failed: 0,
+                chunks_failed,
+            },
+            duration: Duration::from_secs(60),
+        }
+    }
+
+    #[test]
+    fn sweep_report_summary_totals_and_flags_incomplete_worlds() {
+        let report = SweepReport {
+            worlds: vec![
+                world_summary("Sargatanas", 10, 0),
+                world_summary("Ravana", 5, 2),
+                world_summary("Cerberus", 0, 1),
+            ],
+            duration: Duration::from_secs(2 * 3600 + 90),
+        };
+        let text = report.summary_text();
+        assert!(text.contains("3 worlds"));
+        assert!(text.contains("15"), "total changed items: {text}");
+        assert!(text.contains("3 chunks skipped"), "{text}");
+        assert!(
+            text.contains("Ravana") && text.contains("Cerberus"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Sargatanas"),
+            "clean worlds are not listed: {text}"
+        );
+        assert!(text.len() <= 2000, "must fit one Discord message: {text}");
+    }
+
+    #[test]
+    fn sweep_report_summary_caps_the_incomplete_world_list() {
+        let worlds: Vec<_> = (0..40)
+            .map(|i| world_summary(&format!("World{i}"), 1, 1))
+            .collect();
+        let report = SweepReport {
+            worlds,
+            duration: Duration::from_secs(3600),
+        };
+        let text = report.summary_text();
+        assert!(text.contains("+30 more"), "{text}");
+        assert!(text.len() <= 2000, "must fit one Discord message: {text}");
+    }
+
+    #[test]
+    fn sweep_progress_summary_mentions_counts() {
+        let text = SweepProgress {
+            worlds_done: 42,
+            worlds_total: 90,
+            items_changed: 1234,
+            chunks_failed: 3,
+        }
+        .summary_text();
+        assert!(text.contains("42/90"), "{text}");
+        assert!(text.contains("1234"), "{text}");
+        assert!(text.contains("3"), "{text}");
     }
 }
