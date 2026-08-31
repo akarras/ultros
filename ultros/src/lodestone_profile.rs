@@ -83,10 +83,13 @@ fn parse_character_summary(
 
     // The world line reads `Brynhildr [Crystal]`, and on some pages separates
     // the world from its data center with a non-breaking space instead of a
-    // plain one. Either way the world name is the first token.
+    // plain one. `split_whitespace` covers both -- U+00A0 carries the Unicode
+    // White_Space property -- and also eats any indentation the markup puts in
+    // front of the world name, which a split on literal spaces alone would fold
+    // into the token and break the `world_cache` lookup with.
     let home_world = text("frame__chara__world", "home world")?
-        .split([' ', '\u{A0}'])
-        .find(|token| !token.is_empty())
+        .split_whitespace()
+        .next()
         .unwrap_or_default()
         .to_string();
     if home_world.is_empty() {
@@ -128,6 +131,17 @@ mod test {
             .replace("\\u{A0}", "\u{A0}");
         let summary = parse_character_summary(1, &html).unwrap();
         assert_eq!(summary.home_world, "Sargatanas");
+    }
+
+    #[test]
+    fn ignores_markup_indentation_in_front_of_the_world_name() {
+        // Pretty-printed markup puts a newline and tabs between the tag and the
+        // world name; folding those into the token would fail world_cache.
+        let html = "<p class=\"frame__chara__name\">Kalanne Ymir</p>
+             <p class=\"frame__chara__world\">
+			Brynhildr [Crystal]</p>";
+        let summary = parse_character_summary(2, html).unwrap();
+        assert_eq!(summary.home_world, "Brynhildr");
     }
 
     #[test]
