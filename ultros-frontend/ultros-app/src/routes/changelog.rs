@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-08-31",
+        title: "Claiming a Viera or Hrothgar character works again",
+        blurb: "Claiming a character read its Lodestone profile through a parser that only knew the races the game shipped with in 2013, so claiming any Viera or Hrothgar failed outright with a server error. Claims now read just the name and home world off the profile, so every race works - and a character id the Lodestone doesn't know says so instead of erroring.",
+        link: Some("/profile"),
+    },
+    ChangelogEntry {
         date: "2026-08-30",
         title: "List filters actually exclude datacenters now",
         blurb: "Excluding a datacenter on a list only used to affect the purchasing view - the item table's prices and sorting quietly ignored it. It now filters everything, same as excluding a world. The filters also moved into one tidy row (exclusions, sort, hide-acquired), and Auto-mark Purchases left its box at the top of the page for a toolbar button that opens a dialog. Very tall dialogs (like list settings on a short window) now scroll instead of hiding their bottom buttons off-screen.",

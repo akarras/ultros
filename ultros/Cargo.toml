@@ -26,6 +26,9 @@ lodestone = { git = "https://github.com/akarras/lodestone.git", branch = 'async'
 reqwest = { version = "0.11", default-features = false, features = [
     "rustls-tls",
 ] }
+# Reading the character name/home world off a Lodestone profile page, see
+# `lodestone_profile`. This is the same HTML parser the `lodestone` crate uses.
+select = "0.6"
 xiv-gen.workspace = true
 serde = { workspace = true }
 include_dir = "0.7.4"
