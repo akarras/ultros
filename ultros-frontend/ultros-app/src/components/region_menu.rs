@@ -264,25 +264,37 @@ pub fn RegionMenu() -> impl IntoView {
                 class="side-nav-account-trigger"
                 aria-haspopup="true"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
+                // See `HomeWorldMenu`: the visible overline is hidden in the
+                // collapsed rail and the price-tag icon is `aria_hidden`, so
+                // the accessible name has to come from the attribute.
+                aria-label=move || {
+                    format!(
+                        "{}: {}",
+                        t_string!(i18n, region_menu_label),
+                        match zone.get() {
+                            Some(zone) => zone.get_name().to_string(),
+                            None => t_string!(i18n, region_menu_no_zone).to_string(),
+                        },
+                    )
+                }
                 on:click=move |_| set_open.update(|v| *v = !*v)
             >
-                <span class="sr-only">{t!(i18n, region_menu_label)}</span>
-                {move || match current.get() {
-                    Some(selector) => view! { <SelectorKind selector=selector /> }.into_any(),
-                    None => {
-                        view! {
-                            <span class="shrink-0 flex items-center text-[color:var(--color-text-muted)]">
-                                <Icon icon=i::FaEarthAmericasSolid aria_hidden=true />
-                            </span>
-                        }
-                            .into_any()
-                    }
-                }}
-                <span class="side-nav-label ml-2">
-                    {move || match zone.get() {
-                        Some(zone) => zone.get_name().to_string(),
-                        None => t_string!(i18n, region_menu_no_zone).to_string(),
-                    }}
+                // A price tag, not `SelectorKind`: the kind icon made this
+                // row indistinguishable from the home-world row whenever the
+                // zone was a world (#1235). "Where prices come from" is the
+                // row's identity; the selected scope's kind still shows on
+                // the rows inside the panel.
+                <span class="shrink-0 flex items-center text-[color:var(--color-text-muted)]">
+                    <Icon icon=i::ImPriceTag aria_hidden=true />
+                </span>
+                <span class="side-nav-label side-nav-zone-text ml-2">
+                    <span class="side-nav-zone-overline">{t!(i18n, region_menu_label)}</span>
+                    <span class="side-nav-zone-value">
+                        {move || match zone.get() {
+                            Some(zone) => zone.get_name().to_string(),
+                            None => t_string!(i18n, region_menu_no_zone).to_string(),
+                        }}
+                    </span>
                 </span>
                 <Icon
                     icon=i::BiChevronUpSolid
