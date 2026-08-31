@@ -1,6 +1,7 @@
 use crate::components::crafting_cost::{
     CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
 };
+use crate::components::dismissable::use_dismissable;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::is_shard_item;
@@ -8,7 +9,9 @@ use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::price_basis::{CostBasis, MarketScope, RevenueMetric, overlay_sale_stats};
+use crate::price_basis::{
+    BuyScope, CostBasis, RevenueMetric, overlay_sale_stats, override_listings,
+};
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
@@ -37,6 +40,7 @@ use crate::{
 };
 use icondata as i;
 use leptos::prelude::*;
+use leptos_i18n::I18nContext;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
@@ -116,6 +120,148 @@ fn level_for_job_code(levels: &CrafterLevels, code: &str) -> Option<i32> {
 /// Every crafter acronym, in `CraftType` order.
 const JOB_CODES: [&str; 8] = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
 
+// --- Pricing methodology options -------------------------------------------
+// (token, localized label) pairs for the three pricing selects. Free
+// functions rather than closures inside the page component because both the
+// chip row and [`MarketMenu`] render them.
+
+fn cost_basis_options(i18n: I18nContext<Locale, I18nKeys>) -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "listing-min",
+            t_string!(i18n, price_basis_listing_min).to_string(),
+        ),
+        (
+            "sale-median",
+            t_string!(i18n, price_basis_sale_median).to_string(),
+        ),
+        (
+            "sale-min",
+            t_string!(i18n, price_basis_sale_min).to_string(),
+        ),
+        (
+            "sale-avg",
+            t_string!(i18n, price_basis_sale_avg).to_string(),
+        ),
+    ]
+}
+
+fn buy_scope_options(i18n: I18nContext<Locale, I18nKeys>) -> Vec<(&'static str, String)> {
+    vec![
+        ("world", t_string!(i18n, buy_scope_home_world).to_string()),
+        ("datacenter", t_string!(i18n, datacenter).to_string()),
+        ("region", t_string!(i18n, region).to_string()),
+    ]
+}
+
+/// One labelled select inside the [`MarketMenu`] popover. Commits on
+/// `change` — unlike [`FilterChip`]'s select, this one stays mounted after a
+/// commit (the popover only closes on dismiss), so committing per keystroke
+/// of keyboard browsing does not tear the control down mid-navigation.
+#[component]
+fn PricingSelect(
+    #[prop(into)] label: String,
+    #[prop(into)] value: Signal<String>,
+    options: Vec<(&'static str, String)>,
+    #[prop(into)] on_change: Callback<String>,
+) -> impl IntoView {
+    view! {
+        <label class="flex flex-col gap-1 text-[color:var(--color-text)]">
+            <span class="text-xs text-[color:var(--color-text-muted)]">{label}</span>
+            <select
+                class="input input-sm"
+                prop:value=move || value.get()
+                on:change=move |ev| on_change.run(event_target_value(&ev))
+            >
+                {options
+                    .into_iter()
+                    .map(|(val, lab)| {
+                        view! {
+                            <option value=val selected=move || value.get() == val>
+                                {lab}
+                            </option>
+                        }
+                    })
+                    .collect_view()}
+            </select>
+        </label>
+    }
+}
+
+/// Always-visible `Market` button in the control bar's first row, opening a
+/// popover with the buy-scope / cost-basis / revenue-metric selects.
+///
+/// These existed as permanent toolbar fields (#1206), then the
+/// Toolbar→ControlBar migration (#1214) filed them under `+ Filter` — where
+/// #1233 reported the whole feature as gone. They are not row filters: they
+/// change how every row is priced, so they get a standing entry point in row
+/// 1 (same shape as the flip finder's `SavedViewsMenu`). Reads and writes the
+/// same query params as the page's signals, so the non-default chips in the
+/// filter row stay in sync automatically.
+#[component]
+fn MarketMenu() -> impl IntoView {
+    let i18n = use_i18n();
+    let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
+    let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
+    let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
+
+    let open = RwSignal::new(false);
+    let container = NodeRef::<leptos::html::Div>::new();
+    use_dismissable(container, move || open.set(false));
+
+    view! {
+        <div class="relative flex items-center" node_ref=container>
+            // Icon-only below `md`, same yield rules as every row-1 button —
+            // the bar is height-locked and this row cannot wrap.
+            <button
+                class="sticky-bar-button sticky-bar-button-shrink"
+                aria-label=t_string!(i18n, recipe_analyzer_market_button)
+                aria-expanded=move || open.get().to_string()
+                on:click=move |_| open.update(|v| *v = !*v)
+            >
+                <Icon icon=icondata::MdiCashMultiple />
+                <span class="hidden md:inline sticky-bar-button-label">
+                    {t!(i18n, recipe_analyzer_market_button)}
+                </span>
+            </button>
+            <Show when=move || open.get()>
+                <div class="sticky-bar-popover p-3 w-[min(92vw,16rem)] flex flex-col gap-2 text-sm">
+                    <PricingSelect
+                        label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
+                        value=Signal::derive(move || buy_scope().unwrap_or_default().to_string())
+                        options=buy_scope_options(i18n)
+                        on_change=Callback::new(move |v: String| {
+                            let parsed = v.parse::<BuyScope>().ok();
+                            set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
+                        })
+                    />
+                    <PricingSelect
+                        label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
+                        value=Signal::derive(move || cost_basis().unwrap_or_default().to_string())
+                        options=cost_basis_options(i18n)
+                        on_change=Callback::new(move |v: String| {
+                            let parsed = v.parse::<CostBasis>().ok();
+                            set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
+                        })
+                    />
+                    <PricingSelect
+                        label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
+                        value=Signal::derive(move || {
+                            revenue_metric().unwrap_or_default().to_string()
+                        })
+                        options=cost_basis_options(i18n)
+                        on_change=Callback::new(move |v: String| {
+                            let parsed = v.parse::<RevenueMetric>().ok();
+                            set_revenue_metric(parsed.filter(|m| *m != RevenueMetric::default()));
+                        })
+                    />
+                </div>
+            </Show>
+        </div>
+    }
+    .into_any()
+}
+
 // --- Filter registry -------------------------------------------------------
 // Each id is the `filter_query_signal` key it drives, so the list doubles as
 // the URL contract (mirrors the analyzer/currency-exchange convention).
@@ -125,7 +271,7 @@ const FILTER_MIN_SALES: &str = "min-sales";
 const FILTER_JOB: &str = "job";
 const FILTER_COST_BASIS: &str = "cost-basis";
 const FILTER_REVENUE: &str = "revenue";
-const FILTER_SCOPE: &str = "scope";
+const FILTER_BUY_SCOPE: &str = "buy-scope";
 const FILTER_SUBCRAFTS: &str = "subcrafts";
 const FILTER_REQUIRE_HQ: &str = "require-hq";
 const FILTER_OUTLIERS: &str = "filter-outliers";
@@ -134,14 +280,16 @@ const FILTER_USE_ON_HAND: &str = "on-hand";
 
 /// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
 /// order.
+// The pricing methodology controls (cost basis, revenue metric, scope) are
+// deliberately *not* in this list: they change how every row is priced rather
+// than which rows show, so they live behind the always-visible `Pricing`
+// button in row 1 (see [`MarketMenu`]) instead of the `+ Filter` menu, where
+// #1233 reported them as impossible to find.
 const ADDABLE_FILTERS: &[&str] = &[
     FILTER_PROFIT,
     FILTER_ROI,
     FILTER_MIN_SALES,
     FILTER_JOB,
-    FILTER_COST_BASIS,
-    FILTER_REVENUE,
-    FILTER_SCOPE,
     FILTER_SUBCRAFTS,
     FILTER_REQUIRE_HQ,
     FILTER_OUTLIERS,
@@ -152,6 +300,33 @@ const ADDABLE_FILTERS: &[&str] = &[
 /// Trailing sale-history window backing the sale-stat cost/revenue bases.
 /// Matches the `/api/v1/sale_stats` default.
 const SALE_STATS_WINDOW_DAYS: u16 = 7;
+
+/// Rewrite pre-market-model query params (#1206 era) to their successors.
+/// Returns `None` when nothing needs rewriting (the common case — avoids a
+/// navigate loop). `scope` carried region|datacenter and became
+/// `buy-scope`; `revenue=world-min` described what is now the default and
+/// simply drops.
+fn migrate_legacy_params(pairs: &[(String, String)]) -> Option<Vec<(String, String)>> {
+    let legacy = pairs
+        .iter()
+        .any(|(k, v)| k == "scope" || (k == "revenue" && v == "world-min"));
+    if !legacy {
+        return None;
+    }
+    Some(
+        pairs
+            .iter()
+            .filter(|(k, v)| !(k == "revenue" && v == "world-min"))
+            .map(|(k, v)| {
+                if k == "scope" {
+                    (FILTER_BUY_SCOPE.to_string(), v.clone())
+                } else {
+                    (k.clone(), v.clone())
+                }
+            })
+            .collect(),
+    )
+}
 
 /// Whether any crafter is above level 0. A user with all-zero levels can't
 /// craft anything, so the analyzer has nothing to rank.
@@ -272,15 +447,18 @@ fn compare_recipes(mode: SortMode, a: &RecipeProfitData, b: &RecipeProfitData) -
 fn RecipeAnalyzerTable(
     global_cheapest_listings: CheapestListings,
     recent_sales: Option<RecentSales>,
-    /// Bulk sale statistics for the current scope; `None` while not
-    /// requested (listing bases) or when the fetch failed.
+    /// Bulk sale statistics for the buy scope (cost bases); `None` while
+    /// not requested (listing basis) or when the fetch failed.
     sale_stats: Option<BulkSaleStats>,
-    /// True when a sale-stat basis is selected but the stats fetch failed —
+    /// Bulk sale statistics for the sell world (sale-stat revenue
+    /// metrics); `None` while not requested or failed.
+    sell_world_sale_stats: Option<BulkSaleStats>,
+    /// True when a sale-stat basis is selected but its stats fetch failed —
     /// the table silently degrades to the listing basis, so say so.
     sale_stats_error: bool,
-    /// Cheapest listings on the analyzer's selected world, fetched only for
-    /// the world-min revenue metric.
-    world_listings: Option<CheapestListings>,
+    /// Cheapest listings on the analyzer's sell world. Revenue is always
+    /// that world's price; absent only before a world resolves.
+    sell_world_listings: Option<CheapestListings>,
 
     world: Signal<String>,
 ) -> impl IntoView {
@@ -298,7 +476,8 @@ fn RecipeAnalyzerTable(
     // An absent payload behaves as "no sales anywhere": `overlay_sale_stats`
     // becomes a no-op and every sale basis degrades to the listing basis.
     let sale_stats = Arc::new(sale_stats.unwrap_or_default());
-    let world_prices = world_listings.map(|l| Arc::new(CheapestListingsMap::from(l)));
+    let sell_world_sale_stats = Arc::new(sell_world_sale_stats.unwrap_or_default());
+    let sell_world_prices = sell_world_listings.map(|l| Arc::new(CheapestListingsMap::from(l)));
     let data = tracked_data();
     let items = &data.items;
     let recipes = &data.recipes;
@@ -337,7 +516,7 @@ fn RecipeAnalyzerTable(
     let (use_on_hand_url, set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
-    let (scope, set_scope) = filter_query_signal::<MarketScope>(FILTER_SCOPE);
+    let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
 
     // A filter picked from the `+ Filter` menu but not yet committed — its
     // chip mounts in edit state with an empty input (see currency_exchange.rs
@@ -373,21 +552,32 @@ fn RecipeAnalyzerTable(
             },
         )
     };
+    // Revenue base: buy-scope listings with the sell world's own entries
+    // winning (see `override_listings`). Sale-stat metrics overlay the
+    // sell world's history on top of that.
     let revenue_prices = {
         let prices = prices.clone();
-        let sale_stats = sale_stats.clone();
-        Memo::new(
-            move |_| match revenue_metric().unwrap_or_default().sale_stat() {
+        let sell_stats = sell_world_sale_stats.clone();
+        let world = sell_world_prices.clone();
+        Memo::new(move |_| {
+            let base = match &world {
+                Some(w) => Arc::new(override_listings(&prices, w)),
                 None => prices.clone(),
-                Some(stat) => Arc::new(overlay_sale_stats(&prices, &sale_stats, stat)),
-            },
-        )
+            };
+            match revenue_metric().unwrap_or_default().sale_stat() {
+                None => base,
+                Some(stat) => Arc::new(overlay_sale_stats(&base, &sell_stats, stat)),
+            }
+        })
     };
 
+    // The raw buy-scope listing map, un-overlaid: `cheapest_world_id` must
+    // keep meaning "where the scope-cheapest listing sits" regardless of
+    // which pricing bases are selected.
+    let raw_prices = prices.clone();
     let computed_data = Memo::new(move |_| {
         let prices = ingredient_prices.get();
         let revenue = revenue_prices.get();
-        let revenue_metric = revenue_metric().unwrap_or_default();
         let recipes_by_output = recipes_by_output();
         let levels = crafter_levels.get().unwrap_or_default();
         let use_sub = use_subcrafts().unwrap_or(false);
@@ -458,26 +648,20 @@ fn RecipeAnalyzerTable(
                 }
             };
 
-            let market_price_summary = revenue.find_matching_listings(recipe.item_result);
-            let market_price = match revenue_metric {
-                // Selected-world cheapest listing, falling back to the
-                // scope-wide listing when the world has none up.
-                RevenueMetric::WorldMin => world_prices
-                    .as_ref()
-                    .and_then(|m| m.find_matching_listings(recipe.item_result).lowest_gil())
-                    .or_else(|| market_price_summary.lowest_gil())
-                    .unwrap_or(0),
-                _ => market_price_summary.lowest_gil().unwrap_or(0),
-            };
+            let market_price = revenue
+                .find_matching_listings(recipe.item_result)
+                .lowest_gil()
+                .unwrap_or(0);
 
             if market_price == 0 {
                 continue;
             }
 
-            let cheapest_world_id = market_price_summary
+            let scope_summary = raw_prices.find_matching_listings(recipe.item_result);
+            let cheapest_world_id = scope_summary
                 .lq
                 .map(|d| d.world_id)
-                .or(market_price_summary.hq.map(|d| d.world_id))
+                .or(scope_summary.hq.map(|d| d.world_id))
                 .unwrap_or(0);
 
             // Fresh on-hand snapshot per recipe — compute_cost consumes
@@ -621,8 +805,8 @@ fn RecipeAnalyzerTable(
         if revenue_metric().is_some() {
             active.push(FILTER_REVENUE);
         }
-        if scope().is_some() {
-            active.push(FILTER_SCOPE);
+        if buy_scope().is_some() {
+            active.push(FILTER_BUY_SCOPE);
         }
         if use_subcrafts().unwrap_or(false) {
             active.push(FILTER_SUBCRAFTS);
@@ -655,9 +839,6 @@ fn RecipeAnalyzerTable(
                 t_string!(i18n, recipe_analyzer_filter_daily_sales_min_label).to_string()
             }
             FILTER_JOB => t_string!(i18n, recipe_analyzer_filter_job_label).to_string(),
-            FILTER_COST_BASIS => t_string!(i18n, recipe_analyzer_cost_basis_label).to_string(),
-            FILTER_REVENUE => t_string!(i18n, recipe_analyzer_revenue_label).to_string(),
-            FILTER_SCOPE => t_string!(i18n, recipe_analyzer_scope_label).to_string(),
             FILTER_SUBCRAFTS => t_string!(i18n, recipe_analyzer_filter_subcrafts_label).to_string(),
             FILTER_REQUIRE_HQ => {
                 t_string!(i18n, recipe_analyzer_filter_require_hq_label).to_string()
@@ -673,40 +854,6 @@ fn RecipeAnalyzerTable(
         }
     };
 
-    let cost_basis_options = move || {
-        vec![
-            (
-                "listing-min",
-                t_string!(i18n, price_basis_listing_min).to_string(),
-            ),
-            (
-                "sale-median",
-                t_string!(i18n, price_basis_sale_median).to_string(),
-            ),
-            (
-                "sale-min",
-                t_string!(i18n, price_basis_sale_min).to_string(),
-            ),
-            (
-                "sale-avg",
-                t_string!(i18n, price_basis_sale_avg).to_string(),
-            ),
-        ]
-    };
-    let revenue_options = move || {
-        let mut opts = cost_basis_options();
-        opts.push((
-            "world-min",
-            t_string!(i18n, price_basis_world_min).to_string(),
-        ));
-        opts
-    };
-    let scope_options = move || {
-        vec![
-            ("region", t_string!(i18n, region).to_string()),
-            ("datacenter", t_string!(i18n, datacenter).to_string()),
-        ]
-    };
     let job_chip_options = move || {
         JOB_CODES
             .iter()
@@ -748,9 +895,6 @@ fn RecipeAnalyzerTable(
         FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
         FILTER_MIN_SALES => pending_filter.set(Some(FILTER_MIN_SALES)),
         FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
-        FILTER_COST_BASIS => set_cost_basis(Some(CostBasis::SaleMedian)),
-        FILTER_REVENUE => set_revenue_metric(Some(RevenueMetric::SaleMedian)),
-        FILTER_SCOPE => set_scope(Some(MarketScope::Datacenter)),
         FILTER_SUBCRAFTS => set_use_subcrafts(Some(true)),
         FILTER_REQUIRE_HQ => set_require_hq(Some(true)),
         FILTER_OUTLIERS => set_filter_outliers(Some(true)),
@@ -767,7 +911,7 @@ fn RecipeAnalyzerTable(
         set_job_filter(None);
         set_cost_basis(None);
         set_revenue_metric(None);
-        set_scope(None);
+        set_buy_scope(None);
         set_use_subcrafts(None);
         set_require_hq(None);
         set_filter_outliers(None);
@@ -795,7 +939,10 @@ fn RecipeAnalyzerTable(
                     .into_any()
                 }
                 actions=move || {
-                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                    view! {
+                        <RealtimeStatus status=realtime_status last_update=last_update />
+                        <MarketMenu />
+                    }
                         .into_any()
                 }
                 available_filters=Signal::derive(filter_options)
@@ -900,7 +1047,7 @@ fn RecipeAnalyzerTable(
                                 <FilterChip
                                     label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
                                     value=Signal::derive(move || Some(current.to_string()))
-                                    options=cost_basis_options()
+                                    options=cost_basis_options(i18n)
                                     on_commit=Callback::new(move |v: Option<String>| {
                                         let parsed = v.and_then(|v| v.parse::<CostBasis>().ok());
                                         set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
@@ -916,7 +1063,7 @@ fn RecipeAnalyzerTable(
                                 <FilterChip
                                     label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
                                     value=Signal::derive(move || Some(current.to_string()))
-                                    options=revenue_options()
+                                    options=cost_basis_options(i18n)
                                     on_commit=Callback::new(move |v: Option<String>| {
                                         let parsed = v.and_then(|v| v.parse::<RevenueMetric>().ok());
                                         set_revenue_metric(
@@ -928,16 +1075,16 @@ fn RecipeAnalyzerTable(
                         })
                 }}
                 {move || {
-                    scope()
+                    buy_scope()
                         .map(|current| {
                             view! {
                                 <FilterChip
-                                    label=t_string!(i18n, recipe_analyzer_scope_label).to_string()
+                                    label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
                                     value=Signal::derive(move || Some(current.to_string()))
-                                    options=scope_options()
+                                    options=buy_scope_options(i18n)
                                     on_commit=Callback::new(move |v: Option<String>| {
-                                        let parsed = v.and_then(|v| v.parse::<MarketScope>().ok());
-                                        set_scope(parsed.filter(|s| *s != MarketScope::default()));
+                                        let parsed = v.and_then(|v| v.parse::<BuyScope>().ok());
+                                        set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
                                     })
                                 />
                             }
@@ -1251,43 +1398,38 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
     let datacenter = use_datacenter_for_world(move || query.with(|p| p.get("world").clone()));
 
-    let (scope, _) = filter_query_signal::<MarketScope>("scope");
-    let (cost_basis, _) = filter_query_signal::<CostBasis>("cost-basis");
-    let (revenue_metric, _) = filter_query_signal::<RevenueMetric>("revenue");
+    let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
+    let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
+    let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
 
-    // The name fed to every market-data fetch: the world's region, or its
-    // datacenter under DC scope. Falls back to the region when the name
-    // can't be narrowed to a datacenter (unknown world, world data missing).
-    let price_scope_name = Memo::new(move |_| match scope().unwrap_or_default() {
-        MarketScope::Region => region(),
-        MarketScope::Datacenter => datacenter().unwrap_or_else(|| region.get()),
-    });
-
-    let global_cheapest_listings =
-        ArcResource::new(price_scope_name, move |scope_name: String| async move {
-            get_cheapest_listings(&scope_name).await
-        });
-
-    // Sale statistics back the sale-median/min/avg bases. Fetched lazily —
-    // `None` (no fetch) while both selectors sit on a listing basis, so the
-    // default page load is unchanged. Basis toggles between sale stats
-    // recompute client-side; only a scope change refetches.
-    let sale_stats_scope = Memo::new(move |_| {
-        let wants_sale_stats = cost_basis().unwrap_or_default().sale_stat().is_some()
-            || revenue_metric().unwrap_or_default().sale_stat().is_some();
-        wants_sale_stats.then(|| price_scope_name.get())
-    });
-    let sale_stats = ArcResource::new(
-        sale_stats_scope,
-        move |scope_name: Option<String>| async move {
-            match scope_name {
-                Some(name) => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS)
-                    .await
-                    .map(Some),
-                None => Ok(None),
+    // Rewrite pre-market-model query params once on mount, before the
+    // signals above are read reactively (see `migrate_legacy_params`).
+    {
+        let nav = use_navigate();
+        Effect::new(move |_| {
+            let pairs: Vec<(String, String)> = query.with_untracked(|q| {
+                q.clone()
+                    .into_iter()
+                    .map(|(k, v)| (k.into_owned(), v))
+                    .collect()
+            });
+            if let Some(migrated) = migrate_legacy_params(&pairs) {
+                let qs = migrated
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("&");
+                nav(
+                    &format!("?{qs}"),
+                    NavigateOptions {
+                        replace: true,
+                        scroll: false,
+                        ..Default::default()
+                    },
+                );
             }
-        },
-    );
+        });
+    }
 
     let worlds = use_context::<LocalWorldData>()
         .expect("Should always have local world data")
@@ -1303,6 +1445,51 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     });
 
     let (selected_world, set_selected_world) = signal(initial_world);
+
+    // The name fed to ingredient-pricing fetches: the sell world itself,
+    // its datacenter (the default), or the whole region. World scope needs
+    // a resolved world; before one exists (first paint without a home-world
+    // cookie) fall back to the datacenter, then the region, so the resource
+    // always has a fetchable name.
+    let buy_scope_name = Memo::new(move |_| match buy_scope().unwrap_or_default() {
+        BuyScope::World => selected_world
+            .get()
+            .map(|w| w.name)
+            .or_else(|| datacenter.get())
+            .unwrap_or_else(|| region.get()),
+        BuyScope::Datacenter => datacenter().unwrap_or_else(|| region.get()),
+        BuyScope::Region => region(),
+    });
+
+    let global_cheapest_listings =
+        ArcResource::new(buy_scope_name, move |scope_name: String| async move {
+            get_cheapest_listings(&scope_name).await
+        });
+
+    // Sale statistics back the sale-median/min/avg cost bases, over the buy
+    // scope. Fetched lazily — `None` (no fetch) while the cost basis sits
+    // on the listing basis, so the default page load is unchanged. Basis
+    // toggles between sale stats recompute client-side; only a scope change
+    // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
+    // fetched separately below.)
+    let buy_sale_stats_scope = Memo::new(move |_| {
+        cost_basis()
+            .unwrap_or_default()
+            .sale_stat()
+            .is_some()
+            .then(|| buy_scope_name.get())
+    });
+    let sale_stats = ArcResource::new(
+        buy_sale_stats_scope,
+        move |scope_name: Option<String>| async move {
+            match scope_name {
+                Some(name) => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS)
+                    .await
+                    .map(Some),
+                None => Ok(None),
+            }
+        },
+    );
 
     // If no world is selected initially, try to use home world
     Effect::new(move |_| {
@@ -1349,17 +1536,33 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         }
     });
 
-    // Cheapest listings on the selected world, fetched only for the
-    // world-min revenue metric (the "sell it at home" estimate).
-    let world_min_world = Memo::new(move |_| {
-        (revenue_metric().unwrap_or_default() == RevenueMetric::WorldMin)
-            .then(|| selected_world.get().map(|w| w.name))
-            .flatten()
-    });
-    let world_min_listings =
-        ArcResource::new(world_min_world, move |world: Option<String>| async move {
+    // Revenue is always the sell world's price now, so its listings are
+    // always needed (the old fetch was gated on the world-min metric).
+    let sell_world_name = Memo::new(move |_| selected_world.get().map(|w| w.name));
+    let sell_world_listings =
+        ArcResource::new(sell_world_name, move |world: Option<String>| async move {
             match world {
                 Some(world) => get_cheapest_listings(&world).await.map(Some),
+                None => Ok(None),
+            }
+        });
+
+    // Sale-stat revenue metrics read the sell world's history, not the buy
+    // scope's — fetched only while such a metric is selected.
+    let sell_stats_world = Memo::new(move |_| {
+        revenue_metric()
+            .unwrap_or_default()
+            .sale_stat()
+            .is_some()
+            .then(|| sell_world_name.get())
+            .flatten()
+    });
+    let sell_world_sale_stats =
+        ArcResource::new(sell_stats_world, move |world: Option<String>| async move {
+            match world {
+                Some(name) => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS)
+                    .await
+                    .map(Some),
                 None => Ok(None),
             }
         });
@@ -1426,7 +1629,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 // hid the only control that can set a world from a visitor who
                 // has neither a home-world cookie nor `?world=` in the URL.
                 <div class="flex flex-col md:flex-row items-center gap-2">
-                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, select_world_for_sales_data)}</label>
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, recipe_analyzer_sell_world_label)}</label>
                     <div class="w-full md:w-auto">
                         <WorldOnlyPicker
                             current_world=selected_world.into()
@@ -1440,12 +1643,22 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         let listings = global_cheapest_listings.get();
                         let sales = recent_sales.get();
                         let stats = sale_stats.get();
-                        let world_listings = world_min_listings.get();
-                        match (listings, stats, world_listings) {
-                            (Some(Ok(listings)), Some(stats), Some(world_listings)) => {
+                        let sell_listings = sell_world_listings.get();
+                        let sell_stats = sell_world_sale_stats.get();
+                        match (listings, stats, sell_listings, sell_stats) {
+                            (
+                                Some(Ok(listings)),
+                                Some(stats),
+                                Some(sell_listings),
+                                Some(sell_stats),
+                            ) => {
                                 // A failed stats fetch is non-fatal: the table
                                 // degrades to the listing basis and says so.
-                                let (sale_stats, sale_stats_error) = match stats {
+                                let (sale_stats, buy_stats_error) = match stats {
+                                    Ok(stats) => (stats, false),
+                                    Err(_) => (None, true),
+                                };
+                                let (sell_world_sale_stats, sell_stats_error) = match sell_stats {
                                     Ok(stats) => (stats, false),
                                     Err(_) => (None, true),
                                 };
@@ -1455,13 +1668,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         global_cheapest_listings=listings
                                         recent_sales=recent_sales
                                         sale_stats=sale_stats
-                                        sale_stats_error=sale_stats_error
-                                        world_listings=world_listings.ok().flatten()
-                                        world=Signal::derive(price_scope_name)
+                                        sell_world_sale_stats=sell_world_sale_stats
+                                        sale_stats_error=buy_stats_error || sell_stats_error
+                                        sell_world_listings=sell_listings.ok().flatten()
+                                        world=Signal::derive(buy_scope_name)
                                     />
                                 }.into_any()
                             }
-                            (Some(Err(e)), _, _) => {
+                            (Some(Err(e)), _, _, _) => {
                                 view! {
                                     <div class="text-red-400">
                                         "Error loading listings: " {e.to_string()}
@@ -1518,9 +1732,6 @@ mod test {
                 FILTER_ROI,
                 FILTER_MIN_SALES,
                 FILTER_JOB,
-                FILTER_COST_BASIS,
-                FILTER_REVENUE,
-                FILTER_SCOPE,
                 FILTER_SUBCRAFTS,
                 FILTER_REQUIRE_HQ,
                 FILTER_OUTLIERS,
@@ -1534,9 +1745,6 @@ mod test {
                 FILTER_ROI,
                 FILTER_MIN_SALES,
                 FILTER_JOB,
-                FILTER_COST_BASIS,
-                FILTER_REVENUE,
-                FILTER_SCOPE,
                 FILTER_SUBCRAFTS,
                 FILTER_REQUIRE_HQ,
                 FILTER_OUTLIERS,
@@ -1548,15 +1756,50 @@ mod test {
                 "roi",
                 "min-sales",
                 "job",
-                "cost-basis",
-                "revenue",
-                "scope",
                 "subcrafts",
                 "require-hq",
                 "filter-outliers",
                 "shards-exclude",
                 "on-hand",
             ]
+        );
+        // Pricing params left the filter menu (#1233) but their URL keys
+        // are still a bookmark contract.
+        assert_eq!(FILTER_COST_BASIS, "cost-basis");
+        assert_eq!(FILTER_REVENUE, "revenue");
+        assert_eq!(FILTER_BUY_SCOPE, "buy-scope");
+    }
+
+    #[test]
+    fn legacy_scope_param_becomes_buy_scope() {
+        let out = migrate_legacy_params(&[
+            ("world".into(), "Gilgamesh".into()),
+            ("scope".into(), "datacenter".into()),
+        ])
+        .unwrap();
+        assert_eq!(
+            out,
+            vec![
+                ("world".to_string(), "Gilgamesh".to_string()),
+                ("buy-scope".to_string(), "datacenter".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_world_min_revenue_drops() {
+        let out = migrate_legacy_params(&[("revenue".into(), "world-min".into())]).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn modern_urls_are_left_alone() {
+        assert_eq!(
+            migrate_legacy_params(&[
+                ("buy-scope".into(), "region".into()),
+                ("revenue".into(), "sale-median".into()),
+            ]),
+            None
         );
     }
 
