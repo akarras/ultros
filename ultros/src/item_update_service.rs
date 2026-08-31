@@ -92,9 +92,9 @@ fn confirm_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant
 /// Frees a claimed-but-unfinished slot. A confirmed cooldown is left alone.
 ///
 /// Called via `release_full_sweep_slot` when a full sweep makes no progress
-/// on a world (every chunk skipped) — see `do_full_world_sweep`. Task 5 adds
-/// a second caller: the "a full sweep is already running elsewhere" branch
-/// around the claim in `check_for_missed_items_on_world`.
+/// on a world (every chunk skipped) — see `do_full_world_sweep`. Also called
+/// from the "a full sweep is already running elsewhere" branch around the
+/// claim in `check_for_missed_items_on_world`.
 fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
     if let Some(SweepSlot::Running) = slots.get(&world_id) {
         slots.remove(&world_id);
@@ -105,27 +105,17 @@ fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
 /// fetches every marketable item for a world, and two at once doubles the
 /// load on Universalis for zero extra coverage.
 ///
-/// No production caller yet: only `try_begin_full_sweep` claims it, and
-/// nothing calls that until Task 5 wires it into the saturation branch's
-/// "already running elsewhere" check and Task 6 wires it into
-/// `/rescan_market`. Exercised directly by `mod tests` until then.
-// TODO(task-5): remove this allow — `try_begin_full_sweep` gets its first
-// caller when the saturation branch's else-arm lands.
-#[allow(dead_code)]
+/// `try_begin_full_sweep` claims it from the saturation branch's else-arm
+/// in `check_for_missed_items_on_world`; Task 6 adds a second caller from
+/// `/rescan_market`.
 #[derive(Default)]
 pub(crate) struct SweepLock(AtomicBool);
 
 /// Held for the duration of a full sweep; frees the lock on drop (including
 /// panics, so a crashed sweep never wedges the command).
-// TODO(task-5): remove this allow — constructed once `try_begin_full_sweep`
-// has a caller (see `SweepLock`).
-#[allow(dead_code)]
 pub(crate) struct SweepLockGuard(Arc<SweepLock>);
 
 impl SweepLock {
-    // TODO(task-5): remove this allow — called from `try_begin_full_sweep`
-    // once the saturation branch wires that in.
-    #[allow(dead_code)]
     pub(crate) fn try_claim(self: &Arc<Self>) -> Option<SweepLockGuard> {
         self.0
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -156,9 +146,6 @@ pub(crate) struct UpdateService {
     /// [`UpdateService::note_world_uncovered`].
     pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
     /// Serializes full sweeps — see [`SweepLock`].
-    // TODO(task-5): remove this allow — read once `try_begin_full_sweep` has
-    // a caller (the saturation branch's else-arm).
-    #[allow(dead_code)]
     pub(crate) sweep_lock: Arc<SweepLock>,
 }
 
@@ -403,10 +390,6 @@ impl UpdateService {
 
     /// Claims the global full-sweep lock. `None` when a sweep (manual or
     /// saturation-triggered) is already running. See [`SweepLock`].
-    // TODO(task-5): remove this allow — called from the saturation branch's
-    // else-arm in `check_for_missed_items_on_world` once Task 5 wires it in
-    // (Task 6 adds a second caller from `/rescan_market`).
-    #[allow(dead_code)]
     pub(crate) fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
         self.sweep_lock.try_claim()
     }
@@ -502,9 +485,8 @@ impl UpdateService {
     /// was never earned.
     ///
     /// Called by `do_full_world_sweep` when a world's sweep makes no
-    /// progress at all. Task 5 adds a second caller: the "a full sweep is
-    /// already running elsewhere" branch around the claim below. See
-    /// `release_slot`.
+    /// progress at all, and from the "a full sweep is already running
+    /// elsewhere" branch around the claim below. See `release_slot`.
     fn release_full_sweep_slot(&self, world_id: i32) {
         release_slot(
             &mut self
@@ -549,15 +531,26 @@ impl UpdateService {
             metrics::counter!("ultros_catchup_window_saturated", "world" => world.name.clone())
                 .increment(1);
             if self.claim_full_sweep_slot(world.id) {
-                // TODO(task-5): wrap this claim with the global concurrency
-                // guard (`try_begin_full_sweep`) and call `release_full_sweep_slot`
-                // in the "already running elsewhere" branch below; until then
-                // the claim/confirm pair alone still fixes the
-                // cooldown-on-failure bug Task 3 targeted.
-                warn!(world = %world.name, "recency window saturated, running full item sweep");
-                let tally = self.check_items(world, &Self::all_marketable_items()).await;
-                tally.record(&world.name);
-                self.confirm_full_sweep(world.id);
+                // The world slot is ours; the global lock keeps us from
+                // overlapping a manual /rescan_market sweep. If it's busy,
+                // hand the world slot back unstamped so the next saturated
+                // cycle retries.
+                if let Some(_guard) = self.try_begin_full_sweep() {
+                    warn!(world = %world.name, "recency window saturated, running full item sweep");
+                    let tally = self.check_items(world, &Self::all_marketable_items()).await;
+                    tally.record(&world.name);
+                    // Same rule as `do_full_world_sweep`: a world with no
+                    // progress at all must not burn its cooldown for a sweep
+                    // that recovered nothing.
+                    if tally.made_progress() {
+                        self.confirm_full_sweep(world.id);
+                    } else {
+                        self.release_full_sweep_slot(world.id);
+                    }
+                } else {
+                    self.release_full_sweep_slot(world.id);
+                    warn!(world = %world.name, "recency window saturated, but a full sweep is already running");
+                }
             } else {
                 warn!(world = %world.name, "recency window saturated, full sweep on cooldown");
             }
