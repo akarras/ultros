@@ -2048,6 +2048,32 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     position: relative;
     border-top: 1px solid var(--color-outline);
 }
+/* Two-line trigger text for the home-world / price-zone rows (#1235): a
+   tiny purpose overline above the selected value, so the two rows read at
+   a glance. The wrapper also carries `.side-nav-label` so the collapsed
+   rail's existing `display: none` hides both lines and the rows fall back
+   to their purpose icons. Separate lines keep long locale strings from
+   fighting the value for width — each truncates on its own. */
+.side-nav-zone-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.side-nav-zone-overline {
+    font-size: 0.6rem;
+    line-height: 1.2;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.side-nav-zone-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
 /* Row wrapper pairing a full-width select button with a square expand
    chevron. Two sibling buttons — a button nested in a button is invalid
    HTML and breaks tapping. */

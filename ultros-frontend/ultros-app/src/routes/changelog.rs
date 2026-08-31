@@ -38,6 +38,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
         link: Some("/profile"),
     },
     ChangelogEntry {
+        date: "2026-08-31",
+        title: "The sidebar says which world is which",
+        blurb: "The home-world and price-zone rows in the sidebar looked identical whenever the price zone was set to a world. Each row now carries a small label saying what it is, plus its own icon - a house for your home world, a price tag for where prices are read from. The Discord and GitHub links moved back to the very bottom, below the controls.",
+        link: None,
+    },
+    ChangelogEntry {
         date: "2026-08-30",
         title: "List filters actually exclude datacenters now",
         blurb: "Excluding a datacenter on a list only used to affect the purchasing view - the item table's prices and sorting quietly ignored it. It now filters everything, same as excluding a world. The filters also moved into one tidy row (exclusions, sort, hide-acquired), and Auto-mark Purchases left its box at the top of the page for a toolbar button that opens a dialog. Very tall dialogs (like list settings on a short window) now scroll instead of hiding their bottom buttons off-screen.",
