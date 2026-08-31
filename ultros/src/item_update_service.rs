@@ -91,13 +91,10 @@ fn confirm_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant
 
 /// Frees a claimed-but-unfinished slot. A confirmed cooldown is left alone.
 ///
-/// No production call site exists yet: the only legitimate caller is the
-/// "a full sweep is already running elsewhere" branch that the saturation
-/// branch introduces around the claim in `check_for_missed_items_on_world`.
-/// Exercised directly by `mod tests` until then.
-// TODO(task-5): remove this allow — `release_slot` gets its caller (via
-// `release_full_sweep_slot`) when the saturation branch's else-arm lands.
-#[allow(dead_code)]
+/// Called via `release_full_sweep_slot` when a full sweep makes no progress
+/// on a world (every chunk skipped) — see `do_full_world_sweep`. Task 5 adds
+/// a second caller: the "a full sweep is already running elsewhere" branch
+/// around the claim in `check_for_missed_items_on_world`.
 fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
     if let Some(SweepSlot::Running) = slots.get(&world_id) {
         slots.remove(&world_id);
@@ -248,6 +245,18 @@ impl CatchupTally {
             }
         }
     }
+
+    /// True when a full sweep actually fetched and processed at least one
+    /// item — `changed`, `noop`, and `failed` all count as progress, since
+    /// each means an item was fetched and classified; only `chunks_failed`
+    /// (every chunk skipped after retries) means nothing was recovered.
+    /// Used by [`UpdateService::do_full_world_sweep`] to decide whether a
+    /// world's full-sweep cooldown should be confirmed or released — a
+    /// world with no progress must not burn its 6h cooldown for a sweep
+    /// that recovered nothing.
+    fn made_progress(&self) -> bool {
+        self.changed + self.noop + self.failed > 0
+    }
 }
 
 /// One world's outcome from a full sweep, folded into a [`SweepReport`].
@@ -255,12 +264,12 @@ impl CatchupTally {
 /// `duration` isn't read by [`SweepReport::summary_text`] today — it's kept
 /// per-world for Task 6's richer Discord report (e.g. flagging an
 /// unusually slow world). No production reader exists until then.
-// TODO(task-6): remove this allow — `duration` gets a reader when
-// `/rescan_market`'s rewrite reads per-world timing.
-#[allow(dead_code)]
 pub(crate) struct WorldSweepSummary {
     world_name: String,
     tally: CatchupTally,
+    // TODO(task-6): remove this allow — gets a reader when `/rescan_market`'s
+    // rewrite reads per-world timing.
+    #[allow(dead_code)]
     duration: std::time::Duration,
 }
 
@@ -424,9 +433,17 @@ impl UpdateService {
             info!(world = %world.name, "full sweep: scanning world");
             let tally = self.check_items(world, &all_marketable_items).await;
             tally.record(&world.name);
-            // This world just got a full refetch — a saturation-triggered sweep
-            // inside the cooldown window would be pure duplication.
-            self.confirm_full_sweep(world.id);
+            // A world that got nothing — every chunk skipped — has not been
+            // refetched, so it must not burn its cooldown; releasing lets the
+            // next saturated cycle retry. Partial coverage still counts:
+            // re-sweeping a world we mostly refetched would hammer
+            // Universalis for little gain, which is what the cooldown exists
+            // to stop.
+            if tally.made_progress() {
+                self.confirm_full_sweep(world.id);
+            } else {
+                self.release_full_sweep_slot(world.id);
+            }
             items_changed += tally.changed;
             chunks_failed += tally.chunks_failed;
             summaries.push(WorldSweepSummary {
@@ -484,12 +501,10 @@ impl UpdateService {
     /// cycle can retry immediately instead of waiting out a cooldown that
     /// was never earned.
     ///
-    /// Not yet called: its call site is the "a full sweep is already running
-    /// elsewhere" branch that the saturation branch adds around the claim
-    /// below. See `release_slot`.
-    // TODO(task-5): remove this allow — this gets its caller when the
-    // saturation branch's else-arm lands.
-    #[allow(dead_code)]
+    /// Called by `do_full_world_sweep` when a world's sweep makes no
+    /// progress at all. Task 5 adds a second caller: the "a full sweep is
+    /// already running elsewhere" branch around the claim below. See
+    /// `release_slot`.
     fn release_full_sweep_slot(&self, world_id: i32) {
         release_slot(
             &mut self
@@ -969,6 +984,58 @@ mod tests {
         assert!(claim_slot(&mut slots, WORLD_ID, t0 + FULL_SWEEP_COOLDOWN));
     }
 
+    /// `do_full_world_sweep` decides confirm-vs-release per world via
+    /// `CatchupTally::made_progress`; this pins that decision at the slot
+    /// level (spec §3: "a failed saturation-triggered sweep no longer costs
+    /// the world its 6-hour slot") without constructing an `UpdateService`.
+    #[test]
+    fn a_fully_failed_world_leaves_the_slot_claimable() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+
+        // Every chunk skipped, nothing recovered — do_full_world_sweep's
+        // else-arm releases rather than confirms.
+        let all_chunks_skipped = CatchupTally {
+            changed: 0,
+            noop: 0,
+            failed: 0,
+            chunks_failed: 3,
+        };
+        assert!(!all_chunks_skipped.made_progress());
+        release_slot(&mut slots, WORLD_ID);
+
+        assert!(
+            claim_slot(&mut slots, WORLD_ID, t0),
+            "a fully-failed sweep must not burn the cooldown"
+        );
+    }
+
+    /// The counterpart to the above: any progress at all — even a lone write
+    /// failure with no changes or no-ops — confirms the cooldown so a mostly-
+    /// successful sweep doesn't immediately re-hammer Universalis.
+    #[test]
+    fn partial_progress_still_confirms_the_cooldown() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+
+        let one_failed_write = CatchupTally {
+            changed: 0,
+            noop: 0,
+            failed: 1,
+            chunks_failed: 2,
+        };
+        assert!(one_failed_write.made_progress());
+        confirm_slot(&mut slots, WORLD_ID, t0);
+
+        assert!(!claim_slot(
+            &mut slots,
+            WORLD_ID,
+            t0 + FULL_SWEEP_COOLDOWN - Duration::from_secs(1)
+        ));
+    }
+
     #[test]
     fn release_does_not_clear_a_confirmed_cooldown() {
         let mut slots = HashMap::new();
@@ -1231,6 +1298,9 @@ mod tests {
         .summary_text();
         assert!(text.contains("42/90"), "{text}");
         assert!(text.contains("1234"), "{text}");
-        assert!(text.contains("3"), "{text}");
+        // Plain `contains("3")` would pass on the "3" inside "1234" above
+        // regardless of `chunks_failed` — assert the distinctive phrase
+        // `summary_text` actually emits instead.
+        assert!(text.contains("3 chunks skipped"), "{text}");
     }
 }
