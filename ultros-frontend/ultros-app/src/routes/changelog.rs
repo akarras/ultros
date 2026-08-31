@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Recipe Analyzer: see and filter by where the cheapest listing is",
+        blurb: "Two more optional columns show which world and datacenter currently hold the cheapest listing of the item you'd craft. Clicking either one filters the table down to that world or datacenter, the same way the flip finder does, and the filter shows as a chip you can remove.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Recipe Analyzer: pick your columns",
         blurb: "The analyzer gets the flip finder's Columns picker. Alongside the existing table you can now show a confidence chip (on by default), when the item last sold, how many units moved in the last 7 days, the volume-weighted average price with how far the current price sits from it, and the 5% market board tax. Every new column sorts, and your choice is kept in the page's address so you can bookmark it.",
         link: Some("/recipe-analyzer"),

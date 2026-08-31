@@ -28,6 +28,7 @@ use crate::{
         gil::*,
         icon::Icon,
         item_icon::*,
+        query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
         sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
@@ -118,6 +119,26 @@ fn last_sold_label(
 /// server that doesn't serve the column).
 fn vwap_pct(market_price: i32, vwap: i32) -> Option<f32> {
     (vwap > 0).then(|| (market_price - vwap) as f32 / vwap as f32 * 100.0)
+}
+
+/// Whether a row's cheapest-listing location passes the listing-world /
+/// listing-dc filters. Rows whose cheapest world is unknown (`world_id`
+/// resolved to no name — e.g. the stat-overlay's placeholder 0) fail any
+/// active location filter rather than slipping through it.
+fn listing_location_passes(
+    names: Option<&(String, String)>,
+    world_filter: Option<&str>,
+    dc_filter: Option<&str>,
+) -> bool {
+    if world_filter.is_none() && dc_filter.is_none() {
+        return true;
+    }
+    match names {
+        None => false,
+        Some((world, dc)) => {
+            world_filter.is_none_or(|f| f == world) && dc_filter.is_none_or(|f| f == dc)
+        }
+    }
 }
 
 /// Sort ordinal for the confidence band: better bands sort higher, and
@@ -335,6 +356,13 @@ const FILTER_JOB: &str = "job";
 const FILTER_COST_BASIS: &str = "cost-basis";
 const FILTER_REVENUE: &str = "revenue";
 const FILTER_BUY_SCOPE: &str = "buy-scope";
+// Set by clicking a world/DC name in the cheapest-listing columns (same
+// `QueryButton` flow as the flip finder), not from the `+ Filter` menu —
+// hence not in `ADDABLE_FILTERS`. `world`/`datacenter` are taken by the
+// sell-world picker and legacy params on this route, so these get their
+// own keys.
+const FILTER_LISTING_WORLD: &str = "listing-world";
+const FILTER_LISTING_DC: &str = "listing-dc";
 const FILTER_SUBCRAFTS: &str = "subcrafts";
 const FILTER_REQUIRE_HQ: &str = "require-hq";
 const FILTER_OUTLIERS: &str = "filter-outliers";
@@ -372,8 +400,17 @@ const COL_LAST_SOLD: &str = "last-sold";
 const COL_VOLUME: &str = "volume";
 const COL_VWAP: &str = "vwap";
 const COL_TAX: &str = "tax";
-const OPTIONAL_COLUMN_ORDER: &[&str] =
-    &[COL_CONFIDENCE, COL_LAST_SOLD, COL_VOLUME, COL_VWAP, COL_TAX];
+const COL_LISTING_WORLD: &str = "listing-world";
+const COL_LISTING_DC: &str = "listing-dc";
+const OPTIONAL_COLUMN_ORDER: &[&str] = &[
+    COL_CONFIDENCE,
+    COL_LAST_SOLD,
+    COL_VOLUME,
+    COL_VWAP,
+    COL_TAX,
+    COL_LISTING_WORLD,
+    COL_LISTING_DC,
+];
 /// Default-visible optional columns. Sales/day is already an always-on
 /// column; the confidence chip joins it by default so stale or manipulated
 /// sell-world markets don't silently top the ranking.
@@ -624,6 +661,33 @@ fn RecipeAnalyzerTable(
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
+    let (listing_world_filter, set_listing_world_filter) =
+        filter_query_signal::<String>(FILTER_LISTING_WORLD);
+    let (listing_dc_filter, set_listing_dc_filter) =
+        filter_query_signal::<String>(FILTER_LISTING_DC);
+
+    // `cheapest_world_id` -> (world name, datacenter name), for the
+    // cheapest-listing columns and their filters. World data is static for
+    // the session, so this is built once.
+    let world_names: Arc<HashMap<i32, (String, String)>> = {
+        let helper = use_context::<LocalWorldData>()
+            .expect("Should always have local world data")
+            .0
+            .unwrap();
+        Arc::new(
+            helper
+                .get_inner_data()
+                .regions
+                .iter()
+                .flat_map(|r| r.datacenters.iter())
+                .flat_map(|dc| {
+                    dc.worlds
+                        .iter()
+                        .map(move |w| (w.id, (w.name.clone(), dc.name.clone())))
+                })
+                .collect(),
+        )
+    };
 
     // A filter picked from the `+ Filter` menu but not yet committed — its
     // chip mounts in edit state with an empty input (see currency_exchange.rs
@@ -683,6 +747,7 @@ fn RecipeAnalyzerTable(
     // which pricing bases are selected.
     let raw_prices = prices.clone();
     let sell_stats_for_rows = sell_world_sale_stats.clone();
+    let world_names_for_rows = world_names.clone();
     let computed_data = Memo::new(move |_| {
         // Sell-world market context per (item, hq), for the stats-backed
         // columns. Empty when the stats weren't fetched.
@@ -867,6 +932,17 @@ fn RecipeAnalyzerTable(
         if let Some(min_sales) = min_daily_sales() {
             results.retain(|d| d.daily_sales >= min_sales);
         }
+        let lw = listing_world_filter();
+        let ld = listing_dc_filter();
+        if lw.is_some() || ld.is_some() {
+            results.retain(|d| {
+                listing_location_passes(
+                    world_names_for_rows.get(&d.cheapest_world_id),
+                    lw.as_deref(),
+                    ld.as_deref(),
+                )
+            });
+        }
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
@@ -937,6 +1013,12 @@ fn RecipeAnalyzerTable(
         if buy_scope().is_some() {
             active.push(FILTER_BUY_SCOPE);
         }
+        if listing_world_filter().is_some() {
+            active.push(FILTER_LISTING_WORLD);
+        }
+        if listing_dc_filter().is_some() {
+            active.push(FILTER_LISTING_DC);
+        }
         if use_subcrafts().unwrap_or(false) {
             active.push(FILTER_SUBCRAFTS);
         }
@@ -1005,6 +1087,8 @@ fn RecipeAnalyzerTable(
             c if c == COL_VOLUME => t_string!(i18n, recipe_analyzer_col_volume).to_string(),
             c if c == COL_VWAP => t_string!(i18n, recipe_analyzer_col_vwap).to_string(),
             c if c == COL_TAX => t_string!(i18n, analyzer_col_tax).to_string(),
+            c if c == COL_LISTING_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
+            c if c == COL_LISTING_DC => t_string!(i18n, analyzer_col_datacenter).to_string(),
             _ => String::new(),
         }
     };
@@ -1071,6 +1155,8 @@ fn RecipeAnalyzerTable(
         set_cost_basis(None);
         set_revenue_metric(None);
         set_buy_scope(None);
+        set_listing_world_filter(None);
+        set_listing_dc_filter(None);
         set_use_subcrafts(None);
         set_require_hq(None);
         set_filter_outliers(None);
@@ -1249,6 +1335,32 @@ fn RecipeAnalyzerTable(
                                         let parsed = v.and_then(|v| v.parse::<BuyScope>().ok());
                                         set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
                                     })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    listing_world_filter()
+                        .map(|_| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, analyzer_world_label).to_string()
+                                    readonly=true
+                                    value=Signal::derive(listing_world_filter)
+                                    on_commit=Callback::new(move |_| set_listing_world_filter(None))
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    listing_dc_filter()
+                        .map(|_| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, analyzer_datacenter_label).to_string()
+                                    readonly=true
+                                    value=Signal::derive(listing_dc_filter)
+                                    on_commit=Callback::new(move |_| set_listing_dc_filter(None))
                                 />
                             }
                         })
@@ -1460,6 +1572,16 @@ fn RecipeAnalyzerTable(
                                     sort_dir
                                  />
                              })}
+                             {move || visible_cols.get().contains(COL_LISTING_WORLD).then(|| view! {
+                                 <div role="columnheader" class="w-28 shrink-0 p-4 hidden md:block">
+                                     {t!(i18n, analyzer_col_world)}
+                                 </div>
+                             })}
+                             {move || visible_cols.get().contains(COL_LISTING_DC).then(|| view! {
+                                 <div role="columnheader" class="w-28 shrink-0 p-4 hidden md:block">
+                                     {t!(i18n, analyzer_col_datacenter)}
+                                 </div>
+                             })}
                              <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
                         </div>
                     }.into_any()
@@ -1476,6 +1598,9 @@ fn RecipeAnalyzerTable(
                         };
 
                         let job_abbrev = craft_type_acronym(data.recipe.craft_type);
+                        // (world, datacenter) names of the cheapest listing;
+                        // `None` for the stat-overlay placeholder world 0.
+                        let listing_location = world_names.get(&data.cheapest_world_id).cloned();
 
                         let sales_tooltip = format!(
                             "Based on {} sales over {:.1} days",
@@ -1616,6 +1741,74 @@ fn RecipeAnalyzerTable(
                                         <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block">
                                             <Gil amount=tax />
                                         </div>
+                                    })
+                                }
+                                {
+                                    let loc = listing_location.clone();
+                                    move || visible_cols.get().contains(COL_LISTING_WORLD).then(|| {
+                                        match loc.clone() {
+                                            Some((world, _)) => {
+                                                let tooltip = t_string!(i18n, analyzer_only_show_world)
+                                                    .to_string()
+                                                    .replace("%world%", &world);
+                                                let value = Signal::derive({
+                                                    let world = world.clone();
+                                                    move || world.clone()
+                                                });
+                                                view! {
+                                                    <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
+                                                        <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
+                                                            <QueryButton
+                                                                key=FILTER_LISTING_WORLD
+                                                                value=value
+                                                                class="!text-brand-300 hover:text-brand-200 truncate"
+                                                                active_classes="!text-neutral-300 hover:text-neutral-200 truncate"
+                                                                remove_queries=&[FILTER_LISTING_DC]
+                                                            >
+                                                                {move || value.get()}
+                                                            </QueryButton>
+                                                        </Tooltip>
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                            None => view! {
+                                                <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
+                                            }.into_any(),
+                                        }
+                                    })
+                                }
+                                {
+                                    let loc = listing_location.clone();
+                                    move || visible_cols.get().contains(COL_LISTING_DC).then(|| {
+                                        match loc.clone() {
+                                            Some((_, dc)) => {
+                                                let tooltip = t_string!(i18n, analyzer_only_show_world)
+                                                    .to_string()
+                                                    .replace("%world%", &dc);
+                                                let value = Signal::derive({
+                                                    let dc = dc.clone();
+                                                    move || dc.clone()
+                                                });
+                                                view! {
+                                                    <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
+                                                        <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
+                                                            <QueryButton
+                                                                key=FILTER_LISTING_DC
+                                                                value=value
+                                                                class="!text-brand-300 hover:text-brand-200 truncate"
+                                                                active_classes="!text-neutral-300 hover:text-neutral-200 truncate"
+                                                                remove_queries=&[FILTER_LISTING_WORLD]
+                                                            >
+                                                                {move || value.get()}
+                                                            </QueryButton>
+                                                        </Tooltip>
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                            None => view! {
+                                                <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
+                                            }.into_any(),
+                                        }
                                     })
                                 }
                                  <div role="cell" class="px-4 py-2 w-20 shrink-0">
@@ -2048,6 +2241,38 @@ mod test {
         assert_eq!(FILTER_COST_BASIS, "cost-basis");
         assert_eq!(FILTER_REVENUE, "revenue");
         assert_eq!(FILTER_BUY_SCOPE, "buy-scope");
+        // Set by clicking a cheapest-listing world/DC cell, not the menu.
+        assert_eq!(FILTER_LISTING_WORLD, "listing-world");
+        assert_eq!(FILTER_LISTING_DC, "listing-dc");
+    }
+
+    #[test]
+    fn listing_location_filter_predicate() {
+        let names = ("Gilgamesh".to_string(), "Aether".to_string());
+        // No filter: everything passes, even unknown locations.
+        assert!(listing_location_passes(None, None, None));
+        assert!(listing_location_passes(Some(&names), None, None));
+        // World filter.
+        assert!(listing_location_passes(
+            Some(&names),
+            Some("Gilgamesh"),
+            None
+        ));
+        assert!(!listing_location_passes(
+            Some(&names),
+            Some("Balmung"),
+            None
+        ));
+        // DC filter.
+        assert!(listing_location_passes(Some(&names), None, Some("Aether")));
+        assert!(!listing_location_passes(
+            Some(&names),
+            None,
+            Some("Crystal")
+        ));
+        // An unknown cheapest world must not slip through an active filter.
+        assert!(!listing_location_passes(None, Some("Gilgamesh"), None));
+        assert!(!listing_location_passes(None, None, Some("Aether")));
     }
 
     #[test]
