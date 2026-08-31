@@ -226,6 +226,7 @@ fn base_retainer_columns(
 /// them.
 fn retainer_table_panel(
     retainer_name: String,
+    retainer_id: i32,
     world_id: i32,
     columns: Vec<Column<RetainerRow>>,
     rows: Vec<RetainerRow>,
@@ -234,7 +235,7 @@ fn retainer_table_panel(
     let is_empty = rows.is_empty();
     let column_count = visible_column_count(&columns).to_string();
     view! {
-        <div class="panel p-4 rounded-xl">
+        <div id=format!("retainer-{retainer_id}") class="panel p-4 rounded-xl scroll-mt-20">
             <span class="content-title">
                 {retainer_name} " - " <WorldName id=AnySelector::World(world_id) />
             </span>
@@ -309,6 +310,7 @@ fn RetainerUndercutTable(retainer: Retainer, listings: Vec<UndercutData>) -> imp
 
     retainer_table_panel(
         retainer.name.clone(),
+        retainer.id,
         retainer.world_id,
         columns,
         rows,
@@ -330,6 +332,7 @@ fn RetainerTable(retainer: Retainer, listings: Vec<ActiveListing>) -> impl IntoV
 
     retainer_table_panel(
         retainer.name.clone(),
+        retainer.id,
         retainer.world_id,
         columns,
         rows,

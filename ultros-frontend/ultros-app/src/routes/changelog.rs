@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Browser alerts now open the page they are about",
+        blurb: "Click an item-price alert to open that item's market on the world that triggered it. Retainer undercut alerts now open the Undercuts page and jump straight to the affected retainer.",
+        link: Some("/alerts"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Recipe Analyzer: a Market menu for where you buy and sell",
         blurb: "The pricing controls had ended up hidden behind the + Filter menu. They now have their own Market button in the toolbar, reworked around a buy/sell split: choose whether ingredients are priced from your world, your datacenter, or the whole region, pick the cost basis, and revenue is always your sell world's price. Buying now defaults to your datacenter rather than the whole region, so profit estimates no longer assume you fly across the region for every ingredient.",
         link: Some("/recipe-analyzer"),
