@@ -417,18 +417,23 @@ pub struct DeepScan {
     pub launder_suspicion_pct: f32,
 }
 
+/// Strongly-typed band from the raw enum string ClickHouse stores. Falls
+/// back to `Unknown` for unrecognized values (shouldn't happen but keeps
+/// callers resilient to schema drift).
+pub fn parse_confidence_band(raw: &str) -> ConfidenceBand {
+    match raw {
+        "high" => ConfidenceBand::High,
+        "medium" => ConfidenceBand::Medium,
+        "low" => ConfidenceBand::Low,
+        "unusable" => ConfidenceBand::Unusable,
+        _ => ConfidenceBand::Unknown,
+    }
+}
+
 impl DeepScan {
-    /// Strongly-typed band derived from the raw enum string. Falls back to
-    /// `Unknown` for unrecognized values (shouldn't happen but keeps the
-    /// analyzer resilient to schema drift).
+    /// See [`parse_confidence_band`].
     pub fn confidence_band(&self) -> ConfidenceBand {
-        match self.confidence_band_raw.as_str() {
-            "high" => ConfidenceBand::High,
-            "medium" => ConfidenceBand::Medium,
-            "low" => ConfidenceBand::Low,
-            "unusable" => ConfidenceBand::Unusable,
-            _ => ConfidenceBand::Unknown,
-        }
+        parse_confidence_band(&self.confidence_band_raw)
     }
 
     /// Where `current_price` falls in the cleaned 30-day distribution
@@ -1000,6 +1005,13 @@ pub struct BulkSaleStatsRow {
     pub median_price: i32,
     pub avg_price: i32,
     pub num_sold: i64,
+    /// Unix seconds of the newest sale in the window.
+    pub last_sold_unix: i64,
+    /// Units traded in the window (sum of quantities).
+    pub units_sold: u64,
+    /// Volume-weighted average per-unit price, rounded. Weighted by
+    /// quantity so stack trades count per unit, not per transaction.
+    pub vwap: i32,
 }
 
 /// Aggregate min / exact-median / mean per-unit sale price for **every**
@@ -1036,7 +1048,11 @@ pub async fn bulk_sale_stats(
             toInt32(min(price_per_item))                AS min_price,
             toInt32(quantileExact(0.5)(price_per_item)) AS median_price,
             toInt32(round(avg(price_per_item)))         AS avg_price,
-            toInt64(count())                            AS num_sold
+            toInt64(count())                            AS num_sold,
+            toInt64(max(toUnixTimestamp(sold_date)))    AS last_sold_unix,
+            toUInt64(sum(quantity))                     AS units_sold,
+            toInt32(round(if(sum(quantity) = 0, 0,
+                sum(price_per_item * quantity) / sum(quantity)))) AS vwap
         FROM sales
         WHERE world_id IN ({worlds})
           AND sold_date >= now() - INTERVAL {window_days} DAY
@@ -1047,6 +1063,45 @@ pub async fn bulk_sale_stats(
         .client()
         .query(&sql)
         .fetch_all::<BulkSaleStatsRow>()
+        .await?)
+}
+
+/// One row of [`bulk_confidence`]: the stored quality band for one
+/// `(item_id, hq)` on the requested world.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct BulkConfidenceRow {
+    pub item_id: i32,
+    pub hq: u8,
+    pub confidence_band_raw: String,
+}
+
+impl BulkConfidenceRow {
+    /// See [`parse_confidence_band`].
+    pub fn confidence_band(&self) -> ConfidenceBand {
+        parse_confidence_band(&self.confidence_band_raw)
+    }
+}
+
+/// Per-(item, hq) confidence bands for **one** world.
+///
+/// The band is a stored per-world judgement (see
+/// [`aggregate_item_stats_variants`] for why it can't be recomputed across
+/// worlds), so multi-world scopes don't call this and report `Unknown`
+/// instead. The single-world predicate keeps the `FINAL` scan bounded — no
+/// unfiltered reads of `item_quality_score`.
+pub async fn bulk_confidence(
+    ch: &ClickHouseClient,
+    world_id: i32,
+) -> Result<Vec<BulkConfidenceRow>, ClickHouseError> {
+    let sql = format!(
+        "SELECT item_id, hq, toString(confidence_band) AS confidence_band_raw
+         FROM item_quality_score FINAL
+         WHERE world_id = {world_id}"
+    );
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<BulkConfidenceRow>()
         .await?)
 }
 
