@@ -72,11 +72,22 @@ function measure() {
   );
   let showMoreInfo = null;
   if (showMore) {
+    // `elementFromPoint` takes *viewport* coordinates and returns null for
+    // anything outside it. The item page is several thousand pixels tall, so
+    // the button is always far below the fold on first paint and the hit test
+    // would report "unreachable" for a perfectly reachable button. Scroll it
+    // into view first, then hit-test where it actually is. The horizontal
+    // measurement is unaffected by a vertical scroll.
+    showMore.scrollIntoView({ block: 'center' });
     const r = showMore.getBoundingClientRect();
     const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
     showMoreInfo = {
       right: Math.round(r.right),
       reachable: Boolean(hit) && (hit === showMore || showMore.contains(hit)),
+      obscuredBy:
+        hit && !(hit === showMore || showMore.contains(hit))
+          ? hit.tagName.toLowerCase() + (hit.className ? '.' + String(hit.className).split(' ')[0] : '')
+          : null,
       insideScrollport: Boolean(historyTableBox && historyTableBox.contains(showMore)),
     };
   }
@@ -181,7 +192,10 @@ async function main() {
         if (m.showMore.right > width) {
           failures.push(`${width}px: "Show more" ends at x=${m.showMore.right}, past the viewport edge`);
         } else if (!m.showMore.reachable) {
-          failures.push(`${width}px: "Show more" is within the viewport but not hit-testable`);
+          failures.push(
+            `${width}px: "Show more" is scrolled into view but not hit-testable` +
+              (m.showMore.obscuredBy ? ` — covered by <${m.showMore.obscuredBy}>` : ''),
+          );
         }
       }
 
