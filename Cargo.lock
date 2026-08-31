@@ -10263,6 +10263,7 @@ dependencies = [
  "rkyv",
  "rustls 0.23.43",
  "sea-orm",
+ "select",
  "sentry",
  "sentry-tower",
  "sentry-tracing",

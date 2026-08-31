@@ -9,6 +9,7 @@ mod fd_limit;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
+pub(crate) mod lodestone_profile;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub(crate) mod resale_eligibility;
