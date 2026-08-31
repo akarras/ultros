@@ -264,6 +264,19 @@ pub fn RegionMenu() -> impl IntoView {
                 class="side-nav-account-trigger"
                 aria-haspopup="true"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
+                // See `HomeWorldMenu`: the visible overline is hidden in the
+                // collapsed rail and the price-tag icon is `aria_hidden`, so
+                // the accessible name has to come from the attribute.
+                aria-label=move || {
+                    format!(
+                        "{}: {}",
+                        t_string!(i18n, region_menu_label),
+                        match zone.get() {
+                            Some(zone) => zone.get_name().to_string(),
+                            None => t_string!(i18n, region_menu_no_zone).to_string(),
+                        },
+                    )
+                }
                 on:click=move |_| set_open.update(|v| *v = !*v)
             >
                 // A price tag, not `SelectorKind`: the kind icon made this

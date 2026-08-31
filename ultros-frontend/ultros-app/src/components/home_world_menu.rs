@@ -86,6 +86,20 @@ pub fn HomeWorldMenu() -> impl IntoView {
                 class="side-nav-account-trigger"
                 aria-haspopup="true"
                 aria-expanded=move || if open.get() { "true" } else { "false" }
+                // The overline carrying the purpose lives inside
+                // `.side-nav-label`, which the collapsed 56px rail hides, and
+                // the house icon is `aria_hidden` -- without this the button
+                // would have no accessible name at all when collapsed.
+                aria-label=move || {
+                    format!(
+                        "{}: {}",
+                        t_string!(i18n, home_world),
+                        match homeworld.get() {
+                            Some(world) => world.name.to_string(),
+                            None => t_string!(i18n, set_home_world).to_string(),
+                        },
+                    )
+                }
                 on:click=move |_| set_open.update(|v| *v = !*v)
             >
                 // Purpose icon, not `SelectorKind`: a home world is always a
