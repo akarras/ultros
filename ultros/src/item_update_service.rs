@@ -28,6 +28,34 @@ const RECENTLY_UPDATED_WINDOW: u8 = 200;
 const UPLOAD_TIME_SLACK_SECONDS: i64 = 120;
 /// Minimum time between saturation-triggered full sweeps of a single world.
 const FULL_SWEEP_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
+/// Backoff schedule for transient Universalis failures inside a sweep chunk:
+/// one initial attempt plus one retry per entry.
+const CHUNK_RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(45),
+];
+
+/// Runs `op`, retrying transient Universalis failures (429/5xx/timeouts — see
+/// [`universalis::Error::is_transient`]) on the [`CHUNK_RETRY_BACKOFF`]
+/// schedule. Non-transient errors and exhausted retries return the last error.
+async fn retry_transient<T, F, Fut>(mut op: F) -> Result<T, universalis::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, universalis::Error>>,
+{
+    let mut backoff = CHUNK_RETRY_BACKOFF.iter();
+    loop {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(e) if e.is_transient() => match backoff.next() {
+                Some(delay) => tokio::time::sleep(*delay).await,
+                None => return Err(e),
+            },
+            Err(e) => return Err(e),
+        }
+    }
+}
 
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
@@ -547,6 +575,58 @@ mod tests {
         assert!(!universalis_transient(&anyhow::anyhow!(
             "connection pool closed"
         )));
+    }
+
+    fn bare_status(status: u16) -> universalis::Error {
+        universalis::Error::Status {
+            status,
+            url: "https://universalis.app/api/v2/aggregated/Ravana/5".to_string(),
+            body: String::new(),
+        }
+    }
+
+    /// Paused tokio time: `sleep` auto-advances, so the 5s/15s/45s backoff runs
+    /// instantly while still exercising the real await points.
+    #[tokio::test(start_paused = true)]
+    async fn retry_transient_retries_transient_errors_until_success() {
+        let mut attempts = 0;
+        let result = retry_transient(|| {
+            attempts += 1;
+            let out = if attempts < 3 {
+                Err(bare_status(504))
+            } else {
+                Ok(42)
+            };
+            async move { out }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts, 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_transient_gives_up_after_backoff_is_exhausted() {
+        let mut attempts = 0;
+        let result: Result<i32, _> = retry_transient(|| {
+            attempts += 1;
+            async { Err(bare_status(429)) }
+        })
+        .await;
+        assert!(result.unwrap_err().is_transient());
+        // 1 initial attempt + one retry per backoff entry.
+        assert_eq!(attempts, 1 + CHUNK_RETRY_BACKOFF.len());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_transient_fails_non_transient_errors_immediately() {
+        let mut attempts = 0;
+        let result: Result<i32, _> = retry_transient(|| {
+            attempts += 1;
+            async { Err(bare_status(404)) }
+        })
+        .await;
+        assert!(result.unwrap_err().is_not_found());
+        assert_eq!(attempts, 1);
     }
 
     fn ours(item_id: i32, ingested_at: i64) -> Model {
