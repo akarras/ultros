@@ -80,6 +80,38 @@ impl ControlBarPopovers {
     }
 }
 
+/// Parse a `?cols=` value into the visible-column set.
+///
+/// `None` (param absent) yields `default`; an explicit value — even the
+/// empty string — is respected verbatim, filtered to ids in `all` so a
+/// stale token from an old bookmark drops instead of lingering unrendered.
+pub fn parse_visible_cols(
+    raw: Option<&str>,
+    all: &'static [&'static str],
+    default: &'static [&'static str],
+) -> HashSet<&'static str> {
+    match raw {
+        None => default.iter().copied().collect(),
+        Some(s) => s
+            .split(',')
+            .filter_map(|tok| all.iter().find(|c| **c == tok).copied())
+            .collect(),
+    }
+}
+
+/// Serialize the visible set back to the `?cols=` value, in `all`'s order
+/// so the URL is stable regardless of toggle order.
+pub fn serialize_visible_cols(
+    visible: &HashSet<&'static str>,
+    all: &'static [&'static str],
+) -> String {
+    all.iter()
+        .filter(|c| visible.contains(*c))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// One filter the `+ Filter` menu can add.
 ///
 /// The label is the long, explanatory one — the menu is where a filter has to

@@ -31,7 +31,9 @@ async fn seed(ch: &ClickHouseClient, item: i32) -> (i64, i64) {
         .await
         .expect("clear sales fixtures");
     ch.client()
-        .query("ALTER TABLE item_quality_score DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
+        .query(
+            "ALTER TABLE item_quality_score DELETE WHERE item_id = ? SETTINGS mutations_sync = 1",
+        )
         .bind(item)
         .execute()
         .await

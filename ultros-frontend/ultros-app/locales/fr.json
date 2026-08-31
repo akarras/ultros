@@ -1380,6 +1380,8 @@
     "recipe_analyzer_calc_formula": "profit = (prix du marché − 5 % de taxe) − coût par unité",
     "recipe_analyzer_calc_details": "Le coût des ingrédients utilise les annonces les moins chères, ou le prix du vendeur PNJ s'il est inférieur. Les recettes produisant plusieurs objets sont calculées à l'unité. Le revenu suppose une vente sur votre monde sélectionné et déduit la taxe de 5 % du comptoir de vente. Le mode sous-synthèse vérifie s'il est moins cher de fabriquer les ingrédients intermédiaires que de les acheter.",
     "recipe_analyzer_market_button": "Marché",
+    "recipe_analyzer_col_volume": "Volume (7j)",
+    "recipe_analyzer_col_vwap": "VWAP (7j)",
     "recipe_analyzer_buy_from_label": "Acheter depuis",
     "recipe_analyzer_sell_world_label": "Vendre sur",
     "buy_scope_home_world": "Ce monde uniquement",

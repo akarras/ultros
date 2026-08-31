@@ -1383,6 +1383,8 @@
     "recipe_analyzer_calc_formula": "profit = (market price − 5% tax) − cost per unit",
     "recipe_analyzer_calc_details": "Ingredient cost uses the cheapest matching listings, or the NPC vendor price when that is cheaper. Recipes that produce multiple items are costed per unit. Revenue assumes selling on your selected world and deducts the 5% market board tax. Subcraft mode checks whether crafting intermediate ingredients is cheaper than buying them directly.",
     "recipe_analyzer_market_button": "Market",
+    "recipe_analyzer_col_volume": "Volume (7d)",
+    "recipe_analyzer_col_vwap": "VWAP (7d)",
     "recipe_analyzer_buy_from_label": "Buy from",
     "recipe_analyzer_sell_world_label": "Sell on",
     "buy_scope_home_world": "This world only",

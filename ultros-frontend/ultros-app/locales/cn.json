@@ -1380,6 +1380,8 @@
     "recipe_analyzer_calc_formula": "利润 = (市场价格 − 5% 税) − 单件成本",
     "recipe_analyzer_calc_details": "材料成本采用最便宜的在售列表，若NPC商店价格更低则采用商店价格。产出多件的配方按单件计算成本。收益假设在所选服务器出售，并扣除5%的市场税。半成品模式会检查制作中间材料是否比直接购买更便宜。",
     "recipe_analyzer_market_button": "市场设置",
+    "recipe_analyzer_col_volume": "成交量（7天）",
+    "recipe_analyzer_col_vwap": "VWAP（7天）",
     "recipe_analyzer_buy_from_label": "购买范围",
     "recipe_analyzer_sell_world_label": "出售服务器",
     "buy_scope_home_world": "仅此服务器",

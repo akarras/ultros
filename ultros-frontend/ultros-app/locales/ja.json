@@ -1380,6 +1380,8 @@
     "recipe_analyzer_calc_formula": "利益 = (市場価格 − 税5%) − 1個あたりのコスト",
     "recipe_analyzer_calc_details": "素材コストは最安の出品価格、またはそれより安い場合はNPCショップ価格を使用します。複数個できるレシピは1個あたりで計算します。収益は選択中のワールドでの販売を想定し、マーケットの税5%を差し引きます。中間素材モードでは、中間素材を製作する方が購入より安いかを確認します。",
     "recipe_analyzer_market_button": "市場設定",
+    "recipe_analyzer_col_volume": "取引数量（7日）",
+    "recipe_analyzer_col_vwap": "VWAP（7日）",
     "recipe_analyzer_buy_from_label": "購入範囲",
     "recipe_analyzer_sell_world_label": "販売ワールド",
     "buy_scope_home_world": "このワールドのみ",

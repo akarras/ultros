@@ -19,7 +19,10 @@ use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats},
     components::{
         add_recipe_to_list::AddRecipeToList,
-        control_bar::{ControlBar, FilterOption},
+        confidence_badge::ConfidenceBadge,
+        control_bar::{
+            ColumnOption, ControlBar, FilterOption, parse_visible_cols, serialize_visible_cols,
+        },
         crafter_settings::CrafterSettings,
         filter_chip::FilterChip,
         gil::*,
@@ -40,17 +43,20 @@ use crate::{
 };
 use icondata as i;
 use leptos::prelude::*;
+use leptos::reactive::wrappers::write::SignalSetter;
 use leptos_i18n::I18nContext;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
 use percent_encoding::utf8_percent_encode;
+use std::collections::HashSet;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
-    sale_stats::BulkSaleStats,
+    sale_stats::{BulkSaleStats, ItemSaleStats},
+    trends::ConfidenceBand,
 };
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
 
@@ -69,6 +75,62 @@ struct RecipeProfitData {
     avg_price: i32,
     total_sales: usize,
     required_level: i32,
+    // Sell-world market context, from the widened sale stats. All zero /
+    // `Unknown` when the stats aren't fetched (no stats-backed column
+    // visible and a listing revenue basis) or the item had no sales.
+    last_sold_unix: i64,
+    units_sold: u64,
+    vwap: i32,
+    /// Current sell price vs the window VWAP, as a percent. `None` when
+    /// there is no VWAP to compare against.
+    vwap_pct: Option<f32>,
+    /// The market board's cut of one unit's sale at `market_price`.
+    tax: i32,
+    confidence: ConfidenceBand,
+}
+
+/// Resting label for the last-sold cell — same day/hour/just-now buckets
+/// and i18n keys as the flip finder's `COL_LAST_SOLD` cell. A zero or
+/// future timestamp renders as "never" (no sale in the window / old
+/// server).
+fn last_sold_label(
+    i18n: I18nContext<Locale, I18nKeys>,
+    last_sold_unix: i64,
+    now_unix: i64,
+) -> String {
+    if last_sold_unix <= 0 || last_sold_unix > now_unix {
+        return t_string!(i18n, analyzer_last_sold_never).to_string();
+    }
+    let secs = (now_unix - last_sold_unix) as u64;
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    if days > 0 {
+        t_string!(i18n, analyzer_last_sold_days_ago).replace("%count%", &days.to_string())
+    } else if hours > 0 {
+        t_string!(i18n, analyzer_last_sold_hours_ago).replace("%count%", &hours.to_string())
+    } else {
+        t_string!(i18n, analyzer_last_sold_just_now).to_string()
+    }
+}
+
+/// Current sell price vs the window VWAP, as a percent. `None` when there
+/// is no VWAP to compare against (no sales in the window, or an old
+/// server that doesn't serve the column).
+fn vwap_pct(market_price: i32, vwap: i32) -> Option<f32> {
+    (vwap > 0).then(|| (market_price - vwap) as f32 / vwap as f32 * 100.0)
+}
+
+/// Sort ordinal for the confidence band: better bands sort higher, and
+/// rows without deep-scan data (`Unknown`) sort below everything so a
+/// descending confidence sort surfaces trustworthy rows first.
+fn confidence_rank(band: ConfidenceBand) -> u8 {
+    match band {
+        ConfidenceBand::Unknown => 0,
+        ConfidenceBand::Unusable => 1,
+        ConfidenceBand::Low => 2,
+        ConfidenceBand::Medium => 3,
+        ConfidenceBand::High => 4,
+    }
 }
 
 /// Acronym for a `Recipe::craft_type`, matching the `CraftType` sheet order.
@@ -302,6 +364,25 @@ const ADDABLE_FILTERS: &[&str] = &[
 /// Matches the `/api/v1/sale_stats` default.
 const SALE_STATS_WINDOW_DAYS: u16 = 7;
 
+// --- Optional columns ------------------------------------------------------
+// `?cols=` namespace, distinct from the filter registry above. Order here is
+// the columns-picker + serialization order.
+const COL_CONFIDENCE: &str = "confidence";
+const COL_LAST_SOLD: &str = "last-sold";
+const COL_VOLUME: &str = "volume";
+const COL_VWAP: &str = "vwap";
+const COL_TAX: &str = "tax";
+const OPTIONAL_COLUMN_ORDER: &[&str] =
+    &[COL_CONFIDENCE, COL_LAST_SOLD, COL_VOLUME, COL_VWAP, COL_TAX];
+/// Default-visible optional columns. Sales/day is already an always-on
+/// column; the confidence chip joins it by default so stale or manipulated
+/// sell-world markets don't silently top the ranking.
+const DEFAULT_COLS: &[&str] = &[COL_CONFIDENCE];
+/// The columns whose data comes from the sell-world sale stats — any of
+/// them being visible forces that fetch (the tax column is computed from
+/// the revenue already on the row).
+const STATS_BACKED_COLS: &[&str] = &[COL_CONFIDENCE, COL_LAST_SOLD, COL_VOLUME, COL_VWAP];
+
 /// Rewrite pre-market-model query params (#1206 era) to their successors.
 /// Returns `None` when nothing needs rewriting (the common case — avoids a
 /// navigate loop). `scope` carried region|datacenter and became
@@ -383,6 +464,11 @@ enum SortMode {
     CostPerUnit,
     Price,
     AvgPrice,
+    LastSold,
+    Volume,
+    Vwap,
+    Tax,
+    Confidence,
 }
 
 impl FromStr for SortMode {
@@ -396,6 +482,11 @@ impl FromStr for SortMode {
             "cost" => Ok(SortMode::CostPerUnit),
             "price" => Ok(SortMode::Price),
             "avg-price" => Ok(SortMode::AvgPrice),
+            "last-sold" => Ok(SortMode::LastSold),
+            "volume" => Ok(SortMode::Volume),
+            "vwap" => Ok(SortMode::Vwap),
+            "tax" => Ok(SortMode::Tax),
+            "confidence" => Ok(SortMode::Confidence),
             _ => Err(()),
         }
     }
@@ -410,6 +501,11 @@ impl Display for SortMode {
             SortMode::CostPerUnit => "cost",
             SortMode::Price => "price",
             SortMode::AvgPrice => "avg-price",
+            SortMode::LastSold => "last-sold",
+            SortMode::Volume => "volume",
+            SortMode::Vwap => "vwap",
+            SortMode::Tax => "tax",
+            SortMode::Confidence => "confidence",
         };
         f.write_str(val)
     }
@@ -441,6 +537,12 @@ fn compare_recipes(mode: SortMode, a: &RecipeProfitData, b: &RecipeProfitData) -
         SortMode::CostPerUnit => a.cost.cmp(&b.cost),
         SortMode::Price => a.market_price.cmp(&b.market_price),
         SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
+        // Desc (the default) = most recent first: larger unix is newer.
+        SortMode::LastSold => a.last_sold_unix.cmp(&b.last_sold_unix),
+        SortMode::Volume => a.units_sold.cmp(&b.units_sold),
+        SortMode::Vwap => a.vwap.cmp(&b.vwap),
+        SortMode::Tax => a.tax.cmp(&b.tax),
+        SortMode::Confidence => confidence_rank(a.confidence).cmp(&confidence_rank(b.confidence)),
     }
 }
 
@@ -462,6 +564,10 @@ fn RecipeAnalyzerTable(
     sell_world_listings: Option<CheapestListings>,
 
     world: Signal<String>,
+    /// Visible optional columns (`?cols=`), owned by the parent because
+    /// the sell-world stats fetch keys off it.
+    visible_cols: Memo<HashSet<&'static str>>,
+    set_cols_param: SignalSetter<Option<String>>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -576,7 +682,15 @@ fn RecipeAnalyzerTable(
     // keep meaning "where the scope-cheapest listing sits" regardless of
     // which pricing bases are selected.
     let raw_prices = prices.clone();
+    let sell_stats_for_rows = sell_world_sale_stats.clone();
     let computed_data = Memo::new(move |_| {
+        // Sell-world market context per (item, hq), for the stats-backed
+        // columns. Empty when the stats weren't fetched.
+        let sell_stats_map: HashMap<(i32, bool), ItemSaleStats> = sell_stats_for_rows
+            .stats
+            .iter()
+            .map(|s| ((s.item_id, s.hq), *s))
+            .collect();
         let prices = ingredient_prices.get();
         let revenue = revenue_prices.get();
         let recipes_by_output = recipes_by_output();
@@ -714,6 +828,14 @@ fn RecipeAnalyzerTable(
                 0
             };
 
+            // Sell-world stats row matching how revenue resolves: prefer
+            // the HQ row when the analyzer requires HQ, otherwise NQ, and
+            // fall back to whichever quality actually traded.
+            let sell_stat = sell_stats_map
+                .get(&(recipe.item_result, require_hq_flag))
+                .or_else(|| sell_stats_map.get(&(recipe.item_result, !require_hq_flag)));
+            let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
+
             results.push(RecipeProfitData {
                 recipe,
                 profit,
@@ -726,6 +848,12 @@ fn RecipeAnalyzerTable(
                 avg_price: sales_stats.avg_price,
                 total_sales: sales_stats.total_sales,
                 required_level,
+                last_sold_unix: sell_stat.map(|s| s.last_sold_unix).unwrap_or(0),
+                units_sold: sell_stat.map(|s| s.units_sold).unwrap_or(0),
+                vwap,
+                vwap_pct: vwap_pct(market_price, vwap),
+                tax: market_price - net_revenue,
+                confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
             });
         }
 
@@ -868,6 +996,36 @@ fn RecipeAnalyzerTable(
         ]
     };
 
+    // Optional-column picker, flip-finder style. Long labels for the picker
+    // (recognition, not recall — same rationale as the filter menu).
+    let col_label = move |col: &str| -> String {
+        match col {
+            c if c == COL_CONFIDENCE => t_string!(i18n, analyzer_col_confidence).to_string(),
+            c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
+            c if c == COL_VOLUME => t_string!(i18n, recipe_analyzer_col_volume).to_string(),
+            c if c == COL_VWAP => t_string!(i18n, recipe_analyzer_col_vwap).to_string(),
+            c if c == COL_TAX => t_string!(i18n, analyzer_col_tax).to_string(),
+            _ => String::new(),
+        }
+    };
+    let column_options = Signal::derive(move || {
+        OPTIONAL_COLUMN_ORDER
+            .iter()
+            .map(|col| ColumnOption {
+                id: col,
+                label: col_label(col),
+            })
+            .collect::<Vec<_>>()
+    });
+    let toggle_column = Callback::new(move |col: &'static str| {
+        let mut set = visible_cols.get_untracked();
+        if !set.remove(col) {
+            set.insert(col);
+        }
+        set_cols_param.set(Some(serialize_visible_cols(&set, OPTIONAL_COLUMN_ORDER)));
+    });
+    let reset_columns = Callback::new(move |_| set_cols_param.set(None));
+
     // What the `+ Filter` menu offers: everything addable that is not already
     // on screen as a chip.
     let filter_options = Memo::new(move |_| {
@@ -946,6 +1104,10 @@ fn RecipeAnalyzerTable(
                     }
                         .into_any()
                 }
+                columns=column_options
+                visible_columns=Signal::derive(move || visible_cols.get())
+                on_toggle_column=toggle_column
+                on_reset_columns=reset_columns
                 available_filters=Signal::derive(filter_options)
                 on_add_filter=add_filter
                 on_clear_all=clear_all
@@ -1253,6 +1415,51 @@ fn RecipeAnalyzerTable(
                                 sort_mode
                                 sort_dir
                              />
+                             {move || visible_cols.get().contains(COL_CONFIDENCE).then(|| view! {
+                                 <SortableHeaderCell
+                                    mode=SortMode::Confidence
+                                    label=t_string!(i18n, analyzer_col_confidence).to_string()
+                                    class="w-28 shrink-0 p-4 hidden md:block"
+                                    sort_mode
+                                    sort_dir
+                                 />
+                             })}
+                             {move || visible_cols.get().contains(COL_LAST_SOLD).then(|| view! {
+                                 <SortableHeaderCell
+                                    mode=SortMode::LastSold
+                                    label=t_string!(i18n, analyzer_col_last_sold).to_string()
+                                    class="w-28 shrink-0 p-4 hidden md:block"
+                                    sort_mode
+                                    sort_dir
+                                 />
+                             })}
+                             {move || visible_cols.get().contains(COL_VOLUME).then(|| view! {
+                                 <SortableHeaderCell
+                                    mode=SortMode::Volume
+                                    label=t_string!(i18n, recipe_analyzer_col_volume).to_string()
+                                    class="w-28 shrink-0 p-4 hidden md:block"
+                                    sort_mode
+                                    sort_dir
+                                 />
+                             })}
+                             {move || visible_cols.get().contains(COL_VWAP).then(|| view! {
+                                 <SortableHeaderCell
+                                    mode=SortMode::Vwap
+                                    label=t_string!(i18n, recipe_analyzer_col_vwap).to_string()
+                                    class="w-32 shrink-0 p-4 hidden md:block"
+                                    sort_mode
+                                    sort_dir
+                                 />
+                             })}
+                             {move || visible_cols.get().contains(COL_TAX).then(|| view! {
+                                 <SortableHeaderCell
+                                    mode=SortMode::Tax
+                                    label=t_string!(i18n, analyzer_col_tax).to_string()
+                                    class="w-28 shrink-0 p-4 hidden md:block"
+                                    sort_mode
+                                    sort_dir
+                                 />
+                             })}
                              <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
                         </div>
                     }.into_any()
@@ -1359,6 +1566,58 @@ fn RecipeAnalyzerTable(
                                 <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
                                     <Gil amount=data.avg_price />
                                 </div>
+                                {
+                                    let confidence = data.confidence;
+                                    move || visible_cols.get().contains(COL_CONFIDENCE).then(|| view! {
+                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 flex items-center justify-end hidden md:flex">
+                                            <ConfidenceBadge band=confidence />
+                                        </div>
+                                    })
+                                }
+                                {
+                                    let last_sold_unix = data.last_sold_unix;
+                                    move || visible_cols.get().contains(COL_LAST_SOLD).then(|| view! {
+                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block">
+                                            {last_sold_label(i18n, last_sold_unix, chrono::Utc::now().timestamp())}
+                                        </div>
+                                    })
+                                }
+                                {
+                                    let units_sold = data.units_sold;
+                                    move || visible_cols.get().contains(COL_VOLUME).then(|| view! {
+                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block font-mono tabular-nums">
+                                            {units_sold.to_string()}
+                                        </div>
+                                    })
+                                }
+                                {
+                                    let vwap = data.vwap;
+                                    let pct = data.vwap_pct;
+                                    move || visible_cols.get().contains(COL_VWAP).then(|| view! {
+                                        <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
+                                            {if vwap > 0 {
+                                                view! {
+                                                    <Gil amount=vwap />
+                                                    {pct.map(|p| view! {
+                                                        <div class="text-xs text-[color:var(--color-text-muted)]">
+                                                            {format!("{p:+.0}%")}
+                                                        </div>
+                                                    })}
+                                                }.into_any()
+                                            } else {
+                                                view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any()
+                                            }}
+                                        </div>
+                                    })
+                                }
+                                {
+                                    let tax = data.tax;
+                                    move || visible_cols.get().contains(COL_TAX).then(|| view! {
+                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block">
+                                            <Gil amount=tax />
+                                        </div>
+                                    })
+                                }
                                  <div role="cell" class="px-4 py-2 w-20 shrink-0">
                                      <AddRecipeToList recipe=data.recipe />
                                  </div>
@@ -1402,6 +1661,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
+
+    // `?cols=` lives here rather than in the table because the sell-world
+    // stats fetch below keys off which columns are visible, and the table
+    // remounts whenever its resources change.
+    let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let visible_cols = Memo::new(move |_| {
+        parse_visible_cols(cols_param().as_deref(), OPTIONAL_COLUMN_ORDER, DEFAULT_COLS)
+    });
 
     // Rewrite pre-market-model query params once on mount, before the
     // signals above are read reactively (see `migrate_legacy_params`).
@@ -1557,13 +1824,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             }
         });
 
-    // Sale-stat revenue metrics read the sell world's history, not the buy
-    // scope's — fetched only while such a metric is selected.
+    // Sale-stat revenue metrics and the stats-backed columns both read the
+    // sell world's history — fetched only while one of them needs it.
+    // (With the confidence column on by default that is most page loads,
+    // but hiding it drops the fetch again.)
     let sell_stats_world = Memo::new(move |_| {
-        revenue_metric()
-            .unwrap_or_default()
-            .sale_stat()
-            .is_some()
+        let stats_column_visible =
+            visible_cols.with(|c| STATS_BACKED_COLS.iter().any(|id| c.contains(id)));
+        (revenue_metric().unwrap_or_default().sale_stat().is_some() || stats_column_visible)
             .then(|| sell_world_name.get())
             .flatten()
     });
@@ -1682,6 +1950,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         sale_stats_error=buy_stats_error || sell_stats_error
                                         sell_world_listings=sell_listings.ok().flatten()
                                         world=Signal::derive(buy_scope_name)
+                                        visible_cols=visible_cols
+                                        set_cols_param=set_cols_param
                                     />
                                 }.into_any()
                             }
@@ -1824,10 +2094,41 @@ mod test {
             SortMode::CostPerUnit,
             SortMode::Price,
             SortMode::AvgPrice,
+            SortMode::LastSold,
+            SortMode::Volume,
+            SortMode::Vwap,
+            SortMode::Tax,
+            SortMode::Confidence,
         ] {
             assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
         }
         assert!("bogus".parse::<SortMode>().is_err());
+    }
+
+    /// Better bands sort above worse ones, and rows without deep-scan data
+    /// (`Unknown`) sort below everything under the default descending sort.
+    #[test]
+    fn confidence_ranks_better_bands_higher() {
+        let ordered = [
+            ConfidenceBand::Unknown,
+            ConfidenceBand::Unusable,
+            ConfidenceBand::Low,
+            ConfidenceBand::Medium,
+            ConfidenceBand::High,
+        ];
+        for pair in ordered.windows(2) {
+            assert!(confidence_rank(pair[0]) < confidence_rank(pair[1]));
+        }
+    }
+
+    /// % vs VWAP guards the divide: no VWAP (no sales, old server) must be
+    /// "no figure", never a NaN or an infinite percent.
+    #[test]
+    fn vwap_pct_math() {
+        assert_eq!(vwap_pct(150, 100), Some(50.0));
+        assert_eq!(vwap_pct(50, 100), Some(-50.0));
+        assert_eq!(vwap_pct(100, 0), None);
+        assert_eq!(vwap_pct(0, 0), None);
     }
 
     /// `Recipe::craft_type` is a row index into the `CraftType` sheet, which
