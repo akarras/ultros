@@ -1948,21 +1948,25 @@ fn ListingsContent(
             </div>
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
-            // Side by side only from xl up — the sidebar makes a 1024px (lg)
-            // viewport no wider than 768px of content, and two half-width
-            // tables there would both scroll horizontally. `minmax(0,1fr)`
-            // keeps a wide table from blowing the grid past the viewport.
-            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 mt-6">
-                <div id="listings" class="scroll-mt-16 min-w-0">
-                    <ListingsPanel
-                        listing_resource
-                        filtered_listings
-                        world
-                        excluded_datacenters
-                    />
-                </div>
-                <div id="history" class="scroll-mt-16 min-w-0">
-                    <SalesDetails listing_resource />
+            // Both tables force `min-w-[720px]`, so two columns only fit when
+            // the content area is ~1500px wide — roughly a 1440p display once
+            // the sidebar and ad rail take their cut. Gating on the container
+            // (not the viewport) keeps this correct when the sidebar is
+            // collapsed or the ad rail is hidden. `minmax(0,1fr)` keeps a wide
+            // table from blowing the grid past the container.
+            <div class="@container">
+                <div class="grid grid-cols-1 @min-[94rem]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 mt-6">
+                    <div id="listings" class="scroll-mt-16 min-w-0">
+                        <ListingsPanel
+                            listing_resource
+                            filtered_listings
+                            world
+                            excluded_datacenters
+                        />
+                    </div>
+                    <div id="history" class="scroll-mt-16 min-w-0">
+                        <SalesDetails listing_resource />
+                    </div>
                 </div>
             </div>
 
