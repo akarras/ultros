@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Recipe Analyzer: a Market menu for where you buy and sell",
+        blurb: "The pricing controls had ended up hidden behind the + Filter menu. They now have their own Market button in the toolbar, reworked around a buy/sell split: choose whether ingredients are priced from your world, your datacenter, or the whole region, pick the cost basis, and revenue is always your sell world's price. Buying now defaults to your datacenter rather than the whole region, so profit estimates no longer assume you fly across the region for every ingredient.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Claiming a Viera or Hrothgar character works again",
         blurb: "Claiming a character read its Lodestone profile through a parser that only knew the races the game shipped with in 2013, so claiming any Viera or Hrothgar failed outright with a server error. Claims now read just the name and home world off the profile, so every race works - and a character id the Lodestone doesn't know says so instead of erroring.",
         link: Some("/profile"),

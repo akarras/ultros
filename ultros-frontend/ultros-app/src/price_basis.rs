@@ -7,9 +7,12 @@
 //! both to the datacenter instead of the whole region.
 //!
 //! All three enums round-trip through `FromStr`/`Display` so they can live
-//! in the URL via `filter_query_signal`. Cost and scope defaults reproduce
-//! historical behavior exactly; as of 2026-08-29, revenue defaults to
-//! `WorldMin` to price items on the analyzer's selected world.
+//! in the URL via `filter_query_signal`.
+//!
+//! As of the market-model rework (#1233): revenue is always evaluated on
+//! the analyzer's sell world (the old `world-min` metric is the page-level
+//! default and its URL token is migrated away there), and ingredient
+//! pricing is scoped by [`BuyScope`], defaulting to the datacenter.
 
 use std::fmt::{self, Display};
 use std::str::FromStr;
@@ -75,26 +78,27 @@ impl Display for CostBasis {
     }
 }
 
-/// How the crafted item's sale price is estimated.
+/// How the crafted item's sale price is estimated, always on the sell
+/// world (the analyzer's selected world). `revenue=world-min`, the old
+/// token for "sell world's cheapest listing", is migrated to the
+/// `ListingMin` default by the recipe analyzer's URL compat mapping.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum RevenueMetric {
-    /// Cheapest current listing in scope.
+    /// Cheapest current listing on the sell world — the price you'd
+    /// actually list at. Falls back to the buy-scope listing when the
+    /// world has none up (see `override_listings`).
+    #[default]
     ListingMin,
     SaleMedian,
     SaleMin,
     SaleAvg,
-    /// Cheapest current listing on the analyzer's selected world — the
-    /// price you'd actually list at. Falls back to the scope-wide listing
-    /// when the world has none up.
-    #[default]
-    WorldMin,
 }
 
 impl RevenueMetric {
-    /// The sale statistic this metric reads, or `None` for listing-backed metrics.
+    /// The sale statistic this metric reads, or `None` for the listing metric.
     pub fn sale_stat(self) -> Option<SaleStat> {
         match self {
-            RevenueMetric::ListingMin | RevenueMetric::WorldMin => None,
+            RevenueMetric::ListingMin => None,
             RevenueMetric::SaleMedian => Some(SaleStat::Median),
             RevenueMetric::SaleMin => Some(SaleStat::Min),
             RevenueMetric::SaleAvg => Some(SaleStat::Avg),
@@ -110,7 +114,6 @@ impl FromStr for RevenueMetric {
             "sale-median" => Ok(RevenueMetric::SaleMedian),
             "sale-min" => Ok(RevenueMetric::SaleMin),
             "sale-avg" => Ok(RevenueMetric::SaleAvg),
-            "world-min" => Ok(RevenueMetric::WorldMin),
             _ => Err(()),
         }
     }
@@ -123,38 +126,58 @@ impl Display for RevenueMetric {
             RevenueMetric::SaleMedian => "sale-median",
             RevenueMetric::SaleMin => "sale-min",
             RevenueMetric::SaleAvg => "sale-avg",
-            RevenueMetric::WorldMin => "world-min",
         })
     }
 }
 
-/// Whether market data (listings *and* sale stats) is scoped to the whole
-/// region or only the current datacenter.
+/// Where ingredient prices are searched: the sell world only, its
+/// datacenter, or the whole region. Also scopes the cost-basis sale stats.
+/// Defaults to the datacenter — a realistic "purchase zone" that doesn't
+/// assume cross-region travel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub enum MarketScope {
+pub enum BuyScope {
+    World,
     #[default]
-    Region,
     Datacenter,
+    Region,
 }
 
-impl FromStr for MarketScope {
+impl FromStr for BuyScope {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "region" => Ok(MarketScope::Region),
-            "datacenter" => Ok(MarketScope::Datacenter),
+            "world" => Ok(BuyScope::World),
+            "datacenter" => Ok(BuyScope::Datacenter),
+            "region" => Ok(BuyScope::Region),
             _ => Err(()),
         }
     }
 }
 
-impl Display for MarketScope {
+impl Display for BuyScope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            MarketScope::Region => "region",
-            MarketScope::Datacenter => "datacenter",
+            BuyScope::World => "world",
+            BuyScope::Datacenter => "datacenter",
+            BuyScope::Region => "region",
         })
     }
+}
+
+/// Base map with every entry the override map carries replacing the base's.
+/// Used for revenue: the sell world's own listing wins even when it is
+/// higher than the buy-scope minimum (it is the price you would list at);
+/// items with no sell-world listing keep the base price so rows aren't
+/// dropped as unpriceable — same fallback the old `world-min` metric had.
+pub fn override_listings(
+    base: &CheapestListingsMap,
+    over: &CheapestListingsMap,
+) -> CheapestListingsMap {
+    let mut map = base.map.clone();
+    for (key, data) in &over.map {
+        map.insert(*key, *data);
+    }
+    CheapestListingsMap { map }
 }
 
 /// Re-price a [`CheapestListingsMap`] from sale statistics.
@@ -249,11 +272,10 @@ mod tests {
             RevenueMetric::SaleMedian,
             RevenueMetric::SaleMin,
             RevenueMetric::SaleAvg,
-            RevenueMetric::WorldMin,
         ] {
             assert_eq!(metric.to_string().parse(), Ok(metric));
         }
-        for scope in [MarketScope::Region, MarketScope::Datacenter] {
+        for scope in [BuyScope::World, BuyScope::Datacenter, BuyScope::Region] {
             assert_eq!(scope.to_string().parse(), Ok(scope));
         }
     }
@@ -261,12 +283,34 @@ mod tests {
     #[test]
     fn defaults() {
         assert_eq!(CostBasis::default(), CostBasis::ListingMin);
-        // Revenue defaults to the selected world's cheapest listing — you sell
-        // on your own world, not wherever the region-wide minimum happens to be.
-        assert_eq!(RevenueMetric::default(), RevenueMetric::WorldMin);
-        assert_eq!(MarketScope::default(), MarketScope::Region);
+        // Revenue is always evaluated on the sell world; the default is its
+        // cheapest current listing — the price you'd actually list at.
+        assert_eq!(RevenueMetric::default(), RevenueMetric::ListingMin);
+        // Buying defaults to the datacenter: a realistic "purchase zone"
+        // that doesn't assume cross-region travel.
+        assert_eq!(BuyScope::default(), BuyScope::Datacenter);
         assert_eq!(CostBasis::default().sale_stat(), None);
         assert_eq!(RevenueMetric::default().sale_stat(), None);
+    }
+
+    #[test]
+    fn world_min_token_no_longer_parses() {
+        // `revenue=world-min` is handled by the recipe analyzer's URL
+        // compat mapping, not by the enum.
+        assert!("world-min".parse::<RevenueMetric>().is_err());
+    }
+
+    #[test]
+    fn override_listings_prefers_the_override_where_present() {
+        let base = listings(&[(1, false, 100, 7), (2, false, 200, 7)]);
+        let world = listings(&[(1, false, 150, 42)]);
+        let merged = override_listings(&base, &world);
+        // Item 1: the sell world's own (higher) listing wins — that is the
+        // price you'd actually list at.
+        assert_eq!(merged.find_matching_listings(1).lowest_gil(), Some(150));
+        // Item 2: no listing on the sell world — fall back to the base map
+        // so the row isn't dropped as unpriceable.
+        assert_eq!(merged.find_matching_listings(2).lowest_gil(), Some(200));
     }
 
     #[test]
