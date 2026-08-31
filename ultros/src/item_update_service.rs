@@ -57,6 +57,49 @@ where
     }
 }
 
+/// State of a world's full-sweep slot. `Running` reserves the slot while a
+/// sweep is in flight; only a *completed* sweep stamps `CompletedAt`, so a
+/// sweep that dies never costs the world its [`FULL_SWEEP_COOLDOWN`] (a
+/// claim that leaks on panic degrades to the old stamp-upfront behavior).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SweepSlot {
+    Running,
+    CompletedAt(Instant),
+}
+
+/// Claims the slot for `world_id` if it is free or its cooldown has elapsed.
+/// Returns `false` (without touching the map) when a sweep is already
+/// running or a completed sweep is still within [`FULL_SWEEP_COOLDOWN`].
+fn claim_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant) -> bool {
+    match slots.get(&world_id) {
+        Some(SweepSlot::Running) => false,
+        Some(SweepSlot::CompletedAt(at)) if now.duration_since(*at) < FULL_SWEEP_COOLDOWN => false,
+        _ => {
+            slots.insert(world_id, SweepSlot::Running);
+            true
+        }
+    }
+}
+
+/// Marks the slot as a completed sweep, starting its cooldown.
+fn confirm_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant) {
+    slots.insert(world_id, SweepSlot::CompletedAt(now));
+}
+
+/// Frees a claimed-but-unfinished slot. A confirmed cooldown is left alone.
+///
+/// No production call site exists yet: the only legitimate caller is the
+/// "a full sweep is already running elsewhere" branch that Task 4's global
+/// concurrency guard (`try_begin_full_sweep`) introduces around the claim in
+/// `check_for_missed_items_on_world`. Exercised directly by `mod tests` until
+/// that guard lands.
+#[allow(dead_code)]
+fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
+    if let Some(SweepSlot::Running) = slots.get(&world_id) {
+        slots.remove(&world_id);
+    }
+}
+
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
 pub(crate) struct UpdateService {
@@ -65,8 +108,10 @@ pub(crate) struct UpdateService {
     pub(crate) universalis: UniversalisClient,
     pub(crate) listings: EventProducer<ListingEventData>,
     pub(crate) sales: EventProducer<SaleEventData>,
-    /// Per-world timestamp of the last saturation-triggered full sweep.
-    pub(crate) full_sweep_cooldowns: Mutex<HashMap<i32, Instant>>,
+    /// Per-world full-sweep slot: `Running` while a sweep is in flight,
+    /// `CompletedAt` while the [`FULL_SWEEP_COOLDOWN`] from the last
+    /// completed sweep is still active. See [`SweepSlot`].
+    pub(crate) full_sweep_cooldowns: Mutex<HashMap<i32, SweepSlot>>,
     /// Worlds Universalis 404s on. Purely a log de-duplicator — see
     /// [`UpdateService::note_world_uncovered`].
     pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
@@ -236,18 +281,44 @@ impl UpdateService {
 
     /// Claims the full-sweep slot for a world if its cooldown has elapsed.
     fn claim_full_sweep_slot(&self, world_id: i32) -> bool {
-        let mut cooldowns = self
-            .full_sweep_cooldowns
-            .lock()
-            .expect("full_sweep_cooldowns poisoned");
-        let now = Instant::now();
-        match cooldowns.get(&world_id) {
-            Some(last) if now.duration_since(*last) < FULL_SWEEP_COOLDOWN => false,
-            _ => {
-                cooldowns.insert(world_id, now);
-                true
-            }
-        }
+        claim_slot(
+            &mut self
+                .full_sweep_cooldowns
+                .lock()
+                .expect("full_sweep_cooldowns poisoned"),
+            world_id,
+            Instant::now(),
+        )
+    }
+
+    /// Marks a claimed slot as a completed sweep, starting its cooldown.
+    fn confirm_full_sweep(&self, world_id: i32) {
+        confirm_slot(
+            &mut self
+                .full_sweep_cooldowns
+                .lock()
+                .expect("full_sweep_cooldowns poisoned"),
+            world_id,
+            Instant::now(),
+        )
+    }
+
+    /// Frees a claimed-but-unfinished full-sweep slot so the next saturated
+    /// cycle can retry immediately instead of waiting out a cooldown that
+    /// was never earned.
+    ///
+    /// Not yet called in this task: its call site is the "a full sweep is
+    /// already running elsewhere" branch that Task 4's global concurrency
+    /// guard adds around the claim below. See `release_slot`.
+    #[allow(dead_code)]
+    fn release_full_sweep_slot(&self, world_id: i32) {
+        release_slot(
+            &mut self
+                .full_sweep_cooldowns
+                .lock()
+                .expect("full_sweep_cooldowns poisoned"),
+            world_id,
+        )
     }
 
     #[instrument(level = "trace", skip(self))]
@@ -284,9 +355,13 @@ impl UpdateService {
             metrics::counter!("ultros_catchup_window_saturated", "world" => world.name.clone())
                 .increment(1);
             if self.claim_full_sweep_slot(world.id) {
+                // Task 4 adds a global concurrency guard (`try_begin_full_sweep`)
+                // around this claim; until then the claim/confirm pair alone
+                // still fixes the cooldown-on-failure bug this task targets.
                 warn!(world = %world.name, "recency window saturated, running full item sweep");
                 let tally = self.check_items(world, &Self::all_marketable_items()).await;
                 tally.record(&world.name);
+                self.confirm_full_sweep(world.id);
             } else {
                 warn!(world = %world.name, "recency window saturated, full sweep on cooldown");
             }
@@ -687,6 +762,54 @@ mod tests {
             price_per_unit: price,
             world_id: WORLD_ID,
         }
+    }
+
+    #[test]
+    fn claim_confirm_release_slot_lifecycle() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+
+        // Free slot claims; a claimed-but-unconfirmed slot refuses re-claims.
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+        assert!(!claim_slot(&mut slots, WORLD_ID, t0));
+
+        // Released without confirming (sweep died): immediately claimable again —
+        // the failed sweep must not burn the 6h cooldown (spec §3).
+        release_slot(&mut slots, WORLD_ID);
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+
+        // Confirmed: cooldown holds until FULL_SWEEP_COOLDOWN has elapsed.
+        confirm_slot(&mut slots, WORLD_ID, t0);
+        assert!(!claim_slot(
+            &mut slots,
+            WORLD_ID,
+            t0 + FULL_SWEEP_COOLDOWN - Duration::from_secs(1)
+        ));
+        assert!(claim_slot(&mut slots, WORLD_ID, t0 + FULL_SWEEP_COOLDOWN));
+    }
+
+    #[test]
+    fn release_does_not_clear_a_confirmed_cooldown() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+        confirm_slot(&mut slots, WORLD_ID, t0);
+        // A stray release (e.g. an error path running after completion) must not
+        // reopen the world for immediate re-sweeping.
+        release_slot(&mut slots, WORLD_ID);
+        assert!(!claim_slot(
+            &mut slots,
+            WORLD_ID,
+            t0 + Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn slots_are_per_world() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, 1, t0));
+        assert!(claim_slot(&mut slots, 2, t0));
     }
 
     #[test]
