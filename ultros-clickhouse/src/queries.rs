@@ -1023,6 +1023,13 @@ pub struct BulkSaleStatsRow {
 /// across worlds while sum/count, min, max, and volume fields compose exactly.
 /// `FINAL` is safe here because the world/window predicate matches the table's
 /// leading sort key and prunes the read before replacement merging.
+///
+/// VWAP is derived in an **outer** `SELECT` rather than beside the other
+/// aggregates. ClickHouse resolves an identifier to a same-scope alias in
+/// preference to a column, so writing `sum(units_sold)` next to
+/// `sum(units_sold) AS units_sold` expands to `sum(sum(units_sold))` and the
+/// whole query fails with `ILLEGAL_AGGREGATION` (error 184) at runtime —
+/// invisible to any test that only asserts on the SQL string.
 pub async fn bulk_sale_stats(
     ch: &ClickHouseClient,
     world_ids: &[i32],
@@ -1041,17 +1048,30 @@ pub async fn bulk_sale_stats(
         SELECT
             item_id,
             hq,
-            toInt32(min(min_price)) AS min_price,
-            toInt32(quantileTDigestMerge(0.5)(price_quantile)) AS median_price,
-            toInt32(round(sum(price_sum) / greatest(sum(sale_count), 1))) AS avg_price,
-            toInt64(sum(sale_count)) AS num_sold,
-            toInt64(max(last_sold_unix)) AS last_sold_unix,
-            toUInt64(sum(units_sold)) AS units_sold,
-            toInt32(round(sum(gil_volume) / greatest(sum(units_sold), 1))) AS vwap
-        FROM sale_stats_window FINAL
-        WHERE world_id IN ({worlds})
-          AND window_days = {window_days}
-        GROUP BY item_id, hq
+            min_price,
+            median_price,
+            avg_price,
+            num_sold,
+            last_sold_unix,
+            units_sold,
+            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap
+        FROM
+        (
+            SELECT
+                item_id,
+                hq,
+                toInt32(min(min_price)) AS min_price,
+                toInt32(quantileTDigestMerge(0.5)(price_quantile)) AS median_price,
+                toInt32(round(sum(price_sum) / greatest(sum(sale_count), 1))) AS avg_price,
+                toInt64(sum(sale_count)) AS num_sold,
+                toInt64(max(last_sold_unix)) AS last_sold_unix,
+                toUInt64(sum(units_sold)) AS units_sold,
+                toUInt64(sum(gil_volume)) AS gil_volume_sum
+            FROM sale_stats_window FINAL
+            WHERE world_id IN ({worlds})
+              AND window_days = {window_days}
+            GROUP BY item_id, hq
+        )
         "#
     );
     Ok(ch
