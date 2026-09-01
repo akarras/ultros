@@ -39,6 +39,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Browser alerts now open the page they are about",
+        blurb: "Click an item-price alert to open that item's market on the world that triggered it. Retainer undercut alerts now open the Undercuts page and jump straight to the affected retainer.",
+        link: Some("/alerts"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Analyzer explanations stay out of your way",
         blurb: "Recipe, venture, scrip, leve, Free Company crafting, and vendor resale tools no longer put a large calculation explainer above their results. The formulas and assumptions are still available whenever you need them - open the info icon beside the tool name.",
         link: None,
