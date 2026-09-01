@@ -773,6 +773,16 @@ pub fn LeveAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, leve_analyzer_tool_context).to_string()
                     help_href="/help/leve-analyzer"
                     help_body=t_string!(i18n, leve_analyzer_tool_help).to_string()
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, leve_analyzer_calc_title).to_string(),
+                        t_string!(i18n, leve_analyzer_calc_formula).to_string(),
+                        t_string!(i18n, leve_analyzer_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, leve_analyzer_assumption_baseline_nq).to_string(),
+                        t_string!(i18n, leve_analyzer_assumption_expected_value).to_string(),
+                        t_string!(i18n, leve_analyzer_assumption_recent_sales).to_string(),
+                    ]
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
@@ -788,17 +798,6 @@ pub fn LeveAnalyzer() -> impl IntoView {
                         set_current_world=set_selected_world.into()
                     />
                 </ToolHeader>
-                <CalculationSummary
-                    title=t_string!(i18n, leve_analyzer_calc_title).to_string()
-                    formula=t_string!(i18n, leve_analyzer_calc_formula).to_string()
-                    details=t_string!(i18n, leve_analyzer_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_baseline_nq).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_expected_value).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_recent_sales).to_string() />
-                </div>
-
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();

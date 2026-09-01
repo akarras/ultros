@@ -2051,6 +2051,16 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, recipe_analyzer_tool_context).to_string()
                     help_href="/help/recipe-analyzer"
                     help_body=t_string!(i18n, recipe_analyzer_tool_help).to_string()
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, recipe_analyzer_calc_title).to_string(),
+                        t_string!(i18n, recipe_analyzer_calc_formula).to_string(),
+                        t_string!(i18n, recipe_analyzer_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, recipe_analyzer_assumption_crafter_levels).to_string(),
+                        t_string!(i18n, recipe_analyzer_assumption_subcraft_recursion).to_string(),
+                        t_string!(i18n, recipe_analyzer_assumption_sales_velocity).to_string(),
+                    ]
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
@@ -2085,17 +2095,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         </div>
                     }
                 }
-                <CalculationSummary
-                    title=t_string!(i18n, recipe_analyzer_calc_title).to_string()
-                    formula=t_string!(i18n, recipe_analyzer_calc_formula).to_string()
-                    details=t_string!(i18n, recipe_analyzer_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_crafter_levels).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_subcraft_recursion).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, recipe_analyzer_assumption_sales_velocity).to_string() />
-                </div>
-
                 // Rendered unconditionally: gating on `selected_world.is_some()`
                 // hid the only control that can set a world from a visitor who
                 // has neither a home-world cookie nor `?world=` in the URL.
