@@ -1814,7 +1814,10 @@ fn ListingsContent(
                     // right to return, already logged with its status and path
                     // by the fetch layer -- re-reporting it here is what filled
                     // GlitchTip issue 2210. See `AppError::is_api_response`.
-                    if e.is_api_response() {
+                    // A loopback timeout is the same story one layer down:
+                    // already logged by the fetch layer, transient, and the
+                    // other half of GlitchTip issue 2210's volume.
+                    if e.is_api_response() || e.is_transient_transport() {
                         tracing::warn!(error = ?e, item_id, %world, "Error getting value");
                     } else {
                         tracing::error!(error = ?e, item_id, %world, "Error getting value");

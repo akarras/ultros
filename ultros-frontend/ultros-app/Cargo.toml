@@ -105,6 +105,11 @@ reqwest = { version = "0.12", default-features = false, features = [
     "zstd"
 ]}
 
+# The transient-transport classifier is tested against real `reqwest` failures
+# (a socket that never answers, a closed port), which need a runtime.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 

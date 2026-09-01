@@ -180,7 +180,10 @@ pub(crate) fn FlipRouteCard(
                             // a raw URL parameter, so an unresolvable world here
                             // is user input the API correctly 404s, not a fault
                             // of ours. See `AppError::is_api_response`.
-                            if e.is_api_response() {
+                            // A loopback timeout is transient and already
+                            // logged by the fetch layer — see
+                            // `AppError::is_transient_transport`.
+                            if e.is_api_response() || e.is_transient_transport() {
                                 tracing::warn!(error = ?e, item_id, buy_world = %name, "Error getting compare-buy-from listings");
                             } else {
                                 tracing::error!(error = ?e, item_id, buy_world = %name, "Error getting compare-buy-from listings");

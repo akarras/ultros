@@ -10294,6 +10294,7 @@ dependencies = [
  "thousands",
  "time",
  "timeago",
+ "tokio",
  "tracing",
  "ultros-api-types",
  "ultros-charts",
