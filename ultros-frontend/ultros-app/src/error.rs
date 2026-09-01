@@ -90,7 +90,17 @@ impl AppError {
 /// `reqwest`'s predicates walk the source chain, so a timeout that surfaces as
 /// a decode error while the body is streaming is still recognised.
 pub(crate) fn is_transient_reqwest(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect()
+    // `is_connect` does not exist in reqwest's wasm backend — the browser
+    // fetch API reports a refused connection as an opaque request error — so
+    // the client side classifies on the timeout alone.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        error.is_timeout() || error.is_connect()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        error.is_timeout()
+    }
 }
 
 /// This error type implements From's for the non serializable error types and shoves them into a string
