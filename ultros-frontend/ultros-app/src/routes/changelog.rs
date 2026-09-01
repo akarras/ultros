@@ -39,6 +39,30 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Analyzer explanations stay out of your way",
+        blurb: "Recipe, venture, scrip, leve, Free Company crafting, and vendor resale tools no longer put a large calculation explainer above their results. The formulas and assumptions are still available whenever you need them - open the info icon beside the tool name.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
+        title: "Sales at a Glance is gone from the item page",
+        blurb: "The item page's sale history no longer carries the Sales at a Glance panel - the 24 hour and 30 day stat tiles, and the projected next sale price that was extrapolated from them. The projection in particular read as a prediction while being a straight line fit through a handful of recent sales, which is not something to trade on. The sale history table itself is unchanged and now has the full panel to itself; the same numbers, computed over a real sample, live on the analyzer pages.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
+        title: "Recipe Analyzer: see and filter by where the cheapest listing is",
+        blurb: "Two more optional columns show which world and datacenter currently hold the cheapest listing of the item you'd craft. Clicking either one filters the table down to that world or datacenter, the same way the flip finder does, and the filter shows as a chip you can remove.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
+        title: "Recipe Analyzer: pick your columns",
+        blurb: "The analyzer gets the flip finder's Columns picker. Alongside the existing table you can now show a confidence chip (on by default), when the item last sold, how many units moved in the last 7 days, the volume-weighted average price with how far the current price sits from it, and the 5% market board tax. Every new column sorts, and your choice is kept in the page's address so you can bookmark it.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Recipe Analyzer: a Market menu for where you buy and sell",
         blurb: "The pricing controls had ended up hidden behind the + Filter menu. They now have their own Market button in the toolbar, reworked around a buy/sell split: choose whether ingredients are priced from your world, your datacenter, or the whole region, pick the cost basis, and revenue is always your sell world's price. Buying now defaults to your datacenter rather than the whole region, so profit estimates no longer assume you fly across the region for every ingredient.",
         link: Some("/recipe-analyzer"),

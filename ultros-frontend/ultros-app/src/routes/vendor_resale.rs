@@ -921,6 +921,16 @@ pub fn VendorWorldView() -> impl IntoView {
                     context=t_string!(i18n, vendor_resale_tool_context).to_string()
                     help_href="/help/vendor-resale"
                     help_body=t_string!(i18n, vendor_resale_tool_help).to_string()
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, vendor_resale_calc_title).to_string(),
+                        t_string!(i18n, vendor_resale_calc_formula).to_string(),
+                        t_string!(i18n, vendor_resale_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, vendor_resale_assumption_nq_purchase).to_string(),
+                        t_string!(i18n, vendor_resale_assumption_hq_excluded).to_string(),
+                        t_string!(i18n, vendor_resale_assumption_no_vendor_names).to_string(),
+                    ]
                 />
 
                 // Controls Section
@@ -946,16 +956,6 @@ pub fn VendorWorldView() -> impl IntoView {
                                 label=t_string!(i18n, vendor_resale_preset_500_roi).to_string()
                             />
                             <PresetFilterButton href="?profit=50000" label=t_string!(i18n, vendor_resale_preset_50k_profit).to_string() />
-                        </div>
-                        <CalculationSummary
-                            title=t_string!(i18n, vendor_resale_calc_title).to_string()
-                            formula=t_string!(i18n, vendor_resale_calc_formula).to_string()
-                            details=t_string!(i18n, vendor_resale_calc_details).to_string()
-                        />
-                        <div class="flex flex-wrap gap-2">
-                            <AssumptionBadge text=t_string!(i18n, vendor_resale_assumption_nq_purchase).to_string() />
-                            <AssumptionBadge text=t_string!(i18n, vendor_resale_assumption_hq_excluded).to_string() />
-                            <AssumptionBadge text=t_string!(i18n, vendor_resale_assumption_no_vendor_names).to_string() />
                         </div>
                     </div>
                 </div>

@@ -114,6 +114,10 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.6.0"
+# `#[tokio::test(start_paused = true)]` (retry-backoff tests in
+# item_update_service.rs) needs tokio's virtual clock, which only exists
+# behind "test-util". Scoped to dev-dependencies so it never ships.
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 profiling = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]

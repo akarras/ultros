@@ -133,22 +133,11 @@ const DEFAULT_VISIBLE_COLS: &[&str] = &[
 ];
 
 fn parse_visible_cols(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    match raw {
-        None => DEFAULT_VISIBLE_COLS.iter().copied().collect(),
-        Some(s) => s
-            .split(',')
-            .filter_map(|tok| ALL_OPTIONAL_COLS.iter().find(|c| **c == tok).copied())
-            .collect(),
-    }
+    crate::components::control_bar::parse_visible_cols(raw, ALL_OPTIONAL_COLS, DEFAULT_VISIBLE_COLS)
 }
 
 fn serialize_visible_cols(visible: &std::collections::HashSet<&'static str>) -> String {
-    ALL_OPTIONAL_COLS
-        .iter()
-        .filter(|c| visible.contains(*c))
-        .copied()
-        .collect::<Vec<_>>()
-        .join(",")
+    crate::components::control_bar::serialize_visible_cols(visible, ALL_OPTIONAL_COLS)
 }
 use chrono::{Duration, Utc};
 use gloo_timers::future::TimeoutFuture;

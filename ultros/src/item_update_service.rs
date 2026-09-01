@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -28,6 +31,104 @@ const RECENTLY_UPDATED_WINDOW: u8 = 200;
 const UPLOAD_TIME_SLACK_SECONDS: i64 = 120;
 /// Minimum time between saturation-triggered full sweeps of a single world.
 const FULL_SWEEP_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
+/// Backoff schedule for transient Universalis failures inside a sweep chunk:
+/// one initial attempt plus one retry per entry.
+const CHUNK_RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(45),
+];
+
+/// Runs `op`, retrying transient Universalis failures (429/5xx/timeouts — see
+/// [`universalis::Error::is_transient`]) on the [`CHUNK_RETRY_BACKOFF`]
+/// schedule. Non-transient errors and exhausted retries return the last error.
+async fn retry_transient<T, F, Fut>(mut op: F) -> Result<T, universalis::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, universalis::Error>>,
+{
+    let mut backoff = CHUNK_RETRY_BACKOFF.iter();
+    loop {
+        match op().await {
+            Ok(value) => return Ok(value),
+            Err(e) if e.is_transient() => match backoff.next() {
+                Some(delay) => tokio::time::sleep(*delay).await,
+                None => return Err(e),
+            },
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// State of a world's full-sweep slot. `Running` reserves the slot while a
+/// sweep is in flight; only a *completed* sweep stamps `CompletedAt`, so a
+/// sweep that dies never costs the world its [`FULL_SWEEP_COOLDOWN`] (a
+/// claim that leaks on panic degrades to the old stamp-upfront behavior).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SweepSlot {
+    Running,
+    CompletedAt(Instant),
+}
+
+/// Claims the slot for `world_id` if it is free or its cooldown has elapsed.
+/// Returns `false` (without touching the map) when a sweep is already
+/// running or a completed sweep is still within [`FULL_SWEEP_COOLDOWN`].
+fn claim_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant) -> bool {
+    match slots.get(&world_id) {
+        Some(SweepSlot::Running) => false,
+        Some(SweepSlot::CompletedAt(at)) if now.duration_since(*at) < FULL_SWEEP_COOLDOWN => false,
+        _ => {
+            slots.insert(world_id, SweepSlot::Running);
+            true
+        }
+    }
+}
+
+/// Marks the slot as a completed sweep, starting its cooldown.
+fn confirm_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32, now: Instant) {
+    slots.insert(world_id, SweepSlot::CompletedAt(now));
+}
+
+/// Frees a claimed-but-unfinished slot. A confirmed cooldown is left alone.
+///
+/// Called via `release_full_sweep_slot` when a full sweep makes no progress
+/// on a world (every chunk skipped) — see `do_full_world_sweep`. Also called
+/// from the "a full sweep is already running elsewhere" branch around the
+/// claim in `check_for_missed_items_on_world`.
+fn release_slot(slots: &mut HashMap<i32, SweepSlot>, world_id: i32) {
+    if let Some(SweepSlot::Running) = slots.get(&world_id) {
+        slots.remove(&world_id);
+    }
+}
+
+/// Serializes full sweeps (manual and saturation-triggered): a full sweep
+/// fetches every marketable item for a world, and two at once doubles the
+/// load on Universalis for zero extra coverage.
+///
+/// `try_begin_full_sweep` claims it from the saturation branch's else-arm
+/// in `check_for_missed_items_on_world`; Task 6 adds a second caller from
+/// `/rescan_market`.
+#[derive(Default)]
+pub(crate) struct SweepLock(AtomicBool);
+
+/// Held for the duration of a full sweep; frees the lock on drop (including
+/// panics, so a crashed sweep never wedges the command).
+pub(crate) struct SweepLockGuard(Arc<SweepLock>);
+
+impl SweepLock {
+    pub(crate) fn try_claim(self: &Arc<Self>) -> Option<SweepLockGuard> {
+        self.0
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| SweepLockGuard(self.clone()))
+    }
+}
+
+impl Drop for SweepLockGuard {
+    fn drop(&mut self) {
+        self.0.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Item update service attempts to keep ultros' data in sync with Universalis' data.
 /// It does this primarily by comparing the recently updated items on Universalis with recently updated items on ultros
@@ -37,11 +138,15 @@ pub(crate) struct UpdateService {
     pub(crate) universalis: UniversalisClient,
     pub(crate) listings: EventProducer<ListingEventData>,
     pub(crate) sales: EventProducer<SaleEventData>,
-    /// Per-world timestamp of the last saturation-triggered full sweep.
-    pub(crate) full_sweep_cooldowns: Mutex<HashMap<i32, Instant>>,
+    /// Per-world full-sweep slot: `Running` while a sweep is in flight,
+    /// `CompletedAt` while the [`FULL_SWEEP_COOLDOWN`] from the last
+    /// completed sweep is still active. See [`SweepSlot`].
+    pub(crate) full_sweep_cooldowns: Mutex<HashMap<i32, SweepSlot>>,
     /// Worlds Universalis 404s on. Purely a log de-duplicator — see
     /// [`UpdateService::note_world_uncovered`].
     pub(crate) uncovered_worlds: Mutex<HashSet<i32>>,
+    /// Serializes full sweeps — see [`SweepLock`].
+    pub(crate) sweep_lock: Arc<SweepLock>,
 }
 
 /// True when `error` is a Universalis `404`, i.e. it does not know the entity
@@ -98,6 +203,8 @@ struct CatchupTally {
     changed: u64,
     noop: u64,
     failed: u64,
+    /// Fetch chunks skipped after retries — see `ultros_sweep_chunks_failed`.
+    chunks_failed: u64,
 }
 
 impl CatchupTally {
@@ -124,6 +231,99 @@ impl CatchupTally {
                 .increment(count);
             }
         }
+    }
+
+    /// True when a full sweep actually fetched and processed at least one
+    /// item — `changed`, `noop`, and `failed` all count as progress, since
+    /// each means an item was fetched and classified; only `chunks_failed`
+    /// (every chunk skipped after retries) means nothing was recovered.
+    /// Used by [`UpdateService::do_full_world_sweep`] to decide whether a
+    /// world's full-sweep cooldown should be confirmed or released — a
+    /// world with no progress must not burn its 6h cooldown for a sweep
+    /// that recovered nothing.
+    fn made_progress(&self) -> bool {
+        self.changed + self.noop + self.failed > 0
+    }
+}
+
+/// One world's outcome from a full sweep, folded into a [`SweepReport`].
+///
+/// `duration` feeds [`SweepReport::summary_text`]'s "slowest world" line —
+/// see there.
+pub(crate) struct WorldSweepSummary {
+    world_name: String,
+    tally: CatchupTally,
+    duration: std::time::Duration,
+}
+
+/// Fired after each world completes during [`UpdateService::do_full_world_sweep`]
+/// so a long-running sweep can report interim status. `/rescan_market`
+/// (`admin.rs`) forwards these through a throttled channel into a Discord
+/// message via [`SweepProgress::summary_text`].
+pub(crate) struct SweepProgress {
+    worlds_done: usize,
+    worlds_total: usize,
+    items_changed: u64,
+    chunks_failed: u64,
+}
+
+impl SweepProgress {
+    pub(crate) fn summary_text(&self) -> String {
+        format!(
+            "Sweep progress: {}/{} worlds — {} items updated, {} chunks skipped.",
+            self.worlds_done, self.worlds_total, self.items_changed, self.chunks_failed
+        )
+    }
+}
+
+/// Worlds listed by name before the count collapses to "+N more" — keeps the
+/// summary safely under Discord's 2000-character message cap.
+const REPORT_MAX_LISTED_WORLDS: usize = 10;
+
+/// Result of a completed full sweep across every world, returned by
+/// [`UpdateService::do_full_world_sweep`].
+pub(crate) struct SweepReport {
+    worlds: Vec<WorldSweepSummary>,
+    duration: std::time::Duration,
+}
+
+impl SweepReport {
+    pub(crate) fn summary_text(&self) -> String {
+        let changed: u64 = self.worlds.iter().map(|w| w.tally.changed).sum();
+        let failed: u64 = self.worlds.iter().map(|w| w.tally.failed).sum();
+        let chunks_failed: u64 = self.worlds.iter().map(|w| w.tally.chunks_failed).sum();
+        let minutes = self.duration.as_secs() / 60;
+        let mut text = format!(
+            "Full market sweep finished: {} worlds in {minutes} min — {changed} items updated, {failed} item writes failed, {chunks_failed} chunks skipped.",
+            self.worlds.len()
+        );
+        // Flags the single slowest world so an operator can spot one world
+        // dragging out the whole sweep (e.g. Universalis rate-limiting it
+        // harder than the rest) without having to dig through server logs.
+        if let Some(slowest) = self.worlds.iter().max_by_key(|w| w.duration) {
+            let slowest_minutes = slowest.duration.as_secs() / 60;
+            let slowest_seconds = slowest.duration.as_secs() % 60;
+            text.push_str(&format!(
+                "\nSlowest world: {} ({slowest_minutes}m{slowest_seconds:02}s).",
+                slowest.world_name
+            ));
+        }
+        let incomplete: Vec<&str> = self
+            .worlds
+            .iter()
+            .filter(|w| w.tally.chunks_failed > 0)
+            .map(|w| w.world_name.as_str())
+            .collect();
+        if !incomplete.is_empty() {
+            let listed = incomplete[..incomplete.len().min(REPORT_MAX_LISTED_WORLDS)].join(", ");
+            let overflow = incomplete.len().saturating_sub(REPORT_MAX_LISTED_WORLDS);
+            text.push_str(&format!("\nIncomplete worlds: {listed}"));
+            if overflow > 0 {
+                text.push_str(&format!(" (+{overflow} more)"));
+            }
+            text.push_str(" — the 5-minute catch-up loop will recover the skipped items.");
+        }
+        text
     }
 }
 
@@ -176,7 +376,7 @@ impl UpdateService {
         });
     }
 
-    fn all_marketable_items() -> Box<[i32]> {
+    pub(crate) fn all_marketable_items() -> Box<[i32]> {
         xiv_gen_db::data()
             .items
             .values()
@@ -185,14 +385,63 @@ impl UpdateService {
             .collect()
     }
 
-    /// Sweeps over every single marketable item in the game, ignoring the recency cache. Only should be used if data is known to be lost.
-    pub(crate) async fn do_full_world_sweep(&self) -> Result<(), anyhow::Error> {
+    /// Claims the global full-sweep lock. `None` when a sweep (manual or
+    /// saturation-triggered) is already running. See [`SweepLock`].
+    pub(crate) fn try_begin_full_sweep(&self) -> Option<SweepLockGuard> {
+        self.sweep_lock.try_claim()
+    }
+
+    /// Sweeps over every single marketable item in the game, ignoring the
+    /// recency cache. Only should be used if data is known to be lost. Never
+    /// aborts: failed chunks are skipped and reported via the returned
+    /// [`SweepReport`]. `progress` fires after each world completes.
+    ///
+    /// Callers must hold a [`SweepLockGuard`] (see
+    /// [`UpdateService::try_begin_full_sweep`]) so only one full sweep runs.
+    pub(crate) async fn do_full_world_sweep(
+        &self,
+        mut progress: impl FnMut(SweepProgress),
+    ) -> SweepReport {
         let all_marketable_items = Self::all_marketable_items();
-        for world in self.world_cache.get_all_worlds() {
-            tracing::info!("scanning items");
-            self.check_items(world, &all_marketable_items).await?;
+        let worlds: Vec<&world::Model> = self.world_cache.get_all_worlds().copied().collect();
+        let worlds_total = worlds.len();
+        let started = Instant::now();
+        let mut summaries = Vec::with_capacity(worlds_total);
+        let (mut items_changed, mut chunks_failed) = (0u64, 0u64);
+        for world in worlds {
+            let world_started = Instant::now();
+            info!(world = %world.name, "full sweep: scanning world");
+            let tally = self.check_items(world, &all_marketable_items).await;
+            tally.record(&world.name);
+            // A world that got nothing — every chunk skipped — has not been
+            // refetched, so it must not burn its cooldown; releasing lets the
+            // next saturated cycle retry. Partial coverage still counts:
+            // re-sweeping a world we mostly refetched would hammer
+            // Universalis for little gain, which is what the cooldown exists
+            // to stop.
+            if tally.made_progress() {
+                self.confirm_full_sweep(world.id);
+            } else {
+                self.release_full_sweep_slot(world.id);
+            }
+            items_changed += tally.changed;
+            chunks_failed += tally.chunks_failed;
+            summaries.push(WorldSweepSummary {
+                world_name: world.name.clone(),
+                tally,
+                duration: world_started.elapsed(),
+            });
+            progress(SweepProgress {
+                worlds_done: summaries.len(),
+                worlds_total,
+                items_changed,
+                chunks_failed,
+            });
         }
-        Ok(())
+        SweepReport {
+            worlds: summaries,
+            duration: started.elapsed(),
+        }
     }
 
     /// Records that Universalis does not cover `world_id`. Returns `true` the
@@ -206,18 +455,43 @@ impl UpdateService {
 
     /// Claims the full-sweep slot for a world if its cooldown has elapsed.
     fn claim_full_sweep_slot(&self, world_id: i32) -> bool {
-        let mut cooldowns = self
-            .full_sweep_cooldowns
-            .lock()
-            .expect("full_sweep_cooldowns poisoned");
-        let now = Instant::now();
-        match cooldowns.get(&world_id) {
-            Some(last) if now.duration_since(*last) < FULL_SWEEP_COOLDOWN => false,
-            _ => {
-                cooldowns.insert(world_id, now);
-                true
-            }
-        }
+        claim_slot(
+            &mut self
+                .full_sweep_cooldowns
+                .lock()
+                .expect("full_sweep_cooldowns poisoned"),
+            world_id,
+            Instant::now(),
+        )
+    }
+
+    /// Marks a claimed slot as a completed sweep, starting its cooldown.
+    fn confirm_full_sweep(&self, world_id: i32) {
+        confirm_slot(
+            &mut self
+                .full_sweep_cooldowns
+                .lock()
+                .expect("full_sweep_cooldowns poisoned"),
+            world_id,
+            Instant::now(),
+        )
+    }
+
+    /// Frees a claimed-but-unfinished full-sweep slot so the next saturated
+    /// cycle can retry immediately instead of waiting out a cooldown that
+    /// was never earned.
+    ///
+    /// Called by `do_full_world_sweep` when a world's sweep makes no
+    /// progress at all, and from the "a full sweep is already running
+    /// elsewhere" branch around the claim below. See `release_slot`.
+    fn release_full_sweep_slot(&self, world_id: i32) {
+        release_slot(
+            &mut self
+                .full_sweep_cooldowns
+                .lock()
+                .expect("full_sweep_cooldowns poisoned"),
+            world_id,
+        )
     }
 
     #[instrument(level = "trace", skip(self))]
@@ -245,7 +519,7 @@ impl UpdateService {
             Err(e) => return Err(e),
         };
         let item_ids: Box<[i32]> = updates.into_iter().map(|i| i.item_id).collect();
-        let tally = self.check_items(world, &item_ids).await?;
+        let tally = self.check_items(world, &item_ids).await;
         tally.record(&world.name);
         if item_ids.len() >= usize::from(RECENTLY_UPDATED_WINDOW) {
             // Every entry in the recency window was one we missed, so more
@@ -254,9 +528,26 @@ impl UpdateService {
             metrics::counter!("ultros_catchup_window_saturated", "world" => world.name.clone())
                 .increment(1);
             if self.claim_full_sweep_slot(world.id) {
-                warn!(world = %world.name, "recency window saturated, running full item sweep");
-                self.check_items(world, &Self::all_marketable_items())
-                    .await?;
+                // The world slot is ours; the global lock keeps us from
+                // overlapping a manual /rescan_market sweep. If it's busy,
+                // hand the world slot back unstamped so the next saturated
+                // cycle retries.
+                if let Some(_guard) = self.try_begin_full_sweep() {
+                    warn!(world = %world.name, "recency window saturated, running full item sweep");
+                    let tally = self.check_items(world, &Self::all_marketable_items()).await;
+                    tally.record(&world.name);
+                    // Same rule as `do_full_world_sweep`: a world with no
+                    // progress at all must not burn its cooldown for a sweep
+                    // that recovered nothing.
+                    if tally.made_progress() {
+                        self.confirm_full_sweep(world.id);
+                    } else {
+                        self.release_full_sweep_slot(world.id);
+                    }
+                } else {
+                    self.release_full_sweep_slot(world.id);
+                    warn!(world = %world.name, "recency window saturated, but a full sweep is already running");
+                }
             } else {
                 warn!(world = %world.name, "recency window saturated, full sweep on cooldown");
             }
@@ -291,7 +582,7 @@ impl UpdateService {
                 );
                 metrics::counter!("ultros_catchup_price_drift_items", "world" => world.name.clone())
                     .increment(drifted.len() as u64);
-                let tally = self.check_items(world, &drifted).await?;
+                let tally = self.check_items(world, &drifted).await;
                 tally.record(&world.name);
             }
             Ok(_) => {}
@@ -387,22 +678,50 @@ impl UpdateService {
         ))
     }
 
-    async fn check_items(
-        &self,
-        world::Model {
-            id,
-            name: world_name,
-            ..
-        }: &world::Model,
-        item_ids: &[i32],
-    ) -> Result<CatchupTally, anyhow::Error> {
-        let world_id = WorldId(*id);
+    async fn check_items(&self, world: &world::Model, item_ids: &[i32]) -> CatchupTally {
+        let world_id = WorldId(world.id);
+        let world_name = &world.name;
         let mut tally = CatchupTally::default();
-        for item_ids in item_ids.chunks(100) {
-            let market_data = self
-                .universalis
-                .marketboard_current_data(world_name, item_ids)
-                .await?;
+        let total_chunks = item_ids.chunks(100).len();
+        for (chunk_index, item_ids) in item_ids.chunks(100).enumerate() {
+            let market_data = match retry_transient(|| {
+                self.universalis
+                    .marketboard_current_data(world_name, item_ids)
+            })
+            .await
+            {
+                Ok(data) => data,
+                Err(e) if e.is_transient() => {
+                    // Universalis kept shedding this chunk through the whole
+                    // backoff schedule. The items' ingest markers are untouched,
+                    // so the five-minute catch-up loop will re-flag them.
+                    warn!(error = ?e, world = %world_name, items = item_ids.len(), "sweep chunk skipped after retries");
+                    metrics::counter!(
+                        "ultros_sweep_chunks_failed",
+                        "world" => world_name.clone(),
+                        "kind" => "transient",
+                    )
+                    .increment(1);
+                    tally.chunks_failed += 1;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                Err(e) => {
+                    // A non-transient answer (404 world, malformed response) will
+                    // repeat for every remaining chunk of this world — one warning
+                    // and a bulk count beat ~150 identical ones.
+                    let remaining = (total_chunks - chunk_index) as u64;
+                    warn!(error = ?e, world = %world_name, remaining_chunks = remaining, "sweep aborted for world: universalis fetch failed");
+                    metrics::counter!(
+                        "ultros_sweep_chunks_failed",
+                        "world" => world_name.clone(),
+                        "kind" => "error",
+                    )
+                    .increment(remaining);
+                    tally.chunks_failed += remaining;
+                    break;
+                }
+            };
             info!("missing data {item_ids:?}");
 
             let outcomes = stream::iter(
@@ -463,7 +782,7 @@ impl UpdateService {
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        Ok(tally)
+        tally
     }
 }
 
@@ -549,6 +868,58 @@ mod tests {
         )));
     }
 
+    fn bare_status(status: u16) -> universalis::Error {
+        universalis::Error::Status {
+            status,
+            url: "https://universalis.app/api/v2/aggregated/Ravana/5".to_string(),
+            body: String::new(),
+        }
+    }
+
+    /// Paused tokio time: `sleep` auto-advances, so the 5s/15s/45s backoff runs
+    /// instantly while still exercising the real await points.
+    #[tokio::test(start_paused = true)]
+    async fn retry_transient_retries_transient_errors_until_success() {
+        let mut attempts = 0;
+        let result = retry_transient(|| {
+            attempts += 1;
+            let out = if attempts < 3 {
+                Err(bare_status(504))
+            } else {
+                Ok(42)
+            };
+            async move { out }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts, 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_transient_gives_up_after_backoff_is_exhausted() {
+        let mut attempts = 0;
+        let result: Result<i32, _> = retry_transient(|| {
+            attempts += 1;
+            async { Err(bare_status(429)) }
+        })
+        .await;
+        assert!(result.unwrap_err().is_transient());
+        // 1 initial attempt + one retry per backoff entry.
+        assert_eq!(attempts, 1 + CHUNK_RETRY_BACKOFF.len());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_transient_fails_non_transient_errors_immediately() {
+        let mut attempts = 0;
+        let result: Result<i32, _> = retry_transient(|| {
+            attempts += 1;
+            async { Err(bare_status(404)) }
+        })
+        .await;
+        assert!(result.unwrap_err().is_not_found());
+        assert_eq!(attempts, 1);
+    }
+
     fn ours(item_id: i32, ingested_at: i64) -> Model {
         Model {
             item_id,
@@ -577,6 +948,106 @@ mod tests {
             price_per_unit: price,
             world_id: WORLD_ID,
         }
+    }
+
+    #[test]
+    fn claim_confirm_release_slot_lifecycle() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+
+        // Free slot claims; a claimed-but-unconfirmed slot refuses re-claims.
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+        assert!(!claim_slot(&mut slots, WORLD_ID, t0));
+
+        // Released without confirming (sweep died): immediately claimable again —
+        // the failed sweep must not burn the 6h cooldown (spec §3).
+        release_slot(&mut slots, WORLD_ID);
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+
+        // Confirmed: cooldown holds until FULL_SWEEP_COOLDOWN has elapsed.
+        confirm_slot(&mut slots, WORLD_ID, t0);
+        assert!(!claim_slot(
+            &mut slots,
+            WORLD_ID,
+            t0 + FULL_SWEEP_COOLDOWN - Duration::from_secs(1)
+        ));
+        assert!(claim_slot(&mut slots, WORLD_ID, t0 + FULL_SWEEP_COOLDOWN));
+    }
+
+    /// `do_full_world_sweep` decides confirm-vs-release per world via
+    /// `CatchupTally::made_progress`; this pins that decision at the slot
+    /// level (spec §3: "a failed saturation-triggered sweep no longer costs
+    /// the world its 6-hour slot") without constructing an `UpdateService`.
+    #[test]
+    fn a_fully_failed_world_leaves_the_slot_claimable() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+
+        // Every chunk skipped, nothing recovered — do_full_world_sweep's
+        // else-arm releases rather than confirms.
+        let all_chunks_skipped = CatchupTally {
+            changed: 0,
+            noop: 0,
+            failed: 0,
+            chunks_failed: 3,
+        };
+        assert!(!all_chunks_skipped.made_progress());
+        release_slot(&mut slots, WORLD_ID);
+
+        assert!(
+            claim_slot(&mut slots, WORLD_ID, t0),
+            "a fully-failed sweep must not burn the cooldown"
+        );
+    }
+
+    /// The counterpart to the above: any progress at all — even a lone write
+    /// failure with no changes or no-ops — confirms the cooldown so a mostly-
+    /// successful sweep doesn't immediately re-hammer Universalis.
+    #[test]
+    fn partial_progress_still_confirms_the_cooldown() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+
+        let one_failed_write = CatchupTally {
+            changed: 0,
+            noop: 0,
+            failed: 1,
+            chunks_failed: 2,
+        };
+        assert!(one_failed_write.made_progress());
+        confirm_slot(&mut slots, WORLD_ID, t0);
+
+        assert!(!claim_slot(
+            &mut slots,
+            WORLD_ID,
+            t0 + FULL_SWEEP_COOLDOWN - Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn release_does_not_clear_a_confirmed_cooldown() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, WORLD_ID, t0));
+        confirm_slot(&mut slots, WORLD_ID, t0);
+        // A stray release (e.g. an error path running after completion) must not
+        // reopen the world for immediate re-sweeping.
+        release_slot(&mut slots, WORLD_ID);
+        assert!(!claim_slot(
+            &mut slots,
+            WORLD_ID,
+            t0 + Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn slots_are_per_world() {
+        let mut slots = HashMap::new();
+        let t0 = Instant::now();
+        assert!(claim_slot(&mut slots, 1, t0));
+        assert!(claim_slot(&mut slots, 2, t0));
     }
 
     #[test]
@@ -713,8 +1184,18 @@ mod tests {
                 changed: 1,
                 noop: 2,
                 failed: 1,
+                chunks_failed: 0,
             }
         );
+    }
+
+    /// `chunks_failed` counts whole skipped fetch chunks (up to 100 items each),
+    /// not items — it rides the tally for aggregation but is emitted through
+    /// `ultros_sweep_chunks_failed`, never `ultros_catchup_items_recovered`.
+    #[test]
+    fn tally_default_has_no_failed_chunks() {
+        let tally = CatchupTally::default();
+        assert_eq!(tally.chunks_failed, 0);
     }
 
     #[test]
@@ -730,5 +1211,109 @@ mod tests {
             vec![theirs(3, 500), theirs(7, 1_000), theirs(1, 9_999)],
         );
         assert_eq!(missed.iter().map(|i| i.item_id).collect::<Vec<_>>(), [1, 7]);
+    }
+
+    #[test]
+    fn sweep_lock_is_exclusive_and_releases_on_drop() {
+        let lock = Arc::new(SweepLock::default());
+        let guard = lock.try_claim().expect("free lock claims");
+        assert!(
+            lock.try_claim().is_none(),
+            "held lock refuses a second sweep"
+        );
+        drop(guard);
+        assert!(lock.try_claim().is_some(), "dropped guard frees the lock");
+    }
+
+    fn world_summary(name: &str, changed: u64, chunks_failed: u64) -> WorldSweepSummary {
+        world_summary_with_duration(name, changed, chunks_failed, Duration::from_secs(60))
+    }
+
+    fn world_summary_with_duration(
+        name: &str,
+        changed: u64,
+        chunks_failed: u64,
+        duration: Duration,
+    ) -> WorldSweepSummary {
+        WorldSweepSummary {
+            world_name: name.to_string(),
+            tally: CatchupTally {
+                changed,
+                noop: 0,
+                failed: 0,
+                chunks_failed,
+            },
+            duration,
+        }
+    }
+
+    #[test]
+    fn sweep_report_summary_flags_the_slowest_world() {
+        let report = SweepReport {
+            worlds: vec![
+                world_summary_with_duration("Sargatanas", 1, 0, Duration::from_secs(30)),
+                world_summary_with_duration("Ravana", 1, 0, Duration::from_secs(150)),
+                world_summary_with_duration("Cerberus", 1, 0, Duration::from_secs(45)),
+            ],
+            duration: Duration::from_secs(225),
+        };
+        let text = report.summary_text();
+        assert!(text.contains("Slowest world: Ravana (2m30s)"), "{text}");
+    }
+
+    #[test]
+    fn sweep_report_summary_totals_and_flags_incomplete_worlds() {
+        let report = SweepReport {
+            worlds: vec![
+                world_summary("Sargatanas", 10, 0),
+                world_summary("Ravana", 5, 2),
+                world_summary("Cerberus", 0, 1),
+            ],
+            duration: Duration::from_secs(2 * 3600 + 90),
+        };
+        let text = report.summary_text();
+        assert!(text.contains("3 worlds"));
+        assert!(text.contains("15"), "total changed items: {text}");
+        assert!(text.contains("3 chunks skipped"), "{text}");
+        assert!(
+            text.contains("Ravana") && text.contains("Cerberus"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Sargatanas"),
+            "clean worlds are not listed: {text}"
+        );
+        assert!(text.len() <= 2000, "must fit one Discord message: {text}");
+    }
+
+    #[test]
+    fn sweep_report_summary_caps_the_incomplete_world_list() {
+        let worlds: Vec<_> = (0..40)
+            .map(|i| world_summary(&format!("World{i}"), 1, 1))
+            .collect();
+        let report = SweepReport {
+            worlds,
+            duration: Duration::from_secs(3600),
+        };
+        let text = report.summary_text();
+        assert!(text.contains("+30 more"), "{text}");
+        assert!(text.len() <= 2000, "must fit one Discord message: {text}");
+    }
+
+    #[test]
+    fn sweep_progress_summary_mentions_counts() {
+        let text = SweepProgress {
+            worlds_done: 42,
+            worlds_total: 90,
+            items_changed: 1234,
+            chunks_failed: 3,
+        }
+        .summary_text();
+        assert!(text.contains("42/90"), "{text}");
+        assert!(text.contains("1234"), "{text}");
+        // Plain `contains("3")` would pass on the "3" inside "1234" above
+        // regardless of `chunks_failed` — assert the distinctive phrase
+        // `summary_text` actually emits instead.
+        assert!(text.contains("3 chunks skipped"), "{text}");
     }
 }

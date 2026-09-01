@@ -165,20 +165,6 @@ pub fn GilOrDash(#[prop(into)] amount: Signal<Option<i32>>) -> impl IntoView {
     }
 }
 
-#[component]
-pub fn GenericGil<T>(#[prop(into)] amount: Signal<T>) -> impl IntoView
-where
-    T: Separable + 'static + Copy + Send + Sync,
-{
-    view! {
-        <div class="flex flex-row items-center">
-            <GilIcon />
-            <div>{move || amount().separate_with_commas()}</div>
-        </div>
-    }
-    .into_any()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

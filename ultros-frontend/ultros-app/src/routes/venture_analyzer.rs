@@ -655,6 +655,16 @@ pub fn VentureAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, venture_analyzer_tool_context).to_string()
                     help_href="/help/venture-analyzer"
                     help_body=t_string!(i18n, venture_analyzer_tool_help).to_string()
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, venture_analyzer_calc_title).to_string(),
+                        t_string!(i18n, venture_analyzer_calc_formula).to_string(),
+                        t_string!(i18n, venture_analyzer_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, venture_analyzer_assumption_gross_revenue).to_string(),
+                        "Normal ventures only".to_string(),
+                        "Recent sales affect confidence".to_string(),
+                    ]
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
@@ -670,17 +680,6 @@ pub fn VentureAnalyzer() -> impl IntoView {
                         set_current_world=set_selected_world.into()
                     />
                 </ToolHeader>
-                <CalculationSummary
-                    title=t_string!(i18n, venture_analyzer_calc_title).to_string()
-                    formula=t_string!(i18n, venture_analyzer_calc_formula).to_string()
-                    details=t_string!(i18n, venture_analyzer_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, venture_analyzer_assumption_gross_revenue).to_string() />
-                    <AssumptionBadge text="Normal ventures only" />
-                    <AssumptionBadge text="Recent sales affect confidence" />
-                </div>
-
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
