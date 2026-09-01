@@ -1037,7 +1037,13 @@ where
         .instrument(tracing::trace_span!("HTTP FETCH"))
         .into_inner()
         .map_err(|e| {
-            error!("Response {e}. {path}");
+            // Same classification as `fetch_api`: a timeout or a refused
+            // connection is transient, everything else is a real failure.
+            if crate::error::is_transient_reqwest(&e) {
+                tracing::warn!(error = ?e, path, "Internal API unreachable");
+            } else {
+                error!(error = ?e, path, "Error doing leptos delete");
+            }
             e
         })?;
     let status = response.status();
@@ -1113,7 +1119,15 @@ where
         .instrument(tracing::trace_span!("HTTP FETCH"))
         .into_inner()
         .inspect_err(|e| {
-            error!(error = ?e, path, "Error doing leptos fetch");
+            // A loopback timeout or a refused connection is the API being busy
+            // or restarting, not this layer breaking — see
+            // `AppError::is_transient_transport`. GlitchTip issue 2209 is
+            // ~11k of exactly these.
+            if crate::error::is_transient_reqwest(e) {
+                tracing::warn!(error = ?e, path, "Internal API unreachable");
+            } else {
+                error!(error = ?e, path, "Error doing leptos fetch");
+            }
         })?;
     let status = response.status();
     let json = response.text().await?;

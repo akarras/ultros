@@ -57,6 +57,40 @@ impl AppError {
     pub(crate) fn is_api_response(&self) -> bool {
         matches!(self, AppError::ApiError(_))
     }
+
+    /// Whether the call failed in transport in a way that says nothing about
+    /// this code being wrong.
+    ///
+    /// The SSR renderer fetches its own API over loopback with a 10s budget
+    /// (`api::fetch_api`). When the API process is busy — an ingest burst
+    /// holding the database pool, or the moment after a restart — that budget
+    /// expires or the connection is refused. Neither is a bug in the caller:
+    /// the resource renders empty and the next request succeeds.
+    ///
+    /// Reported at error level, those are the two highest-volume GlitchTip
+    /// issues on the project (2209 "Error doing leptos fetch", ~11k events, and
+    /// 2210 "Error getting value", ~7.6k), and their volume is what makes the
+    /// backlog unreadable. They stay in the container log and as breadcrumbs at
+    /// warn level, which is where the `error!`-only rule already puts the other
+    /// expected failures here and in `ultros/src/web/error.rs`.
+    ///
+    /// Only timeouts and connect failures qualify. A refused body, a malformed
+    /// 2xx, or a missing parameter is still our own side breaking.
+    pub(crate) fn is_transient_transport(&self) -> bool {
+        match self {
+            AppError::SystemError(SystemError::ReqwestError(error)) => is_transient_reqwest(error),
+            _ => false,
+        }
+    }
+}
+
+/// Shared by [`AppError::is_transient_transport`] and the fetch helpers, which
+/// classify before the error is wrapped.
+///
+/// `reqwest`'s predicates walk the source chain, so a timeout that surfaces as
+/// a decode error while the body is streaming is still recognised.
+pub(crate) fn is_transient_reqwest(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect()
 }
 
 /// This error type implements From's for the non serializable error types and shoves them into a string
@@ -246,5 +280,98 @@ mod test {
                 "{error:?} is not something the API answered with"
             );
         }
+    }
+}
+
+/// Regressions for GlitchTip issues 2209 ("Error doing leptos fetch") and 2210
+/// ("Error getting value"), whose live traffic is the SSR renderer's loopback
+/// call to its own API expiring the 10s budget
+/// (`reqwest::Error { kind: Request, source: TimedOut }`).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod transient_transport_tests {
+    use super::AppError;
+    use std::time::Duration;
+
+    /// Reproduce a real `reqwest` failure against a socket that accepts the
+    /// connection and never answers, which is what a starved API process looks
+    /// like from the renderer.
+    fn timed_out_request() -> reqwest::Error {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime");
+        runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("a loopback listener");
+            let addr = listener.local_addr().expect("the bound address");
+            // Accept and hold: never write a response.
+            tokio::spawn(async move {
+                let _accepted = listener.accept().await;
+                std::future::pending::<()>().await;
+            });
+            let client = reqwest::ClientBuilder::new()
+                .timeout(Duration::from_millis(250))
+                .build()
+                .expect("a client");
+            client
+                .get(format!("http://{addr}/api/v1/listings/Jenova/12241"))
+                .send()
+                .await
+                .expect_err("a silent server must time the request out")
+        })
+    }
+
+    fn connection_refused() -> reqwest::Error {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime");
+        runtime.block_on(async {
+            // Bind then drop, so the port is known-closed.
+            let addr = {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("a loopback listener");
+                listener.local_addr().expect("the bound address")
+            };
+            reqwest::Client::new()
+                .get(format!("http://{addr}/api/v1/cheapest/Europe"))
+                .send()
+                .await
+                .expect_err("a closed port must refuse the connection")
+        })
+    }
+
+    #[test]
+    fn a_loopback_timeout_is_transient() {
+        let error = timed_out_request();
+        assert!(error.is_timeout(), "expected a timeout, got {error:?}");
+        let error = AppError::from(error);
+        assert!(
+            error.is_transient_transport(),
+            "a timed-out loopback fetch must not be error-level: {error:?}",
+        );
+        assert!(
+            !error.is_api_response(),
+            "a timeout is not the API answering, so the existing              `is_api_response` guard never covered it: {error:?}",
+        );
+    }
+
+    #[test]
+    fn a_refused_connection_is_transient() {
+        let error = AppError::from(connection_refused());
+        assert!(
+            error.is_transient_transport(),
+            "a refused loopback connection must not be error-level: {error:?}",
+        );
+    }
+
+    /// The classification must stay narrow: a malformed body on an otherwise
+    /// healthy response is our own side breaking and still deserves an issue.
+    #[test]
+    fn a_deserialize_failure_is_not_transient() {
+        let error = AppError::Json("expected value at line 1 column 1".to_owned());
+        assert!(!error.is_transient_transport(), "{error:?}");
     }
 }
