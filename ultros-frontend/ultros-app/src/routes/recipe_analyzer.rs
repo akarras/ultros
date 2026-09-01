@@ -31,7 +31,7 @@ use crate::{
         query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
-        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell},
         tool_help::*,
         tooltip::Tooltip,
         virtual_scroller::*,
@@ -119,6 +119,36 @@ fn last_sold_label(
 /// server that doesn't serve the column).
 fn vwap_pct(market_price: i32, vwap: i32) -> Option<f32> {
     (vwap > 0).then(|| (market_price - vwap) as f32 / vwap as f32 * 100.0)
+}
+
+/// Collapse the NQ/HQ rows from the 7-day rollup into the sale summary used
+/// by the always-visible velocity and average-price columns. The rollup is the
+/// default source so the analyzer does not need a second recent-sales payload;
+/// raw samples remain available when the user explicitly enables outlier
+/// filtering.
+fn sales_stats_from_rollup(
+    stats: &HashMap<(i32, bool), ItemSaleStats>,
+    item_id: i32,
+) -> Option<SalesStats> {
+    let rows = [false, true]
+        .into_iter()
+        .filter_map(|hq| stats.get(&(item_id, hq)))
+        .filter(|row| row.num_sold > 0)
+        .collect::<Vec<_>>();
+    let total_sales = rows.iter().map(|row| row.num_sold).sum::<i64>();
+    if total_sales <= 0 {
+        return None;
+    }
+    let price_total = rows
+        .iter()
+        .map(|row| i128::from(row.avg_price) * i128::from(row.num_sold))
+        .sum::<i128>();
+
+    Some(SalesStats {
+        daily_sales: total_sales as f32 / f32::from(SALE_STATS_WINDOW_DAYS),
+        avg_price: (price_total / i128::from(total_sales)) as i32,
+        total_sales: usize::try_from(total_sales).unwrap_or(usize::MAX),
+    })
 }
 
 /// Whether a row's cheapest-listing location passes the listing-world /
@@ -415,11 +445,6 @@ const OPTIONAL_COLUMN_ORDER: &[&str] = &[
 /// column; the confidence chip joins it by default so stale or manipulated
 /// sell-world markets don't silently top the ranking.
 const DEFAULT_COLS: &[&str] = &[COL_CONFIDENCE];
-/// The columns whose data comes from the sell-world sale stats — any of
-/// them being visible forces that fetch (the tax column is computed from
-/// the revenue already on the row).
-const STATS_BACKED_COLS: &[&str] = &[COL_CONFIDENCE, COL_LAST_SOLD, COL_VOLUME, COL_VWAP];
-
 /// Rewrite pre-market-model query params (#1206 era) to their successors.
 /// Returns `None` when nothing needs rewriting (the common case — avoids a
 /// navigate loop). `scope` carried region|datacenter and became
@@ -818,15 +843,22 @@ fn RecipeAnalyzerTable(
                 continue;
             }
 
-            let sales_stats = if let Some(item_sales) = sales_map.get(&{ recipe.item_result }) {
-                analyze_sales(item_sales, filter_outliers)
+            let sales_stats = if filter_outliers {
+                sales_map
+                    .get(&recipe.item_result)
+                    .map(|sales| analyze_sales(sales, true))
             } else {
-                SalesStats {
-                    daily_sales: 0.0,
-                    avg_price: 0,
-                    total_sales: 0,
-                }
-            };
+                sales_stats_from_rollup(&sell_stats_map, recipe.item_result).or_else(|| {
+                    sales_map
+                        .get(&recipe.item_result)
+                        .map(|sales| analyze_sales(sales, false))
+                })
+            }
+            .unwrap_or(SalesStats {
+                daily_sales: 0.0,
+                avg_price: 0,
+                total_sales: 0,
+            });
 
             let market_price = revenue
                 .find_matching_listings(recipe.item_result)
@@ -944,11 +976,14 @@ fn RecipeAnalyzerTable(
             });
         }
 
-        // Sort
-        // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
+        // The table is virtualized, so retaining the full result set adds
+        // browser-side rows without increasing DOM size or server work.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        sort_and_truncate(&mut results, dir, 100, |a, b| compare_recipes(mode, a, b));
+        results.sort_unstable_by(|a, b| match dir {
+            SortDir::Asc => compare_recipes(mode, a, b),
+            SortDir::Desc => compare_recipes(mode, a, b).reverse(),
+        });
 
         results
             .into_iter()
@@ -1853,7 +1888,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 
     let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
-    let (revenue_metric, _) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
+    let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
     // `?cols=` lives here rather than in the table because the sell-world
     // stats fetch below keys off which columns are visible, and the table
@@ -1998,14 +2033,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         }
     });
 
-    let recent_sales = ArcResource::new(selected_world, move |world| async move {
-        if let Some(world) = world {
-            get_recent_sales_for_world(&world.name).await
-        } else {
-            Ok(RecentSales { sales: vec![] })
-        }
-    });
-
     // Revenue is always the sell world's price now, so its listings are
     // always needed (the old fetch was gated on the world-min metric).
     let sell_world_name = Memo::new(move |_| selected_world.get().map(|w| w.name));
@@ -2017,17 +2044,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             }
         });
 
-    // Sale-stat revenue metrics and the stats-backed columns both read the
-    // sell world's history — fetched only while one of them needs it.
-    // (With the confidence column on by default that is most page loads,
-    // but hiding it drops the fetch again.)
-    let sell_stats_world = Memo::new(move |_| {
-        let stats_column_visible =
-            visible_cols.with(|c| STATS_BACKED_COLS.iter().any(|id| c.contains(id)));
-        (revenue_metric().unwrap_or_default().sale_stat().is_some() || stats_column_visible)
-            .then(|| sell_world_name.get())
-            .flatten()
-    });
+    // The same 7-day rollup supplies velocity, average price, sale-stat
+    // revenue metrics, and optional stats columns. It is the analyzer's one
+    // default sale-history payload regardless of which columns are visible.
+    let sell_stats_world = Memo::new(move |_| sell_world_name.get());
     let sell_world_sale_stats =
         ArcResource::new(sell_stats_world, move |world: Option<String>| async move {
             match world {
@@ -2037,6 +2057,25 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 None => Ok(None),
             }
         });
+
+    // Raw sale samples are only needed for the opt-in outlier filter. If the
+    // rollup request fails, fetch them as a failover so the analyzer remains
+    // useful while ClickHouse recovers.
+    let sell_stats_for_fallback = sell_world_sale_stats.clone();
+    let recent_sales_source = Memo::new(move |_| {
+        let rollup_failed = matches!(sell_stats_for_fallback.get(), Some(Err(_)));
+        (
+            selected_world.get(),
+            filter_outliers().unwrap_or(false) || rollup_failed,
+        )
+    });
+    let recent_sales = ArcResource::new(recent_sales_source, move |(world, needed)| async move {
+        if needed && let Some(world) = world {
+            get_recent_sales_for_world(&world.name).await
+        } else {
+            Ok(RecentSales { sales: vec![] })
+        }
+    });
 
     let recent_sales_clone = recent_sales.clone();
     view! {
@@ -2354,6 +2393,38 @@ mod test {
         assert_eq!(vwap_pct(50, 100), Some(-50.0));
         assert_eq!(vwap_pct(100, 0), None);
         assert_eq!(vwap_pct(0, 0), None);
+    }
+
+    #[test]
+    fn rollup_sales_summary_combines_quality_rows() {
+        let stats = HashMap::from([
+            (
+                (42, false),
+                ItemSaleStats {
+                    item_id: 42,
+                    hq: false,
+                    avg_price: 100,
+                    num_sold: 14,
+                    ..Default::default()
+                },
+            ),
+            (
+                (42, true),
+                ItemSaleStats {
+                    item_id: 42,
+                    hq: true,
+                    avg_price: 400,
+                    num_sold: 7,
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        let summary = sales_stats_from_rollup(&stats, 42).unwrap();
+        assert_eq!(summary.total_sales, 21);
+        assert_eq!(summary.daily_sales, 3.0);
+        assert_eq!(summary.avg_price, 200);
+        assert!(sales_stats_from_rollup(&stats, 99).is_none());
     }
 
     /// `Recipe::craft_type` is a row index into the `CraftType` sheet, which

@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-01",
+        title: "Recipe Analyzer now shows every matching recipe",
+        blurb: "The Recipe Analyzer no longer stops after its first 100 results. Scroll through the full ranked list without loading thousands of table rows into the page at once, and keep using the same sorts and filters across the whole result set.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
         date: "2026-08-31",
         title: "Sales at a Glance is gone from the item page",
         blurb: "The item page's sale history no longer carries the Sales at a Glance panel - the 24 hour and 30 day stat tiles, and the projected next sale price that was extrapolated from them. The projection in particular read as a prediction while being a straight line fit through a handful of recent sales, which is not something to trade on. The sale history table itself is unchanged and now has the full panel to itself; the same numbers, computed over a real sample, live on the analyzer pages.",

@@ -303,6 +303,8 @@ define_error_enum!(WebError {
     NotFound,
     #[error("Bad request")]
     BadRequest,
+    #[error("Service temporarily unavailable")]
+    TemporarilyUnavailable,
 });
 
 /// The title error reporting groups this error under.
@@ -331,6 +333,7 @@ impl WebError {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
             WebError::NotFound => StatusCode::NOT_FOUND,
             WebError::BadRequest => StatusCode::BAD_REQUEST,
+            WebError::TemporarilyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             WebError::InvalidItemId(_) | WebError::WorldNotFound(_) => StatusCode::BAD_REQUEST,
             // Analyzer warm-up isn't a server bug — it's a transient state at
             // startup. 503 lets clients retry instead of treating it as fatal.
@@ -348,14 +351,17 @@ impl WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         let status = self.as_status_code();
-        // Analyzer warm-up (503) is an expected transient state at startup, not
-        // a real server bug. Keep it out of `tracing::error!` so the
-        // `sentry_tracing` layer doesn't capture it as a GlitchTip issue
-        // (see issues 5033/5034 — e2e harness racing the warm-up window).
-        let is_transient_warmup =
-            matches!(self, WebError::AnalyzerError(AnalyzerError::Uninitialized));
+        // Expected 503s are transient states, not server bugs. Keep them out
+        // of `tracing::error!` so the `sentry_tracing` layer doesn't capture
+        // them as GlitchTip issues (see issues 5033/5034 for the analyzer
+        // warm-up case).
+        let is_expected_transient = matches!(
+            self,
+            WebError::AnalyzerError(AnalyzerError::Uninitialized)
+                | WebError::TemporarilyUnavailable
+        );
 
-        let message = if status.is_server_error() && !is_transient_warmup {
+        let message = if status.is_server_error() && !is_expected_transient {
             "Internal server error".to_string()
         } else {
             format!("{self}")
@@ -366,7 +372,7 @@ impl IntoResponse for WebError {
         // memory figures, the failing item id) can safely ride along here while
         // the title stays stable.
         let title = report_title(&self);
-        if status.is_server_error() && !is_transient_warmup {
+        if status.is_server_error() && !is_expected_transient {
             tracing::error!(error = %self, %status, "{title}");
         } else {
             tracing::debug!(error = %self, %status, "{title}");
