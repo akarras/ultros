@@ -830,6 +830,16 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, fc_crafting_tool_context).to_string()
                     help_href="/help/fc-crafting"
                     help_body=t_string!(i18n, fc_crafting_tool_help).to_string()
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, fc_crafting_calc_title).to_string(),
+                        t_string!(i18n, fc_crafting_calc_formula).to_string(),
+                        t_string!(i18n, fc_crafting_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, fc_crafting_assumption_market_prices).to_string(),
+                        t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string(),
+                        t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string(),
+                    ]
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
@@ -847,17 +857,6 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                         />
                     </Show>
                 </ToolHeader>
-                <CalculationSummary
-                    title=t_string!(i18n, fc_crafting_calc_title).to_string()
-                    formula=t_string!(i18n, fc_crafting_calc_formula).to_string()
-                    details=t_string!(i18n, fc_crafting_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_market_prices).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string() />
-                </div>
-
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();

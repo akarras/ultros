@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-08-31",
+        title: "Analyzer explanations stay out of your way",
+        blurb: "Recipe, venture, scrip, leve, Free Company crafting, and vendor resale tools no longer put a large calculation explainer above their results. The formulas and assumptions are still available whenever you need them - open the info icon beside the tool name.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-08-31",
         title: "Sales at a Glance is gone from the item page",
         blurb: "The item page's sale history no longer carries the Sales at a Glance panel - the 24 hour and 30 day stat tiles, and the projected next sale price that was extrapolated from them. The projection in particular read as a prediction while being a straight line fit through a handful of recent sales, which is not something to trade on. The sale history table itself is unchanged and now has the full panel to itself; the same numbers, computed over a real sample, live on the analyzer pages.",
         link: Some("/items"),
