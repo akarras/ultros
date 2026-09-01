@@ -7,7 +7,7 @@
 //!   ULTROS_CH_INTEGRATION=1 cargo test -p ultros-clickhouse --test sale_stats_smoke
 
 use ultros_api_types::trends::ConfidenceBand;
-use ultros_clickhouse::{ClickHouseClient, queries, rows::SaleRow};
+use ultros_clickhouse::{ClickHouseClient, queries, rollups, rows::SaleRow};
 
 fn integration_enabled() -> bool {
     std::env::var("ULTROS_CH_INTEGRATION").is_ok()
@@ -38,6 +38,12 @@ async fn seed(ch: &ClickHouseClient, item: i32) -> (i64, i64) {
         .execute()
         .await
         .expect("clear quality fixtures");
+    ch.client()
+        .query("ALTER TABLE sale_stats_window DELETE WHERE item_id = ? SETTINGS mutations_sync = 1")
+        .bind(item)
+        .execute()
+        .await
+        .expect("clear sale-stat rollup fixtures");
 
     // bulk_sale_stats windows on `now()`, so the fixture must be recent.
     let now = chrono::Utc::now().timestamp();
@@ -96,6 +102,9 @@ async fn widened_columns_match_the_fixture() {
     let ch = ClickHouseClient::from_env();
     ch.migrate().await.expect("migrate");
     let (_older, newer) = seed(&ch, FIXTURE_ITEM_SALE_STATS).await;
+    rollups::refresh_sale_stats_window(&ch, 7)
+        .await
+        .expect("refresh sale stats");
 
     let rows = queries::bulk_sale_stats(&ch, &[FIXTURE_WORLD], 7)
         .await

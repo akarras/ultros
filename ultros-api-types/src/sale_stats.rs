@@ -15,7 +15,8 @@ pub struct ItemSaleStats {
     pub hq: bool,
     /// Lowest per-unit sale price in the window.
     pub min_price: i32,
-    /// Exact median per-unit sale price in the window.
+    /// Approximate median per-unit sale price in the window, merged from
+    /// per-world t-digest states.
     pub median_price: i32,
     /// Arithmetic mean per-unit sale price in the window, rounded.
     pub avg_price: i32,

@@ -1014,19 +1014,22 @@ pub struct BulkSaleStatsRow {
     pub vwap: i32,
 }
 
-/// Aggregate min / exact-median / mean per-unit sale price for **every**
+/// Aggregate min / median / mean per-unit sale price for **every**
 /// item with sales in the trailing `window_days`, across `world_ids`.
 ///
 /// Backs `GET /api/v1/sale_stats/{worldDcOrRegion}` — the recipe analyzer's
-/// selectable cost basis. This intentionally scans `sales` rather than
-/// folding the per-world `item_stats_window` rollup: medians don't compose
-/// across worlds, and a trailing-window scan bounded by `sold_date` is
-/// cheap at ClickHouse scale. The endpoint sets a multi-minute
-/// `Cache-Control`, so edge caching bounds how often the scan reruns.
+/// selectable cost basis. Reads the scheduled `sale_stats_window` snapshots,
+/// never raw `sales`: the stored t-digest state makes the median mergeable
+/// across worlds while sum/count, min, max, and volume fields compose exactly.
+/// `FINAL` is safe here because the world/window predicate matches the table's
+/// leading sort key and prunes the read before replacement merging.
 ///
-/// Same conventions as [`price_series`]: no `FINAL` (unmerged
-/// `ReplacingMergeTree` duplicates shift aggregates imperceptibly), no
-/// joins, and only numeric values are interpolated into the SQL string.
+/// VWAP is derived in an **outer** `SELECT` rather than beside the other
+/// aggregates. ClickHouse resolves an identifier to a same-scope alias in
+/// preference to a column, so writing `sum(units_sold)` next to
+/// `sum(units_sold) AS units_sold` expands to `sum(sum(units_sold))` and the
+/// whole query fails with `ILLEGAL_AGGREGATION` (error 184) at runtime —
+/// invisible to any test that only asserts on the SQL string.
 pub async fn bulk_sale_stats(
     ch: &ClickHouseClient,
     world_ids: &[i32],
@@ -1045,18 +1048,30 @@ pub async fn bulk_sale_stats(
         SELECT
             item_id,
             hq,
-            toInt32(min(price_per_item))                AS min_price,
-            toInt32(quantileExact(0.5)(price_per_item)) AS median_price,
-            toInt32(round(avg(price_per_item)))         AS avg_price,
-            toInt64(count())                            AS num_sold,
-            toInt64(max(toUnixTimestamp(sold_date)))    AS last_sold_unix,
-            toUInt64(sum(quantity))                     AS units_sold,
-            toInt32(round(if(sum(quantity) = 0, 0,
-                sum(price_per_item * quantity) / sum(quantity)))) AS vwap
-        FROM sales
-        WHERE world_id IN ({worlds})
-          AND sold_date >= now() - INTERVAL {window_days} DAY
-        GROUP BY item_id, hq
+            min_price,
+            median_price,
+            avg_price,
+            num_sold,
+            last_sold_unix,
+            units_sold,
+            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap
+        FROM
+        (
+            SELECT
+                item_id,
+                hq,
+                toInt32(min(min_price)) AS min_price,
+                toInt32(quantileTDigestMerge(0.5)(price_quantile)) AS median_price,
+                toInt32(round(sum(price_sum) / greatest(sum(sale_count), 1))) AS avg_price,
+                toInt64(sum(sale_count)) AS num_sold,
+                toInt64(max(last_sold_unix)) AS last_sold_unix,
+                toUInt64(sum(units_sold)) AS units_sold,
+                toUInt64(sum(gil_volume)) AS gil_volume_sum
+            FROM sale_stats_window FINAL
+            WHERE world_id IN ({worlds})
+              AND window_days = {window_days}
+            GROUP BY item_id, hq
+        )
         "#
     );
     Ok(ch

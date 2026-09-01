@@ -75,6 +75,120 @@ struct Config {
     discord_token: String,
 }
 
+/// Stable Postgres advisory-lock id for the ClickHouse rollup scheduler.
+/// Session locks are released automatically when a process or connection
+/// dies, so another replica takes over without two replicas scanning raw
+/// sales at the same time.
+const ROLLUP_SCHEDULER_LOCK_KEY: i64 = 0x55_4c_54_52_4f_53;
+
+fn spawn_rollup_scheduler(
+    ch: ultros_clickhouse::ClickHouseClient,
+    db: UltrosDb,
+    token: CancellationToken,
+) {
+    tokio::spawn(async move {
+        loop {
+            let pool = db.get_connection().get_postgres_connection_pool();
+            let mut connection = tokio::select! {
+                _ = token.cancelled() => return,
+                result = pool.acquire() => match result {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        warn!(?error, "could not acquire connection for rollup scheduler lease");
+                        tokio::select! {
+                            _ = token.cancelled() => return,
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                        }
+                        continue;
+                    }
+                }
+            };
+
+            let acquired =
+                sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+                    .bind(ROLLUP_SCHEDULER_LOCK_KEY)
+                    .fetch_one(&mut *connection)
+                    .await;
+            match acquired {
+                Ok(true) => {
+                    info!("acquired ClickHouse rollup scheduler lease");
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(1.0);
+                    let scheduler_token = token.child_token();
+                    let scheduler = ultros_clickhouse::rollups::run_scheduler(
+                        ch.clone(),
+                        scheduler_token.clone(),
+                    );
+                    tokio::pin!(scheduler);
+                    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
+                    // The lock-acquisition query already proved the connection
+                    // alive; do not immediately issue a redundant heartbeat.
+                    heartbeat.tick().await;
+
+                    let retry = loop {
+                        tokio::select! {
+                            _ = token.cancelled() => {
+                                scheduler_token.cancel();
+                                scheduler.await;
+                                break false;
+                            }
+                            _ = &mut scheduler => {
+                                // `run_scheduler` only returns after its token
+                                // is cancelled. If it ever exits independently,
+                                // release the lease and start a clean election.
+                                break true;
+                            }
+                            _ = heartbeat.tick() => {
+                                let alive = tokio::time::timeout(
+                                    std::time::Duration::from_secs(5),
+                                    sea_orm::sqlx::query_scalar::<_, i32>("SELECT 1")
+                                        .fetch_one(&mut *connection),
+                                )
+                                .await;
+                                match alive {
+                                    Ok(Ok(_)) => continue,
+                                    Ok(Err(error)) => warn!(
+                                        ?error,
+                                        "lost ClickHouse rollup scheduler lease connection"
+                                    ),
+                                    Err(_) => warn!(
+                                        "timed out checking ClickHouse rollup scheduler lease"
+                                    ),
+                                }
+                                scheduler_token.cancel();
+                                scheduler.await;
+                                break true;
+                            }
+                        }
+                    };
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
+                    let _ = sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+                        .bind(ROLLUP_SCHEDULER_LOCK_KEY)
+                        .fetch_one(&mut *connection)
+                        .await;
+                    if !retry {
+                        return;
+                    }
+                }
+                Ok(false) => {
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "could not acquire ClickHouse rollup scheduler lease"
+                    );
+                }
+            }
+
+            drop(connection);
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+            }
+        }
+    });
+}
+
 async fn run_socket_listener(
     db: UltrosDb,
     listings_tx: EventProducer<ListingEventData>,
@@ -459,11 +573,10 @@ async fn main() -> Result<()> {
     let ch_writer = match ch_client.migrate().await {
         Ok(()) => {
             let writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
-            // Background scheduler that keeps item_stats_window +
-            // item_quality_score fresh. Runs an immediate seed pass on startup,
-            // then on independent cadences (1d every 15min, 7d hourly,
-            // 30d/90d every 6h, quality hourly).
-            ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
+            // Exactly one web replica keeps the ClickHouse rollups fresh. A
+            // Postgres advisory lock prevents deployment scale from
+            // multiplying the scheduled raw-sales scans.
+            spawn_rollup_scheduler(ch_client.clone(), db.clone(), token.clone());
             writer
         }
         Err(e) => {
@@ -585,6 +698,7 @@ async fn main() -> Result<()> {
         ch_client,
         universalis: universalis_client,
         price_series_cache: Default::default(),
+        sale_stats_cache: Default::default(),
     };
     let web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
     tokio::select! {

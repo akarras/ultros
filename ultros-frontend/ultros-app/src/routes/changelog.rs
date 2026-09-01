@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-01",
+        title: "Recipe Analyzer now shows every matching recipe",
+        blurb: "The Recipe Analyzer no longer stops after its first 100 results. Scroll through the full ranked list without loading thousands of table rows into the page at once, and keep using the same sorts and filters across the whole result set.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
         date: "2026-08-31",
         title: "Analyzer explanations stay out of your way",
         blurb: "Recipe, venture, scrip, leve, Free Company crafting, and vendor resale tools no longer put a large calculation explainer above their results. The formulas and assumptions are still available whenever you need them - open the info icon beside the tool name.",

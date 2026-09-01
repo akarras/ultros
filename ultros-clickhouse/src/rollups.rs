@@ -386,6 +386,66 @@ pub async fn refresh_sales_hourly(ch: &ClickHouseClient) -> Result<u64, ClickHou
     Ok(count.n)
 }
 
+/// Refresh the mergeable whole-market sale-stat snapshot for one supported
+/// trailing window.
+///
+/// This is deliberately a scheduled raw-sales scan, not a request-time scan.
+/// The cost is therefore fixed by the four refresh cadences rather than by
+/// page traffic. The t-digest state remains mergeable across worlds, allowing
+/// one small table to serve world, datacenter, and region selectors.
+#[instrument(skip(ch))]
+pub async fn refresh_sale_stats_window(
+    ch: &ClickHouseClient,
+    window_days: u16,
+) -> Result<u64, ClickHouseError> {
+    let sql = build_sale_stats_refresh_sql(window_days);
+    ch.client().query(&sql).execute().await?;
+
+    #[derive(clickhouse::Row, serde::Deserialize)]
+    struct Count {
+        n: u64,
+    }
+    let count: Count = ch
+        .client()
+        .query(
+            "SELECT count() AS n FROM sale_stats_window FINAL \
+             WHERE window_days = ?",
+        )
+        .bind(window_days)
+        .fetch_one()
+        .await?;
+    tracing::info!(
+        window_days,
+        rows = count.n,
+        "sale_stats_window refresh done"
+    );
+    Ok(count.n)
+}
+
+fn build_sale_stats_refresh_sql(window_days: u16) -> String {
+    format!(
+        r#"
+        INSERT INTO sale_stats_window
+        SELECT
+            world_id,
+            toUInt16({window_days}) AS window_days,
+            item_id,
+            hq,
+            now() AS computed_at,
+            toUInt32(min(price_per_item)) AS min_price,
+            quantileTDigestState(0.5)(price_per_item) AS price_quantile,
+            toUInt64(sum(toUInt64(price_per_item))) AS price_sum,
+            toUInt64(count()) AS sale_count,
+            toInt64(max(toUnixTimestamp(sold_date))) AS last_sold_unix,
+            toUInt64(sum(quantity)) AS units_sold,
+            toUInt64(sum(total_gil)) AS gil_volume
+        FROM sales FINAL
+        WHERE sold_date >= now() - INTERVAL {window_days} DAY
+        GROUP BY world_id, item_id, hq
+        "#
+    )
+}
+
 /// Refresh `item_category_map` from xiv-gen.
 ///
 /// Maps every item with a known ItemSearchCategory to that category's
@@ -481,6 +541,7 @@ pub async fn refresh_all(ch: &ClickHouseClient) -> Result<(), ClickHouseError> {
     }
     for w in [1u16, 7, 30, 90] {
         refresh_window(ch, w).await?;
+        refresh_sale_stats_window(ch, w).await?;
     }
     refresh_quality_scores(ch).await?;
     if let Err(e) = refresh_world_kpi_5min(ch).await {
@@ -500,8 +561,8 @@ pub async fn refresh_window_with(client: &Client, window_days: u16) -> Result<()
     Ok(())
 }
 
-/// Spawn the background scheduler that keeps `item_stats_window` and
-/// `item_quality_score` fresh on independent cadences:
+/// Run the background scheduler that keeps `item_stats_window`,
+/// `sale_stats_window`, and `item_quality_score` fresh on independent cadences:
 ///
 /// - 1-day window:  every 15 minutes (cheap, drives the hottest dashboards)
 /// - 7-day window:  every 60 minutes
@@ -513,51 +574,50 @@ pub async fn refresh_window_with(client: &Client, window_days: u16) -> Result<()
 /// over named intervals, so there's no resource contention between cadences
 /// and one stuck refresh can't block the others.
 ///
-/// Does an immediate seed-refresh of all windows on startup before entering
-/// the schedule loop, so newly-deployed servers don't wait 15 minutes for
-/// the first dashboard query to return data.
-pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::CancellationToken) {
-    tokio::spawn(async move {
-        // Seed: do one pass of everything before entering the schedule. If
-        // this fails (e.g. CH unreachable), log and continue — the scheduled
-        // ticks will retry shortly.
-        if let Err(e) = refresh_all(&ch).await {
-            tracing::warn!(error = ?e, "initial rollup seed failed");
-        } else {
-            tracing::info!("initial rollup seed complete");
-        }
+/// Does an immediate seed-refresh of all windows before entering the schedule
+/// loop. The caller must ensure only one process runs this future at a time;
+/// the web binary holds a Postgres advisory lock for its lifetime so adding
+/// replicas cannot multiply the raw-sales scans.
+pub async fn run_scheduler(ch: ClickHouseClient, token: tokio_util::sync::CancellationToken) {
+    // Seed: do one pass of everything before entering the schedule. If this
+    // fails (e.g. CH unreachable), log and continue — scheduled ticks retry.
+    if let Err(e) = refresh_all(&ch).await {
+        tracing::warn!(error = ?e, "initial rollup seed failed");
+    } else {
+        tracing::info!("initial rollup seed complete");
+    }
 
-        let mut tick_1d = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
-        let mut tick_7d = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
-        let mut tick_30d_90d = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
-        let mut tick_quality = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
-        let mut tick_kpi = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
-        // sales_hourly drives the home-page sparklines + Market Movers, so
-        // it wants to be reasonably fresh. 15 min is the same cadence as the
-        // 1-day rollup window and stays well ahead of the 60s browser cache
-        // on the consuming endpoint.
-        let mut tick_hourly = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+    let mut tick_1d = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
+    let mut tick_7d = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+    let mut tick_30d_90d = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+    let mut tick_quality = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
+    let mut tick_kpi = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+    // sales_hourly drives the home-page sparklines + Market Movers, so
+    // it wants to be reasonably fresh. 15 min is the same cadence as the
+    // 1-day rollup window and stays well ahead of the 60s browser cache
+    // on the consuming endpoint.
+    let mut tick_hourly = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
 
-        // All intervals fire immediately on first .tick() — burn those since
-        // we already seeded above.
-        tick_1d.tick().await;
-        tick_7d.tick().await;
-        tick_30d_90d.tick().await;
-        tick_quality.tick().await;
-        tick_kpi.tick().await;
-        tick_hourly.tick().await;
+    // All intervals fire immediately on first .tick() — burn those since
+    // we already seeded above.
+    tick_1d.tick().await;
+    tick_7d.tick().await;
+    tick_30d_90d.tick().await;
+    tick_quality.tick().await;
+    tick_kpi.tick().await;
+    tick_hourly.tick().await;
 
-        // If we miss a deadline (e.g. CH was slow), delay the next tick
-        // rather than firing back-to-back catch-up ticks.
-        tick_1d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        tick_7d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        tick_30d_90d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        tick_quality.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        tick_kpi.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        tick_hourly.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // If we miss a deadline (e.g. CH was slow), delay the next tick rather
+    // than firing back-to-back catch-up ticks.
+    tick_1d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick_7d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick_30d_90d.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick_quality.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick_kpi.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick_hourly.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        loop {
-            tokio::select! {
+    loop {
+        tokio::select! {
                 biased;
                 _ = token.cancelled() => {
                     tracing::info!("rollup scheduler exiting");
@@ -567,18 +627,30 @@ pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancellati
                     if let Err(e) = refresh_window(&ch, 1).await {
                         tracing::warn!(error = ?e, "1d rollup refresh failed");
                     }
+                    if let Err(e) = refresh_sale_stats_window(&ch, 1).await {
+                        tracing::warn!(error = ?e, "1d sale-stats refresh failed");
+                    }
                 }
                 _ = tick_7d.tick() => {
                     if let Err(e) = refresh_window(&ch, 7).await {
                         tracing::warn!(error = ?e, "7d rollup refresh failed");
+                    }
+                    if let Err(e) = refresh_sale_stats_window(&ch, 7).await {
+                        tracing::warn!(error = ?e, "7d sale-stats refresh failed");
                     }
                 }
                 _ = tick_30d_90d.tick() => {
                     if let Err(e) = refresh_window(&ch, 30).await {
                         tracing::warn!(error = ?e, "30d rollup refresh failed");
                     }
+                    if let Err(e) = refresh_sale_stats_window(&ch, 30).await {
+                        tracing::warn!(error = ?e, "30d sale-stats refresh failed");
+                    }
                     if let Err(e) = refresh_window(&ch, 90).await {
                         tracing::warn!(error = ?e, "90d rollup refresh failed");
+                    }
+                    if let Err(e) = refresh_sale_stats_window(&ch, 90).await {
+                        tracing::warn!(error = ?e, "90d sale-stats refresh failed");
                     }
                 }
                 _ = tick_quality.tick() => {
@@ -596,7 +668,20 @@ pub fn spawn_scheduler(ch: ClickHouseClient, token: tokio_util::sync::Cancellati
                         tracing::warn!(error = ?e, "sales_hourly refresh failed");
                     }
                 }
-            }
         }
-    });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sale_stats_refresh_is_scope_first_and_window_bounded() {
+        let sql = build_sale_stats_refresh_sql(7);
+        assert!(sql.contains("INTERVAL 7 DAY"));
+        assert!(sql.contains("GROUP BY world_id, item_id, hq"));
+        assert!(sql.contains("quantileTDigestState(0.5)(price_per_item)"));
+        assert!(sql.contains("toUInt16(7) AS window_days"));
+    }
 }
