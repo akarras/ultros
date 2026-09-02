@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-02",
+        title: "Pages that failed to load are fixed",
+        blurb: "Some pages would occasionally come back blank or half-rendered because a link on them could crash the page while it was being built. Links no longer depend on the piece that was failing, so those pages load every time.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-09-02",
         title: "Shared item links are quieter and stay useful",
         blurb: "Item links shared to Discord now show a clean Ultros card that points back to the live market page. The old card packed in a price-history graph that Discord could cache long after its numbers stopped being current.",
         link: Some("/items"),
