@@ -218,6 +218,7 @@
     "formula_role_revenue": "이익에 더해짐",
     "formula_role_tax": "장터 세금",
     "formula_role_cost": "차감된 비용",
+    "formula_degraded_listing_fallback": "판매 기록을 불러올 수 없습니다 — 최저가 판매 등록을 사용합니다",
     "delete_account": "계정 삭제",
     "delete_account_desc": "위험: 계정과 관련된 모든 정보를 삭제하려면, 토글로 확인한 뒤 삭제 버튼을 누르세요.",
     "delete_account_confirm": "예, 제 계정을 삭제합니다",

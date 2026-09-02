@@ -218,6 +218,7 @@
     "formula_role_revenue": "计入利润",
     "formula_role_tax": "市场税",
     "formula_role_cost": "扣除的成本",
+    "formula_degraded_listing_fallback": "无法获取销售历史 — 使用最低价出售品",
     "delete_account": "删除账户",
     "delete_account_desc": "危险：如果你希望删除账户及其相关的所有信息，请先打开开关确认，然后点击删除按钮。",
     "delete_account_confirm": "是的，删除我的账户",

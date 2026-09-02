@@ -218,6 +218,7 @@
     "formula_role_revenue": "erhöht den Gewinn",
     "formula_role_tax": "Marktbrett-Steuer",
     "formula_role_cost": "abgezogene Kosten",
+    "formula_degraded_listing_fallback": "Verkaufshistorie nicht verfügbar — verwendet das günstigste Angebot",
     "delete_account": "Konto löschen",
     "delete_account_desc": "GEFAHR: Wenn du dein Konto und alle zugehörigen Daten löschen möchtest, bestätige es mit dem Schalter und klicke dann auf Löschen.",
     "delete_account_confirm": "Ja, mein Konto löschen",

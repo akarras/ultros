@@ -218,6 +218,7 @@
     "formula_role_revenue": "s'ajoute au profit",
     "formula_role_tax": "taxe de marché",
     "formula_role_cost": "coût déduit",
+    "formula_degraded_listing_fallback": "Historique des ventes indisponible — utilisation de l'annonce la moins chère",
     "delete_account": "Supprimer le compte",
     "delete_account_desc": "DANGER : si vous souhaitez supprimer votre compte et toutes les données associées, confirmez avec l’interrupteur puis appuyez sur le bouton de suppression",
     "delete_account_confirm": "Oui, supprimer mon compte",

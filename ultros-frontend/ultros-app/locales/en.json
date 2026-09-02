@@ -218,6 +218,7 @@
     "formula_role_revenue": "adds to profit",
     "formula_role_tax": "market board tax",
     "formula_role_cost": "subtracted cost",
+    "formula_degraded_listing_fallback": "Sale history unavailable — using cheapest listing",
     "delete_account": "Delete Account",
     "delete_account_desc": "DANGER: If you wish to delete your account and all information associated with it, confirm with the toggle and then press the delete button",
     "delete_account_confirm": "Yes, delete my account",

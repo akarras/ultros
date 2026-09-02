@@ -218,6 +218,7 @@
     "formula_role_revenue": "利益に加算",
     "formula_role_tax": "マーケット税",
     "formula_role_cost": "差し引かれるコスト",
+    "formula_degraded_listing_fallback": "販売履歴を取得できません — 最安値の出品を使用しています",
     "delete_account": "アカウントを削除",
     "delete_account_desc": "警告：アカウントと関連するすべての情報を削除する場合は、トグルで確認した上で削除ボタンを押してください。",
     "delete_account_confirm": "はい、アカウントを削除します",
