@@ -2,3 +2,4 @@
 //! zero-copy price views and the fetch gate. See
 //! docs/superpowers/specs/2026-09-01-analyzer-kit-design.md.
 pub mod formula;
+pub mod signals;
