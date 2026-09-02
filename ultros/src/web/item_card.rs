@@ -103,7 +103,20 @@ pub(crate) async fn item_card(
     let scope = world_helper
         .lookup_world_by_name(&world)
         .ok_or_else(|| WebError::WorldNotFound(world))?;
-    let bytes = ultros_item_card::render_item_card(item.key_id.0, &item.name, scope.get_name())?;
+    // ~430 ms of pure CPU per card (2400x1260 supersampled canvas, Lanczos3
+    // downscale, PNG encode) with no await inside it. Left on the async
+    // worker it pins that thread for the whole render, and social crawlers
+    // fetch these in bursts, so a handful of concurrent unfurls would stall
+    // every other response the runtime is serving. Owned inputs so the
+    // closure can be `'static`.
+    let item_id = item.key_id.0;
+    let item_name = item.name.clone();
+    let scope = scope.get_name().to_string();
+    let bytes = tokio::task::spawn_blocking(move || {
+        ultros_item_card::render_item_card(item_id, &item_name, &scope)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("item card render task failed: {e}"))??;
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, "image/png")
         // No market values or timestamps are baked into this card, so a
