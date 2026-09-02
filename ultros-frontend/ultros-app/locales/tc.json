@@ -212,7 +212,7 @@
     "labs_desc": "仍在完善中的功能。開啟其中一項，可在全員開放前搶先體驗。",
     "labs_on": "開",
     "labs_off": "關",
-    "labs_analyzer_ledger_title": "配方分析器：利潤公式列",
+    "labs_analyzer_ledger_title": "配方分析器：利潤公式條",
     "labs_analyzer_ledger_desc": "在表格上方以可操作形式顯示利潤公式，並標記參與計算的欄位。",
     "delete_account": "刪除帳號",
     "delete_account_desc": "危險：若要刪除帳號及所有相關資料，請先開啟切換按鈕確認，再點擊刪除按鈕。",
