@@ -1314,7 +1314,10 @@ pub fn CurrencySelection() -> impl IntoView {
                     children=|(item_id, item_name, category_name)| {
                         view! {
                             <AppLink
-                                href=item_id.to_string()
+                                // Absolute: `AppLink` is a plain anchor and
+                                // does not resolve hrefs against the matched
+                                // route. See `components::app_link`.
+                                href=format!("/currency-exchange/{item_id}")
                                 attr:class="card-link group flex items-center gap-2 px-3 py-2 rounded-lg border \
                                            border-white/5 bg-[color:var(--color-background-elevated)] \
                                            hover:bg-white/5 hover:border-brand-500/40 transition-colors"
