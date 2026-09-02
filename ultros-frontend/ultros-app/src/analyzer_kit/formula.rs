@@ -163,6 +163,10 @@ pub enum DropRule {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ProfitFormula {
     pub revenue: Term<RevenueEstimator>,
+    /// Fixed to the sell world until Phase F seats the sell-side scope
+    /// here. Nothing reads it yet: the derived `PartialEq` (which
+    /// `Memo<ProfitFormula>` needs) is what keeps `dead_code` quiet, so do
+    /// not "clean it up".
     pub sell_scope: Term<BuyScope>,
     pub cost: Term<CostEstimator>,
     pub buy_scope: Term<BuyScope>,

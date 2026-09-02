@@ -710,6 +710,10 @@ fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
             continue;
         }
 
+        // Deliberately the un-overlaid buy-scope listings, not the priced
+        // view: `cheapest_world_id` must keep meaning "where the
+        // scope-cheapest listing sits" regardless of which pricing bases
+        // are selected.
         let scope_summary = inp.buy_listings.find_matching_listings(recipe.item_result);
         let cheapest_world_id = scope_summary
             .lq

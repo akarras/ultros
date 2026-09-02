@@ -390,7 +390,9 @@ constructs it (A: `Term::{Fixed, Select}`, `RevenueEstimator::Signal`, `CostEsti
   `computed_data` split into pure `price_rows` and `filter_and_sort`; `?sort=` hoisted; the
   folded sell-history resource; `key_id` tiebreak; debug-build timing. The raw-sales map stays
   keyed by item (re-keying by quality would change the outlier and failover numbers). Numbers:
-  none, pinned by a recorded oracle over a fixture. No changelog.
+  none, pinned by a recorded oracle over a fixture. No changelog. (shipped without `layers.rs`,
+  `PriceSummary::chosen` and `IngredientLine.world_id`: none has a Phase A consumer, and an
+  unread item fails `-D warnings`; `layers.rs` lands with Phase B/E1, the other two with Phase D)
 - **Phase B — column kit and recipe table adoption, byte-identical pixels.** `columns`,
   `cells`, `grid`; `SortableHeaderCell` and `ColumnOption` props; currency exchange's private
   cols parser deleted; `--tool-fixed-cols`. Recipe: the static column table with its seven

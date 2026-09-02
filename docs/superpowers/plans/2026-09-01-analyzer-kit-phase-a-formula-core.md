@@ -251,6 +251,8 @@ Ledger: `SaleStat::{Min,Median,Avg}`, `PriceSignal` (4), `BuyScope` (3) — all 
 
 ### Task 2: `ProfitFormula`, `profit_line` and the per-tool policies
 
+*Executed as amended: `ProfitLine` has no `net` field (no non-test reader); `price_rows` reads `revenue` and `cost` from the line.*
+
 **Files:**
 - Modify: `ultros-frontend/ultros-app/src/analyzer_kit/formula.rs`
 - Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs:203-216` (remove `per_unit_cost`, `MARKET_TAX_PERCENT`, `net_after_tax`) and the two tests `per_unit_cost_divides_by_yield`, `net_after_tax_takes_five_percent` (2212-2231, their `///` doc comments included)
@@ -265,7 +267,7 @@ Ledger: `SaleStat::{Min,Median,Avg}`, `PriceSignal` (4), `BuyScope` (3) — all 
   - `ProfitFormula::recipe_from_query(cost: Option<CostBasis>, revenue: Option<RevenueMetric>, scope: Option<BuyScope>) -> ProfitFormula`
   - `ProfitFormula::effective(self, buy_stats_loaded: bool, sell_stats_loaded: bool) -> ProfitFormula`
   - `ProfitFormula::cost_signal(&self) -> PriceSignal`, `revenue_signal(&self) -> PriceSignal`, `buy_scope(&self) -> BuyScope`
-  - `pub struct ProfitLine { revenue, tax, net, cost, profit, roi }`
+  - `pub struct ProfitLine { revenue, tax, cost, profit, roi }`
   - `pub fn profit_line(gross: i32, cost_per_unit: i32, f: &ProfitFormula) -> (ProfitLine, bool)`
   - `pub fn sale_tax_for(gross: i32, math: TaxMath) -> i32`, `pub fn net_after_tax(gross: i32, math: TaxMath) -> i32`
   - `pub fn per_unit_cost(craft_cost: i32, amount_result: i32) -> i32`
@@ -317,7 +319,7 @@ Ledger: `SaleStat::{Min,Median,Avg}`, `PriceSignal` (4), `BuyScope` (3) — all 
         // 12,560 gross → 11,932 net; 11,300 cost → 632 profit, ROI 5%.
         let (line, dropped) = profit_line(12_560, 11_300, &f);
         assert!(!dropped);
-        assert_eq!(line.net, 11_932);
+        assert_eq!(line.revenue - line.tax, 11_932);
         assert_eq!(line.tax, 628);
         assert_eq!(line.profit, 632);
         assert_eq!(line.roi, 5);
@@ -333,7 +335,7 @@ Ledger: `SaleStat::{Min,Median,Avg}`, `PriceSignal` (4), `BuyScope` (3) — all 
         let f = recipe_default();
         // Terminus Putty class: 999,999 gross, 261 cost.
         let (line, _) = profit_line(999_999, 261, &f);
-        assert_eq!(line.net, 949_999);
+        assert_eq!(line.revenue - line.tax, 949_999);
         assert_eq!(line.profit, 949_738);
         assert_eq!(line.roi, 363_884);
         // Cost 0 → ROI 0, never a division by zero.
@@ -501,7 +503,6 @@ impl ProfitFormula {
 pub struct ProfitLine {
     pub revenue: i32,
     pub tax: i32,
-    pub net: i32,
     pub cost: i32,
     pub profit: i32,
     pub roi: i32,
@@ -553,7 +554,6 @@ pub fn profit_line(gross: i32, cost_per_unit: i32, f: &ProfitFormula) -> (Profit
         ProfitLine {
             revenue: gross,
             tax,
-            net,
             cost: cost_per_unit,
             profit,
             roi,
@@ -1336,8 +1336,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
             recipe,
             profit: line.profit,
             return_on_investment: line.roi,
-            cost: cost_per_unit,
-            market_price,
+            cost: line.cost,
+            market_price: line.revenue,
             cheapest_world_id,
             sub_crafts: breakdown.sub_crafts,
             daily_sales: sales_stats.daily_sales,
@@ -1723,6 +1723,8 @@ git commit -m "test(recipe-analyzer): characterization oracle for price_rows; re
 
 ### Task 7: Page-level `?sort=`, the folded sell-history resource, stale comments
 
+*Executed as amended: keying one folded resource on `(world, outliers)` refetched the whole-world rollup on an in-page outliers toggle, which `main` never did; the rollup stays world-keyed and the raw body has its own resource. One accepted deviation, in a failure mode only: with the outliers flag on at load and a failed rollup the raw body is fetched twice.*
+
 **Files:**
 - Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs` (page component 1873-2205, table props 611-640, the `MarketMenu` comment at 402-411)
 
@@ -1734,25 +1736,27 @@ git commit -m "test(recipe-analyzer): characterization oracle for price_rows; re
 
 ```rust
     #[test]
-    fn sell_history_key_reads_outliers_not_resource_state() {
-        assert_eq!(sell_history_key(Some("Gilgamesh"), false), Some(("Gilgamesh".to_string(), false)));
-        assert_eq!(sell_history_key(Some("Gilgamesh"), true), Some(("Gilgamesh".to_string(), true)));
-        assert_eq!(sell_history_key(None, true), None);
+    fn raw_sales_key_reads_outliers_not_resource_state() {
+        assert_eq!(raw_sales_key(Some("Gilgamesh"), false), Some(("Gilgamesh".to_string(), false)));
+        assert_eq!(raw_sales_key(Some("Gilgamesh"), true), Some(("Gilgamesh".to_string(), true)));
+        assert_eq!(raw_sales_key(None, true), None);
     }
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cargo test -p ultros-app --lib sell_history_key`
+Run: `cargo test -p ultros-app --lib raw_sales_key`
 Expected: FAIL to compile.
 
-- [ ] **Step 3: Implement the folded resource**
+- [ ] **Step 3: Implement the sell-history and raw-sales resources**
 
 Add near the other free functions:
 
 ```rust
-/// One sell-world history payload: the 7-day rollup plus, when the outlier
-/// filter is on or the rollup failed, the raw recent sales.
+/// One sell-world history payload: the 7-day rollup plus, only when that
+/// rollup failed, the raw recent sales as a failover. Keyed on the world
+/// alone, so the opt-in outlier filter never re-requests the rollup — the
+/// on-demand raw body is [`raw_sales_key`]'s separate resource.
 // `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
 // required (both field types already derive it).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1763,31 +1767,22 @@ struct SellHistory {
     raw_failed: bool,
 }
 
-/// The resource key. Deliberately built from URL state only — the old
-/// key read the rollup resource inside a memo, which Leptos flags at
-/// hydration (#1248 follow-up).
-fn sell_history_key(world: Option<&str>, outliers: bool) -> Option<(String, bool)> {
+/// The raw-sales resource key. Deliberately built from URL state only — the
+/// old key read the rollup resource inside a memo, which Leptos flags at
+/// hydration (#1248 follow-up). The rollup's own failover is decided inside
+/// [`fetch_sell_history`], off the reactive graph entirely.
+fn raw_sales_key(world: Option<&str>, outliers: bool) -> Option<(String, bool)> {
     world.map(|w| (w.to_string(), outliers))
 }
 
-async fn fetch_sell_history(world: String, outliers: bool) -> SellHistory {
-    // With the outlier filter on both bodies are needed: fetch them
-    // concurrently, as the two separate resources did before the fold.
-    // Otherwise the raw sales are only a failover for a failed rollup.
-    let (stats, raw) = if outliers {
-        let (s, r) = futures::join!(
-            get_sale_stats(&world, SALE_STATS_WINDOW_DAYS),
-            get_recent_sales_for_world(&world)
-        );
-        (s, Some(r))
+async fn fetch_sell_history(world: String) -> SellHistory {
+    // The raw sales are only a failover here: if the rollup request fails,
+    // fetch them so the analyzer stays useful while ClickHouse recovers.
+    let stats = get_sale_stats(&world, SALE_STATS_WINDOW_DAYS).await;
+    let raw = if stats.is_err() {
+        Some(get_recent_sales_for_world(&world).await)
     } else {
-        let s = get_sale_stats(&world, SALE_STATS_WINDOW_DAYS).await;
-        let r = if s.is_err() {
-            Some(get_recent_sales_for_world(&world).await)
-        } else {
-            None
-        };
-        (s, r)
+        None
     };
     SellHistory {
         stats_failed: stats.is_err(),
@@ -1801,16 +1796,28 @@ async fn fetch_sell_history(world: String, outliers: bool) -> SellHistory {
 In `RecipeAnalyzer`, delete the `sell_world_sale_stats`, `recent_sales_source` and `recent_sales` resources (lines 2047-2078) and add:
 
 ```rust
-    let sell_history_source = Memo::new(move |_| {
-        sell_history_key(
-            selected_world.get().map(|w| w.name).as_deref(),
-            filter_outliers().unwrap_or(false),
-        )
-    });
-    let sell_history = ArcResource::new(sell_history_source, move |key: Option<(String, bool)>| async move {
-        match key {
-            Some((world, outliers)) => Some(fetch_sell_history(world, outliers).await),
+    // The same 7-day rollup supplies velocity, average price, sale-stat
+    // revenue metrics, and optional stats columns. Keyed on the world
+    // alone: toggling the outlier chip must not re-request this (heavy)
+    // body, so its failover raw sales live in here while the on-demand
+    // raw sales get their own resource below.
+    let sell_history = ArcResource::new(sell_world_name, move |world: Option<String>| async move {
+        match world {
+            Some(world) => Some(fetch_sell_history(world).await),
             None => None,
+        }
+    });
+
+    // Raw sale samples are needed only for the opt-in outlier filter. Its
+    // own resource, so flipping the chip on fetches exactly this body and
+    // flipping it off fetches nothing at all.
+    let raw_sales_source = Memo::new(move |_| {
+        raw_sales_key(sell_world_name.get().as_deref(), filter_outliers().unwrap_or(false))
+    });
+    let raw_sales = ArcResource::new(raw_sales_source, move |key: Option<(String, bool)>| async move {
+        match key {
+            Some((world, true)) => Some(get_recent_sales_for_world(&world).await),
+            _ => None,
         }
     });
 ```
@@ -1827,16 +1834,23 @@ Update the ToolHeader's inline error (it read `recent_sales_clone`):
 ```rust
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
-                            sell_history_for_header
+                            // Either raw-sales fetch failing shows this, exactly
+                            // as the one pre-fold `recent_sales` resource did.
+                            let on_demand_failed = matches!(
+                                raw_sales_for_header.get().flatten(),
+                                Some(Err(_))
+                            );
+                            let failover_failed = sell_history_for_header
                                 .get()
                                 .flatten()
-                                .filter(|h| h.raw_failed)
-                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
+                                .is_some_and(|h| h.raw_failed);
+                            (on_demand_failed || failover_failed)
+                                .then(|| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                         }}
                     </Suspense>
 ```
 
-with `let sell_history_for_header = sell_history.clone();` declared before the view. Delete the old `let recent_sales_clone = recent_sales.clone();` that fed this slot, and in the join drop `let sales = recent_sales.get();` and the `let recent_sales = sales.and_then(..)` line the old `match` used.
+with `let sell_history_for_header = sell_history.clone();` and `let raw_sales_for_header = raw_sales.clone();` declared before the view. Delete the old `let recent_sales_clone = recent_sales.clone();` that fed this slot, and in the join drop `let sales = recent_sales.get();` and the `let recent_sales = sales.and_then(..)` line the old `match` used.
 
 Update the Suspense join:
 
@@ -1846,8 +1860,15 @@ Update the Suspense join:
                         let stats = sale_stats.get();
                         let sell_listings = sell_world_listings.get();
                         let history = sell_history.get();
-                        match (listings, stats, sell_listings, history) {
-                            (Some(Ok(listings)), Some(stats), Some(sell_listings), Some(history)) => {
+                        let raw = raw_sales.get();
+                        match (listings, stats, sell_listings, history, raw) {
+                            (
+                                Some(Ok(listings)),
+                                Some(stats),
+                                Some(sell_listings),
+                                Some(history),
+                                Some(raw),
+                            ) => {
                                 let (sale_stats, buy_stats_error) = match stats {
                                     Ok(stats) => (stats, false),
                                     Err(_) => (None, true),
@@ -1859,10 +1880,13 @@ Update the Suspense join:
                                     raw_failed: false,
                                 });
                                 let sale_stats_error = buy_stats_error || history.stats_failed;
+                                // The on-demand body wins; the rollup's
+                                // failover body fills in when it was fetched.
+                                let recent_sales = raw.and_then(|r| r.ok()).or(history.raw);
                                 view! {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
-                                        recent_sales=history.raw
+                                        recent_sales=recent_sales
                                         sale_stats=sale_stats
                                         sell_world_sale_stats=history.stats
                                         sale_stats_error=sale_stats_error
@@ -1875,7 +1899,7 @@ Update the Suspense join:
                                     />
                                 }.into_any()
                             }
-                            (Some(Err(e)), _, _, _) => { /* unchanged */ }
+                            (Some(Err(e)), _, _, _, _) => { /* unchanged */ }
                             _ => { /* unchanged */ }
                         }
                     }}
@@ -1913,7 +1937,7 @@ with `use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, needed_bodies};`.
 - [ ] **Step 5: Run everything**
 
 Run: `cargo test -p ultros-app --lib`
-Expected: PASS (all, including `sell_history_key_reads_outliers_not_resource_state`).
+Expected: PASS (all, including `raw_sales_key_reads_outliers_not_resource_state`).
 
 Run: `cargo fmt --all && cargo clippy -p ultros-app --all-targets -- -D warnings`
 Expected: clean, no dead code anywhere in `analyzer_kit`.

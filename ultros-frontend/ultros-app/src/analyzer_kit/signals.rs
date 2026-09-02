@@ -1,4 +1,3 @@
-// ultros-frontend/ultros-app/src/analyzer_kit/signals.rs
 //! Price lookups the pricing core can be generic over, and the layered
 //! view that prices from a sale statistic with the listing as fallback
 //! without cloning any map.
@@ -144,7 +143,7 @@ mod tests {
         }
     }
 
-    /// Items 1-4 cover: listed both sides, listed only in base, listed
+    /// Items 1-5 cover: listed both sides, listed only in base, listed
     /// only in over, stats without any listing, and a zero-priced stat.
     fn fixture() -> (CheapestListingsMap, CheapestListingsMap, BulkSaleStats) {
         let base = listings(&[

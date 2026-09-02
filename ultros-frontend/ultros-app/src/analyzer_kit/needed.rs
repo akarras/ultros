@@ -1,5 +1,5 @@
-//! Which bulk bodies a view needs. The page turns each role into one
-//! resource, so "what does this URL fetch" is a pure function.
+//! Which bulk bodies a view needs. Today the page consults the set only
+//! for the buy-scope stats gate; later phases wire the remaining roles.
 
 use std::collections::BTreeSet;
 
