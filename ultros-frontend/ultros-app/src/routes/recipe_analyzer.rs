@@ -1057,7 +1057,16 @@ fn RecipeAnalyzerTable(
                 },
                 on_hand: on_hand.as_ref(),
             };
-            Arc::new(price_rows(&inp).into_iter().map(Arc::new).collect())
+            #[cfg(all(debug_assertions, feature = "hydrate"))]
+            let t0 = js_sys::Date::now();
+            let rows = price_rows(&inp);
+            #[cfg(all(debug_assertions, feature = "hydrate"))]
+            leptos::logging::log!(
+                "price_rows: {} recipes priced in {:.1} ms",
+                rows.len(),
+                js_sys::Date::now() - t0
+            );
+            Arc::new(rows.into_iter().map(Arc::new).collect())
         })
     };
 
