@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "ultros",
+    "ultros-item-card",
     "ultros-db",
     "ultros-api-types",
     "ultros-clickhouse",

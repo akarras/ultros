@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-02",
+        title: "Shared item links are quieter and stay useful",
+        blurb: "Item links shared to Discord now show a clean Ultros card that points back to the live market page. The old card packed in a price-history graph that Discord could cache long after its numbers stopped being current.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
         date: "2026-09-01",
         title: "Recipe Analyzer now shows every matching recipe",
         blurb: "The Recipe Analyzer no longer stops after its first 100 results. Scroll through the full ranked list without loading thousands of table rows into the page at once, and keep using the same sorts and filters across the whole result set.",
@@ -447,6 +453,25 @@ pub fn latest_changelog_date() -> &'static str {
     CHANGELOG.first().map(|entry| entry.date).unwrap_or("")
 }
 
+/// Groups the changelog into one bucket per day, newest day first, preserving
+/// the order entries were written in within a day.
+///
+/// Several changes usually ship on the same day, and giving each of them its
+/// own dated card makes the page read as a wall of repeated dates. Grouping
+/// relies on [`CHANGELOG`] being sorted newest-first (guarded by
+/// `entries_are_sorted_newest_first`), so same-day entries are always
+/// adjacent.
+pub fn changelog_by_day() -> Vec<(&'static str, Vec<&'static ChangelogEntry>)> {
+    let mut days: Vec<(&'static str, Vec<&'static ChangelogEntry>)> = Vec::new();
+    for entry in CHANGELOG {
+        match days.last_mut() {
+            Some((date, entries)) if *date == entry.date => entries.push(entry),
+            _ => days.push((entry.date, vec![entry])),
+        }
+    }
+    days
+}
+
 #[component]
 pub fn Changelog() -> impl IntoView {
     let i18n = use_i18n();
@@ -466,26 +491,32 @@ pub fn Changelog() -> impl IntoView {
                         {t!(i18n, changelog_intro)}
                     </p>
                 </section>
-                <ol class="flex flex-col gap-4">
-                    {CHANGELOG.iter().map(|entry| view! {
-                        <li class="panel p-5 rounded-xl flex flex-col gap-2">
+                <ol class="flex flex-col gap-6">
+                    {changelog_by_day().into_iter().map(|(date, entries)| view! {
+                        <li class="flex flex-col gap-3">
                             <time
-                                datetime=entry.date
+                                datetime=date
                                 class="text-xs font-bold uppercase tracking-wide text-brand-300 tabular-nums"
                             >
-                                {entry.date}
+                                {date}
                             </time>
-                            <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{entry.title}</h2>
-                            <p class="text-sm text-[color:var(--color-text-muted)]">{entry.blurb}</p>
-                            {entry.link.map(|href| view! {
-                                <AppLink
-                                    href=href
-                                    attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-1.5 self-start"
-                                >
-                                    {t!(i18n, changelog_try_it)}
-                                    <Icon icon=i::FaArrowRightSolid width="0.8em" height="0.8em" />
-                                </AppLink>
-                            })}
+                            <ul class="panel rounded-xl divide-y divide-[color:var(--color-outline)]">
+                                {entries.into_iter().map(|entry| view! {
+                                    <li class="p-5 flex flex-col gap-2">
+                                        <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{entry.title}</h2>
+                                        <p class="text-sm text-[color:var(--color-text-muted)]">{entry.blurb}</p>
+                                        {entry.link.map(|href| view! {
+                                            <AppLink
+                                                href=href
+                                                attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-1.5 self-start"
+                                            >
+                                                {t!(i18n, changelog_try_it)}
+                                                <Icon icon=i::FaArrowRightSolid width="0.8em" height="0.8em" />
+                                            </AppLink>
+                                        })}
+                                    </li>
+                                }).collect_view()}
+                            </ul>
                         </li>
                     }).collect_view()}
                 </ol>
@@ -548,5 +579,31 @@ mod tests {
     #[test]
     fn latest_date_is_the_first_entry() {
         assert_eq!(latest_changelog_date(), CHANGELOG[0].date);
+    }
+
+    /// One bucket per day, every entry kept, order preserved.
+    #[test]
+    fn grouping_by_day_is_lossless_and_ordered() {
+        let days = changelog_by_day();
+        let flattened: Vec<_> = days
+            .iter()
+            .flat_map(|(_, entries)| entries.iter().copied())
+            .collect();
+        assert_eq!(flattened.len(), CHANGELOG.len());
+        for (grouped, original) in flattened.iter().zip(CHANGELOG) {
+            assert!(**grouped == *original, "{} is out of place", original.title);
+        }
+        for pair in days.windows(2) {
+            assert!(
+                pair[0].0 > pair[1].0,
+                "days are not strictly newest-first: {} then {}",
+                pair[0].0,
+                pair[1].0
+            );
+        }
+        for (date, entries) in &days {
+            assert!(!entries.is_empty());
+            assert!(entries.iter().all(|entry| entry.date == *date));
+        }
     }
 }
