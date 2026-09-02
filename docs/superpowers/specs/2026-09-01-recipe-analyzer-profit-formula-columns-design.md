@@ -1,7 +1,10 @@
 # Recipe Analyzer: the profit formula as columns — design
 
 Date: 2026-09-01
-Status: draft, pending Aaron's review
+Status: draft, pending Aaron's review. The model, UI vocabulary, URL contract and decision
+points here stand; the PR plan (Phases 1a/1b/2/3) is superseded by
+`2026-09-01-analyzer-kit-design.md`, which re-homes them onto a shared analyzer kit (its
+Phases A/C/D) and adds the sell-side scope, the flip finder's column family and the ports.
 Issue: #1233 (follow-up after #1238 / #1239 / #1240 / #1248; does not close it — the port
 to the other analyzers stays open)
 
