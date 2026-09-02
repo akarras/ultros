@@ -99,7 +99,11 @@ fn header_cell<T: 'static, M: SortColumn>(
             <SortableHeaderCell
                 mode=mode
                 label=label_fn(i18n)
-                class=class
+                // The wide variant is still only `w-40`: clip a long
+                // label (de/ja) rather than widen the column, and hand
+                // the whole label back on hover.
+                title=label_fn(i18n)
+                class=format!("{class} truncate")
                 sort_mode
                 sort_dir
                 badge=role
@@ -451,6 +455,9 @@ mod tests {
             .to_html();
             assert!(html.contains("listing · Gilgamesh"), "{html}");
             assert!(html.contains("w-40 px-3 py-2 leading-tight"), "{html}");
+            // The marked *cell* class has to reach the row too, or the
+            // header and its cells sit on different widths.
+            assert!(html.contains("class=\"w-40\""), "{html}");
             assert!(
                 html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
                 "{html}"

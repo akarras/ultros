@@ -88,7 +88,13 @@ pub fn FormulaStrip(terms: Vec<StripTerm>, layout: StripLayout) -> impl IntoView
                             None => view! { <span>{move || term.label.get()}</span> }.into_any(),
                         }}
                         {term.place.map(|p| view! { <span class="filter-chip-label">"· " {move || p.get()}</span> })}
-                        {term.place_select.map(select_view)}
+                        // `‹signal› · ‹Buy from›` — the same separator the
+                        // fixed `place` prints, so a two-select term still
+                        // reads as one place-qualified price.
+                        {term.place_select.map(|p| view! {
+                            <span class="filter-chip-label">"·"</span>
+                            {select_view(p)}
+                        })}
                         <span
                             class=move || if degraded.get() { "inline-block w-1.5 h-1.5 rounded-full bg-amber-300" } else { "hidden" }
                             role="img"

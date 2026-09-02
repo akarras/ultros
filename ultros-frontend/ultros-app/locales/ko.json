@@ -213,7 +213,7 @@
     "labs_on": "켬",
     "labs_off": "끔",
     "labs_analyzer_ledger_title": "제작 레시피 분석기: 이익 공식 바",
-    "labs_analyzer_ledger_desc": "표 위에 이익 공식을 조작 가능한 형태로 표시하고, 계산에 사용되는 열을 표시합니다.",
+    "labs_analyzer_ledger_desc": "표 위에 이익 공식을 조작 가능한 형태로 표시하고, 계산에 사용되는 열을 강조합니다.",
     "formula_role_result": "결과",
     "formula_role_revenue": "이익에 더해짐",
     "formula_role_tax": "장터 세금",

@@ -341,6 +341,11 @@ fn LanguageSettings() -> impl IntoView {
 #[component]
 fn LabsSettings() -> impl IntoView {
     use crate::global_state::labs::{LABS, LABS_COOKIE, Labs};
+    // Shipping the last experiment deletes its `LABS` entry; an empty
+    // "Labs" box with nothing to toggle would outlive it.
+    if LABS.is_empty() {
+        return ().into_any();
+    }
     let cookies = use_context::<Cookies>().unwrap();
     let (labs, set_labs) = cookies.use_cookie_typed::<_, Labs>(LABS_COOKIE);
     let i18n = use_i18n();

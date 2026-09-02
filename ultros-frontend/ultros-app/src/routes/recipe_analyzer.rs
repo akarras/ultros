@@ -407,12 +407,38 @@ fn MarketMenu(
                         <FormulaStrip terms=terms.run(()) layout=StripLayout::Stacked />
                         // What each price basis actually means, so the
                         // strip's selects are choosable without leaving
-                        // the page.
+                        // the page. Each line opens with the picker label
+                        // it explains, so a sentence can be matched to the
+                        // option it belongs to.
                         <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
-                            <span>{t!(i18n, price_basis_listing_min_help)}</span>
-                            <span>{t!(i18n, price_basis_sale_median_help)}</span>
-                            <span>{t!(i18n, price_basis_sale_min_help)}</span>
-                            <span>{t!(i18n, price_basis_sale_avg_help)}</span>
+                            <span>
+                                <span class="font-medium text-[color:var(--color-text)]">
+                                    {t!(i18n, price_basis_listing_min)}
+                                </span>
+                                " "
+                                {t!(i18n, price_basis_listing_min_help)}
+                            </span>
+                            <span>
+                                <span class="font-medium text-[color:var(--color-text)]">
+                                    {t!(i18n, price_basis_sale_median)}
+                                </span>
+                                " "
+                                {t!(i18n, price_basis_sale_median_help)}
+                            </span>
+                            <span>
+                                <span class="font-medium text-[color:var(--color-text)]">
+                                    {t!(i18n, price_basis_sale_min)}
+                                </span>
+                                " "
+                                {t!(i18n, price_basis_sale_min_help)}
+                            </span>
+                            <span>
+                                <span class="font-medium text-[color:var(--color-text)]">
+                                    {t!(i18n, price_basis_sale_avg)}
+                                </span>
+                                " "
+                                {t!(i18n, price_basis_sale_avg_help)}
+                            </span>
                         </div>
                     </Show>
                 </div>
@@ -1283,10 +1309,12 @@ fn RecipeAnalyzerTable(
     /// The analyzer-ledger lab: header marks, the profit readout, the
     /// clamped ROI and the popover's strip all hang off this.
     ledger: Signal<bool>,
-    /// `(buy, sell)` degraded flags. Written here — this is where the
-    /// resource outcomes are known — and read by the page's strip chips
-    /// and info-panel sentence.
-    stats_degraded: RwSignal<(bool, bool)>,
+    /// `(buy, sell)` stats-*loaded* flags: the very pair this table's
+    /// `formula` memo hands `ProfitFormula::effective`. Written here —
+    /// this is where the resource outcomes are known — and read by the
+    /// page's strip chips and info-panel sentence, so all three describe
+    /// the same fallback the rows were priced with.
+    stats_loaded: RwSignal<(bool, bool)>,
     /// The sell world's name, for the Price/Profit marks.
     #[prop(into)]
     sell_place: Signal<String>,
@@ -1322,9 +1350,9 @@ fn RecipeAnalyzerTable(
     let i18n = use_i18n();
 
     // The table is the only place that knows how each stats body actually
-    // resolved; publish it once so the page's strip and info panel can say
-    // the numbers fell back.
-    Effect::new(move |_| stats_degraded.set((buy_stats_error, sell_stats_error)));
+    // resolved; publish the loaded pair once so the page's strip and info
+    // panel derive the fallback from the same two booleans the rows did.
+    Effect::new(move |_| stats_loaded.set((buy_stats_loaded, sell_stats_loaded)));
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -2300,12 +2328,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
     let ledger = use_lab(LAB_ANALYZER_LEDGER);
-    // `(buy, sell)` — written by an Effect inside the table, where the
-    // resource outcomes are known.
-    let stats_degraded = RwSignal::new((false, false));
+    // `(buy, sell)` stats-loaded flags — written by an Effect inside the
+    // table, where the resource outcomes are known. `(true, true)` until
+    // then, so SSR and the pre-Effect client render name the selected
+    // signals rather than flashing a fallback that never happened.
+    let stats_loaded = RwSignal::new((true, true));
     // The *selected* formula. `effective()` is applied at each reader:
     // the table marks its headers from its own copy, and the info panel's
-    // sentence applies it below over `stats_degraded`.
+    // sentence and the strip's dots apply it below over `stats_loaded`.
     let formula_page = Memo::new(move |_| {
         ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope())
     });
@@ -2426,7 +2456,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     aria: t_string!(i18n, formula_change_revenue_aria).to_string(),
                 }),
                 place_select: None,
-                degraded: Signal::derive(move || stats_degraded.get().1),
+                // Lit only when *this* term fell back: the effective
+                // revenue signal differs from the selected one.
+                degraded: Signal::derive(move || {
+                    let loaded = stats_loaded.get();
+                    let f = formula_page.get();
+                    f.revenue_signal() != f.effective(loaded.0, loaded.1).revenue_signal()
+                }),
             },
             StripTerm::fixed(
                 TermRole::Tax,
@@ -2454,7 +2490,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }),
                     aria: t_string!(i18n, formula_change_scope_aria).to_string(),
                 }),
-                degraded: Signal::derive(move || stats_degraded.get().0),
+                degraded: Signal::derive(move || {
+                    let loaded = stats_loaded.get();
+                    let f = formula_page.get();
+                    f.cost_signal() != f.effective(loaded.0, loaded.1).cost_signal()
+                }),
             },
         ]
     };
@@ -2595,8 +2635,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 // The EFFECTIVE formula: a failed stats body
                                 // downgrades the signal, and the sentence must
                                 // never name a signal the numbers ignore.
-                                let (buy_failed, sell_failed) = stats_degraded.get();
-                                let f = formula_page.get().effective(!buy_failed, !sell_failed);
+                                let loaded = stats_loaded.get();
+                                let f = formula_page.get().effective(loaded.0, loaded.1);
                                 let label_of = |s: PriceSignal| {
                                     cost_basis_options(i18n)
                                         .into_iter()
@@ -2740,7 +2780,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         sort_mode=sort_mode
                                         sort_dir=sort_dir
                                         ledger=ledger
-                                        stats_degraded=stats_degraded
+                                        stats_loaded=stats_loaded
                                         sell_place=sell_place
                                         buy_place=buy_place
                                         strip_terms=Callback::new(move |()| strip_terms())
@@ -2748,6 +2788,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 }.into_any()
                             }
                             (Some(Err(e)), _, _, _, _) => {
+                                // The table — and the Effect that publishes
+                                // the pair — is gone; leaving the last
+                                // outcome behind would keep stale dots lit.
+                                stats_loaded.set((true, true));
                                 view! {
                                     <div class="text-red-400">
                                         "Error loading listings: " {e.to_string()}
@@ -3448,5 +3492,37 @@ mod test {
         assert_eq!(labels.labels[&TermRole::Cost], "7d median · Aether");
         assert_eq!(labels.labels[&TermRole::Revenue], "listing · Gilgamesh");
         assert_eq!(labels.labels[&TermRole::Result], "per unit · after 5% tax");
+    }
+
+    /// The info panel's `label_of` finds a signal's picker label by
+    /// matching `PriceSignal`'s URL token against `cost_basis_options`'
+    /// first field. A token that drifts out of that list would silently
+    /// blank the sentence's revenue or cost name, so pin the pairing.
+    #[test]
+    fn every_price_signal_token_has_a_picker_label() {
+        // `t_string!` needs an I18nContext, which spawns an Effect: stand
+        // up the executor and the context, as the kit's tests do.
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            for signal in [
+                PriceSignal::ListingMin,
+                PriceSignal::SaleMin,
+                PriceSignal::SaleMedian,
+                PriceSignal::SaleAvg,
+            ] {
+                let token = signal.to_string();
+                let label = cost_basis_options(i18n)
+                    .into_iter()
+                    .find(|(t, _)| *t == token)
+                    .map(|(_, l)| l);
+                assert!(
+                    label.is_some_and(|l| !l.is_empty()),
+                    "no picker label for {token}"
+                );
+            }
+        });
     }
 }

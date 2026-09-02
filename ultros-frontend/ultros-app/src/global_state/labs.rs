@@ -69,10 +69,16 @@ impl fmt::Display for Labs {
 
 /// Whether an experiment is on for this view: the cookie set, or the
 /// `?labs=` list in the URL (for sharing a link with a tester).
+///
+/// A `Memo`, not a bare derived signal: this depends on the whole query
+/// map, so every filter edit invalidates it, and its readers (a `title`
+/// closure per table row, the formula memo, the `Show`s) would all re-run
+/// for a value that practically never changes. The memo's diff stops that
+/// at one comparison.
 pub fn use_lab(token: &'static str) -> Signal<bool> {
     let cookie = use_context::<Cookies>().map(|c| c.use_cookie_typed::<_, Labs>(LABS_COOKIE).0);
     let query = use_query_map();
-    Signal::derive(move || {
+    Memo::new(move |_| {
         let from_cookie = cookie.is_some_and(|c| c.get().is_some_and(|l| l.has(token)));
         let from_url = query.with(|q| {
             q.get("labs")
@@ -81,6 +87,7 @@ pub fn use_lab(token: &'static str) -> Signal<bool> {
         });
         from_cookie || from_url
     })
+    .into()
 }
 
 #[cfg(test)]
