@@ -280,6 +280,46 @@ mod tests {
             assert!(html.contains("Profit"), "{html}");
             assert!(!html.contains("Extra"), "{html}");
             assert_eq!(html.matches("role=\"cell\"").count(), 2, "{html}");
+            // The sortable Profit header goes through `SortableHeaderCell`,
+            // which emits a live `aria-sort`; the plain unsortable Item
+            // header does not.
+            assert_eq!(html.matches("aria-sort=").count(), 1, "{html}");
+        });
+    }
+
+    #[test]
+    fn grid_renders_optional_columns_when_visible() {
+        // The Profit cell renders `<Gil>`, which reads the i18n context.
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let visible = RwSignal::new(HashSet::from(["extra"]));
+            let html = view! {
+                <AnalyzerGrid
+                    columns=&COLS
+                    rows=Signal::derive(|| vec![(0usize, Row(7))])
+                    visible_cols=visible
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    custom=Arc::new(|r: &Row, kind: ColumnKind| {
+                        view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
+                            .into_any()
+                    })
+                    layout=GridLayout {
+                        viewport_height: 720.0,
+                        row_height: 60.0,
+                        header_height: 64.0,
+                        overscan: 8,
+                    }
+                    header_class="thead"
+                    row_class=stripe
+                />
+            }
+            .to_html();
+            assert!(html.contains("Extra"), "{html}");
+            assert_eq!(html.matches("role=\"cell\"").count(), 3, "{html}");
         });
     }
 }

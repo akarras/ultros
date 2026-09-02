@@ -90,6 +90,9 @@ pub struct ToolColumnMeta<T: 'static, M: 'static> {
     pub default_dir: SortDir,
     pub header_class: &'static str,
     pub cell_class: &'static str,
+    /// Whether an optional column starts visible. Ignored when `id` is
+    /// empty (always-on columns): both the picker and the default set
+    /// read it only for optional columns.
     pub default_on: bool,
     pub cell: fn(&T, &CellCtx) -> CellValue,
 }
