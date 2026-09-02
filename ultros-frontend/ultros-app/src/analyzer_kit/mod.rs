@@ -4,5 +4,6 @@
 pub mod cells;
 pub mod columns;
 pub mod formula;
+pub mod grid;
 pub mod needed;
 pub mod signals;
