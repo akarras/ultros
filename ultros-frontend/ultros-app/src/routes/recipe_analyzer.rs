@@ -832,8 +832,10 @@ fn filter_and_sort(
     kept.into_iter().enumerate().collect()
 }
 
-/// One sell-world history payload: the 7-day rollup plus, when the outlier
-/// filter is on or the rollup failed, the raw recent sales.
+/// One sell-world history payload: the 7-day rollup plus, only when that
+/// rollup failed, the raw recent sales as a failover. Keyed on the world
+/// alone, so the opt-in outlier filter never re-requests the rollup — the
+/// on-demand raw body is [`raw_sales_key`]'s separate resource.
 // `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
 // required (both field types already derive it).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -844,31 +846,22 @@ struct SellHistory {
     raw_failed: bool,
 }
 
-/// The resource key. Deliberately built from URL state only — the old
-/// key read the rollup resource inside a memo, which Leptos flags at
-/// hydration (#1248 follow-up).
-fn sell_history_key(world: Option<&str>, outliers: bool) -> Option<(String, bool)> {
+/// The raw-sales resource key. Deliberately built from URL state only — the
+/// old key read the rollup resource inside a memo, which Leptos flags at
+/// hydration (#1248 follow-up). The rollup's own failover is decided inside
+/// [`fetch_sell_history`], off the reactive graph entirely.
+fn raw_sales_key(world: Option<&str>, outliers: bool) -> Option<(String, bool)> {
     world.map(|w| (w.to_string(), outliers))
 }
 
-async fn fetch_sell_history(world: String, outliers: bool) -> SellHistory {
-    // With the outlier filter on both bodies are needed: fetch them
-    // concurrently, as the two separate resources did before the fold.
-    // Otherwise the raw sales are only a failover for a failed rollup.
-    let (stats, raw) = if outliers {
-        let (s, r) = futures::join!(
-            get_sale_stats(&world, SALE_STATS_WINDOW_DAYS),
-            get_recent_sales_for_world(&world)
-        );
-        (s, Some(r))
+async fn fetch_sell_history(world: String) -> SellHistory {
+    // The raw sales are only a failover here: if the rollup request fails,
+    // fetch them so the analyzer stays useful while ClickHouse recovers.
+    let stats = get_sale_stats(&world, SALE_STATS_WINDOW_DAYS).await;
+    let raw = if stats.is_err() {
+        Some(get_recent_sales_for_world(&world).await)
     } else {
-        let s = get_sale_stats(&world, SALE_STATS_WINDOW_DAYS).await;
-        let r = if s.is_err() {
-            Some(get_recent_sales_for_world(&world).await)
-        } else {
-            None
-        };
-        (s, r)
+        None
     };
     SellHistory {
         stats_failed: stats.is_err(),
@@ -2144,26 +2137,37 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The same 7-day rollup supplies velocity, average price, sale-stat
     // revenue metrics, and optional stats columns. It is the analyzer's one
     // default sale-history payload regardless of which columns are visible.
-    // The raw sale samples ride along in the same resource: they are needed
-    // only for the opt-in outlier filter, or as a failover when the rollup
-    // request fails, so the analyzer stays useful while ClickHouse recovers.
-    let sell_history_source = Memo::new(move |_| {
-        sell_history_key(
-            selected_world.get().map(|w| w.name).as_deref(),
+    // Keyed on the world alone: toggling the outlier chip must not re-request
+    // this (heavy) body, so its failover raw sales live in here while the
+    // on-demand raw sales get their own resource below.
+    let sell_history = ArcResource::new(sell_world_name, move |world: Option<String>| async move {
+        match world {
+            Some(world) => Some(fetch_sell_history(world).await),
+            None => None,
+        }
+    });
+
+    // Raw sale samples are needed only for the opt-in outlier filter. Its own
+    // resource, so flipping the chip on fetches exactly this body and
+    // flipping it off fetches nothing at all.
+    let raw_sales_source = Memo::new(move |_| {
+        raw_sales_key(
+            sell_world_name.get().as_deref(),
             filter_outliers().unwrap_or(false),
         )
     });
-    let sell_history = ArcResource::new(
-        sell_history_source,
+    let raw_sales = ArcResource::new(
+        raw_sales_source,
         move |key: Option<(String, bool)>| async move {
             match key {
-                Some((world, outliers)) => Some(fetch_sell_history(world, outliers).await),
-                None => None,
+                Some((world, true)) => Some(get_recent_sales_for_world(&world).await),
+                _ => None,
             }
         },
     );
 
     let sell_history_for_header = sell_history.clone();
+    let raw_sales_for_header = raw_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
             <MetaTitle title="Recipe Analyzer - Ultros" />
@@ -2189,11 +2193,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
-                            sell_history_for_header
+                            // Either raw-sales fetch failing shows this, exactly
+                            // as the one pre-fold `recent_sales` resource did.
+                            let on_demand_failed = matches!(
+                                raw_sales_for_header.get().flatten(),
+                                Some(Err(_))
+                            );
+                            let failover_failed = sell_history_for_header
                                 .get()
                                 .flatten()
-                                .filter(|h| h.raw_failed)
-                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
+                                .is_some_and(|h| h.raw_failed);
+                            (on_demand_failed || failover_failed)
+                                .then(|| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                         }}
                     </Suspense>
                 </ToolHeader>
@@ -2240,12 +2251,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         let stats = sale_stats.get();
                         let sell_listings = sell_world_listings.get();
                         let history = sell_history.get();
-                        match (listings, stats, sell_listings, history) {
+                        let raw = raw_sales.get();
+                        match (listings, stats, sell_listings, history, raw) {
                             (
                                 Some(Ok(listings)),
                                 Some(stats),
                                 Some(sell_listings),
                                 Some(history),
+                                Some(raw),
                             ) => {
                                 // A failed stats fetch is non-fatal: the table
                                 // degrades to the listing basis and says so.
@@ -2262,10 +2275,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     raw_failed: false,
                                 });
                                 let sale_stats_error = buy_stats_error || history.stats_failed;
+                                // The on-demand body wins; the rollup's
+                                // failover body fills in when it was fetched.
+                                let recent_sales = raw
+                                    .and_then(|r| r.ok())
+                                    .or(history.raw);
                                 view! {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
-                                        recent_sales=history.raw
+                                        recent_sales=recent_sales
                                         sale_stats=sale_stats
                                         sell_world_sale_stats=history.stats
                                         sale_stats_error=sale_stats_error
@@ -2278,7 +2296,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     />
                                 }.into_any()
                             }
-                            (Some(Err(e)), _, _, _) => {
+                            (Some(Err(e)), _, _, _, _) => {
                                 view! {
                                     <div class="text-red-400">
                                         "Error loading listings: " {e.to_string()}
@@ -2907,15 +2925,15 @@ mod test {
     }
 
     #[test]
-    fn sell_history_key_reads_outliers_not_resource_state() {
+    fn raw_sales_key_reads_outliers_not_resource_state() {
         assert_eq!(
-            sell_history_key(Some("Gilgamesh"), false),
+            raw_sales_key(Some("Gilgamesh"), false),
             Some(("Gilgamesh".to_string(), false))
         );
         assert_eq!(
-            sell_history_key(Some("Gilgamesh"), true),
+            raw_sales_key(Some("Gilgamesh"), true),
             Some(("Gilgamesh".to_string(), true))
         );
-        assert_eq!(sell_history_key(None, true), None);
+        assert_eq!(raw_sales_key(None, true), None);
     }
 }
