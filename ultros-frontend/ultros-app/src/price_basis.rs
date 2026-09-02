@@ -2,13 +2,22 @@
 //!
 //! The enums moved to [`crate::analyzer_kit::formula`] (one `PriceSignal`
 //! for both sides); this module re-exports them so existing call sites
-//! keep their names, and keeps the two map-cloning helpers that the
-//! zero-copy `SignalView` reproduces.
+//! keep their names. The two map-cloning helpers it used to hand the
+//! analyzer are now test-only: [`crate::analyzer_kit::signals::SignalView`]
+//! reproduces them without cloning, and keeping them compiled under
+//! `cfg(test)` is what pins that equivalence.
 
-pub use crate::analyzer_kit::formula::{BuyScope, CostBasis, RevenueMetric, SaleStat};
+pub use crate::analyzer_kit::formula::{BuyScope, CostBasis, RevenueMetric};
+
+// The two map-cloning helpers below are the oracle `SignalView` is tested
+// against; nothing outside tests calls them any more.
+#[cfg(test)]
+use crate::analyzer_kit::formula::SaleStat;
+#[cfg(test)]
 use ultros_api_types::cheapest_listings::{
     CheapestListingData, CheapestListingMapKey, CheapestListingsMap,
 };
+#[cfg(test)]
 use ultros_api_types::sale_stats::BulkSaleStats;
 
 /// Base map with every entry the override map carries replacing the base's.
@@ -16,6 +25,7 @@ use ultros_api_types::sale_stats::BulkSaleStats;
 /// higher than the buy-scope minimum (it is the price you would list at);
 /// items with no sell-world listing keep the base price so rows aren't
 /// dropped as unpriceable — same fallback the old `world-min` metric had.
+#[cfg(test)]
 pub fn override_listings(
     base: &CheapestListingsMap,
     over: &CheapestListingsMap,
@@ -39,6 +49,7 @@ pub fn override_listings(
 /// `world_id` is preserved from the listing entry where one exists (it
 /// feeds "cheapest world" UI); stat-only entries get `0`, which no UI
 /// resolves to a world link.
+#[cfg(test)]
 pub fn overlay_sale_stats(
     listings: &CheapestListingsMap,
     stats: &BulkSaleStats,

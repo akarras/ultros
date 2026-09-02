@@ -2252,6 +2252,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::analyzer_kit::formula::PriceSignal;
+    use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
@@ -2614,5 +2616,246 @@ mod test {
             empty_reason(true, &CrafterLevels::default(), Some("MIN")),
             Some(EmptyReason::FiltersExcludeAll)
         );
+    }
+
+    // --- `price_rows` / `filter_and_sort` -----------------------------------
+
+    /// Deterministic synthetic market: every item `i` lists NQ at
+    /// `100 + (i % 97) * 7` on world 1 and HQ at that plus 50 on world 2;
+    /// the sell world lists the OUTPUT items of the fixture recipes 20%
+    /// higher on world 3; 7d stats exist for every third item.
+    fn fixture(
+        recipes: &[&'static Recipe],
+    ) -> (CheapestListingsMap, CheapestListingsMap, BulkSaleStats) {
+        let mut buy = Vec::new();
+        let mut sell = Vec::new();
+        let mut stats = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for r in recipes {
+            for id in r.ingredient.iter().chain(std::iter::once(&r.item_result)) {
+                if *id == 0 || !seen.insert(*id) {
+                    continue;
+                }
+                let nq = 100 + (*id % 97) * 7;
+                buy.push(CheapestListingItem {
+                    item_id: *id,
+                    hq: false,
+                    cheapest_price: nq,
+                    world_id: 1,
+                });
+                buy.push(CheapestListingItem {
+                    item_id: *id,
+                    hq: true,
+                    cheapest_price: nq + 50,
+                    world_id: 2,
+                });
+                if *id % 3 == 0 {
+                    stats.push(ItemSaleStats {
+                        item_id: *id,
+                        hq: false,
+                        min_price: nq - 10,
+                        median_price: nq + 5,
+                        avg_price: nq + 9,
+                        num_sold: 14,
+                        ..Default::default()
+                    });
+                }
+            }
+            let out = r.item_result;
+            let nq = 100 + (out % 97) * 7;
+            sell.push(CheapestListingItem {
+                item_id: out,
+                hq: false,
+                cheapest_price: nq * 12 / 10,
+                world_id: 3,
+            });
+        }
+        (
+            CheapestListingsMap::from(CheapestListings {
+                cheapest_listings: buy,
+            }),
+            CheapestListingsMap::from(CheapestListings {
+                cheapest_listings: sell,
+            }),
+            BulkSaleStats { stats },
+        )
+    }
+
+    fn fixture_recipes() -> Vec<&'static Recipe> {
+        let data = xiv_gen_db::data();
+        let mut all: Vec<&'static Recipe> = data.recipes.values().collect();
+        all.sort_by_key(|r| r.key_id.0);
+        all.into_iter().take(300).collect()
+    }
+
+    fn run(cost: PriceSignal, revenue: PriceSignal, outliers: bool) -> Vec<RecipeProfitData> {
+        let data = xiv_gen_db::data();
+        let recipes = fixture_recipes();
+        let (buy, sell, stats) = fixture(&recipes);
+        let index = stats_index(&stats);
+        let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let raw_sales = HashMap::new();
+        let levels = CrafterLevels::default(); // 100 in every job
+        let inp = PriceInputs {
+            recipes: &recipes,
+            recipe_level_tables: &data.recipe_level_tables,
+            recipes_by_output: &by_output,
+            buy_listings: &buy,
+            sell_listings: Some(&sell),
+            buy_stats: Some(&index),
+            sell_stats: &index,
+            raw_sales: &raw_sales,
+            formula: ProfitFormula::recipe_from_query(Some(cost), Some(revenue), None),
+            levels: &levels,
+            job_filter: None,
+            use_subcrafts: false,
+            require_hq: false,
+            filter_outliers: outliers,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: None,
+        };
+        price_rows(&inp)
+    }
+
+    /// Every row obeys the formula's arithmetic and the drop rule; this
+    /// runs over 300 real recipes with synthetic prices.
+    #[test]
+    fn price_rows_rows_obey_the_formula() {
+        let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+        assert!(rows.len() > 50, "fixture priced only {} rows", rows.len());
+        for r in &rows {
+            let net = r.market_price as i64 * 95 / 100;
+            assert!(
+                (r.cost as i64) < net,
+                "row kept with cost >= net: {:?}",
+                r.recipe.key_id
+            );
+            assert_eq!(r.profit as i64, net - r.cost as i64);
+            assert_eq!(r.tax as i64, r.market_price as i64 - net);
+            let roi = if r.cost > 0 {
+                (r.profit as f64 / r.cost as f64 * 100.0) as i32
+            } else {
+                0
+            };
+            assert_eq!(r.return_on_investment, roi);
+            // Revenue is `lowest_gil()` over the sell world's NQ listing (20% up)
+            // and the buy scope's HQ listing (`nq + 50`), whichever is lower:
+            // exactly today's `override_listings` + `lowest_gil` behaviour.
+            let nq = 100 + (r.recipe.item_result % 97) * 7;
+            assert_eq!(r.market_price, (nq * 12 / 10).min(nq + 50));
+        }
+    }
+
+    /// The characterization oracle. Regenerate ONLY if a phase changes the
+    /// numbers on purpose: run with `--nocapture`, copy the printed tuples.
+    #[test]
+    fn price_rows_matches_recorded_oracle_on_fixture() {
+        let rows = run(PriceSignal::SaleMedian, PriceSignal::ListingMin, false);
+        let got: Vec<(i32, i32, i32, i32, i32, i32)> = rows
+            .iter()
+            .take(12)
+            .map(|r| {
+                (
+                    r.recipe.key_id.0,
+                    r.profit,
+                    r.return_on_investment,
+                    r.cost,
+                    r.market_price,
+                    r.tax,
+                )
+            })
+            .collect();
+        println!("ORACLE = {got:?}");
+        // Recorded from the pre-refactor pipeline (Move A, commit above).
+        const ORACLE: &[(i32, i32, i32, i32, i32, i32)] = &[
+            (0, 114, 0, 0, 120, 6),
+            (1, 89, 74, 120, 220, 11),
+            (2, 35, 13, 267, 318, 16),
+            (3, 203, 74, 272, 500, 25),
+            (4, 47, 17, 275, 339, 17),
+            (5, 332, 269, 123, 479, 24),
+            (7, 209, 74, 279, 514, 26),
+            (9, 421, 150, 280, 738, 37),
+            (12, 134, 50, 267, 423, 22),
+            (13, 413, 150, 274, 724, 37),
+            (14, 238, 86, 276, 542, 28),
+            (15, 210, 77, 271, 507, 26),
+        ];
+        assert_eq!(got, ORACLE);
+    }
+
+    fn row(key: i32, profit: i32, roi: i32, daily: f32, world: i32) -> Arc<RecipeProfitData> {
+        let recipe = fixture_recipes()
+            .into_iter()
+            .find(|r| r.key_id.0 == key)
+            .expect("fixture recipe");
+        Arc::new(RecipeProfitData {
+            recipe,
+            profit,
+            return_on_investment: roi,
+            cost: 1,
+            market_price: 2,
+            cheapest_world_id: world,
+            sub_crafts: vec![],
+            daily_sales: daily,
+            avg_price: 0,
+            total_sales: 0,
+            required_level: 1,
+            last_sold_unix: 0,
+            units_sold: 0,
+            vwap: 0,
+            vwap_pct: None,
+            tax: 0,
+            confidence: ConfidenceBand::Unknown,
+        })
+    }
+
+    #[test]
+    fn filter_and_sort_is_pure_and_inclusive() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(4)
+            .map(|r| r.key_id.0)
+            .collect();
+        // The two profit-200 rows are fed in DESCENDING key order, so a
+        // stable sort without the key-id tiebreak would emit them the other
+        // way round and this test would fail.
+        let rows = vec![
+            row(keys[0], 100, 10, 1.0, 7),
+            row(keys[1], 300, 30, 0.5, 8),
+            row(keys[3], 200, 5, 3.0, 9),
+            row(keys[2], 200, 20, 2.0, 7),
+        ];
+        let names: HashMap<i32, (String, String)> = [
+            (7, ("Gilgamesh".to_string(), "Aether".to_string())),
+            (8, ("Balmung".to_string(), "Crystal".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        let t = Thresholds {
+            min_profit: Some(200),
+            ..Default::default()
+        };
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
+        // Inclusive `>=`; ties broken by key id ascending; indexes renumbered.
+        let got: Vec<(usize, i32, i32)> = out
+            .iter()
+            .map(|(i, r)| (*i, r.profit, r.recipe.key_id.0))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(0, 300, keys[1]), (1, 200, keys[2]), (2, 200, keys[3])]
+        );
+        // Ascending flips the order but keeps the same tiebreak direction.
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Asc);
+        assert_eq!(out[0].1.profit, 200);
+        assert_eq!(out[0].1.recipe.key_id.0, keys[2]);
+        // A listing-world filter drops unknown worlds (9 has no name).
+        let t = Thresholds {
+            listing_world: Some("Gilgamesh".into()),
+            ..Default::default()
+        };
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
+        assert_eq!(out.len(), 2);
     }
 }
