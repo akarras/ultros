@@ -23,6 +23,7 @@ use leptos_router::location::Location;
 use leptos_router::params::ParamsMap;
 
 use crate::components::app_link::use_location_or_default;
+use crate::components::term_badge::{TermBadge, TermRole};
 
 use crate::components::icon::Icon;
 use icondata as i;
@@ -203,17 +204,54 @@ pub fn SortableHeaderCell<M>(
     /// Query keys dropped when the sort changes (e.g. `page`).
     #[prop(optional)]
     reset_keys: &'static [&'static str],
+    /// Hover text for the whole header cell.
+    #[prop(optional, into)]
+    title: Option<String>,
+    /// A muted 10px second line ("listing · Aether"). When set the cell
+    /// lays out as two lines; pass `px-3 py-2 leading-tight` in `class`.
+    #[prop(optional, into)]
+    sub_label: Option<Signal<String>>,
+    /// The formula operator this column plays, rendered before the label.
+    #[prop(optional)]
+    badge: Option<TermRole>,
+    /// Brand tint plus a bottom hairline: this column feeds Profit.
+    #[prop(optional, into)]
+    emphasized: Option<Signal<bool>>,
 ) -> impl IntoView
 where
     M: SortColumn,
 {
+    let two_line = sub_label.is_some();
+    let cell_class = move || {
+        let mut c = class.clone();
+        if two_line {
+            c.push_str(" flex flex-col justify-center gap-0.5");
+        }
+        if emphasized.is_some_and(|e| e.get()) {
+            c.push_str(" bg-[color:color-mix(in_srgb,var(--brand-ring)_18%,transparent)] shadow-[inset_0_-2px_0_var(--brand-ring)]");
+        }
+        c
+    };
     view! {
         <div
             role="columnheader"
-            class=class
+            class=cell_class
+            title=title
             aria-sort=move || column_aria_sort(mode, sort_mode, sort_dir)
         >
-            <SortHeader mode label sort_mode sort_dir reset_keys />
+            {match badge {
+                Some(role) => view! {
+                    <div class="flex items-center gap-2 min-w-0">
+                        <TermBadge role=role />
+                        <SortHeader mode label sort_mode sort_dir reset_keys />
+                    </div>
+                }
+                .into_any(),
+                None => view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }.into_any(),
+            }}
+            {sub_label.map(|s| view! {
+                <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
+            })}
         </div>
     }
     .into_any()
@@ -432,6 +470,51 @@ mod test {
         sort_and_truncate(&mut rows, SortDir::Desc, 100, |a, b| a.cmp(b));
         assert_eq!(rows.len(), 100);
         assert_eq!(rows, (400..500).rev().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn header_cell_renders_badge_sub_label_and_emphasis() {
+        // `TermBadge` builds an I18nContext (spawns an Effect) and `<Gil>`
+        // reads it: stand up the executor and the context, as
+        // components/list/filter_row.rs's tests do.
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let html = view! {
+                <SortableHeaderCell
+                    mode=Col::Cost
+                    label="Cost"
+                    class="w-40"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                    badge=crate::components::term_badge::TermRole::Cost
+                    sub_label=Signal::derive(|| "listing · Aether".to_string())
+                    emphasized=Signal::derive(|| true)
+                />
+            }
+            .to_html();
+            assert!(html.contains("listing · Aether"), "{html}");
+            assert!(html.contains("aria-hidden=\"true\""), "{html}");
+            assert!(html.contains("sr-only"), "{html}");
+            assert!(
+                html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
+                "{html}"
+            );
+            // Without the props the markup is what it was.
+            let plain = view! {
+                <SortableHeaderCell
+                    mode=Col::Cost
+                    label="Cost"
+                    class="w-32"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                />
+            }
+            .to_html();
+            assert!(!plain.contains("sr-only"), "{plain}");
+            assert!(!plain.contains("min-w-0"), "{plain}");
+        });
     }
 
     /// Same defect class as GlitchTip #7278 in `QueryButton`: this header
