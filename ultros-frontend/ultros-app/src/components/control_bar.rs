@@ -48,6 +48,12 @@ pub struct ColumnOption {
     pub label: String,
 }
 
+impl ColumnOption {
+    pub fn new(id: &'static str, label: String) -> Self {
+        Self { id, label }
+    }
+}
+
 /// Handle on the bar's two popovers.
 ///
 /// [`ControlBar`] makes its own when the caller doesn't pass one. Pass one
