@@ -1,5 +1,10 @@
-use crate::analyzer_kit::cells::last_sold_label;
+use crate::analyzer_kit::cells::CellValue;
+use crate::analyzer_kit::columns::{
+    CellCtx, ColumnKind, ColumnSpec, Layer, Sortability, ToolColumnMeta, default_dir_for,
+    picker_options, sort_from_token, sort_token, sortability_for,
+};
 use crate::analyzer_kit::formula::{ProfitFormula, per_unit_cost, profit_line};
+use crate::analyzer_kit::grid::{AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout};
 use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies};
 use crate::analyzer_kit::signals::{PriceLookup, SignalView, StatsIndex, stats_index};
 use crate::components::crafting_cost::{
@@ -17,14 +22,11 @@ use crate::price_basis::{BuyScope, CostBasis, RevenueMetric};
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
-    analysis::{SalesStats, analyze_sales, roi_badge_class},
+    analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats},
     components::{
         add_recipe_to_list::AddRecipeToList,
-        confidence_badge::ConfidenceBadge,
-        control_bar::{
-            ColumnOption, ControlBar, FilterOption, parse_visible_cols, serialize_visible_cols,
-        },
+        control_bar::{ControlBar, FilterOption, parse_visible_cols, serialize_visible_cols},
         crafter_settings::CrafterSettings,
         filter_chip::FilterChip,
         gil::*,
@@ -33,10 +35,9 @@ use crate::{
         query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
-        sort_header::{SortColumn, SortDir, SortableHeaderCell},
+        sort_header::{SortColumn, SortDir},
         tool_help::*,
         tooltip::Tooltip,
-        virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -54,6 +55,7 @@ use leptos_router::{
 };
 use percent_encoding::utf8_percent_encode;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
@@ -392,19 +394,363 @@ const COL_VWAP: &str = "vwap";
 const COL_TAX: &str = "tax";
 const COL_LISTING_WORLD: &str = "listing-world";
 const COL_LISTING_DC: &str = "listing-dc";
-const OPTIONAL_COLUMN_ORDER: &[&str] = &[
-    COL_CONFIDENCE,
-    COL_LAST_SOLD,
-    COL_VOLUME,
-    COL_VWAP,
-    COL_TAX,
-    COL_LISTING_WORLD,
-    COL_LISTING_DC,
+/// `?cols=` order, derived from the table so the URL contract has one
+/// source: the picker, the grid and the serializer cannot disagree.
+static OPTIONAL_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    RECIPE_COLUMNS
+        .iter()
+        .filter(|c| !c.id.is_empty())
+        .map(|c| c.id)
+        .collect()
+});
+/// Default-visible optional columns, derived from `default_on`. Sales/day
+/// is already an always-on column; the confidence chip joins it by default
+/// so stale or manipulated sell-world markets don't silently top the
+/// ranking.
+static DEFAULT_COLS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    RECIPE_COLUMNS
+        .iter()
+        .filter(|c| !c.id.is_empty() && c.default_on)
+        .map(|c| c.id)
+        .collect()
+});
+
+// --- The column table ------------------------------------------------------
+// One `static` describes every column: its `?cols=` token, its `?sort=`
+// token and default direction, the classes it renders with, and how to pull
+// its value off a row. `SortMode`'s context-free `FromStr`/`Display` and the
+// `&'static` slices `parse_visible_cols` needs both read it.
+
+type RecipeRow = Arc<RecipeProfitData>;
+
+impl AnalyzerRow for RecipeRow {
+    type Key = xiv_gen::RecipeId;
+    fn key(&self) -> Self::Key {
+        self.recipe.key_id
+    }
+}
+
+// Labels: one fn per column so the table can be a `static`.
+fn label_item(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, item).to_string()
+}
+fn label_profit(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, profit).to_string()
+}
+fn label_roi(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, roi).to_string()
+}
+fn label_cost(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, recipe_analyzer_col_cost_per_unit).to_string()
+}
+fn label_price(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, price).to_string()
+}
+fn label_daily(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, daily_sales).to_string()
+}
+fn label_avg(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, avg_price).to_string()
+}
+fn label_confidence(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_confidence).to_string()
+}
+fn label_last_sold(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_last_sold).to_string()
+}
+fn label_volume(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, recipe_analyzer_col_volume).to_string()
+}
+fn label_vwap(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, recipe_analyzer_col_vwap).to_string()
+}
+fn label_tax(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_tax).to_string()
+}
+fn label_world(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_world).to_string()
+}
+fn label_dc(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_datacenter).to_string()
+}
+fn label_actions(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, actions).to_string()
+}
+
+static SPEC_ITEM: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Item,
+    label: label_item,
+};
+static SPEC_PROFIT: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Profit,
+    label: label_profit,
+};
+static SPEC_ROI: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Roi,
+    label: label_roi,
+};
+static SPEC_COST: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::CostSlot,
+    label: label_cost,
+};
+static SPEC_PRICE: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::RevenueSlot,
+    label: label_price,
+};
+static SPEC_DAILY: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::SalesPerDay7,
+    label: label_daily,
+};
+static SPEC_AVG: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::AvgPrice,
+    label: label_avg,
+};
+static SPEC_CONFIDENCE: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Confidence,
+    label: label_confidence,
+};
+static SPEC_LAST_SOLD: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::LastSold,
+    label: label_last_sold,
+};
+static SPEC_VOLUME: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::VolumeUnits7,
+    label: label_volume,
+};
+static SPEC_VWAP: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Vwap7,
+    label: label_vwap,
+};
+static SPEC_TAX: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Tax,
+    label: label_tax,
+};
+static SPEC_WORLD: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::ListingWorld,
+    label: label_world,
+};
+static SPEC_DC: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::ListingDc,
+    label: label_dc,
+};
+static SPEC_ACTIONS: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Actions,
+    label: label_actions,
+};
+
+// Cell extractors. `Custom` = the page renders it (needs context the row
+// does not carry: item names, the world link, the on-hand list button).
+fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Custom
+}
+fn cell_profit(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Gil(r.profit)
+}
+fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::RoiBadge(r.return_on_investment)
+}
+fn cell_price(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Gil(r.market_price)
+}
+fn cell_avg(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Gil(r.avg_price)
+}
+fn cell_confidence(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Confidence(r.confidence)
+}
+fn cell_last_sold(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::LastSoldUnix(r.last_sold_unix)
+}
+fn cell_volume(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Count(r.units_sold)
+}
+fn cell_vwap(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::GilWithPct {
+        amount: r.vwap,
+        pct: r.vwap_pct,
+    }
+}
+fn cell_tax(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Gil(r.tax)
+}
+
+const CELL_R: &str = "px-4 py-2 w-32 shrink-0 text-right";
+const CELL_R_MD: &str = "px-4 py-2 w-32 shrink-0 text-right hidden md:block";
+const CELL_28_MD: &str = "px-4 py-2 w-28 shrink-0 text-right hidden md:block";
+const HEAD: &str = "w-32 shrink-0 p-4";
+const HEAD_MD: &str = "w-32 shrink-0 p-4 hidden md:block";
+const HEAD_28_MD: &str = "w-28 shrink-0 p-4 hidden md:block";
+
+/// The recipe table, column by column, classes copied verbatim from the
+/// markup this replaced. `id` = the `?cols=` token (always-on columns
+/// have none); `sort_id` = the `?sort=` token.
+static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 15] = [
+    ToolColumnMeta {
+        spec: &SPEC_ITEM,
+        id: "",
+        sort_id: "",
+        sort: Sortability::No,
+        default_dir: SortDir::Desc,
+        header_class: "w-64 md:w-80 shrink-0 p-4",
+        cell_class: "",
+        default_on: true,
+        cell: cell_custom,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_PROFIT,
+        id: "",
+        sort_id: "profit",
+        sort: sortability_for(Layer::Computed, Some(SortMode::Profit)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD,
+        cell_class: CELL_R,
+        default_on: true,
+        cell: cell_profit,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_ROI,
+        id: "",
+        sort_id: "roi",
+        sort: sortability_for(Layer::Computed, Some(SortMode::Roi)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD,
+        cell_class: CELL_R,
+        default_on: true,
+        cell: cell_roi,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_COST,
+        id: "",
+        sort_id: "cost",
+        sort: sortability_for(Layer::Computed, Some(SortMode::CostPerUnit)),
+        default_dir: SortDir::Asc,
+        header_class: HEAD,
+        cell_class: "",
+        default_on: true,
+        cell: cell_custom,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_PRICE,
+        id: "",
+        sort_id: "price",
+        sort: sortability_for(Layer::RowLocal, Some(SortMode::Price)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD,
+        cell_class: CELL_R,
+        default_on: true,
+        cell: cell_price,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_DAILY,
+        id: "",
+        sort_id: "velocity",
+        sort: sortability_for(Layer::Bulk, Some(SortMode::Velocity)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_MD,
+        cell_class: "",
+        default_on: true,
+        cell: cell_custom,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_AVG,
+        id: "",
+        sort_id: "avg-price",
+        sort: sortability_for(Layer::Bulk, Some(SortMode::AvgPrice)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_MD,
+        cell_class: CELL_R_MD,
+        default_on: true,
+        cell: cell_avg,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_CONFIDENCE,
+        id: COL_CONFIDENCE,
+        sort_id: "confidence",
+        sort: sortability_for(Layer::Bulk, Some(SortMode::Confidence)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_28_MD,
+        cell_class: "px-4 py-2 w-28 shrink-0 flex items-center justify-end hidden md:flex",
+        default_on: true,
+        cell: cell_confidence,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_LAST_SOLD,
+        id: COL_LAST_SOLD,
+        sort_id: "last-sold",
+        sort: sortability_for(Layer::Bulk, Some(SortMode::LastSold)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_28_MD,
+        cell_class: CELL_28_MD,
+        default_on: false,
+        cell: cell_last_sold,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_VOLUME,
+        id: COL_VOLUME,
+        sort_id: "volume",
+        sort: sortability_for(Layer::Bulk, Some(SortMode::Volume)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_28_MD,
+        cell_class: "px-4 py-2 w-28 shrink-0 text-right hidden md:block font-mono tabular-nums",
+        default_on: false,
+        cell: cell_volume,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_VWAP,
+        id: COL_VWAP,
+        sort_id: "vwap",
+        sort: sortability_for(Layer::Bulk, Some(SortMode::Vwap)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_MD,
+        cell_class: CELL_R_MD,
+        default_on: false,
+        cell: cell_vwap,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_TAX,
+        id: COL_TAX,
+        sort_id: "tax",
+        sort: sortability_for(Layer::Computed, Some(SortMode::Tax)),
+        default_dir: SortDir::Desc,
+        header_class: HEAD_28_MD,
+        cell_class: CELL_28_MD,
+        default_on: false,
+        cell: cell_tax,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_WORLD,
+        id: COL_LISTING_WORLD,
+        sort_id: "",
+        sort: Sortability::No,
+        default_dir: SortDir::Desc,
+        header_class: HEAD_28_MD,
+        cell_class: "",
+        default_on: false,
+        cell: cell_custom,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_DC,
+        id: COL_LISTING_DC,
+        sort_id: "",
+        sort: Sortability::No,
+        default_dir: SortDir::Desc,
+        header_class: HEAD_28_MD,
+        cell_class: "",
+        default_on: false,
+        cell: cell_custom,
+    },
+    ToolColumnMeta {
+        spec: &SPEC_ACTIONS,
+        id: "",
+        sort_id: "",
+        sort: Sortability::No,
+        default_dir: SortDir::Desc,
+        header_class: "w-20 shrink-0 p-4",
+        cell_class: "",
+        default_on: true,
+        cell: cell_custom,
+    },
 ];
-/// Default-visible optional columns. Sales/day is already an always-on
-/// column; the confidence chip joins it by default so stale or manipulated
-/// sell-world markets don't silently top the ranking.
-const DEFAULT_COLS: &[&str] = &[COL_CONFIDENCE];
 /// Rewrite pre-market-model query params (#1206 era) to their successors.
 /// Returns `None` when nothing needs rewriting (the common case — avoids a
 /// navigate loop). `scope` carried region|datacenter and became
@@ -497,39 +843,16 @@ impl FromStr for SortMode {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "roi" => Ok(SortMode::Roi),
-            "profit" => Ok(SortMode::Profit),
-            "velocity" => Ok(SortMode::Velocity),
-            "cost" => Ok(SortMode::CostPerUnit),
-            "price" => Ok(SortMode::Price),
-            "avg-price" => Ok(SortMode::AvgPrice),
-            "last-sold" => Ok(SortMode::LastSold),
-            "volume" => Ok(SortMode::Volume),
-            "vwap" => Ok(SortMode::Vwap),
-            "tax" => Ok(SortMode::Tax),
-            "confidence" => Ok(SortMode::Confidence),
-            _ => Err(()),
-        }
+        sort_from_token(&RECIPE_COLUMNS, s).ok_or(())
     }
 }
 
 impl Display for SortMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let val = match self {
-            SortMode::Roi => "roi",
-            SortMode::Profit => "profit",
-            SortMode::Velocity => "velocity",
-            SortMode::CostPerUnit => "cost",
-            SortMode::Price => "price",
-            SortMode::AvgPrice => "avg-price",
-            SortMode::LastSold => "last-sold",
-            SortMode::Volume => "volume",
-            SortMode::Vwap => "vwap",
-            SortMode::Tax => "tax",
-            SortMode::Confidence => "confidence",
-        };
-        f.write_str(val)
+        // Every variant is catalogued exactly once (pinned by test); the
+        // fallback token only guards against a future variant added to the
+        // enum before the table.
+        f.write_str(sort_token(&RECIPE_COLUMNS, *self).unwrap_or("profit"))
     }
 }
 
@@ -539,12 +862,10 @@ impl SortColumn for SortMode {
     }
 
     /// Cost per unit reads best-first ascending — the cheapest craft is the
-    /// interesting one. Everything else is a biggest-first metric.
+    /// interesting one. Everything else is a biggest-first metric; both come
+    /// from the column table's `default_dir`.
     fn default_dir(self) -> SortDir {
-        match self {
-            SortMode::CostPerUnit => SortDir::Asc,
-            _ => SortDir::Desc,
-        }
+        default_dir_for(&RECIPE_COLUMNS, self)
     }
 }
 
@@ -1187,34 +1508,15 @@ fn RecipeAnalyzerTable(
     };
 
     // Optional-column picker, flip-finder style. Long labels for the picker
-    // (recognition, not recall — same rationale as the filter menu).
-    let col_label = move |col: &str| -> String {
-        match col {
-            c if c == COL_CONFIDENCE => t_string!(i18n, analyzer_col_confidence).to_string(),
-            c if c == COL_LAST_SOLD => t_string!(i18n, analyzer_col_last_sold).to_string(),
-            c if c == COL_VOLUME => t_string!(i18n, recipe_analyzer_col_volume).to_string(),
-            c if c == COL_VWAP => t_string!(i18n, recipe_analyzer_col_vwap).to_string(),
-            c if c == COL_TAX => t_string!(i18n, analyzer_col_tax).to_string(),
-            c if c == COL_LISTING_WORLD => t_string!(i18n, analyzer_col_world).to_string(),
-            c if c == COL_LISTING_DC => t_string!(i18n, analyzer_col_datacenter).to_string(),
-            _ => String::new(),
-        }
-    };
-    let column_options = Signal::derive(move || {
-        OPTIONAL_COLUMN_ORDER
-            .iter()
-            .map(|col| ColumnOption {
-                id: col,
-                label: col_label(col),
-            })
-            .collect::<Vec<_>>()
-    });
+    // (recognition, not recall — same rationale as the filter menu), read
+    // straight off the column table.
+    let column_options = Signal::derive(move || picker_options(&RECIPE_COLUMNS, i18n));
     let toggle_column = Callback::new(move |col: &'static str| {
         let mut set = visible_cols.get_untracked();
         if !set.remove(col) {
             set.insert(col);
         }
-        set_cols_param.set(Some(serialize_visible_cols(&set, OPTIONAL_COLUMN_ORDER)));
+        set_cols_param.set(Some(serialize_visible_cols(&set, &OPTIONAL_COLUMN_ORDER)));
     });
     let reset_columns = Callback::new(move |_| set_cols_param.set(None));
 
@@ -1270,6 +1572,191 @@ fn RecipeAnalyzerTable(
         set_filter_outliers(None);
         set_exclude_shards(None);
         set_use_on_hand(None);
+    });
+
+    // The cells the grid hands back to the page: they need context the row
+    // does not carry (item names and icons, the world link, the on-hand
+    // list button). Every branch is the old cell's markup verbatim, keyed
+    // by the column's kind.
+    let world_names_for_cells = world_names.clone();
+    let custom: CustomCell<RecipeRow> = Arc::new(move |data, kind| {
+        let data = data.clone();
+        let item_id = ItemId(data.recipe.item_result);
+        match kind {
+            ColumnKind::Item => {
+                let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
+                let job_abbrev = craft_type_acronym(data.recipe.craft_type);
+                view! {
+                    <div role="cell" class="px-4 py-2 flex flex-row w-64 md:w-80 shrink-0 items-center gap-2">
+                         <a
+                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                            href=format!("/item/{}/{}", world(), item_id.0)
+                        >
+                            <div class="shrink-0">
+                                <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
+                            </div>
+                            <div class="flex flex-col">
+                                <span>{item}</span>
+                                <span class="text-xs text-[color:var(--color-text-muted)]">
+                                    "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
+                                </span>
+                            </div>
+                        </a>
+                    </div>
+                }
+                .into_any()
+            }
+            ColumnKind::CostSlot => view! {
+                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
+                    <Gil amount=data.cost />
+                    {
+                        let data_for_yield = data.clone();
+                        (data.recipe.amount_result > 1)
+                            .then(|| view! {
+                                <div class="text-xs text-[color:var(--color-text-muted)]">
+                                    {t!(i18n, recipe_analyzer_yield_note, n = move || data_for_yield.recipe.amount_result)}
+                                </div>
+                            })
+                    }
+                    {
+                        let has_sub_crafts = !data.sub_crafts.is_empty();
+                        let sub_crafts = data.sub_crafts.clone();
+                        view! {
+                            <Show when=move || has_sub_crafts>
+                                {
+                                    let sub_crafts_for_text = sub_crafts.clone();
+                                    let count = sub_crafts.len();
+                                    view! {
+                                        <Tooltip
+                                            tooltip_text={
+                                                let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
+                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
+                                                    (name, sub.amount, sub.unit_cost)
+                                                }).collect();
+                                                Signal::derive(move || {
+                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
+                                                    for (name, amount, cost) in &sub_crafts_details {
+                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
+                                                    }
+                                                    tooltip
+                                                })
+                                            }
+                                        >
+                                            <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
+                                                <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
+                                                <span>{count} " sub"</span>
+                                            </div>
+                                        </Tooltip>
+                                    }
+                                }
+                            </Show>
+                        }
+                    }
+                </div>
+            }
+            .into_any(),
+            ColumnKind::SalesPerDay7 => {
+                let sales_tooltip = format!(
+                    "Based on {} sales over {:.1} days",
+                    data.total_sales,
+                    (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
+                );
+                view! {
+                    <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
+                        <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
+                            {format!("{:.1} / day", data.daily_sales)}
+                        </span>
+                    </div>
+                }
+                .into_any()
+            }
+            // (world, datacenter) names of the cheapest listing; `None` for
+            // the stat-overlay placeholder world 0.
+            ColumnKind::ListingWorld => {
+                let listing_location = world_names_for_cells.get(&data.cheapest_world_id).cloned();
+                match listing_location {
+                    Some((world, _)) => {
+                        let tooltip = t_string!(i18n, analyzer_only_show_world)
+                            .to_string()
+                            .replace("%world%", &world);
+                        let value = Signal::derive({
+                            let world = world.clone();
+                            move || world.clone()
+                        });
+                        view! {
+                            <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
+                                <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
+                                    <QueryButton
+                                        key=FILTER_LISTING_WORLD
+                                        value=value
+                                        class="!text-brand-300 hover:text-brand-200 truncate"
+                                        active_classes="!text-neutral-300 hover:text-neutral-200 truncate"
+                                        remove_queries=&[FILTER_LISTING_DC]
+                                    >
+                                        {move || value.get()}
+                                    </QueryButton>
+                                </Tooltip>
+                            </div>
+                        }.into_any()
+                    }
+                    None => view! {
+                        <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
+                    }.into_any(),
+                }
+            }
+            ColumnKind::ListingDc => {
+                let listing_location = world_names_for_cells.get(&data.cheapest_world_id).cloned();
+                match listing_location {
+                    Some((_, dc)) => {
+                        let tooltip = t_string!(i18n, analyzer_only_show_world)
+                            .to_string()
+                            .replace("%world%", &dc);
+                        let value = Signal::derive({
+                            let dc = dc.clone();
+                            move || dc.clone()
+                        });
+                        view! {
+                            <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
+                                <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
+                                    <QueryButton
+                                        key=FILTER_LISTING_DC
+                                        value=value
+                                        class="!text-brand-300 hover:text-brand-200 truncate"
+                                        active_classes="!text-neutral-300 hover:text-neutral-200 truncate"
+                                        remove_queries=&[FILTER_LISTING_WORLD]
+                                    >
+                                        {move || value.get()}
+                                    </QueryButton>
+                                </Tooltip>
+                            </div>
+                        }.into_any()
+                    }
+                    None => view! {
+                        <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
+                    }.into_any(),
+                }
+            }
+            ColumnKind::Actions => view! {
+                <div role="cell" class="px-4 py-2 w-20 shrink-0">
+                    <AddRecipeToList recipe=data.recipe />
+                </div>
+            }
+            .into_any(),
+            other => unreachable!("no custom cell for column {other:?}"),
+        }
+    });
+
+    // Zebra striping, verbatim from the markup the grid replaced.
+    fn stripe(index: usize) -> &'static str {
+        if index.is_multiple_of(2) {
+            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
+        } else {
+            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
+        }
+    }
+    let cell_ctx = Signal::derive(|| CellCtx {
+        now_unix: chrono::Utc::now().timestamp(),
     });
 
     view! {
@@ -1584,347 +2071,22 @@ fn RecipeAnalyzerTable(
 
             // Results Table
              <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                <VirtualScroller
-                    viewport_height=720.0
-                    row_height=60.0
-                    overscan=8
-                    header_height=64.0
-                    variable_height=false
-                    header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-64 md:w-80 shrink-0 p-4">{t!(i18n, item)}</div>
-                             <SortableHeaderCell
-                                mode=SortMode::Profit
-                                label=t_string!(i18n, profit).to_string()
-                                class="w-32 shrink-0 p-4"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::Roi
-                                label=t_string!(i18n, roi).to_string()
-                                class="w-32 shrink-0 p-4"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::CostPerUnit
-                                label=t_string!(i18n, recipe_analyzer_col_cost_per_unit).to_string()
-                                class="w-32 shrink-0 p-4"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::Price
-                                label=t_string!(i18n, price).to_string()
-                                class="w-32 shrink-0 p-4"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::Velocity
-                                label=t_string!(i18n, daily_sales).to_string()
-                                class="w-32 shrink-0 p-4 hidden md:block"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::AvgPrice
-                                label=t_string!(i18n, avg_price).to_string()
-                                class="w-32 shrink-0 p-4 hidden md:block"
-                                sort_mode
-                                sort_dir
-                             />
-                             {move || visible_cols.get().contains(COL_CONFIDENCE).then(|| view! {
-                                 <SortableHeaderCell
-                                    mode=SortMode::Confidence
-                                    label=t_string!(i18n, analyzer_col_confidence).to_string()
-                                    class="w-28 shrink-0 p-4 hidden md:block"
-                                    sort_mode
-                                    sort_dir
-                                 />
-                             })}
-                             {move || visible_cols.get().contains(COL_LAST_SOLD).then(|| view! {
-                                 <SortableHeaderCell
-                                    mode=SortMode::LastSold
-                                    label=t_string!(i18n, analyzer_col_last_sold).to_string()
-                                    class="w-28 shrink-0 p-4 hidden md:block"
-                                    sort_mode
-                                    sort_dir
-                                 />
-                             })}
-                             {move || visible_cols.get().contains(COL_VOLUME).then(|| view! {
-                                 <SortableHeaderCell
-                                    mode=SortMode::Volume
-                                    label=t_string!(i18n, recipe_analyzer_col_volume).to_string()
-                                    class="w-28 shrink-0 p-4 hidden md:block"
-                                    sort_mode
-                                    sort_dir
-                                 />
-                             })}
-                             {move || visible_cols.get().contains(COL_VWAP).then(|| view! {
-                                 <SortableHeaderCell
-                                    mode=SortMode::Vwap
-                                    label=t_string!(i18n, recipe_analyzer_col_vwap).to_string()
-                                    class="w-32 shrink-0 p-4 hidden md:block"
-                                    sort_mode
-                                    sort_dir
-                                 />
-                             })}
-                             {move || visible_cols.get().contains(COL_TAX).then(|| view! {
-                                 <SortableHeaderCell
-                                    mode=SortMode::Tax
-                                    label=t_string!(i18n, analyzer_col_tax).to_string()
-                                    class="w-28 shrink-0 p-4 hidden md:block"
-                                    sort_mode
-                                    sort_dir
-                                 />
-                             })}
-                             {move || visible_cols.get().contains(COL_LISTING_WORLD).then(|| view! {
-                                 <div role="columnheader" class="w-28 shrink-0 p-4 hidden md:block">
-                                     {t!(i18n, analyzer_col_world)}
-                                 </div>
-                             })}
-                             {move || visible_cols.get().contains(COL_LISTING_DC).then(|| view! {
-                                 <div role="columnheader" class="w-28 shrink-0 p-4 hidden md:block">
-                                     {t!(i18n, analyzer_col_datacenter)}
-                                 </div>
-                             })}
-                             <div role="columnheader" class="w-20 shrink-0 p-4">{t!(i18n, actions)}</div>
-                        </div>
-                    }.into_any()
-                    each=computed_data.into()
-                    key=move |(index, data): &(usize, Arc<RecipeProfitData>)| (*index, data.recipe.key_id)
-                    view=move |(index, data): (usize, Arc<RecipeProfitData>)| {
-                        let item_id = ItemId(data.recipe.item_result);
-                        let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
-                        let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
-                        let classes = if (index % 2) == 0 {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                        } else {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                        };
-
-                        let job_abbrev = craft_type_acronym(data.recipe.craft_type);
-                        // (world, datacenter) names of the cheapest listing;
-                        // `None` for the stat-overlay placeholder world 0.
-                        let listing_location = world_names.get(&data.cheapest_world_id).cloned();
-
-                        let sales_tooltip = format!(
-                            "Based on {} sales over {:.1} days",
-                            data.total_sales,
-                            (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
-                        );
-
-                        view! {
-                            <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-64 md:w-80 shrink-0 items-center gap-2">
-                                     <a
-                                        class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id.0)
-                                    >
-                                        <div class="shrink-0">
-                                            <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                        </div>
-                                        <div class="flex flex-col">
-                                            <span>{item}</span>
-                                            <span class="text-xs text-[color:var(--color-text-muted)]">
-                                                "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
-                                            </span>
-                                        </div>
-                                    </a>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
-                                    <Gil amount=data.profit />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
-                                     <span class={roi_badge_class(data.return_on_investment)}>
-                                        {format!("{}%", data.return_on_investment)}
-                                    </span>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
-                                    <Gil amount=data.cost />
-                                    {
-                                        let data_for_yield = data.clone();
-                                        (data.recipe.amount_result > 1)
-                                            .then(|| view! {
-                                                <div class="text-xs text-[color:var(--color-text-muted)]">
-                                                    {t!(i18n, recipe_analyzer_yield_note, n = move || data_for_yield.recipe.amount_result)}
-                                                </div>
-                                            })
-                                    }
-                                    {
-                                        let has_sub_crafts = !data.sub_crafts.is_empty();
-                                        let sub_crafts = data.sub_crafts.clone();
-                                        view! {
-                                            <Show when=move || has_sub_crafts>
-                                                {
-                                                    let sub_crafts_for_text = sub_crafts.clone();
-                                                    let count = sub_crafts.len();
-                                                    view! {
-                                                        <Tooltip
-                                                            tooltip_text={
-                                                                let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
-                                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
-                                                                    (name, sub.amount, sub.unit_cost)
-                                                                }).collect();
-                                                                Signal::derive(move || {
-                                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
-                                                                    for (name, amount, cost) in &sub_crafts_details {
-                                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
-                                                                    }
-                                                                    tooltip
-                                                                })
-                                                            }
-                                                        >
-                                                            <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
-                                                                <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                                                <span>{count} " sub"</span>
-                                                            </div>
-                                                        </Tooltip>
-                                                    }
-                                                }
-                                            </Show>
-                                        }
-                                    }
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
-                                    <Gil amount=data.market_price />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
-                                    <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                                        {format!("{:.1} / day", data.daily_sales)}
-                                    </span>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
-                                    <Gil amount=data.avg_price />
-                                </div>
-                                {
-                                    let confidence = data.confidence;
-                                    move || visible_cols.get().contains(COL_CONFIDENCE).then(|| view! {
-                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 flex items-center justify-end hidden md:flex">
-                                            <ConfidenceBadge band=confidence />
-                                        </div>
-                                    })
-                                }
-                                {
-                                    let last_sold_unix = data.last_sold_unix;
-                                    move || visible_cols.get().contains(COL_LAST_SOLD).then(|| view! {
-                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block">
-                                            {last_sold_label(i18n, last_sold_unix, chrono::Utc::now().timestamp())}
-                                        </div>
-                                    })
-                                }
-                                {
-                                    let units_sold = data.units_sold;
-                                    move || visible_cols.get().contains(COL_VOLUME).then(|| view! {
-                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block font-mono tabular-nums">
-                                            {units_sold.to_string()}
-                                        </div>
-                                    })
-                                }
-                                {
-                                    let vwap = data.vwap;
-                                    let pct = data.vwap_pct;
-                                    move || visible_cols.get().contains(COL_VWAP).then(|| view! {
-                                        <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
-                                            {if vwap > 0 {
-                                                view! {
-                                                    <Gil amount=vwap />
-                                                    {pct.map(|p| view! {
-                                                        <div class="text-xs text-[color:var(--color-text-muted)]">
-                                                            {format!("{p:+.0}%")}
-                                                        </div>
-                                                    })}
-                                                }.into_any()
-                                            } else {
-                                                view! { <span class="text-[color:var(--color-text-muted)]">"—"</span> }.into_any()
-                                            }}
-                                        </div>
-                                    })
-                                }
-                                {
-                                    let tax = data.tax;
-                                    move || visible_cols.get().contains(COL_TAX).then(|| view! {
-                                        <div role="cell" class="px-4 py-2 w-28 shrink-0 text-right hidden md:block">
-                                            <Gil amount=tax />
-                                        </div>
-                                    })
-                                }
-                                {
-                                    let loc = listing_location.clone();
-                                    move || visible_cols.get().contains(COL_LISTING_WORLD).then(|| {
-                                        match loc.clone() {
-                                            Some((world, _)) => {
-                                                let tooltip = t_string!(i18n, analyzer_only_show_world)
-                                                    .to_string()
-                                                    .replace("%world%", &world);
-                                                let value = Signal::derive({
-                                                    let world = world.clone();
-                                                    move || world.clone()
-                                                });
-                                                view! {
-                                                    <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
-                                                        <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
-                                                            <QueryButton
-                                                                key=FILTER_LISTING_WORLD
-                                                                value=value
-                                                                class="!text-brand-300 hover:text-brand-200 truncate"
-                                                                active_classes="!text-neutral-300 hover:text-neutral-200 truncate"
-                                                                remove_queries=&[FILTER_LISTING_DC]
-                                                            >
-                                                                {move || value.get()}
-                                                            </QueryButton>
-                                                        </Tooltip>
-                                                    </div>
-                                                }.into_any()
-                                            }
-                                            None => view! {
-                                                <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
-                                            }.into_any(),
-                                        }
-                                    })
-                                }
-                                {
-                                    let loc = listing_location.clone();
-                                    move || visible_cols.get().contains(COL_LISTING_DC).then(|| {
-                                        match loc.clone() {
-                                            Some((_, dc)) => {
-                                                let tooltip = t_string!(i18n, analyzer_only_show_world)
-                                                    .to_string()
-                                                    .replace("%world%", &dc);
-                                                let value = Signal::derive({
-                                                    let dc = dc.clone();
-                                                    move || dc.clone()
-                                                });
-                                                view! {
-                                                    <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
-                                                        <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
-                                                            <QueryButton
-                                                                key=FILTER_LISTING_DC
-                                                                value=value
-                                                                class="!text-brand-300 hover:text-brand-200 truncate"
-                                                                active_classes="!text-neutral-300 hover:text-neutral-200 truncate"
-                                                                remove_queries=&[FILTER_LISTING_WORLD]
-                                                            >
-                                                                {move || value.get()}
-                                                            </QueryButton>
-                                                        </Tooltip>
-                                                    </div>
-                                                }.into_any()
-                                            }
-                                            None => view! {
-                                                <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
-                                            }.into_any(),
-                                        }
-                                    })
-                                }
-                                 <div role="cell" class="px-4 py-2 w-20 shrink-0">
-                                     <AddRecipeToList recipe=data.recipe />
-                                 </div>
-                            </div>
-                        }.into_any()
+                <AnalyzerGrid
+                    columns=&RECIPE_COLUMNS
+                    rows=computed_data
+                    visible_cols=visible_cols
+                    sort_mode=sort_mode
+                    sort_dir=sort_dir
+                    ctx=cell_ctx
+                    custom=custom
+                    layout=GridLayout {
+                        viewport_height: 720.0,
+                        row_height: 60.0,
+                        header_height: 64.0,
+                        overscan: 8,
                     }
+                    header_class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+                    row_class=stripe
                 />
              </div>
         </div>
@@ -1970,7 +2132,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (sort_mode, _) = query_signal::<SortMode>("sort");
     let (sort_dir, _) = query_signal::<SortDir>("dir");
     let visible_cols = Memo::new(move |_| {
-        parse_visible_cols(cols_param().as_deref(), OPTIONAL_COLUMN_ORDER, DEFAULT_COLS)
+        parse_visible_cols(
+            cols_param().as_deref(),
+            &OPTIONAL_COLUMN_ORDER,
+            &DEFAULT_COLS,
+        )
     });
 
     // Rewrite pre-market-model query params once on mount, before the
@@ -2447,6 +2613,55 @@ mod test {
             assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
         }
         assert!("bogus".parse::<SortMode>().is_err());
+    }
+
+    /// `?cols=` tokens and the default set are a bookmark contract; both
+    /// are derived from `RECIPE_COLUMNS`, so a reordered or retokenised
+    /// table would silently rewrite every shared link.
+    #[test]
+    fn recipe_optional_column_order_is_a_stable_url_contract() {
+        assert_eq!(
+            OPTIONAL_COLUMN_ORDER.as_slice(),
+            &[
+                "confidence",
+                "last-sold",
+                "volume",
+                "vwap",
+                "tax",
+                "listing-world",
+                "listing-dc"
+            ]
+        );
+        assert_eq!(DEFAULT_COLS.as_slice(), &["confidence"]);
+    }
+
+    /// Every sort mode must be catalogued by exactly one column: two
+    /// columns claiming one mode makes `Display` pick an arbitrary token,
+    /// and none makes the mode unreachable from a URL.
+    #[test]
+    fn every_recipe_sort_mode_is_catalogued_exactly_once() {
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::Velocity,
+            SortMode::CostPerUnit,
+            SortMode::Price,
+            SortMode::AvgPrice,
+            SortMode::LastSold,
+            SortMode::Volume,
+            SortMode::Vwap,
+            SortMode::Tax,
+            SortMode::Confidence,
+        ] {
+            let hits = RECIPE_COLUMNS
+                .iter()
+                .filter(|c| matches!(c.sort, Sortability::By(m) if m == mode))
+                .count();
+            assert_eq!(hits, 1, "{mode:?} catalogued {hits} times");
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert_eq!(SortMode::CostPerUnit.default_dir(), SortDir::Asc);
+        assert_eq!(SortMode::Profit.default_dir(), SortDir::Desc);
     }
 
     /// Better bands sort above worse ones, and rows without deep-scan data
