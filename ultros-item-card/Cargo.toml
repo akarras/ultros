@@ -1,0 +1,17 @@
+[package]
+name = "ultros-item-card"
+version = "0.1.0"
+edition = "2024"
+license = "MIT or Apache-2.0"
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+ril = { version = "0.10.3", default-features = false, features = [
+    "gradient",
+    "png",
+    "resize",
+    "text",
+] }
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
