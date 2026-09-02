@@ -234,7 +234,6 @@ impl ProfitFormula {
 pub struct ProfitLine {
     pub revenue: i32,
     pub tax: i32,
-    pub net: i32,
     pub cost: i32,
     pub profit: i32,
     pub roi: i32,
@@ -286,7 +285,6 @@ pub fn profit_line(gross: i32, cost_per_unit: i32, f: &ProfitFormula) -> (Profit
         ProfitLine {
             revenue: gross,
             tax,
-            net,
             cost: cost_per_unit,
             profit,
             roi,
@@ -369,7 +367,7 @@ mod tests {
         // 12,560 gross → 11,932 net; 11,300 cost → 632 profit, ROI 5%.
         let (line, dropped) = profit_line(12_560, 11_300, &f);
         assert!(!dropped);
-        assert_eq!(line.net, 11_932);
+        assert_eq!(line.revenue - line.tax, 11_932);
         assert_eq!(line.tax, 628);
         assert_eq!(line.profit, 632);
         assert_eq!(line.roi, 5);
@@ -385,7 +383,7 @@ mod tests {
         let f = recipe_default();
         // Terminus Putty class: 999,999 gross, 261 cost.
         let (line, _) = profit_line(999_999, 261, &f);
-        assert_eq!(line.net, 949_999);
+        assert_eq!(line.revenue - line.tax, 949_999);
         assert_eq!(line.profit, 949_738);
         assert_eq!(line.roi, 363_884);
         // Cost 0 → ROI 0, never a division by zero.
