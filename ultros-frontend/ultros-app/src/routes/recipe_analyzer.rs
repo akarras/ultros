@@ -3,10 +3,13 @@ use crate::analyzer_kit::columns::{
     CellCtx, ColumnKind, ColumnSpec, Layer, Sortability, ToolColumnMeta, default_dir_for,
     picker_options, sort_from_token, sort_token, sortability_for,
 };
-use crate::analyzer_kit::formula::{ProfitFormula, per_unit_cost, profit_line};
-use crate::analyzer_kit::grid::{AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout};
+use crate::analyzer_kit::formula::{
+    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, per_unit_cost, profit_line,
+};
+use crate::analyzer_kit::grid::{AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, MarkLabels};
 use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies};
 use crate::analyzer_kit::signals::{PriceLookup, SignalView, StatsIndex, stats_index};
+use crate::analyzer_kit::strip::{FormulaStrip, StripLayout, StripSelect, StripTerm};
 use crate::components::crafting_cost::{
     CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
 };
@@ -16,6 +19,7 @@ use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap}
 use crate::components::related_items::is_shard_item;
 use crate::components::term_badge::TermRole;
 use crate::global_state::craft_options::{self, CraftOptions};
+use crate::global_state::labs::{LAB_ANALYZER_LEDGER, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -58,6 +62,7 @@ use percent_encoding::utf8_percent_encode;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -235,6 +240,42 @@ fn buy_scope_options(i18n: I18nContext<Locale, I18nKeys>) -> Vec<(&'static str, 
     ]
 }
 
+/// The header sub-labels for one set of marks: each priced side names the
+/// signal *and* the place it was read from, and the result column carries
+/// the tool's own sub-line. Built key by key and never iterated, so no
+/// `HashMap` ordering can reach the DOM.
+fn mark_labels(
+    m: &FormulaMarks,
+    cost_short: &str,
+    revenue_short: &str,
+    profit_sub: &str,
+) -> MarkLabels {
+    MarkLabels {
+        labels: [
+            (TermRole::Result, profit_sub.to_string()),
+            (
+                TermRole::Revenue,
+                format!("{revenue_short} · {}", m.sell_place),
+            ),
+            (TermRole::Cost, format!("{cost_short} · {}", m.buy_place)),
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+/// The short name a header sub-label or a strip chip uses for a signal
+/// ("listing", "7d median"), as opposed to the long picker labels in
+/// [`cost_basis_options`].
+fn short_signal(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
+    match s {
+        PriceSignal::ListingMin => t_string!(i18n, signal_short_listing_min).to_string(),
+        PriceSignal::SaleMin => t_string!(i18n, signal_short_sale_min).to_string(),
+        PriceSignal::SaleMedian => t_string!(i18n, signal_short_sale_median).to_string(),
+        PriceSignal::SaleAvg => t_string!(i18n, signal_short_sale_avg).to_string(),
+    }
+}
+
 /// One labelled select inside the [`MarketMenu`] popover. Commits on
 /// `change` — unlike [`FilterChip`]'s select, this one stays mounted after a
 /// commit (the popover only closes on dismiss), so committing per keystroke
@@ -270,7 +311,9 @@ fn PricingSelect(
 }
 
 /// Always-visible `Market` button in the control bar's first row, opening a
-/// popover with the buy-scope / cost-basis / revenue-metric selects.
+/// popover with the buy-scope / cost-basis / revenue-metric selects — or,
+/// while the analyzer-ledger lab is on, the stacked formula strip and the
+/// four price-basis explanations.
 ///
 /// These existed as permanent toolbar fields (#1206), then the
 /// Toolbar→ControlBar migration (#1214) filed them under `+ Filter` — where
@@ -280,7 +323,13 @@ fn PricingSelect(
 /// same query params as the page's signals, so the non-default chips in the
 /// filter row stay in sync automatically.
 #[component]
-fn MarketMenu() -> impl IntoView {
+fn MarketMenu(
+    /// The same ledger chips the inline strip renders, built once on the
+    /// page (this component lives inside the table's `ControlBar`).
+    terms: Callback<(), Vec<StripTerm>>,
+    /// The analyzer-ledger lab. Off = exactly the three selects below.
+    ledger: Signal<bool>,
+) -> impl IntoView {
     let i18n = use_i18n();
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
@@ -306,36 +355,66 @@ fn MarketMenu() -> impl IntoView {
                 </span>
             </button>
             <Show when=move || open.get()>
-                <div class="sticky-bar-popover p-3 w-[min(92vw,16rem)] flex flex-col gap-2 text-sm">
-                    <PricingSelect
-                        label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
-                        value=Signal::derive(move || buy_scope().unwrap_or_default().to_string())
-                        options=buy_scope_options(i18n)
-                        on_change=Callback::new(move |v: String| {
-                            let parsed = v.parse::<BuyScope>().ok();
-                            set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
-                        })
-                    />
-                    <PricingSelect
-                        label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
-                        value=Signal::derive(move || cost_basis().unwrap_or_default().to_string())
-                        options=cost_basis_options(i18n)
-                        on_change=Callback::new(move |v: String| {
-                            let parsed = v.parse::<CostBasis>().ok();
-                            set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
-                        })
-                    />
-                    <PricingSelect
-                        label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
-                        value=Signal::derive(move || {
-                            revenue_metric().unwrap_or_default().to_string()
-                        })
-                        options=cost_basis_options(i18n)
-                        on_change=Callback::new(move |v: String| {
-                            let parsed = v.parse::<RevenueMetric>().ok();
-                            set_revenue_metric(parsed.filter(|m| *m != RevenueMetric::default()));
-                        })
-                    />
+                <div class=move || {
+                    if ledger.get() {
+                        "sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm"
+                    } else {
+                        "sticky-bar-popover p-3 w-[min(92vw,16rem)] flex flex-col gap-2 text-sm"
+                    }
+                }>
+                    <Show
+                        when=move || ledger.get()
+                        fallback=move || {
+                            view! {
+                                <PricingSelect
+                                    label=t_string!(i18n, recipe_analyzer_buy_from_label).to_string()
+                                    value=Signal::derive(move || {
+                                        buy_scope().unwrap_or_default().to_string()
+                                    })
+                                    options=buy_scope_options(i18n)
+                                    on_change=Callback::new(move |v: String| {
+                                        let parsed = v.parse::<BuyScope>().ok();
+                                        set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
+                                    })
+                                />
+                                <PricingSelect
+                                    label=t_string!(i18n, recipe_analyzer_cost_basis_label).to_string()
+                                    value=Signal::derive(move || {
+                                        cost_basis().unwrap_or_default().to_string()
+                                    })
+                                    options=cost_basis_options(i18n)
+                                    on_change=Callback::new(move |v: String| {
+                                        let parsed = v.parse::<CostBasis>().ok();
+                                        set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
+                                    })
+                                />
+                                <PricingSelect
+                                    label=t_string!(i18n, recipe_analyzer_revenue_label).to_string()
+                                    value=Signal::derive(move || {
+                                        revenue_metric().unwrap_or_default().to_string()
+                                    })
+                                    options=cost_basis_options(i18n)
+                                    on_change=Callback::new(move |v: String| {
+                                        let parsed = v.parse::<RevenueMetric>().ok();
+                                        set_revenue_metric(
+                                            parsed.filter(|m| *m != RevenueMetric::default()),
+                                        );
+                                    })
+                                />
+                            }
+                        }
+                    >
+                        <FormulaStrip terms=terms.run(()) layout=StripLayout::Stacked />
+                        // What each price basis actually means, so the
+                        // strip's selects are choosable without leaving
+                        // the page.
+                        <div class="flex flex-col gap-1 text-xs text-[color:var(--color-text-muted)]">
+                            <span>{t!(i18n, price_basis_listing_min_help)}</span>
+                            <span>{t!(i18n, price_basis_sale_median_help)}</span>
+                            <span>{t!(i18n, price_basis_sale_min_help)}</span>
+                            <span>{t!(i18n, price_basis_sale_avg_help)}</span>
+                        </div>
+                    </Show>
                 </div>
             </Show>
         </div>
@@ -544,9 +623,6 @@ static SPEC_ACTIONS: ColumnSpec = ColumnSpec {
 fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::Custom
 }
-fn cell_profit(r: &RecipeRow, _: &CellCtx) -> CellValue {
-    CellValue::Gil(r.profit)
-}
 fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::RoiBadge(r.return_on_investment)
 }
@@ -619,7 +695,9 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 15] = [
         sort: sortability_for(Layer::Computed, Some(SortMode::Profit)),
         header_class: HEAD,
         cell_class: CELL_R,
-        cell: cell_profit,
+        // Custom, not `CellValue::Gil`: the marked cell carries the row's
+        // arithmetic as a `title`, which no generic cell renders.
+        cell: cell_custom,
         side: Some(TermRole::Result),
         formula_header_class: FORMULA_HEAD,
         formula_cell_class: FORMULA_CELL,
@@ -640,6 +718,10 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 15] = [
         sort: sortability_for(Layer::Computed, Some(SortMode::CostPerUnit)),
         default_dir: SortDir::Asc,
         header_class: HEAD,
+        // A custom cell, but the class still comes from the table: the
+        // grid hands it to the `custom` closure so a marked Cost cell
+        // widens with its header.
+        cell_class: CELL_R,
         side: Some(TermRole::Cost),
         formula_header_class: FORMULA_HEAD,
         formula_cell_class: FORMULA_CELL,
@@ -1179,9 +1261,12 @@ fn RecipeAnalyzerTable(
     /// Bulk sale statistics for the sell world (sale-stat revenue
     /// metrics); `None` while not requested or failed.
     sell_world_sale_stats: Option<BulkSaleStats>,
-    /// True when a sale-stat basis is selected but its stats fetch failed —
-    /// the table silently degrades to the listing basis, so say so.
-    sale_stats_error: bool,
+    /// True when a sale-stat cost basis is selected but the buy-scope
+    /// stats fetch failed — the table silently degrades to the listing
+    /// basis, so say so.
+    buy_stats_error: bool,
+    /// The same, for the sell world's sale history.
+    sell_stats_error: bool,
     /// Cheapest listings on the analyzer's sell world. Revenue is always
     /// that world's price; absent only before a world resolves.
     sell_world_listings: Option<CheapestListings>,
@@ -1195,6 +1280,22 @@ fn RecipeAnalyzerTable(
     sort_mode: Memo<Option<SortMode>>,
     /// Current `?dir=`, owned by the parent for the same remount reason.
     sort_dir: Memo<Option<SortDir>>,
+    /// The analyzer-ledger lab: header marks, the profit readout, the
+    /// clamped ROI and the popover's strip all hang off this.
+    ledger: Signal<bool>,
+    /// `(buy, sell)` degraded flags. Written here — this is where the
+    /// resource outcomes are known — and read by the page's strip chips
+    /// and info-panel sentence.
+    stats_degraded: RwSignal<(bool, bool)>,
+    /// The sell world's name, for the Price/Profit marks.
+    #[prop(into)]
+    sell_place: Signal<String>,
+    /// The buy scope's name, for the Cost mark.
+    #[prop(into)]
+    buy_place: Signal<String>,
+    /// The ledger chips, built on the page (the popover that renders them
+    /// lives inside this table's `ControlBar`).
+    strip_terms: Callback<(), Vec<StripTerm>>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -1219,6 +1320,11 @@ fn RecipeAnalyzerTable(
     let recipes = &data.recipes;
     let recipe_level_tables = &data.recipe_level_tables;
     let i18n = use_i18n();
+
+    // The table is the only place that knows how each stats body actually
+    // resolved; publish it once so the page's strip and info panel can say
+    // the numbers fell back.
+    Effect::new(move |_| stats_degraded.set((buy_stats_error, sell_stats_error)));
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -1304,8 +1410,34 @@ fn RecipeAnalyzerTable(
     let all_recipes: Arc<Vec<&'static Recipe>> = Arc::new(recipes.values().collect());
 
     let formula = Memo::new(move |_| {
-        ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope())
-            .effective(buy_stats_loaded, sell_stats_loaded)
+        let mut f = ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope())
+            .effective(buy_stats_loaded, sell_stats_loaded);
+        // The phase's one number change, and it only happens under the
+        // lab: a 363,884% ROI off a single fake listing reads as noise, so
+        // the clamped policy caps it at the display ceiling.
+        if ledger.get() {
+            f.roi = RoiMath::ClampedF64;
+        }
+        f
+    });
+
+    // Header marks come from the *effective* formula above, never from the
+    // raw selection: a header must not name a signal the numbers fell back
+    // from. `None` leaves every column exactly as it renders today.
+    // A `Memo`, not a derived signal: the grid reads this once per formula
+    // cell per row, and a derived signal would rebuild the label map (and
+    // re-render every row on any unrelated query change) each time.
+    let marks = Memo::new(move |_| {
+        ledger.get().then(|| {
+            let f = formula.get();
+            let m = f.marks(sell_place.get(), buy_place.get());
+            mark_labels(
+                &m,
+                &short_signal(i18n, m.cost),
+                &short_signal(i18n, m.revenue),
+                t_string!(i18n, recipe_analyzer_profit_sub),
+            )
+        })
     });
 
     // The pricing pass. Rebuilt only when a pricing input changes — a
@@ -1575,7 +1707,7 @@ fn RecipeAnalyzerTable(
     // list button). Every branch is the old cell's markup verbatim, keyed
     // by the column's kind.
     let world_names_for_cells = world_names.clone();
-    let custom: CustomCell<RecipeRow> = Arc::new(move |data, kind, _class| {
+    let custom: CustomCell<RecipeRow> = Arc::new(move |data, kind, class| {
         let data = data.clone();
         let item_id = ItemId(data.recipe.item_result);
         match kind {
@@ -1595,7 +1727,8 @@ fn RecipeAnalyzerTable(
                             <div class="flex flex-col">
                                 <span>{item}</span>
                                 <span class="text-xs text-[color:var(--color-text-muted)]">
-                                    "Lv " {data.required_level} " • iLv " {item_level} " " {job_abbrev}
+                                    {t_string!(i18n, recipe_analyzer_item_level_label, level = data.required_level, ilvl = item_level).to_string()}
+                                    " " {job_abbrev}
                                 </span>
                             </div>
                         </a>
@@ -1603,8 +1736,37 @@ fn RecipeAnalyzerTable(
                 }
                 .into_any()
             }
+            // The ledger's `=` result term. The class is the grid's, so a
+            // marked cell tracks its header's width; the readout spells
+            // the row's own arithmetic out in a `title`.
+            ColumnKind::Profit => {
+                let readout = {
+                    let data = data.clone();
+                    move || {
+                        ledger.get().then(|| {
+                            t_string!(
+                                i18n,
+                                recipe_analyzer_profit_readout,
+                                price = data.market_price.separate_with_commas(),
+                                tax = data.tax.separate_with_commas(),
+                                cost = data.cost.separate_with_commas(),
+                                profit = data.profit.separate_with_commas()
+                            )
+                            .to_string()
+                        })
+                    }
+                };
+                view! {
+                    // `title` is an `Option`: with the lab off the cell
+                    // carries no attribute at all.
+                    <div role="cell" class=class title=readout>
+                        <Gil amount=data.profit />
+                    </div>
+                }
+                .into_any()
+            }
             ColumnKind::CostSlot => view! {
-                <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right">
+                <div role="cell" class=class>
                     <Gil amount=data.cost />
                     {
                         let data_for_yield = data.clone();
@@ -1631,9 +1793,11 @@ fn RecipeAnalyzerTable(
                                                     (name, sub.amount, sub.unit_cost)
                                                 }).collect();
                                                 Signal::derive(move || {
-                                                    let mut tooltip = String::from("Includes sub-crafts:\n");
+                                                    let mut tooltip = t_string!(i18n, recipe_analyzer_subcraft_header).to_string();
                                                     for (name, amount, cost) in &sub_crafts_details {
-                                                        tooltip.push_str(&format!("• {}x {} ({} gil)\n", amount, name, cost));
+                                                        tooltip.push_str(
+                                                            &t_string!(i18n, recipe_analyzer_subcraft_row, count = *amount, name = name.clone(), gil = *cost).to_string(),
+                                                        );
                                                     }
                                                     tooltip
                                                 })
@@ -1641,7 +1805,7 @@ fn RecipeAnalyzerTable(
                                         >
                                             <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
                                                 <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                                <span>{count} " sub"</span>
+                                                <span>{count} " " {t!(i18n, recipe_analyzer_sub_suffix)}</span>
                                             </div>
                                         </Tooltip>
                                     }
@@ -1653,15 +1817,25 @@ fn RecipeAnalyzerTable(
             }
             .into_any(),
             ColumnKind::SalesPerDay7 => {
-                let sales_tooltip = format!(
-                    "Based on {} sales over {:.1} days",
-                    data.total_sales,
-                    (data.total_sales as f32 / data.daily_sales.max(0.001)) // approximate duration back
-                );
+                // Window length, approximated back out of the sample count
+                // and the per-day rate.
+                let sales_tooltip = t_string!(
+                    i18n,
+                    recipe_analyzer_sales_tooltip,
+                    count = data.total_sales,
+                    days = format!("{:.1}", data.total_sales as f32 / data.daily_sales.max(0.001))
+                )
+                .to_string();
+                let per_day = t_string!(
+                    i18n,
+                    recipe_analyzer_sales_per_day,
+                    sales = format!("{:.1}", data.daily_sales)
+                )
+                .to_string();
                 view! {
                     <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
                         <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
-                            {format!("{:.1} / day", data.daily_sales)}
+                            {per_day}
                         </span>
                     </div>
                 }
@@ -1758,7 +1932,7 @@ fn RecipeAnalyzerTable(
     view! {
         <div class="flex flex-col gap-6">
             <ActiveListBanner />
-            {sale_stats_error
+            {(buy_stats_error || sell_stats_error)
                 .then(|| view! {
                     <div class="text-amber-400 text-sm">
                         {t!(i18n, recipe_analyzer_sale_stats_unavailable)}
@@ -1777,7 +1951,7 @@ fn RecipeAnalyzerTable(
                 actions=move || {
                     view! {
                         <RealtimeStatus status=realtime_status last_update=last_update />
-                        <MarketMenu />
+                        <MarketMenu terms=strip_terms ledger=ledger />
                     }
                         .into_any()
                 }
@@ -2083,6 +2257,7 @@ fn RecipeAnalyzerTable(
                     }
                     header_class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
                     row_class=stripe
+                    marks=marks
                 />
              </div>
         </div>
@@ -2117,9 +2292,23 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let region = use_region_for_world(move || query.with(|p| p.get("world").clone()));
     let datacenter = use_datacenter_for_world(move || query.with(|p| p.get("world").clone()));
 
-    let (buy_scope, _) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
-    let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
+    // The three pricing params are read here for the resources; under the
+    // lab their setters also drive the formula strip's selects.
+    let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
+    let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
+    let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+
+    let ledger = use_lab(LAB_ANALYZER_LEDGER);
+    // `(buy, sell)` — written by an Effect inside the table, where the
+    // resource outcomes are known.
+    let stats_degraded = RwSignal::new((false, false));
+    // The *selected* formula. `effective()` is applied at each reader:
+    // the table marks its headers from its own copy, and the info panel's
+    // sentence applies it below over `stats_degraded`.
+    let formula_page = Memo::new(move |_| {
+        ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope())
+    });
 
     // `?cols=` lives here rather than in the table because the table
     // remounts whenever its resources change.
@@ -2202,6 +2391,73 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         BuyScope::Datacenter => datacenter().unwrap_or_else(|| region.get()),
         BuyScope::Region => region(),
     });
+
+    // Where each side of the ledger is priced, by name. The sell world can
+    // legitimately be unresolved on a first paint with no home-world cookie.
+    let sell_place = Memo::new(move |_| {
+        selected_world
+            .get()
+            .map(|w| w.name)
+            .unwrap_or_else(|| "…".to_string())
+    });
+    let buy_place = Memo::new(move |_| buy_scope_name.get());
+
+    // The ledger as chips: `[=] Profit / unit  [+] revenue · sell world
+    // [−] 5% tax  [−] cost · buy scope`. Every select writes the same URL
+    // param its Market-popover twin does, so the two stay in lockstep. Built
+    // once and handed to both the inline row and the popover.
+    let strip_terms = move || {
+        vec![
+            StripTerm::fixed(
+                TermRole::Result,
+                Signal::derive(move || t_string!(i18n, formula_term_profit_per_unit).to_string()),
+            ),
+            StripTerm {
+                role: TermRole::Revenue,
+                label: Signal::derive(String::new),
+                place: Some(sell_place.into()),
+                select: Some(StripSelect {
+                    value: Signal::derive(move || revenue_metric().unwrap_or_default().to_string()),
+                    options: cost_basis_options(i18n),
+                    on_change: Callback::new(move |v: String| {
+                        let parsed = v.parse::<RevenueMetric>().ok();
+                        set_revenue_metric(parsed.filter(|m| *m != RevenueMetric::default()));
+                    }),
+                    aria: t_string!(i18n, formula_change_revenue_aria).to_string(),
+                }),
+                place_select: None,
+                degraded: Signal::derive(move || stats_degraded.get().1),
+            },
+            StripTerm::fixed(
+                TermRole::Tax,
+                Signal::derive(move || t_string!(i18n, formula_term_tax).to_string()),
+            ),
+            StripTerm {
+                role: TermRole::Cost,
+                label: Signal::derive(String::new),
+                place: None,
+                select: Some(StripSelect {
+                    value: Signal::derive(move || cost_basis().unwrap_or_default().to_string()),
+                    options: cost_basis_options(i18n),
+                    on_change: Callback::new(move |v: String| {
+                        let parsed = v.parse::<CostBasis>().ok();
+                        set_cost_basis(parsed.filter(|b| *b != CostBasis::default()));
+                    }),
+                    aria: t_string!(i18n, formula_change_cost_aria).to_string(),
+                }),
+                place_select: Some(StripSelect {
+                    value: Signal::derive(move || buy_scope().unwrap_or_default().to_string()),
+                    options: buy_scope_options(i18n),
+                    on_change: Callback::new(move |v: String| {
+                        let parsed = v.parse::<BuyScope>().ok();
+                        set_buy_scope(parsed.filter(|s| *s != BuyScope::default()));
+                    }),
+                    aria: t_string!(i18n, formula_change_scope_aria).to_string(),
+                }),
+                degraded: Signal::derive(move || stats_degraded.get().0),
+            },
+        ]
+    };
 
     let global_cheapest_listings =
         ArcResource::new(buy_scope_name, move |scope_name: String| async move {
@@ -2334,7 +2590,36 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     help_body=t_string!(i18n, recipe_analyzer_tool_help).to_string()
                     calculation=ToolCalculation::new(
                         t_string!(i18n, recipe_analyzer_calc_title).to_string(),
-                        t_string!(i18n, recipe_analyzer_calc_formula).to_string(),
+                        Signal::derive(move || {
+                            if ledger.get() {
+                                // The EFFECTIVE formula: a failed stats body
+                                // downgrades the signal, and the sentence must
+                                // never name a signal the numbers ignore.
+                                let (buy_failed, sell_failed) = stats_degraded.get();
+                                let f = formula_page.get().effective(!buy_failed, !sell_failed);
+                                let label_of = |s: PriceSignal| {
+                                    cost_basis_options(i18n)
+                                        .into_iter()
+                                        .find(|(t, _)| *t == s.to_string())
+                                        .map(|(_, l)| l)
+                                        .unwrap_or_default()
+                                };
+                                // The connectives are translated: this is a
+                                // template, never a `format!` in Rust.
+                                t_string!(
+                                    i18n,
+                                    recipe_analyzer_calc_formula_live,
+                                    revenue = label_of(f.revenue_signal()),
+                                    sell = sell_place.get(),
+                                    tax = t_string!(i18n, formula_term_tax).to_string(),
+                                    cost = label_of(f.cost_signal()),
+                                    buy = buy_place.get()
+                                )
+                                .to_string()
+                            } else {
+                                t_string!(i18n, recipe_analyzer_calc_formula).to_string()
+                            }
+                        }),
                         t_string!(i18n, recipe_analyzer_calc_details).to_string(),
                     )
                     assumptions=vec![
@@ -2396,6 +2681,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         />
                     </div>
                 </div>
+                // The ledger, directly under the world it sells on. md+ only:
+                // below that the chips would wrap into four full-width rows
+                // and push the table off the first screen — the Market
+                // popover carries the same controls stacked.
+                <Show when=move || ledger.get()>
+                    <div class="hidden md:flex flex-wrap items-center gap-2">
+                        <FormulaStrip terms=strip_terms() layout=StripLayout::Inline />
+                    </div>
+                </Show>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
@@ -2426,7 +2720,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     stats_failed: false,
                                     raw_failed: false,
                                 });
-                                let sale_stats_error = buy_stats_error || history.stats_failed;
                                 // The on-demand body wins; the rollup's
                                 // failover body fills in when it was fetched.
                                 let recent_sales = raw
@@ -2438,13 +2731,19 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         recent_sales=recent_sales
                                         sale_stats=sale_stats
                                         sell_world_sale_stats=history.stats
-                                        sale_stats_error=sale_stats_error
+                                        buy_stats_error=buy_stats_error
+                                        sell_stats_error=history.stats_failed
                                         sell_world_listings=sell_listings.ok().flatten()
                                         world=Signal::derive(buy_scope_name)
                                         visible_cols=visible_cols
                                         set_cols_param=set_cols_param
                                         sort_mode=sort_mode
                                         sort_dir=sort_dir
+                                        ledger=ledger
+                                        stats_degraded=stats_degraded
+                                        sell_place=sell_place
+                                        buy_place=buy_place
+                                        strip_terms=Callback::new(move |()| strip_terms())
                                     />
                                 }.into_any()
                             }
@@ -2469,7 +2768,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::analyzer_kit::formula::PriceSignal;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
 
@@ -3136,5 +3434,19 @@ mod test {
             Some(("Gilgamesh".to_string(), true))
         );
         assert_eq!(raw_sales_key(None, true), None);
+    }
+
+    /// The header sub-labels are built from the *effective* formula's
+    /// marks, so a mark never names a signal the numbers fell back from.
+    /// Each role's label pairs the short signal name with the place the
+    /// price came from; the result carries the tool's own sub-line.
+    #[test]
+    fn formula_marks_labels_name_signal_and_place() {
+        let f = ProfitFormula::recipe_from_query(Some(PriceSignal::SaleMedian), None, None);
+        let m = f.marks("Gilgamesh".into(), "Aether".into());
+        let labels = mark_labels(&m, "7d median", "listing", "per unit · after 5% tax");
+        assert_eq!(labels.labels[&TermRole::Cost], "7d median · Aether");
+        assert_eq!(labels.labels[&TermRole::Revenue], "listing · Gilgamesh");
+        assert_eq!(labels.labels[&TermRole::Result], "per unit · after 5% tax");
     }
 }
