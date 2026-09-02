@@ -1,4 +1,5 @@
 use crate::analyzer_kit::formula::{ProfitFormula, per_unit_cost, profit_line};
+use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies};
 use crate::analyzer_kit::signals::{PriceLookup, SignalView, StatsIndex, stats_index};
 use crate::components::crafting_cost::{
     CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
@@ -389,7 +390,7 @@ const FILTER_USE_ON_HAND: &str = "on-hand";
 /// order.
 // The pricing methodology controls (cost basis, revenue metric, scope) are
 // deliberately *not* in this list: they change how every row is priced rather
-// than which rows show, so they live behind the always-visible `Pricing`
+// than which rows show, so they live behind the always-visible `Market`
 // button in row 1 (see [`MarketMenu`]) instead of the `+ Filter` menu, where
 // #1233 reported them as impossible to find.
 const ADDABLE_FILTERS: &[&str] = &[
@@ -403,10 +404,6 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_EXCLUDE_SHARDS,
     FILTER_USE_ON_HAND,
 ];
-
-/// Trailing sale-history window backing the sale-stat cost/revenue bases.
-/// Matches the `/api/v1/sale_stats` default.
-const SALE_STATS_WINDOW_DAYS: u16 = 7;
 
 // --- Optional columns ------------------------------------------------------
 // `?cols=` namespace, distinct from the filter registry above. Order here is
@@ -835,6 +832,52 @@ fn filter_and_sort(
     kept.into_iter().enumerate().collect()
 }
 
+/// One sell-world history payload: the 7-day rollup plus, when the outlier
+/// filter is on or the rollup failed, the raw recent sales.
+// `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
+// required (both field types already derive it).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SellHistory {
+    stats: Option<BulkSaleStats>,
+    raw: Option<RecentSales>,
+    stats_failed: bool,
+    raw_failed: bool,
+}
+
+/// The resource key. Deliberately built from URL state only — the old
+/// key read the rollup resource inside a memo, which Leptos flags at
+/// hydration (#1248 follow-up).
+fn sell_history_key(world: Option<&str>, outliers: bool) -> Option<(String, bool)> {
+    world.map(|w| (w.to_string(), outliers))
+}
+
+async fn fetch_sell_history(world: String, outliers: bool) -> SellHistory {
+    // With the outlier filter on both bodies are needed: fetch them
+    // concurrently, as the two separate resources did before the fold.
+    // Otherwise the raw sales are only a failover for a failed rollup.
+    let (stats, raw) = if outliers {
+        let (s, r) = futures::join!(
+            get_sale_stats(&world, SALE_STATS_WINDOW_DAYS),
+            get_recent_sales_for_world(&world)
+        );
+        (s, Some(r))
+    } else {
+        let s = get_sale_stats(&world, SALE_STATS_WINDOW_DAYS).await;
+        let r = if s.is_err() {
+            Some(get_recent_sales_for_world(&world).await)
+        } else {
+            None
+        };
+        (s, r)
+    };
+    SellHistory {
+        stats_failed: stats.is_err(),
+        stats: stats.ok(),
+        raw_failed: matches!(raw, Some(Err(_))),
+        raw: raw.and_then(|r| r.ok()),
+    }
+}
+
 #[component]
 fn RecipeAnalyzerTable(
     global_cheapest_listings: CheapestListings,
@@ -853,10 +896,14 @@ fn RecipeAnalyzerTable(
     sell_world_listings: Option<CheapestListings>,
 
     world: Signal<String>,
-    /// Visible optional columns (`?cols=`), owned by the parent because
-    /// the sell-world stats fetch keys off it.
+    /// Visible optional columns (`?cols=`), owned by the parent because the
+    /// table remounts whenever its resources change.
     visible_cols: Memo<HashSet<&'static str>>,
     set_cols_param: SignalSetter<Option<String>>,
+    /// Current `?sort=`, owned by the parent for the same remount reason.
+    sort_mode: Memo<Option<SortMode>>,
+    /// Current `?dir=`, owned by the parent for the same remount reason.
+    sort_dir: Memo<Option<SortDir>>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -893,8 +940,6 @@ fn RecipeAnalyzerTable(
         map
     });
 
-    let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     // Filter params use `filter_query_signal` (replace: true, scroll: false):
     // editing a chip writes the URL on every keystroke, and plain
     // `query_signal`'s defaults would push a history entry and yank the
@@ -1935,10 +1980,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
-    // `?cols=` lives here rather than in the table because the sell-world
-    // stats fetch below keys off which columns are visible, and the table
+    // `?cols=` lives here rather than in the table because the table
     // remounts whenever its resources change.
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    // `?sort=` / `?dir=` are hoisted for the same reason.
+    let (sort_mode, _) = query_signal::<SortMode>("sort");
+    let (sort_dir, _) = query_signal::<SortDir>("dir");
     let visible_cols = Memo::new(move |_| {
         parse_visible_cols(cols_param().as_deref(), OPTIONAL_COLUMN_ORDER, DEFAULT_COLS)
     });
@@ -2023,10 +2070,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
     // fetched separately below.)
     let buy_sale_stats_scope = Memo::new(move |_| {
-        cost_basis()
-            .unwrap_or_default()
-            .sale_stat()
-            .is_some()
+        let formula = ProfitFormula::recipe_from_query(cost_basis(), None, buy_scope());
+        // Phase A is fetch-identical to `main`: the dedupe of a buy scope
+        // that equals the sell world is Phase D's, so the flag stays false.
+        let needs = RecipeNeeds {
+            outliers: false,
+            buy_scope_is_sell_world: false,
+        };
+        needed_bodies(&formula, &needs)
+            .contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS))
             .then(|| buy_scope_name.get())
     });
     let sale_stats = ArcResource::new(
@@ -2092,37 +2144,26 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The same 7-day rollup supplies velocity, average price, sale-stat
     // revenue metrics, and optional stats columns. It is the analyzer's one
     // default sale-history payload regardless of which columns are visible.
-    let sell_stats_world = Memo::new(move |_| sell_world_name.get());
-    let sell_world_sale_stats =
-        ArcResource::new(sell_stats_world, move |world: Option<String>| async move {
-            match world {
-                Some(name) => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS)
-                    .await
-                    .map(Some),
-                None => Ok(None),
-            }
-        });
-
-    // Raw sale samples are only needed for the opt-in outlier filter. If the
-    // rollup request fails, fetch them as a failover so the analyzer remains
-    // useful while ClickHouse recovers.
-    let sell_stats_for_fallback = sell_world_sale_stats.clone();
-    let recent_sales_source = Memo::new(move |_| {
-        let rollup_failed = matches!(sell_stats_for_fallback.get(), Some(Err(_)));
-        (
-            selected_world.get(),
-            filter_outliers().unwrap_or(false) || rollup_failed,
+    // The raw sale samples ride along in the same resource: they are needed
+    // only for the opt-in outlier filter, or as a failover when the rollup
+    // request fails, so the analyzer stays useful while ClickHouse recovers.
+    let sell_history_source = Memo::new(move |_| {
+        sell_history_key(
+            selected_world.get().map(|w| w.name).as_deref(),
+            filter_outliers().unwrap_or(false),
         )
     });
-    let recent_sales = ArcResource::new(recent_sales_source, move |(world, needed)| async move {
-        if needed && let Some(world) = world {
-            get_recent_sales_for_world(&world.name).await
-        } else {
-            Ok(RecentSales { sales: vec![] })
-        }
-    });
+    let sell_history = ArcResource::new(
+        sell_history_source,
+        move |key: Option<(String, bool)>| async move {
+            match key {
+                Some((world, outliers)) => Some(fetch_sell_history(world, outliers).await),
+                None => None,
+            }
+        },
+    );
 
-    let recent_sales_clone = recent_sales.clone();
+    let sell_history_for_header = sell_history.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
             <MetaTitle title="Recipe Analyzer - Ultros" />
@@ -2148,9 +2189,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
-                            recent_sales_clone
+                            sell_history_for_header
                                 .get()
-                                .and_then(|r| r.err())
+                                .flatten()
+                                .filter(|h| h.raw_failed)
                                 .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                         }}
                     </Suspense>
@@ -2195,16 +2237,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
-                        let sales = recent_sales.get();
                         let stats = sale_stats.get();
                         let sell_listings = sell_world_listings.get();
-                        let sell_stats = sell_world_sale_stats.get();
-                        match (listings, stats, sell_listings, sell_stats) {
+                        let history = sell_history.get();
+                        match (listings, stats, sell_listings, history) {
                             (
                                 Some(Ok(listings)),
                                 Some(stats),
                                 Some(sell_listings),
-                                Some(sell_stats),
+                                Some(history),
                             ) => {
                                 // A failed stats fetch is non-fatal: the table
                                 // degrades to the listing basis and says so.
@@ -2212,22 +2253,28 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     Ok(stats) => (stats, false),
                                     Err(_) => (None, true),
                                 };
-                                let (sell_world_sale_stats, sell_stats_error) = match sell_stats {
-                                    Ok(stats) => (stats, false),
-                                    Err(_) => (None, true),
-                                };
-                                let recent_sales = sales.and_then(|s| s.ok());
+                                // No sell world resolved yet, so nothing was
+                                // requested: reads as "no sales anywhere".
+                                let history = history.unwrap_or(SellHistory {
+                                    stats: None,
+                                    raw: None,
+                                    stats_failed: false,
+                                    raw_failed: false,
+                                });
+                                let sale_stats_error = buy_stats_error || history.stats_failed;
                                 view! {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
-                                        recent_sales=recent_sales
+                                        recent_sales=history.raw
                                         sale_stats=sale_stats
-                                        sell_world_sale_stats=sell_world_sale_stats
-                                        sale_stats_error=buy_stats_error || sell_stats_error
+                                        sell_world_sale_stats=history.stats
+                                        sale_stats_error=sale_stats_error
                                         sell_world_listings=sell_listings.ok().flatten()
                                         world=Signal::derive(buy_scope_name)
                                         visible_cols=visible_cols
                                         set_cols_param=set_cols_param
+                                        sort_mode=sort_mode
+                                        sort_dir=sort_dir
                                     />
                                 }.into_any()
                             }
@@ -2857,5 +2904,18 @@ mod test {
         };
         let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn sell_history_key_reads_outliers_not_resource_state() {
+        assert_eq!(
+            sell_history_key(Some("Gilgamesh"), false),
+            Some(("Gilgamesh".to_string(), false))
+        );
+        assert_eq!(
+            sell_history_key(Some("Gilgamesh"), true),
+            Some(("Gilgamesh".to_string(), true))
+        );
+        assert_eq!(sell_history_key(None, true), None);
     }
 }
