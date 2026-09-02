@@ -494,7 +494,31 @@ locales with real translations.
     the alternative columns) or switch the default cost basis to the sale median once listing
     age exists.
 
-## 11. Deliberately left out
+## 11. Incremental delivery and the Labs toggle
+
+The refactor phases (A, B, E1, G, H) ship unflagged: each is pinned byte-identical to the
+page it replaces by a recorded oracle, so a flag would only mean maintaining two renderers.
+The phases that change what a player sees (C, D, E2, F, J's column) ship behind a **Labs**
+toggle, so they can merge to main and run on prod for Aaron and Kosyne before becoming the
+default.
+
+Mechanism, fitting what the repo already has: a cookie, because the recipe analyzer renders on
+the server and a client-only flag would hydrate differently. `global_state/labs.rs` holds
+`Labs { enabled: BTreeSet<String> }` with `FromStr`/`Display` as a comma-separated list under
+the cookie name `LABS`, read through `Cookies::use_cookie_typed`, the same pattern as
+`CraftOptions` and the theme cookies. Each experiment is a `&'static str` token
+(`analyzer-ledger` for Phase C, `analyzer-signal-columns` for D, `analyzer-market-columns` for
+E2, `analyzer-sell-scope` for F). `use_lab(token) -> Signal<bool>` is true when the cookie set
+contains the token or the page URL carries `?labs=token[,token]`, so a link can be shared with
+a tester without touching their settings. The Settings page gains a "Labs" section listing the
+live experiments as `Toggle`s with a one-line description each, all strings in the seven
+locales. When a flag is off, the page renders exactly as before the phase, pinned by the same
+shape test the phase adds. Every flag names the phase that removes it: a flag is deleted, and
+its behaviour becomes the default, in the phase after the one where Kosyne has validated it,
+so at most three flags exist at any time. The toggle module lands with Phase C, its first
+consumer.
+
+## 12. Deliberately left out
 
 Scope × signal product columns; a best-sell-world signal; a bulk sparkline endpoint, cheapest
 ladder, p25/p75, cleaned median, Real Price in bulk; canonicalising the flip finder's
