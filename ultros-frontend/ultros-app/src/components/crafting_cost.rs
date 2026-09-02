@@ -5,8 +5,8 @@
 // Drop the allow (and the helper) if a real caller never materializes.
 #![allow(dead_code)]
 
+use crate::analyzer_kit::signals::PriceLookup;
 use std::collections::HashMap;
-use ultros_api_types::cheapest_listings::CheapestListingsMap;
 use xiv_gen::{ItemId, Recipe};
 
 /// Crystal/shard/cluster items are item_search_category == 59 in xiv-gen.
@@ -136,10 +136,10 @@ impl<'a> Iterator for IngredientsIter<'a> {
     }
 }
 
-pub fn compute_ingredient_cost(
+pub fn compute_ingredient_cost<P: PriceLookup + ?Sized>(
     item_id: ItemId,
     amount_needed: i32,
-    prices: &CheapestListingsMap,
+    prices: &P,
     opts: &CraftingCostOptions<'_>,
 ) -> IngredientLine {
     // Look up price. HQ-preferred when require_hq, with LQ fallback.
@@ -223,9 +223,9 @@ pub mod fixtures;
 /// `is_shard` returns true for ingredient item ids whose `item_search_category == 59`.
 /// In production this is `|id| tracked_data().items.get(&id).map(|i| i.item_search_category == 59).unwrap_or(false)`.
 /// In tests this is a closure over a fixture HashMap.
-pub fn compute_cost(
+pub fn compute_cost<P: PriceLookup + ?Sized>(
     recipe: &Recipe,
-    prices: &CheapestListingsMap,
+    prices: &P,
     recipes_by_output: &HashMap<ItemId, Vec<&'static Recipe>>,
     opts: &CraftingCostOptions<'_>,
     is_shard: &dyn Fn(ItemId) -> bool,
@@ -233,9 +233,9 @@ pub fn compute_cost(
     compute_cost_inner(recipe, prices, recipes_by_output, opts, is_shard, 0)
 }
 
-fn compute_cost_inner(
+fn compute_cost_inner<P: PriceLookup + ?Sized>(
     recipe: &Recipe,
-    prices: &CheapestListingsMap,
+    prices: &P,
     recipes_by_output: &HashMap<ItemId, Vec<&'static Recipe>>,
     opts: &CraftingCostOptions<'_>,
     is_shard: &dyn Fn(ItemId) -> bool,
@@ -1091,5 +1091,49 @@ mod tests {
         // Only the winning sub-recipe contributes a SubcraftInfo.
         assert_eq!(cb.sub_crafts.len(), 1);
         assert_eq!(cb.sub_crafts[0].unit_cost, 20);
+    }
+
+    #[test]
+    fn compute_cost_accepts_a_signal_view() {
+        use crate::analyzer_kit::formula::SaleStat;
+        use crate::analyzer_kit::signals::{SignalView, stats_index};
+        use ultros_api_types::sale_stats::{BulkSaleStats, ItemSaleStats};
+
+        // One-ingredient recipe: item 10 → item 20, needs 2 of item 10.
+        let recipe = make_recipe_yielding(&[(10, 2)], 20, 1);
+        let listings = one_listing(10, false, 100, 1);
+        let stats = BulkSaleStats {
+            stats: vec![ItemSaleStats {
+                item_id: 10,
+                hq: false,
+                min_price: 40,
+                median_price: 60,
+                avg_price: 70,
+                num_sold: 5,
+                ..Default::default()
+            }],
+        };
+        let index = stats_index(&stats);
+        let empty = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &empty,
+            vendor_prices: None,
+        };
+        let by_output = HashMap::new();
+        let not_shard = |_: ItemId| false;
+
+        let plain = compute_cost(&recipe, &listings, &by_output, &opts, &not_shard);
+        assert_eq!(plain.cost, 200);
+
+        let view = SignalView {
+            over: None,
+            base: &listings,
+            stats: Some((&index, SaleStat::Median)),
+        };
+        let priced = compute_cost(&recipe, &view, &by_output, &opts, &not_shard);
+        assert_eq!(priced.cost, 120);
     }
 }

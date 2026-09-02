@@ -1,3 +1,6 @@
+use crate::analyzer_kit::formula::{ProfitFormula, per_unit_cost, profit_line};
+use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies};
+use crate::analyzer_kit::signals::{PriceLookup, SignalView, StatsIndex, stats_index};
 use crate::components::crafting_cost::{
     CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
 };
@@ -9,9 +12,7 @@ use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
-use crate::price_basis::{
-    BuyScope, CostBasis, RevenueMetric, overlay_sale_stats, override_listings,
-};
+use crate::price_basis::{BuyScope, CostBasis, RevenueMetric};
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
@@ -198,20 +199,6 @@ fn craft_type_acronym(craft_type: i32) -> &'static str {
         7 => "CUL",
         _ => "",
     }
-}
-
-/// Cost of one unit of output: one craft costs `craft_cost` and yields
-/// `amount_result` units. Yields of 0 (bad sheet rows) are treated as 1.
-fn per_unit_cost(craft_cost: i32, amount_result: i32) -> i32 {
-    craft_cost / amount_result.max(1)
-}
-
-/// The market board's cut of every sale.
-const MARKET_TAX_PERCENT: i64 = 5;
-
-/// What the seller actually receives from a sale listed at `gross`.
-fn net_after_tax(gross: i32) -> i32 {
-    (gross as i64 * (100 - MARKET_TAX_PERCENT) / 100) as i32
 }
 
 /// The user's level for a job acronym, or `None` if the acronym isn't a
@@ -403,7 +390,7 @@ const FILTER_USE_ON_HAND: &str = "on-hand";
 /// order.
 // The pricing methodology controls (cost basis, revenue metric, scope) are
 // deliberately *not* in this list: they change how every row is priced rather
-// than which rows show, so they live behind the always-visible `Pricing`
+// than which rows show, so they live behind the always-visible `Market`
 // button in row 1 (see [`MarketMenu`]) instead of the `+ Filter` menu, where
 // #1233 reported them as impossible to find.
 const ADDABLE_FILTERS: &[&str] = &[
@@ -417,10 +404,6 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_EXCLUDE_SHARDS,
     FILTER_USE_ON_HAND,
 ];
-
-/// Trailing sale-history window backing the sale-stat cost/revenue bases.
-/// Matches the `/api/v1/sale_stats` default.
-const SALE_STATS_WINDOW_DAYS: u16 = 7;
 
 // --- Optional columns ------------------------------------------------------
 // `?cols=` namespace, distinct from the filter registry above. Order here is
@@ -608,6 +591,290 @@ fn compare_recipes(mode: SortMode, a: &RecipeProfitData, b: &RecipeProfitData) -
     }
 }
 
+/// Everything the pricing pass reads, snapshotted out of the reactive
+/// graph so the pass is a plain function (and unit-testable).
+struct PriceInputs<'a> {
+    recipes: &'a [&'static Recipe],
+    recipe_level_tables: &'static HashMap<RecipeLevelTableId, xiv_gen::RecipeLevelTable>,
+    recipes_by_output: &'a HashMap<ItemId, Vec<&'static Recipe>>,
+    /// Buy-scope listings.
+    buy_listings: &'a CheapestListingsMap,
+    /// Sell-world listings (absent before a world resolves).
+    sell_listings: Option<&'a CheapestListingsMap>,
+    /// Buy-scope sale stats, indexed. `None` when not fetched.
+    buy_stats: Option<&'a StatsIndex>,
+    /// Sell-world sale stats, indexed. Empty when not fetched.
+    sell_stats: &'a StatsIndex,
+    /// Raw recent sales by item (both qualities merged), for the outlier
+    /// filter and the rollup failover.
+    raw_sales: &'a HashMap<i32, Vec<&'a SaleData>>,
+    formula: ProfitFormula,
+    levels: &'a CrafterLevels,
+    job_filter: Option<&'a str>,
+    use_subcrafts: bool,
+    require_hq: bool,
+    filter_outliers: bool,
+    shards: ShardsMode,
+    /// The on-hand stockpile when the on-hand toggle is on.
+    // TODO(follow-up): when `CraftOptions::active_craft_list` is set, fetch
+    // the list resource and build a `ListOnHand` from its items instead of
+    // this local stockpile. The type is in place; the async resource fetch
+    // is the missing piece.
+    on_hand: Option<&'a HashMap<i32, i32>>,
+}
+
+/// One priced row per craftable recipe with a sell price, under the
+/// selected formula. Unprofitable rows are dropped here (the formula's
+/// drop rule); thresholds and sorting happen in [`filter_and_sort`].
+fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
+    let mut results = Vec::new();
+
+    // If no levels set, return empty (but we'll show a message)
+    if !has_any_level(inp.levels) {
+        return results;
+    }
+
+    // Ingredients price over the buy scope; revenue prices over the sell
+    // world with the buy scope as fallback. Same two layers the cloned
+    // `override_listings` / `overlay_sale_stats` maps used to build, now
+    // evaluated per lookup.
+    let ingredient_view = SignalView {
+        over: None,
+        base: inp.buy_listings,
+        stats: inp
+            .formula
+            .cost_signal()
+            .sale_stat()
+            .and_then(|stat| inp.buy_stats.map(|idx| (idx, stat))),
+    };
+    let revenue_view = SignalView {
+        over: inp.sell_listings,
+        base: inp.buy_listings,
+        stats: inp
+            .formula
+            .revenue_signal()
+            .sale_stat()
+            .map(|stat| (inp.sell_stats, stat)),
+    };
+
+    for recipe in inp.recipes.iter().copied() {
+        // Filter by job and level
+        let required_level = inp
+            .recipe_level_tables
+            .get(&RecipeLevelTableId(recipe.recipe_level_table))
+            .map(|t| t.class_job_level as i32)
+            .unwrap_or(0);
+
+        let job_code = craft_type_acronym(recipe.craft_type);
+        let user_level = level_for_job_code(inp.levels, job_code).unwrap_or(0);
+
+        if let Some(filter) = inp.job_filter
+            && filter != job_code
+        {
+            continue;
+        }
+
+        // Check if the user can realistically craft this recipe.
+        // If we have a required_level from RecipeLevelTable, ensure user_level >= required_level.
+        // If we don't, fall back to "any non-zero level can craft".
+        if user_level == 0 {
+            continue;
+        }
+        if required_level > 0 && user_level < required_level {
+            continue;
+        }
+
+        let sales_stats = if inp.filter_outliers {
+            inp.raw_sales
+                .get(&recipe.item_result)
+                .map(|sales| analyze_sales(sales, true))
+        } else {
+            sales_stats_from_rollup(inp.sell_stats, recipe.item_result).or_else(|| {
+                inp.raw_sales
+                    .get(&recipe.item_result)
+                    .map(|sales| analyze_sales(sales, false))
+            })
+        }
+        .unwrap_or(SalesStats {
+            daily_sales: 0.0,
+            avg_price: 0,
+            total_sales: 0,
+        });
+
+        let market_price = revenue_view
+            .find_matching_listings(recipe.item_result)
+            .lowest_gil()
+            .unwrap_or(0);
+
+        if market_price == 0 {
+            continue;
+        }
+
+        // Deliberately the un-overlaid buy-scope listings, not the priced
+        // view: `cheapest_world_id` must keep meaning "where the
+        // scope-cheapest listing sits" regardless of which pricing bases
+        // are selected.
+        let scope_summary = inp.buy_listings.find_matching_listings(recipe.item_result);
+        let cheapest_world_id = scope_summary
+            .lq
+            .map(|d| d.world_id)
+            .or(scope_summary.hq.map(|d| d.world_id))
+            .unwrap_or(0);
+
+        // Fresh on-hand snapshot per recipe — compute_cost consumes
+        // from the snapshot, and reusing one across recipes would
+        // wrongly deplete the user's stockpile after the first recipe.
+        let active: Box<dyn crate::components::crafting_cost::OnHand> = match inp.on_hand {
+            Some(map) => Box::new(LocalOnHand::from_map(map.clone())),
+            None => Box::new(EmptyOnHand),
+        };
+        let opts = CraftingCostOptions {
+            require_hq: inp.require_hq,
+            max_subcraft_depth: if inp.use_subcrafts { 2 } else { 0 },
+            shards: inp.shards,
+            on_hand: active.as_ref(),
+            vendor_prices: Some(vendor_price_map()),
+        };
+        let breakdown = compute_cost(
+            recipe,
+            &ingredient_view,
+            inp.recipes_by_output,
+            &opts,
+            &is_shard_item,
+        );
+
+        // `breakdown.cost` is the cost of one execution of the recipe, which
+        // yields `amount_result` units; the market price is per unit, so
+        // compare per unit.
+        let cost_per_unit = per_unit_cost(breakdown.cost, recipe.amount_result);
+
+        let (line, dropped) = profit_line(market_price, cost_per_unit, &inp.formula);
+        if dropped {
+            continue;
+        }
+
+        // Sell-world stats row matching how revenue resolves: prefer
+        // the HQ row when the analyzer requires HQ, otherwise NQ, and
+        // fall back to whichever quality actually traded.
+        let sell_stat = inp
+            .sell_stats
+            .get(&(recipe.item_result, inp.require_hq))
+            .or_else(|| inp.sell_stats.get(&(recipe.item_result, !inp.require_hq)));
+        let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
+
+        results.push(RecipeProfitData {
+            recipe,
+            profit: line.profit,
+            return_on_investment: line.roi,
+            cost: line.cost,
+            market_price: line.revenue,
+            cheapest_world_id,
+            sub_crafts: breakdown.sub_crafts,
+            daily_sales: sales_stats.daily_sales,
+            avg_price: sales_stats.avg_price,
+            total_sales: sales_stats.total_sales,
+            required_level,
+            last_sold_unix: sell_stat.map(|s| s.last_sold_unix).unwrap_or(0),
+            units_sold: sell_stat.map(|s| s.units_sold).unwrap_or(0),
+            vwap,
+            vwap_pct: vwap_pct(market_price, vwap),
+            tax: line.tax,
+            confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
+        });
+    }
+
+    results
+}
+
+/// The user's row filters. `None` = not set.
+#[derive(Clone, Debug, PartialEq, Default)]
+struct Thresholds {
+    min_profit: Option<i32>,
+    min_roi: Option<i32>,
+    min_daily_sales: Option<f32>,
+    listing_world: Option<String>,
+    listing_dc: Option<String>,
+}
+
+/// Apply the thresholds and sort. Pure, so a header click never re-prices.
+fn filter_and_sort(
+    rows: &[Arc<RecipeProfitData>],
+    t: &Thresholds,
+    world_names: &HashMap<i32, (String, String)>,
+    mode: SortMode,
+    dir: SortDir,
+) -> Vec<(usize, Arc<RecipeProfitData>)> {
+    let mut kept: Vec<Arc<RecipeProfitData>> = rows
+        .iter()
+        .filter(|d| t.min_profit.is_none_or(|min| d.profit >= min))
+        .filter(|d| t.min_roi.is_none_or(|min| d.return_on_investment >= min))
+        .filter(|d| t.min_daily_sales.is_none_or(|min| d.daily_sales >= min))
+        .filter(|d| {
+            if t.listing_world.is_none() && t.listing_dc.is_none() {
+                return true;
+            }
+            listing_location_passes(
+                world_names.get(&d.cheapest_world_id),
+                t.listing_world.as_deref(),
+                t.listing_dc.as_deref(),
+            )
+        })
+        .cloned()
+        .collect();
+    // The table is virtualized, so retaining the full result set adds
+    // browser-side rows without increasing DOM size or server work.
+    kept.sort_by(|a, b| {
+        let ord = match dir {
+            SortDir::Asc => compare_recipes(mode, a, b),
+            SortDir::Desc => compare_recipes(mode, a, b).reverse(),
+        };
+        // Deterministic tiebreak: the input comes from a std HashMap, so
+        // without it ties could order differently on the server and the
+        // client and mismatch the SSR-rendered rows.
+        ord.then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
+    });
+    kept.into_iter().enumerate().collect()
+}
+
+/// One sell-world history payload: the 7-day rollup plus, only when that
+/// rollup failed, the raw recent sales as a failover. Keyed on the world
+/// alone, so the opt-in outlier filter never re-requests the rollup — the
+/// on-demand raw body is [`raw_sales_key`]'s separate resource.
+// `ArcResource` values round-trip through `JsonSerdeCodec`, so serde is
+// required (both field types already derive it).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SellHistory {
+    stats: Option<BulkSaleStats>,
+    raw: Option<RecentSales>,
+    stats_failed: bool,
+    raw_failed: bool,
+}
+
+/// The raw-sales resource key. Deliberately built from URL state only — the
+/// old key read the rollup resource inside a memo, which Leptos flags at
+/// hydration (#1248 follow-up). The rollup's own failover is decided inside
+/// [`fetch_sell_history`], off the reactive graph entirely.
+fn raw_sales_key(world: Option<&str>, outliers: bool) -> Option<(String, bool)> {
+    world.map(|w| (w.to_string(), outliers))
+}
+
+async fn fetch_sell_history(world: String) -> SellHistory {
+    // The raw sales are only a failover here: if the rollup request fails,
+    // fetch them so the analyzer stays useful while ClickHouse recovers.
+    let stats = get_sale_stats(&world, SALE_STATS_WINDOW_DAYS).await;
+    let raw = if stats.is_err() {
+        Some(get_recent_sales_for_world(&world).await)
+    } else {
+        None
+    };
+    SellHistory {
+        stats_failed: stats.is_err(),
+        stats: stats.ok(),
+        raw_failed: matches!(raw, Some(Err(_))),
+        raw: raw.and_then(|r| r.ok()),
+    }
+}
+
 #[component]
 fn RecipeAnalyzerTable(
     global_cheapest_listings: CheapestListings,
@@ -626,10 +893,14 @@ fn RecipeAnalyzerTable(
     sell_world_listings: Option<CheapestListings>,
 
     world: Signal<String>,
-    /// Visible optional columns (`?cols=`), owned by the parent because
-    /// the sell-world stats fetch keys off it.
+    /// Visible optional columns (`?cols=`), owned by the parent because the
+    /// table remounts whenever its resources change.
     visible_cols: Memo<HashSet<&'static str>>,
     set_cols_param: SignalSetter<Option<String>>,
+    /// Current `?sort=`, owned by the parent for the same remount reason.
+    sort_mode: Memo<Option<SortMode>>,
+    /// Current `?dir=`, owned by the parent for the same remount reason.
+    sort_dir: Memo<Option<SortDir>>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -642,10 +913,12 @@ fn RecipeAnalyzerTable(
     let rt_update = realtime;
     let last_update = Signal::derive(move || rt_update.as_ref().and_then(|r| r.last_update.get()));
     let prices = Arc::new(CheapestListingsMap::from(global_cheapest_listings));
-    // An absent payload behaves as "no sales anywhere": `overlay_sale_stats`
-    // becomes a no-op and every sale basis degrades to the listing basis.
-    let sale_stats = Arc::new(sale_stats.unwrap_or_default());
-    let sell_world_sale_stats = Arc::new(sell_world_sale_stats.unwrap_or_default());
+    // An absent payload behaves as "no sales anywhere": every sale-stat
+    // basis degrades to the listing basis (`ProfitFormula::effective`).
+    let buy_stats_loaded = sale_stats.is_some();
+    let sell_stats_loaded = sell_world_sale_stats.is_some();
+    let sale_stats = sale_stats.unwrap_or_default();
+    let sell_world_sale_stats = sell_world_sale_stats.unwrap_or_default();
     let sell_world_prices = sell_world_listings.map(|l| Arc::new(CheapestListingsMap::from(l)));
     let data = tracked_data();
     let items = &data.items;
@@ -664,8 +937,6 @@ fn RecipeAnalyzerTable(
         map
     });
 
-    let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
     // Filter params use `filter_query_signal` (replace: true, scroll: false):
     // editing a chip writes the URL on every keystroke, and plain
     // `query_signal`'s defaults would push a history entry and yank the
@@ -732,264 +1003,89 @@ fn RecipeAnalyzerTable(
         use_on_hand_url().unwrap_or_else(|| craft_options.get().unwrap_or_default().use_on_hand)
     };
 
-    let has_levels = Memo::new(move |_| has_any_level(&crafter_levels.get().unwrap_or_default()));
+    // Indexes are built once per payload, not once per recompute.
+    let sell_stats_index: Arc<StatsIndex> = Arc::new(stats_index(&sell_world_sale_stats));
+    let buy_stats_index: Option<Arc<StatsIndex>> =
+        buy_stats_loaded.then(|| Arc::new(stats_index(&sale_stats)));
+    let all_recipes: Arc<Vec<&'static Recipe>> = Arc::new(recipes.values().collect());
 
-    // Re-priced maps for the selected bases, rebuilt only when the basis
-    // changes. Listing bases share the original map; sale bases overlay the
-    // chosen statistic onto it (with the current listing as fallback for
-    // items that had no sales in the window — see `overlay_sale_stats`).
-    let ingredient_prices = {
+    let formula = Memo::new(move |_| {
+        ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope())
+            .effective(buy_stats_loaded, sell_stats_loaded)
+    });
+
+    // The pricing pass. Rebuilt only when a pricing input changes — a
+    // header click or a threshold edit re-runs `filter_and_sort` alone.
+    let on_hand_map = use_context::<OnHandMap>();
+    let priced: Memo<Arc<Vec<Arc<RecipeProfitData>>>> = {
         let prices = prices.clone();
-        let sale_stats = sale_stats.clone();
-        Memo::new(
-            move |_| match cost_basis().unwrap_or_default().sale_stat() {
-                None => prices.clone(),
-                Some(stat) => Arc::new(overlay_sale_stats(&prices, &sale_stats, stat)),
-            },
-        )
-    };
-    // Revenue base: buy-scope listings with the sell world's own entries
-    // winning (see `override_listings`). Sale-stat metrics overlay the
-    // sell world's history on top of that.
-    let revenue_prices = {
-        let prices = prices.clone();
-        let sell_stats = sell_world_sale_stats.clone();
-        let world = sell_world_prices.clone();
+        let sell_world_prices = sell_world_prices.clone();
+        let sell_stats_index = sell_stats_index.clone();
+        let buy_stats_index = buy_stats_index.clone();
+        let all_recipes = all_recipes.clone();
         Memo::new(move |_| {
-            let base = match &world {
-                Some(w) => Arc::new(override_listings(&prices, w)),
-                None => prices.clone(),
+            let raw_sales: HashMap<i32, Vec<&SaleData>> = recent_sales
+                .as_ref()
+                .map(|sales| {
+                    let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
+                    for sale in &sales.sales {
+                        map.entry(sale.item_id).or_default().push(sale);
+                    }
+                    map
+                })
+                .unwrap_or_default();
+            let levels = crafter_levels.get().unwrap_or_default();
+            let job = job_filter();
+            let on_hand = use_on_hand_enabled()
+                .then(|| on_hand_map.map(|m| m.0.get_untracked()).unwrap_or_default());
+            let recipes_by_output = recipes_by_output();
+            let inp = PriceInputs {
+                recipes: &all_recipes,
+                recipe_level_tables,
+                recipes_by_output: &recipes_by_output,
+                buy_listings: &prices,
+                sell_listings: sell_world_prices.as_deref(),
+                buy_stats: buy_stats_index.as_deref(),
+                sell_stats: &sell_stats_index,
+                raw_sales: &raw_sales,
+                formula: formula(),
+                levels: &levels,
+                job_filter: job.as_deref(),
+                use_subcrafts: use_subcrafts().unwrap_or(false),
+                require_hq: require_hq().unwrap_or(false),
+                filter_outliers: filter_outliers().unwrap_or(false),
+                shards: if exclude_shards_enabled() {
+                    ShardsMode::ExcludeShards
+                } else {
+                    ShardsMode::IncludeMarket
+                },
+                on_hand: on_hand.as_ref(),
             };
-            match revenue_metric().unwrap_or_default().sale_stat() {
-                None => base,
-                Some(stat) => Arc::new(overlay_sale_stats(&base, &sell_stats, stat)),
-            }
+            #[cfg(all(debug_assertions, feature = "hydrate"))]
+            let t0 = js_sys::Date::now();
+            let rows = price_rows(&inp);
+            #[cfg(all(debug_assertions, feature = "hydrate"))]
+            leptos::logging::log!(
+                "price_rows: {} recipes priced in {:.1} ms",
+                rows.len(),
+                js_sys::Date::now() - t0
+            );
+            Arc::new(rows.into_iter().map(Arc::new).collect())
         })
     };
 
-    // The raw buy-scope listing map, un-overlaid: `cheapest_world_id` must
-    // keep meaning "where the scope-cheapest listing sits" regardless of
-    // which pricing bases are selected.
-    let raw_prices = prices.clone();
-    let sell_stats_for_rows = sell_world_sale_stats.clone();
     let world_names_for_rows = world_names.clone();
     let computed_data = Memo::new(move |_| {
-        // Sell-world market context per (item, hq), for the stats-backed
-        // columns. Empty when the stats weren't fetched.
-        let sell_stats_map: HashMap<(i32, bool), ItemSaleStats> = sell_stats_for_rows
-            .stats
-            .iter()
-            .map(|s| ((s.item_id, s.hq), *s))
-            .collect();
-        let prices = ingredient_prices.get();
-        let revenue = revenue_prices.get();
-        let recipes_by_output = recipes_by_output();
-        let levels = crafter_levels.get().unwrap_or_default();
-        let use_sub = use_subcrafts().unwrap_or(false);
-        let require_hq_flag = require_hq().unwrap_or(false);
-        let filter_outliers = filter_outliers().unwrap_or(false);
-
-        let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
-            let mut map: HashMap<i32, Vec<&SaleData>> = HashMap::new();
-            for sale in &sales.sales {
-                map.entry(sale.item_id).or_default().push(sale);
-            }
-            map
-        } else {
-            HashMap::new()
+        let t = Thresholds {
+            min_profit: minimum_profit(),
+            min_roi: minimum_roi(),
+            min_daily_sales: min_daily_sales(),
+            listing_world: listing_world_filter(),
+            listing_dc: listing_dc_filter(),
         };
-
-        let mut results = Vec::new();
-
-        // If no levels set, return empty (but we'll show a message)
-        if !has_levels() {
-            return vec![];
-        }
-
-        // Hoist context lookups ONCE; the on-hand SNAPSHOT is rebuilt
-        // per recipe inside the loop because compute_cost consumes it.
-        let opts_value = craft_options.get().unwrap_or_default();
-        let shards = if exclude_shards_enabled() {
-            ShardsMode::ExcludeShards
-        } else {
-            ShardsMode::IncludeMarket
-        };
-        let on_hand_map = use_context::<OnHandMap>();
-        let use_on_hand = use_on_hand_enabled();
-
-        for recipe in recipes.values() {
-            // Filter by job and level
-            let required_level = recipe_level_tables
-                .get(&RecipeLevelTableId(recipe.recipe_level_table))
-                .map(|t| t.class_job_level as i32)
-                .unwrap_or(0);
-
-            let job_code = craft_type_acronym(recipe.craft_type);
-            let user_level = level_for_job_code(&levels, job_code).unwrap_or(0);
-
-            if let Some(filter) = job_filter()
-                && filter != job_code
-            {
-                continue;
-            }
-
-            // Check if the user can realistically craft this recipe.
-            // If we have a required_level from RecipeLevelTable, ensure user_level >= required_level.
-            // If we don't, fall back to "any non-zero level can craft".
-            if user_level == 0 {
-                continue;
-            }
-            if required_level > 0 && user_level < required_level {
-                continue;
-            }
-
-            let sales_stats = if filter_outliers {
-                sales_map
-                    .get(&recipe.item_result)
-                    .map(|sales| analyze_sales(sales, true))
-            } else {
-                sales_stats_from_rollup(&sell_stats_map, recipe.item_result).or_else(|| {
-                    sales_map
-                        .get(&recipe.item_result)
-                        .map(|sales| analyze_sales(sales, false))
-                })
-            }
-            .unwrap_or(SalesStats {
-                daily_sales: 0.0,
-                avg_price: 0,
-                total_sales: 0,
-            });
-
-            let market_price = revenue
-                .find_matching_listings(recipe.item_result)
-                .lowest_gil()
-                .unwrap_or(0);
-
-            if market_price == 0 {
-                continue;
-            }
-
-            let scope_summary = raw_prices.find_matching_listings(recipe.item_result);
-            let cheapest_world_id = scope_summary
-                .lq
-                .map(|d| d.world_id)
-                .or(scope_summary.hq.map(|d| d.world_id))
-                .unwrap_or(0);
-
-            // Fresh on-hand snapshot per recipe — compute_cost consumes
-            // from the snapshot, and reusing one across recipes would
-            // wrongly deplete the user's stockpile after the first recipe.
-            let local = on_hand_map
-                .map(|m: OnHandMap| LocalOnHand::from_map(m.0.get_untracked()))
-                .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
-            let empty = EmptyOnHand;
-            // TODO(follow-up): when active_craft_list is Some, fetch the list resource
-            // and construct ListOnHand from its items instead of falling through to LocalOnHand.
-            // The type (ListOnHand) is in place; the async resource fetch is the missing piece.
-            let active: Box<dyn crate::components::crafting_cost::OnHand> =
-                match opts_value.active_craft_list {
-                    Some(_list_id) if use_on_hand => {
-                        // List fetch is async-resourced separately; for the first cut,
-                        // fall through to LocalOnHand if the resource isn't ready yet.
-                        // (Plumbing the resource in is left for a follow-up — flagged
-                        //  in the roadmap section of the spec.)
-                        Box::new(local)
-                    }
-                    _ if use_on_hand => Box::new(local),
-                    _ => Box::new(empty),
-                };
-            let opts = CraftingCostOptions {
-                require_hq: require_hq_flag,
-                max_subcraft_depth: if use_sub { 2 } else { 0 },
-                shards,
-                on_hand: active.as_ref(),
-                vendor_prices: Some(vendor_price_map()),
-            };
-            let breakdown =
-                compute_cost(recipe, &prices, &recipes_by_output, &opts, &is_shard_item);
-            let craft_cost = breakdown.cost;
-            let sub_crafts = breakdown.sub_crafts.clone();
-
-            // craft_cost is the cost of one execution of the recipe, which yields
-            // `amount_result` units; the market price is per unit, so compare per unit.
-            let cost_per_unit = per_unit_cost(craft_cost, recipe.amount_result);
-
-            let net_revenue = net_after_tax(market_price);
-            if cost_per_unit >= net_revenue {
-                continue;
-            }
-            let profit = net_revenue - cost_per_unit;
-            let roi = if cost_per_unit > 0 {
-                (profit as f64 / cost_per_unit as f64 * 100.0) as i32
-            } else {
-                0
-            };
-
-            // Sell-world stats row matching how revenue resolves: prefer
-            // the HQ row when the analyzer requires HQ, otherwise NQ, and
-            // fall back to whichever quality actually traded.
-            let sell_stat = sell_stats_map
-                .get(&(recipe.item_result, require_hq_flag))
-                .or_else(|| sell_stats_map.get(&(recipe.item_result, !require_hq_flag)));
-            let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
-
-            results.push(RecipeProfitData {
-                recipe,
-                profit,
-                return_on_investment: roi,
-                cost: cost_per_unit,
-                market_price,
-                cheapest_world_id,
-                sub_crafts,
-                daily_sales: sales_stats.daily_sales,
-                avg_price: sales_stats.avg_price,
-                total_sales: sales_stats.total_sales,
-                required_level,
-                last_sold_unix: sell_stat.map(|s| s.last_sold_unix).unwrap_or(0),
-                units_sold: sell_stat.map(|s| s.units_sold).unwrap_or(0),
-                vwap,
-                vwap_pct: vwap_pct(market_price, vwap),
-                tax: market_price - net_revenue,
-                confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
-            });
-        }
-
-        // Filter results
-        if let Some(min) = minimum_profit() {
-            results.retain(|d| d.profit >= min);
-        }
-        if let Some(min) = minimum_roi() {
-            results.retain(|d| d.return_on_investment >= min);
-        }
-        if let Some(min_sales) = min_daily_sales() {
-            results.retain(|d| d.daily_sales >= min_sales);
-        }
-        let lw = listing_world_filter();
-        let ld = listing_dc_filter();
-        if lw.is_some() || ld.is_some() {
-            results.retain(|d| {
-                listing_location_passes(
-                    world_names_for_rows.get(&d.cheapest_world_id),
-                    lw.as_deref(),
-                    ld.as_deref(),
-                )
-            });
-        }
-
-        // The table is virtualized, so retaining the full result set adds
-        // browser-side rows without increasing DOM size or server work.
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        results.sort_unstable_by(|a, b| match dir {
-            SortDir::Asc => compare_recipes(mode, a, b),
-            SortDir::Desc => compare_recipes(mode, a, b).reverse(),
-        });
-
-        results
-            .into_iter()
-            .map(Arc::new)
-            .enumerate()
-            .collect::<Vec<_>>()
+        filter_and_sort(&priced(), &t, &world_names_for_rows, mode, dir)
     });
 
     let empty_state = Memo::new(move |_| {
@@ -1890,10 +1986,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (cost_basis, _) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
-    // `?cols=` lives here rather than in the table because the sell-world
-    // stats fetch below keys off which columns are visible, and the table
+    // `?cols=` lives here rather than in the table because the table
     // remounts whenever its resources change.
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    // `?sort=` / `?dir=` are hoisted for the same reason.
+    let (sort_mode, _) = query_signal::<SortMode>("sort");
+    let (sort_dir, _) = query_signal::<SortDir>("dir");
     let visible_cols = Memo::new(move |_| {
         parse_visible_cols(cols_param().as_deref(), OPTIONAL_COLUMN_ORDER, DEFAULT_COLS)
     });
@@ -1978,10 +2076,15 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
     // fetched separately below.)
     let buy_sale_stats_scope = Memo::new(move |_| {
-        cost_basis()
-            .unwrap_or_default()
-            .sale_stat()
-            .is_some()
+        let formula = ProfitFormula::recipe_from_query(cost_basis(), None, buy_scope());
+        // Phase A is fetch-identical to `main`: the dedupe of a buy scope
+        // that equals the sell world is Phase D's, so the flag stays false.
+        let needs = RecipeNeeds {
+            outliers: false,
+            buy_scope_is_sell_world: false,
+        };
+        needed_bodies(&formula, &needs)
+            .contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS))
             .then(|| buy_scope_name.get())
     });
     let sale_stats = ArcResource::new(
@@ -2047,37 +2150,37 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // The same 7-day rollup supplies velocity, average price, sale-stat
     // revenue metrics, and optional stats columns. It is the analyzer's one
     // default sale-history payload regardless of which columns are visible.
-    let sell_stats_world = Memo::new(move |_| sell_world_name.get());
-    let sell_world_sale_stats =
-        ArcResource::new(sell_stats_world, move |world: Option<String>| async move {
-            match world {
-                Some(name) => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS)
-                    .await
-                    .map(Some),
-                None => Ok(None),
-            }
-        });
-
-    // Raw sale samples are only needed for the opt-in outlier filter. If the
-    // rollup request fails, fetch them as a failover so the analyzer remains
-    // useful while ClickHouse recovers.
-    let sell_stats_for_fallback = sell_world_sale_stats.clone();
-    let recent_sales_source = Memo::new(move |_| {
-        let rollup_failed = matches!(sell_stats_for_fallback.get(), Some(Err(_)));
-        (
-            selected_world.get(),
-            filter_outliers().unwrap_or(false) || rollup_failed,
-        )
-    });
-    let recent_sales = ArcResource::new(recent_sales_source, move |(world, needed)| async move {
-        if needed && let Some(world) = world {
-            get_recent_sales_for_world(&world.name).await
-        } else {
-            Ok(RecentSales { sales: vec![] })
+    // Keyed on the world alone: toggling the outlier chip must not re-request
+    // this (heavy) body, so its failover raw sales live in here while the
+    // on-demand raw sales get their own resource below.
+    let sell_history = ArcResource::new(sell_world_name, move |world: Option<String>| async move {
+        match world {
+            Some(world) => Some(fetch_sell_history(world).await),
+            None => None,
         }
     });
 
-    let recent_sales_clone = recent_sales.clone();
+    // Raw sale samples are needed only for the opt-in outlier filter. Its own
+    // resource, so flipping the chip on fetches exactly this body and
+    // flipping it off fetches nothing at all.
+    let raw_sales_source = Memo::new(move |_| {
+        raw_sales_key(
+            sell_world_name.get().as_deref(),
+            filter_outliers().unwrap_or(false),
+        )
+    });
+    let raw_sales = ArcResource::new(
+        raw_sales_source,
+        move |key: Option<(String, bool)>| async move {
+            match key {
+                Some((world, true)) => Some(get_recent_sales_for_world(&world).await),
+                _ => None,
+            }
+        },
+    );
+
+    let sell_history_for_header = sell_history.clone();
+    let raw_sales_for_header = raw_sales.clone();
     view! {
         <div class="flex flex-col gap-4 h-full">
             <MetaTitle title="Recipe Analyzer - Ultros" />
@@ -2103,10 +2206,18 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 >
                     <Suspense fallback=InlineStatusSkeleton>
                         {move || {
-                            recent_sales_clone
+                            // Either raw-sales fetch failing shows this, exactly
+                            // as the one pre-fold `recent_sales` resource did.
+                            let on_demand_failed = matches!(
+                                raw_sales_for_header.get().flatten(),
+                                Some(Err(_))
+                            );
+                            let failover_failed = sell_history_for_header
                                 .get()
-                                .and_then(|r| r.err())
-                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
+                                .flatten()
+                                .is_some_and(|h| h.raw_failed);
+                            (on_demand_failed || failover_failed)
+                                .then(|| view! { <div class="text-red-400 text-sm">{t!(i18n, error_loading_sales_data)}</div> })
                         }}
                     </Suspense>
                 </ToolHeader>
@@ -2150,16 +2261,17 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
-                        let sales = recent_sales.get();
                         let stats = sale_stats.get();
                         let sell_listings = sell_world_listings.get();
-                        let sell_stats = sell_world_sale_stats.get();
-                        match (listings, stats, sell_listings, sell_stats) {
+                        let history = sell_history.get();
+                        let raw = raw_sales.get();
+                        match (listings, stats, sell_listings, history, raw) {
                             (
                                 Some(Ok(listings)),
                                 Some(stats),
                                 Some(sell_listings),
-                                Some(sell_stats),
+                                Some(history),
+                                Some(raw),
                             ) => {
                                 // A failed stats fetch is non-fatal: the table
                                 // degrades to the listing basis and says so.
@@ -2167,26 +2279,37 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                     Ok(stats) => (stats, false),
                                     Err(_) => (None, true),
                                 };
-                                let (sell_world_sale_stats, sell_stats_error) = match sell_stats {
-                                    Ok(stats) => (stats, false),
-                                    Err(_) => (None, true),
-                                };
-                                let recent_sales = sales.and_then(|s| s.ok());
+                                // No sell world resolved yet, so nothing was
+                                // requested: reads as "no sales anywhere".
+                                let history = history.unwrap_or(SellHistory {
+                                    stats: None,
+                                    raw: None,
+                                    stats_failed: false,
+                                    raw_failed: false,
+                                });
+                                let sale_stats_error = buy_stats_error || history.stats_failed;
+                                // The on-demand body wins; the rollup's
+                                // failover body fills in when it was fetched.
+                                let recent_sales = raw
+                                    .and_then(|r| r.ok())
+                                    .or(history.raw);
                                 view! {
                                     <RecipeAnalyzerTable
                                         global_cheapest_listings=listings
                                         recent_sales=recent_sales
                                         sale_stats=sale_stats
-                                        sell_world_sale_stats=sell_world_sale_stats
-                                        sale_stats_error=buy_stats_error || sell_stats_error
+                                        sell_world_sale_stats=history.stats
+                                        sale_stats_error=sale_stats_error
                                         sell_world_listings=sell_listings.ok().flatten()
                                         world=Signal::derive(buy_scope_name)
                                         visible_cols=visible_cols
                                         set_cols_param=set_cols_param
+                                        sort_mode=sort_mode
+                                        sort_dir=sort_dir
                                     />
                                 }.into_any()
                             }
-                            (Some(Err(e)), _, _, _) => {
+                            (Some(Err(e)), _, _, _, _) => {
                                 view! {
                                     <div class="text-red-400">
                                         "Error loading listings: " {e.to_string()}
@@ -2207,28 +2330,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::analyzer_kit::formula::PriceSignal;
+    use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
-
-    /// A craft costs `craft_cost` and yields `amount_result` units; the table
-    /// prices everything per unit. Guards the degenerate `amount_result == 0`
-    /// rows some sheets carry.
-    #[test]
-    fn per_unit_cost_divides_by_yield() {
-        assert_eq!(per_unit_cost(300, 3), 100);
-        assert_eq!(per_unit_cost(300, 1), 300);
-        assert_eq!(per_unit_cost(300, 0), 300);
-        assert_eq!(per_unit_cost(100, 3), 33); // integer division, floor
-    }
-
-    /// The market board takes 5% of every sale; profit must be computed on the
-    /// 95% the seller actually receives, rounded down.
-    #[test]
-    fn net_after_tax_takes_five_percent() {
-        assert_eq!(net_after_tax(100), 95);
-        assert_eq!(net_after_tax(1), 0); // floor, not round
-        assert_eq!(net_after_tax(0), 0);
-        assert_eq!(net_after_tax(1_999_999_999), 1_899_999_999); // no i32 overflow
-    }
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
     /// Toolbar wrote verbatim — a drifted id here silently breaks every
@@ -2590,5 +2694,259 @@ mod test {
             empty_reason(true, &CrafterLevels::default(), Some("MIN")),
             Some(EmptyReason::FiltersExcludeAll)
         );
+    }
+
+    // --- `price_rows` / `filter_and_sort` -----------------------------------
+
+    /// Deterministic synthetic market: every item `i` lists NQ at
+    /// `100 + (i % 97) * 7` on world 1 and HQ at that plus 50 on world 2;
+    /// the sell world lists the OUTPUT items of the fixture recipes 20%
+    /// higher on world 3; 7d stats exist for every third item.
+    fn fixture(
+        recipes: &[&'static Recipe],
+    ) -> (CheapestListingsMap, CheapestListingsMap, BulkSaleStats) {
+        let mut buy = Vec::new();
+        let mut sell = Vec::new();
+        let mut stats = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for r in recipes {
+            for id in r.ingredient.iter().chain(std::iter::once(&r.item_result)) {
+                if *id == 0 || !seen.insert(*id) {
+                    continue;
+                }
+                let nq = 100 + (*id % 97) * 7;
+                buy.push(CheapestListingItem {
+                    item_id: *id,
+                    hq: false,
+                    cheapest_price: nq,
+                    world_id: 1,
+                });
+                buy.push(CheapestListingItem {
+                    item_id: *id,
+                    hq: true,
+                    cheapest_price: nq + 50,
+                    world_id: 2,
+                });
+                if *id % 3 == 0 {
+                    stats.push(ItemSaleStats {
+                        item_id: *id,
+                        hq: false,
+                        min_price: nq - 10,
+                        median_price: nq + 5,
+                        avg_price: nq + 9,
+                        num_sold: 14,
+                        ..Default::default()
+                    });
+                }
+            }
+            let out = r.item_result;
+            let nq = 100 + (out % 97) * 7;
+            sell.push(CheapestListingItem {
+                item_id: out,
+                hq: false,
+                cheapest_price: nq * 12 / 10,
+                world_id: 3,
+            });
+        }
+        (
+            CheapestListingsMap::from(CheapestListings {
+                cheapest_listings: buy,
+            }),
+            CheapestListingsMap::from(CheapestListings {
+                cheapest_listings: sell,
+            }),
+            BulkSaleStats { stats },
+        )
+    }
+
+    fn fixture_recipes() -> Vec<&'static Recipe> {
+        let data = xiv_gen_db::data();
+        let mut all: Vec<&'static Recipe> = data.recipes.values().collect();
+        all.sort_by_key(|r| r.key_id.0);
+        all.into_iter().take(300).collect()
+    }
+
+    fn run(cost: PriceSignal, revenue: PriceSignal, outliers: bool) -> Vec<RecipeProfitData> {
+        let data = xiv_gen_db::data();
+        let recipes = fixture_recipes();
+        let (buy, sell, stats) = fixture(&recipes);
+        let index = stats_index(&stats);
+        let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let raw_sales = HashMap::new();
+        let levels = CrafterLevels::default(); // 100 in every job
+        let inp = PriceInputs {
+            recipes: &recipes,
+            recipe_level_tables: &data.recipe_level_tables,
+            recipes_by_output: &by_output,
+            buy_listings: &buy,
+            sell_listings: Some(&sell),
+            buy_stats: Some(&index),
+            sell_stats: &index,
+            raw_sales: &raw_sales,
+            formula: ProfitFormula::recipe_from_query(Some(cost), Some(revenue), None),
+            levels: &levels,
+            job_filter: None,
+            use_subcrafts: false,
+            require_hq: false,
+            filter_outliers: outliers,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: None,
+        };
+        price_rows(&inp)
+    }
+
+    /// Every row obeys the formula's arithmetic and the drop rule; this
+    /// runs over 300 real recipes with synthetic prices.
+    #[test]
+    fn price_rows_rows_obey_the_formula() {
+        let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+        assert!(rows.len() > 50, "fixture priced only {} rows", rows.len());
+        for r in &rows {
+            let net = r.market_price as i64 * 95 / 100;
+            assert!(
+                (r.cost as i64) < net,
+                "row kept with cost >= net: {:?}",
+                r.recipe.key_id
+            );
+            assert_eq!(r.profit as i64, net - r.cost as i64);
+            assert_eq!(r.tax as i64, r.market_price as i64 - net);
+            let roi = if r.cost > 0 {
+                (r.profit as f64 / r.cost as f64 * 100.0) as i32
+            } else {
+                0
+            };
+            assert_eq!(r.return_on_investment, roi);
+            // Revenue is `lowest_gil()` over the sell world's NQ listing (20% up)
+            // and the buy scope's HQ listing (`nq + 50`), whichever is lower:
+            // exactly today's `override_listings` + `lowest_gil` behaviour.
+            let nq = 100 + (r.recipe.item_result % 97) * 7;
+            assert_eq!(r.market_price, (nq * 12 / 10).min(nq + 50));
+        }
+    }
+
+    /// The characterization oracle. Regenerate ONLY if a phase changes the
+    /// numbers on purpose: run with `--nocapture`, copy the printed tuples.
+    #[test]
+    fn price_rows_matches_recorded_oracle_on_fixture() {
+        let rows = run(PriceSignal::SaleMedian, PriceSignal::ListingMin, false);
+        let got: Vec<(i32, i32, i32, i32, i32, i32)> = rows
+            .iter()
+            .take(12)
+            .map(|r| {
+                (
+                    r.recipe.key_id.0,
+                    r.profit,
+                    r.return_on_investment,
+                    r.cost,
+                    r.market_price,
+                    r.tax,
+                )
+            })
+            .collect();
+        println!("ORACLE = {got:?}");
+        // Recorded from the pre-refactor pipeline (Move A, commit above).
+        const ORACLE: &[(i32, i32, i32, i32, i32, i32)] = &[
+            (0, 114, 0, 0, 120, 6),
+            (1, 89, 74, 120, 220, 11),
+            (2, 35, 13, 267, 318, 16),
+            (3, 203, 74, 272, 500, 25),
+            (4, 47, 17, 275, 339, 17),
+            (5, 332, 269, 123, 479, 24),
+            (7, 209, 74, 279, 514, 26),
+            (9, 421, 150, 280, 738, 37),
+            (12, 134, 50, 267, 423, 22),
+            (13, 413, 150, 274, 724, 37),
+            (14, 238, 86, 276, 542, 28),
+            (15, 210, 77, 271, 507, 26),
+        ];
+        assert_eq!(got, ORACLE);
+    }
+
+    fn row(key: i32, profit: i32, roi: i32, daily: f32, world: i32) -> Arc<RecipeProfitData> {
+        let recipe = fixture_recipes()
+            .into_iter()
+            .find(|r| r.key_id.0 == key)
+            .expect("fixture recipe");
+        Arc::new(RecipeProfitData {
+            recipe,
+            profit,
+            return_on_investment: roi,
+            cost: 1,
+            market_price: 2,
+            cheapest_world_id: world,
+            sub_crafts: vec![],
+            daily_sales: daily,
+            avg_price: 0,
+            total_sales: 0,
+            required_level: 1,
+            last_sold_unix: 0,
+            units_sold: 0,
+            vwap: 0,
+            vwap_pct: None,
+            tax: 0,
+            confidence: ConfidenceBand::Unknown,
+        })
+    }
+
+    #[test]
+    fn filter_and_sort_is_pure_and_inclusive() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(4)
+            .map(|r| r.key_id.0)
+            .collect();
+        // The two profit-200 rows are fed in DESCENDING key order, so a
+        // stable sort without the key-id tiebreak would emit them the other
+        // way round and this test would fail.
+        let rows = vec![
+            row(keys[0], 100, 10, 1.0, 7),
+            row(keys[1], 300, 30, 0.5, 8),
+            row(keys[3], 200, 5, 3.0, 9),
+            row(keys[2], 200, 20, 2.0, 7),
+        ];
+        let names: HashMap<i32, (String, String)> = [
+            (7, ("Gilgamesh".to_string(), "Aether".to_string())),
+            (8, ("Balmung".to_string(), "Crystal".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        let t = Thresholds {
+            min_profit: Some(200),
+            ..Default::default()
+        };
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
+        // Inclusive `>=`; ties broken by key id ascending; indexes renumbered.
+        let got: Vec<(usize, i32, i32)> = out
+            .iter()
+            .map(|(i, r)| (*i, r.profit, r.recipe.key_id.0))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(0, 300, keys[1]), (1, 200, keys[2]), (2, 200, keys[3])]
+        );
+        // Ascending flips the order but keeps the same tiebreak direction.
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Asc);
+        assert_eq!(out[0].1.profit, 200);
+        assert_eq!(out[0].1.recipe.key_id.0, keys[2]);
+        // A listing-world filter drops unknown worlds (9 has no name).
+        let t = Thresholds {
+            listing_world: Some("Gilgamesh".into()),
+            ..Default::default()
+        };
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn raw_sales_key_reads_outliers_not_resource_state() {
+        assert_eq!(
+            raw_sales_key(Some("Gilgamesh"), false),
+            Some(("Gilgamesh".to_string(), false))
+        );
+        assert_eq!(
+            raw_sales_key(Some("Gilgamesh"), true),
+            Some(("Gilgamesh".to_string(), true))
+        );
+        assert_eq!(raw_sales_key(None, true), None);
     }
 }

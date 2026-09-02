@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 pub(crate) mod analysis;
+pub(crate) mod analyzer_kit;
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod error;
