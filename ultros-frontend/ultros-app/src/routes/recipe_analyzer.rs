@@ -14,6 +14,7 @@ use crate::components::dismissable::use_dismissable;
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::is_shard_item;
+use crate::components::term_badge::TermRole;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
@@ -581,174 +582,169 @@ const HEAD: &str = "w-32 shrink-0 p-4";
 const HEAD_MD: &str = "w-32 shrink-0 p-4 hidden md:block";
 const HEAD_28_MD: &str = "w-28 shrink-0 p-4 hidden md:block";
 
+/// The two-line, wider variants a formula column switches to while the
+/// ledger marks are on.
+const FORMULA_HEAD: &str = "w-40 shrink-0 px-3 py-2 leading-tight";
+const FORMULA_CELL: &str = "px-3 py-2 w-40 shrink-0 text-right";
+
+/// Every field at its table-wide default, so each column below spells
+/// out only what it actually differs in.
+const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
+    spec: &SPEC_ITEM,
+    id: "",
+    sort_id: "",
+    sort: Sortability::No,
+    default_dir: SortDir::Desc,
+    header_class: "",
+    cell_class: "",
+    default_on: true,
+    cell: cell_custom,
+    side: None,
+    formula_header_class: "",
+    formula_cell_class: "",
+};
+
 /// The recipe table, column by column, classes copied verbatim from the
 /// markup this replaced. `id` = the `?cols=` token (always-on columns
 /// have none); `sort_id` = the `?sort=` token.
 static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 15] = [
     ToolColumnMeta {
         spec: &SPEC_ITEM,
-        id: "",
-        sort_id: "",
-        sort: Sortability::No,
-        default_dir: SortDir::Desc,
         header_class: "w-64 md:w-80 shrink-0 p-4",
-        cell_class: "",
-        default_on: true,
-        cell: cell_custom,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_PROFIT,
-        id: "",
         sort_id: "profit",
         sort: sortability_for(Layer::Computed, Some(SortMode::Profit)),
-        default_dir: SortDir::Desc,
         header_class: HEAD,
         cell_class: CELL_R,
-        default_on: true,
         cell: cell_profit,
+        side: Some(TermRole::Result),
+        formula_header_class: FORMULA_HEAD,
+        formula_cell_class: FORMULA_CELL,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_ROI,
-        id: "",
         sort_id: "roi",
         sort: sortability_for(Layer::Computed, Some(SortMode::Roi)),
-        default_dir: SortDir::Desc,
         header_class: HEAD,
         cell_class: CELL_R,
-        default_on: true,
         cell: cell_roi,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_COST,
-        id: "",
         sort_id: "cost",
         sort: sortability_for(Layer::Computed, Some(SortMode::CostPerUnit)),
         default_dir: SortDir::Asc,
         header_class: HEAD,
-        cell_class: "",
-        default_on: true,
-        cell: cell_custom,
+        side: Some(TermRole::Cost),
+        formula_header_class: FORMULA_HEAD,
+        formula_cell_class: FORMULA_CELL,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_PRICE,
-        id: "",
         sort_id: "price",
         sort: sortability_for(Layer::RowLocal, Some(SortMode::Price)),
-        default_dir: SortDir::Desc,
         header_class: HEAD,
         cell_class: CELL_R,
-        default_on: true,
         cell: cell_price,
+        side: Some(TermRole::Revenue),
+        formula_header_class: FORMULA_HEAD,
+        formula_cell_class: FORMULA_CELL,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_DAILY,
-        id: "",
         sort_id: "velocity",
         sort: sortability_for(Layer::Bulk, Some(SortMode::Velocity)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_MD,
-        cell_class: "",
-        default_on: true,
-        cell: cell_custom,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_AVG,
-        id: "",
         sort_id: "avg-price",
         sort: sortability_for(Layer::Bulk, Some(SortMode::AvgPrice)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_MD,
         cell_class: CELL_R_MD,
-        default_on: true,
         cell: cell_avg,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_CONFIDENCE,
         id: COL_CONFIDENCE,
         sort_id: "confidence",
         sort: sortability_for(Layer::Bulk, Some(SortMode::Confidence)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_28_MD,
         cell_class: "px-4 py-2 w-28 shrink-0 flex items-center justify-end hidden md:flex",
-        default_on: true,
         cell: cell_confidence,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_LAST_SOLD,
         id: COL_LAST_SOLD,
         sort_id: "last-sold",
         sort: sortability_for(Layer::Bulk, Some(SortMode::LastSold)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_28_MD,
         cell_class: CELL_28_MD,
         default_on: false,
         cell: cell_last_sold,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_VOLUME,
         id: COL_VOLUME,
         sort_id: "volume",
         sort: sortability_for(Layer::Bulk, Some(SortMode::Volume)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_28_MD,
         cell_class: "px-4 py-2 w-28 shrink-0 text-right hidden md:block font-mono tabular-nums",
         default_on: false,
         cell: cell_volume,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_VWAP,
         id: COL_VWAP,
         sort_id: "vwap",
         sort: sortability_for(Layer::Bulk, Some(SortMode::Vwap)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_MD,
         cell_class: CELL_R_MD,
         default_on: false,
         cell: cell_vwap,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_TAX,
         id: COL_TAX,
         sort_id: "tax",
         sort: sortability_for(Layer::Computed, Some(SortMode::Tax)),
-        default_dir: SortDir::Desc,
         header_class: HEAD_28_MD,
         cell_class: CELL_28_MD,
         default_on: false,
         cell: cell_tax,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_WORLD,
         id: COL_LISTING_WORLD,
-        sort_id: "",
-        sort: Sortability::No,
-        default_dir: SortDir::Desc,
         header_class: HEAD_28_MD,
-        cell_class: "",
         default_on: false,
-        cell: cell_custom,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_DC,
         id: COL_LISTING_DC,
-        sort_id: "",
-        sort: Sortability::No,
-        default_dir: SortDir::Desc,
         header_class: HEAD_28_MD,
-        cell_class: "",
         default_on: false,
-        cell: cell_custom,
+        ..RECIPE_BASE
     },
     ToolColumnMeta {
         spec: &SPEC_ACTIONS,
-        id: "",
-        sort_id: "",
-        sort: Sortability::No,
-        default_dir: SortDir::Desc,
         header_class: "w-20 shrink-0 p-4",
-        cell_class: "",
-        default_on: true,
-        cell: cell_custom,
+        ..RECIPE_BASE
     },
 ];
 /// Rewrite pre-market-model query params (#1206 era) to their successors.
@@ -1579,7 +1575,7 @@ fn RecipeAnalyzerTable(
     // list button). Every branch is the old cell's markup verbatim, keyed
     // by the column's kind.
     let world_names_for_cells = world_names.clone();
-    let custom: CustomCell<RecipeRow> = Arc::new(move |data, kind| {
+    let custom: CustomCell<RecipeRow> = Arc::new(move |data, kind, _class| {
         let data = data.clone();
         let item_id = ItemId(data.recipe.item_result);
         match kind {

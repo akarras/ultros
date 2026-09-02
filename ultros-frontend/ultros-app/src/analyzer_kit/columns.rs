@@ -8,6 +8,7 @@ use leptos_i18n::I18nContext;
 
 use crate::components::control_bar::ColumnOption;
 use crate::components::sort_header::{SortColumn, SortDir};
+use crate::components::term_badge::TermRole;
 use crate::i18n::*;
 
 use super::cells::CellValue;
@@ -95,6 +96,17 @@ pub struct ToolColumnMeta<T: 'static, M: 'static> {
     /// read it only for optional columns.
     pub default_on: bool,
     pub cell: fn(&T, &CellCtx) -> CellValue,
+    /// The formula role this column plays, for the pages that mark their
+    /// formula columns. `None` for a column that is never marked.
+    pub side: Option<TermRole>,
+    /// The wider, two-line header classes used in place of
+    /// `header_class` while this column is marked. `""` for a column
+    /// that is never marked.
+    pub formula_header_class: &'static str,
+    /// The cell classes matching `formula_header_class`, used in place
+    /// of `cell_class` while this column is marked. `""` for a column
+    /// that is never marked.
+    pub formula_cell_class: &'static str,
 }
 
 pub fn picker_options<T, M>(
@@ -189,28 +201,38 @@ mod tests {
         CellValue::Gil(*v)
     }
 
+    /// Every field at its table-wide default, so each column below
+    /// spells out only what it actually differs in.
+    const BASE: ToolColumnMeta<i32, Col> = ToolColumnMeta {
+        spec: &SPEC_ITEM,
+        id: "",
+        sort_id: "",
+        sort: Sortability::No,
+        default_dir: SortDir::Desc,
+        header_class: "",
+        cell_class: "",
+        default_on: true,
+        cell: gil_cell,
+        side: None,
+        formula_header_class: "",
+        formula_cell_class: "",
+    };
+
     static COLS: [ToolColumnMeta<i32, Col>; 3] = [
         ToolColumnMeta {
             spec: &SPEC_ITEM,
-            id: "",
-            sort_id: "",
-            sort: Sortability::No,
-            default_dir: SortDir::Desc,
             header_class: "w-64",
             cell_class: "w-64",
-            default_on: true,
             cell: no_cell,
+            ..BASE
         },
         ToolColumnMeta {
             spec: &SPEC_PROFIT,
-            id: "",
             sort_id: "profit",
             sort: sortability_for(Layer::Computed, Some(Col::Profit)),
-            default_dir: SortDir::Desc,
             header_class: "w-32",
             cell_class: "w-32",
-            default_on: true,
-            cell: gil_cell,
+            ..BASE
         },
         ToolColumnMeta {
             spec: &SPEC_COST,
@@ -221,7 +243,7 @@ mod tests {
             header_class: "w-32",
             cell_class: "w-32",
             default_on: false,
-            cell: gil_cell,
+            ..BASE
         },
     ];
 
