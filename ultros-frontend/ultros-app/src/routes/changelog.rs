@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-02",
+        title: "Shared item links are quieter and stay useful",
+        blurb: "Item links shared to Discord now show a clean Ultros card that points back to the live market page. The old card packed in a price-history graph that Discord could cache long after its numbers stopped being current.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
         date: "2026-09-01",
         title: "Recipe Analyzer now shows every matching recipe",
         blurb: "The Recipe Analyzer no longer stops after its first 100 results. Scroll through the full ranked list without loading thousands of table rows into the page at once, and keep using the same sorts and filters across the whole result set.",

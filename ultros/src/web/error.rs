@@ -438,7 +438,7 @@ mod tests {
     /// The typed ClickHouse title only survives if the error stays a
     /// [`WebError::ClickHouse`] all the way to `into_response`.
     ///
-    /// Regression test for the 2026-08-23 outage: `item_card::generate_image`
+    /// Regression test for the 2026-08-23 outage: the item-card chart generator
     /// returned `anyhow::Result`, so `build_price_series`'s typed error was
     /// flattened into `AnyhowError` at the first `?`. Every item-card request
     /// during the outage reported as the generic "Returning web error" — the
