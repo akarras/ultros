@@ -367,7 +367,12 @@ fn LabsSettings() -> impl IntoView {
                                 set_checked=(move |checked: bool| {
                                     let mut current = labs.get_untracked().unwrap_or_default();
                                     if checked { current.enabled.insert(token.to_string()); } else { current.enabled.remove(token); }
-                                    set_labs(if current.enabled.is_empty() { None } else { Some(current) });
+                                    // Always write the set, even when it is empty: the shared cookie
+                                    // helper's removal path does not carry the path/SameSite/Secure
+                                    // attributes the write used, so a delete is silently ignored by the
+                                    // browser and the lab could never be switched off. An empty set
+                                    // serializes to `LABS=` and parses back to "nothing enabled".
+                                    set_labs(Some(current));
                                 }).into_signal_setter()
                                 checked_label=t_string!(i18n, labs_on)
                                 unchecked_label=t_string!(i18n, labs_off)
