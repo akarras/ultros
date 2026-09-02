@@ -18,6 +18,7 @@ use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos::task::spawn_local;
+use leptos_i18n::I18nContext;
 
 use icondata as i;
 use log::info;
@@ -338,6 +339,62 @@ fn LanguageSettings() -> impl IntoView {
 }
 
 #[component]
+fn LabsSettings() -> impl IntoView {
+    use crate::global_state::labs::{LABS, LABS_COOKIE, Labs};
+    let cookies = use_context::<Cookies>().unwrap();
+    let (labs, set_labs) = cookies.use_cookie_typed::<_, Labs>(LABS_COOKIE);
+    let i18n = use_i18n();
+    view! {
+        <div class="panel p-6 rounded-xl">
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, labs_title)}</h3>
+            <p class="text-sm text-[color:var(--color-text-muted)] mb-4">{t!(i18n, labs_desc)}</p>
+            <div class="flex flex-col gap-4">
+                {LABS.iter().map(|lab| {
+                    let token = lab.token;
+                    view! {
+                        <div class="grid md:grid-cols-3 gap-4 items-center">
+                            <div class="col-span-2">
+                                <div class="font-semibold text-[color:var(--color-text)]">{lab_title(i18n, token)}</div>
+                                <div class="text-sm text-[color:var(--color-text-muted)]">{lab_desc(i18n, token)}</div>
+                            </div>
+                            <Toggle
+                                checked=Signal::derive(move || labs().unwrap_or_default().has(token))
+                                set_checked=(move |checked: bool| {
+                                    let mut current = labs.get_untracked().unwrap_or_default();
+                                    if checked { current.enabled.insert(token.to_string()); } else { current.enabled.remove(token); }
+                                    set_labs(if current.enabled.is_empty() { None } else { Some(current) });
+                                }).into_signal_setter()
+                                checked_label=t_string!(i18n, labs_on)
+                                unchecked_label=t_string!(i18n, labs_off)
+                            />
+                        </div>
+                    }
+                }).collect_view()}
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn lab_title(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
+    match token {
+        crate::global_state::labs::LAB_ANALYZER_LEDGER => {
+            t_string!(i18n, labs_analyzer_ledger_title).to_string()
+        }
+        _ => token.to_string(),
+    }
+}
+
+fn lab_desc(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
+    match token {
+        crate::global_state::labs::LAB_ANALYZER_LEDGER => {
+            t_string!(i18n, labs_analyzer_ledger_desc).to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+#[component]
 pub fn Settings() -> impl IntoView {
     use crate::components::theme_picker::ThemePicker;
     let i18n = use_i18n();
@@ -354,6 +411,7 @@ pub fn Settings() -> impl IntoView {
                 <CrafterSettings />
                 <ThemePicker />
                 <AdChoice />
+                <LabsSettings />
             </div>
         </div>
     }
