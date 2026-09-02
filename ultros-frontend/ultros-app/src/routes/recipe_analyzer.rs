@@ -1,3 +1,4 @@
+use crate::analyzer_kit::cells::last_sold_label;
 use crate::analyzer_kit::formula::{ProfitFormula, per_unit_cost, profit_line};
 use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies};
 use crate::analyzer_kit::signals::{PriceLookup, SignalView, StatsIndex, stats_index};
@@ -89,30 +90,6 @@ struct RecipeProfitData {
     /// The market board's cut of one unit's sale at `market_price`.
     tax: i32,
     confidence: ConfidenceBand,
-}
-
-/// Resting label for the last-sold cell — same day/hour/just-now buckets
-/// and i18n keys as the flip finder's `COL_LAST_SOLD` cell. A zero or
-/// future timestamp renders as "never" (no sale in the window / old
-/// server).
-fn last_sold_label(
-    i18n: I18nContext<Locale, I18nKeys>,
-    last_sold_unix: i64,
-    now_unix: i64,
-) -> String {
-    if last_sold_unix <= 0 || last_sold_unix > now_unix {
-        return t_string!(i18n, analyzer_last_sold_never).to_string();
-    }
-    let secs = (now_unix - last_sold_unix) as u64;
-    let days = secs / 86_400;
-    let hours = (secs % 86_400) / 3_600;
-    if days > 0 {
-        t_string!(i18n, analyzer_last_sold_days_ago).replace("%count%", &days.to_string())
-    } else if hours > 0 {
-        t_string!(i18n, analyzer_last_sold_hours_ago).replace("%count%", &hours.to_string())
-    } else {
-        t_string!(i18n, analyzer_last_sold_just_now).to_string()
-    }
 }
 
 /// Current sell price vs the window VWAP, as a percent. `None` when there
