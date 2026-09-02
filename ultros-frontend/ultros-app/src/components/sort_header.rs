@@ -239,19 +239,35 @@ where
             title=title
             aria-sort=move || column_aria_sort(mode, sort_mode, sort_dir)
         >
-            {match badge {
-                Some(role) => view! {
-                    <div class="flex items-center gap-2 min-w-0">
-                        <TermBadge role=role />
-                        <SortHeader mode label sort_mode sort_dir reset_keys />
-                    </div>
+            // Everything-unset must render a single concrete child with no
+            // `Option`-typed slot: an `Option<T>` child that is `None` still
+            // writes a `<!>` hydration-marker comment (tachys), which the 35
+            // existing call sites (all of which leave `badge`/`sub_label`
+            // unset) never emitted before this component grew these props.
+            {match (badge, sub_label) {
+                (None, None) => {
+                    view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }.into_any()
+                }
+                (badge, sub_label) => view! {
+                    {match badge {
+                        Some(role) => view! {
+                            <div class="flex items-center gap-2 min-w-0">
+                                <TermBadge role=role />
+                                <SortHeader mode label sort_mode sort_dir reset_keys />
+                            </div>
+                        }
+                        .into_any(),
+                        None => {
+                            view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }
+                                .into_any()
+                        }
+                    }}
+                    {sub_label.map(|s| view! {
+                        <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
+                    })}
                 }
                 .into_any(),
-                None => view! { <SortHeader mode label sort_mode sort_dir reset_keys /> }.into_any(),
             }}
-            {sub_label.map(|s| view! {
-                <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
-            })}
         </div>
     }
     .into_any()
@@ -514,6 +530,27 @@ mod test {
             .to_html();
             assert!(!plain.contains("sr-only"), "{plain}");
             assert!(!plain.contains("min-w-0"), "{plain}");
+            // The cell must add no hydration markers of its own beyond what
+            // the bare `SortHeader` it wraps already emits — an `Option`
+            // child that resolves to `None` (e.g. an unset `sub_label`)
+            // still writes a `<!>` placeholder comment, which would make
+            // every one of the 35 existing call sites' markup drift from
+            // what it was before this component grew these props.
+            let bare = view! {
+                <SortHeader
+                    mode=Col::Cost
+                    label="Cost"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                />
+            }
+            .to_html();
+            assert_eq!(
+                plain.matches("<!>").count(),
+                bare.matches("<!>").count(),
+                "cell added its own hydration marker(s): {plain}"
+            );
+            assert_eq!(plain.matches("role=\"columnheader\"").count(), 1, "{plain}");
         });
     }
 
