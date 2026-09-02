@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-02",
+        title: "Turning ads back on works again",
+        blurb: "Switching \"hide ads\" off in Settings had no effect: the setting was never actually cleared, so ads stayed hidden and the toggle flipped itself back on after a reload. Turning the setting off now sticks, and ads come back.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-09-02",
         title: "Pages that failed to load are fixed",
         blurb: "Some pages would occasionally come back blank or half-rendered because a link on them could crash the page while it was being built. Links no longer depend on the piece that was failing, so those pages load every time.",
         link: None,
