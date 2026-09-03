@@ -38,6 +38,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
         link: Some("/items"),
     },
     ChangelogEntry {
+        date: "2026-09-03",
+        title: "Being signed out no longer leaves you stuck",
+        blurb: "When Discord expired or revoked your login, or when you deleted your account, Ultros often failed to finish signing you out: the site kept showing you as signed in while everything that needed your account quietly failed, and the only way out was clearing your browser's cookies by hand. You are now signed out properly the moment it happens, whatever page you were on.",
+        link: None,
+    },
+    ChangelogEntry {
         date: "2026-09-02",
         title: "Recipe Analyzer: every price signal is a column you can sort, and Hop gain tells you whether the trip to another world pays (Labs)",
         blurb: "Turn on \"Recipe Analyzer: price signals as columns\" under Settings › Labs. The Columns picker gains a column for every cost and revenue signal, each with a \"use\" pill that makes it the formula's input, plus Hop gain / unit (what buying at home would cost minus buying across the buy scope) and Worlds to visit (which worlds hold the cheapest ingredients). Rows with an ingredient that has no listing and no vendor now say how many are unpriced. For everyone, with sub-crafts on, an unlisted intermediate that can be crafted is now costed as a craft instead of as free, so Cost / unit rises on those rows.",
