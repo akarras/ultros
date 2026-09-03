@@ -21,6 +21,11 @@ pub(crate) fn visible_listing_count(total: usize, show_more: bool) -> usize {
     }
 }
 
+/// Whether the collapsed preview has additional rows available.
+pub(crate) fn has_more_listings(total: usize, show_more: bool) -> bool {
+    !show_more && total > LISTING_PREVIEW_ROWS
+}
+
 #[component]
 pub fn ListingsTable(
     #[prop(into)] listings: Signal<Vec<(ActiveListing, Arc<Retainer>)>>,
@@ -61,29 +66,9 @@ pub fn ListingsTable(
                 </tr>
             </thead>
             <tbody>
-                // #6831 — the largest GlitchTip issue by orders of magnitude —
-                // is a tachys hydration panic (`hydration.rs`
-                // `failed_to_cast_marker_node`: "expected a marker node, found
-                // <tr>") firing on essentially every `/item/*` page under
-                // production's out-of-order streaming SSR.
-                //
-                // Root cause: a `<For>` relies on its *following sibling* to
-                // supply a marker node so the hydration walk knows where the
-                // keyed list ends. A dynamic sibling (`{ move || … }`) emits that
-                // opening marker; a plain static element does not. This `<tbody>`
-                // placed a static `<tr>` (the "show more" row) directly after the
-                // `<For>`, leaving the list's trailing edge unbounded — the walker
-                // then reads that `<tr>` where it expected a marker and panics.
-                //
-                // (PR #933 removed a redundant `{ move || <For/> }` *wrapper* but
-                // left this static-`<tr>`-after-`<For>` adjacency intact, so the
-                // crash survived on the deployed fix build.)
-                //
-                // Fix: render `<For>` as a direct child and the "show more" row as
-                // a *dynamic* `{ move || … }` block, exactly like the sibling
-                // `SaleHistoryTable` — which reads the same resource in the same
-                // `<Transition>` on this page and never crashes. The dynamic block
-                // supplies the marker node that bounds the `<For>`.
+                // Keep the keyed list as the tbody's only dynamic child. This is
+                // the same hydration-safe shape as `SaleHistoryTable`; the footer
+                // action deliberately lives outside the table and its scrollport.
                 <For
                     each=listings
                     key=move |(listing, _retainer)| listing.id
@@ -117,26 +102,25 @@ pub fn ListingsTable(
                         }
                     }
                 />
-                {move || {
-                    (!show_more() && listing_count() >= 10)
-                        .then(|| {
-                            view! {
-                                <tr>
-                                    <td colspan=7>
-                                        <button
-                                            class="btn w-full"
-                                            on:click=move |_| set_show_more(true)
-                                        >
-                                            {t!(i18n, listings_show_more)}
-                                        </button>
-                                    </td>
-                                </tr>
-                            }
-                        })
-                }}
             </tbody>
             </table>
         </div>
+        // Match the sale-history footer: it stays full-width and visible even
+        // when the wide table itself scrolls horizontally.
+        {move || {
+            has_more_listings(listing_count(), show_more())
+                .then(|| {
+                    view! {
+                        <button
+                            class="btn btn-primary w-full mt-2"
+                            data-testid="listings-show-more"
+                            on:click=move |_| set_show_more(true)
+                        >
+                            {t!(i18n, listings_show_more)}
+                        </button>
+                    }
+                })
+        }}
     }
     .into_any()
 }
@@ -164,5 +148,13 @@ mod tests {
     fn empty_is_empty_either_way() {
         assert_eq!(visible_listing_count(0, false), 0);
         assert_eq!(visible_listing_count(0, true), 0);
+    }
+
+    #[test]
+    fn show_more_only_appears_when_the_preview_hides_rows() {
+        assert!(!has_more_listings(LISTING_PREVIEW_ROWS - 1, false));
+        assert!(!has_more_listings(LISTING_PREVIEW_ROWS, false));
+        assert!(has_more_listings(LISTING_PREVIEW_ROWS + 1, false));
+        assert!(!has_more_listings(LISTING_PREVIEW_ROWS + 1, true));
     }
 }

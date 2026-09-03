@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-03",
+        title: "Active listings are tidier to browse",
+        blurb: "The listings table's Show more control now matches sale history and stays outside the table's scroll area. Datacenter exclusions use one clear, theme-aware toggle per datacenter, show how many listings remain, and offer a reset instead of leaving an empty table behind. They also stay scoped to the listings table, so filtering it no longer blanks the price summary or other item-page sections.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
         date: "2026-09-02",
         title: "Recipe Analyzer: every price signal is a column you can sort, and Hop gain tells you whether the trip to another world pays (Labs)",
         blurb: "Turn on \"Recipe Analyzer: price signals as columns\" under Settings › Labs. The Columns picker gains a column for every cost and revenue signal, each with a \"use\" pill that makes it the formula's input, plus Hop gain / unit (what buying at home would cost minus buying across the buy scope) and Worlds to visit (which worlds hold the cheapest ingredients). Rows with an ingredient that has no listing and no vendor now say how many are unpriced. For everyone, with sub-crafts on, an unlisted intermediate that can be crafted is now costed as a craft instead of as free, so Cost / unit rises on those rows.",
