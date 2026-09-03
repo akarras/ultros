@@ -3,7 +3,9 @@ use crate::analysis::{
     get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct, profit_per_day,
     return_on_investment, roi_badge_class, sale_tax, sniper_clamp, velocity_per_day,
 };
-use crate::analyzer_kit::enrichment::{DEBOUNCE_MS, PREFETCH_MARGIN, visible_keys};
+use crate::analyzer_kit::enrichment::{
+    Absorb, DEBOUNCE_MS, Enrichment, PREFETCH_MARGIN, visible_keys,
+};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
@@ -36,7 +38,7 @@ use crate::{
         virtual_scroller::*,
         world_picker::*,
     },
-    error::AppError,
+    error::{AppError, AppResult},
     global_state::{LocalWorldData, region_for_world::region_for_world_name},
     math::filter_outliers_iqr_in_place,
     query_defaults::{
@@ -46,32 +48,78 @@ use crate::{
     routes::world_nav::world_nav_url,
 };
 use ultros_api_types::{
-    resale_quality::ResaleQualityRow, sparklines::SparklinesRequest, trends::ConfidenceBand,
+    resale_quality::{ResaleQualityResponse, ResaleQualityRow},
+    sparklines::{SparklinesRequest, SparklinesResponse},
+    trends::ConfidenceBand,
 };
 
-/// ClickHouse-backed per-row enrichment for the analyzer table. Built
-/// asynchronously from one `resale_quality` + one `sparklines` batch
-/// fetch and looked up by `(item_id, hq)` while rendering rows.
-#[derive(Clone, Debug, Default)]
-struct EnrichmentMaps {
-    quality: HashMap<(i32, bool), ResaleQualityRow>,
-    sparkline: HashMap<(i32, bool), Vec<u32>>,
-    /// Keys whose fetch has completed (with OR without data). Lets cells tell
-    /// "still loading" (absent) from "fetched, no CH data" (present, but no
-    /// entry in `quality` / `sparkline`).
-    settled: std::collections::HashSet<(i32, bool)>,
+/// The flip finder's enrichment key: `(item_id, hq)`.
+type FlipKey = (i32, bool);
+
+/// What one `(item_id, hq)` gets back from the two ClickHouse feeds. Either
+/// half can be absent: the rollup has no row for most items (~7% coverage),
+/// and a feed that errored contributes nothing for its batch.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FlipEnrichment {
+    quality: Option<ResaleQualityRow>,
+    sparkline: Option<Vec<u32>>,
 }
 
-impl EnrichmentMaps {
-    fn quality_for(&self, key: &(i32, bool)) -> Option<&ResaleQualityRow> {
-        self.quality.get(key)
+// Per feed, exactly as the two maps used to `extend` independently: a batch
+// that lost one feed keeps the half already stored.
+impl Absorb for FlipEnrichment {
+    fn absorb(&mut self, newer: Self) {
+        if newer.quality.is_some() {
+            self.quality = newer.quality;
+        }
+        if newer.sparkline.is_some() {
+            self.sparkline = newer.sparkline;
+        }
     }
-    fn sparkline_for(&self, key: &(i32, bool)) -> Option<&Vec<u32>> {
-        self.sparkline.get(key)
+}
+
+/// ClickHouse-backed per-row enrichment for the analyzer table, grown by
+/// the visible-window hook (`use_visible_enrichment`) from one
+/// `resale_quality` + one `sparklines` batch per window and looked up by
+/// `(item_id, hq)` while filtering and rendering rows. A key is *settled*
+/// once its batch completed, with or without data, which is how cells tell
+/// "still loading" from "fetched, no CH data".
+type FlipStore = Enrichment<FlipKey, FlipEnrichment>;
+
+fn quality_for<'a>(store: &'a FlipStore, key: &FlipKey) -> Option<&'a ResaleQualityRow> {
+    store.get(key).and_then(|v| v.quality.as_ref())
+}
+
+fn sparkline_for<'a>(store: &'a FlipStore, key: &FlipKey) -> Option<&'a [u32]> {
+    store.get(key).and_then(|v| v.sparkline.as_deref())
+}
+
+/// Fold the two feed responses into one value per key. A feed that failed
+/// contributes nothing — its keys still settle (the hook settles every
+/// requested key), so those cells show "—" rather than a skeleton forever,
+/// exactly as before the lift. Errors stay silent, as they were.
+fn zip_flip_enrichment(
+    quality: AppResult<ResaleQualityResponse>,
+    sparklines: AppResult<SparklinesResponse>,
+) -> Vec<(FlipKey, FlipEnrichment)> {
+    let mut by_key: HashMap<FlipKey, FlipEnrichment> = HashMap::new();
+    // The key is bound before the `Some(row)` move: an assignment evaluates
+    // its value before its place, so `entry((row.item_id, row.hq)) = Some(row)`
+    // would read a moved `row` (E0382).
+    if let Ok(q) = quality {
+        for row in q.rows {
+            let key = (row.item_id, row.hq);
+            by_key.entry(key).or_default().quality = Some(row);
+        }
     }
-    fn is_settled(&self, key: &(i32, bool)) -> bool {
-        self.settled.contains(key)
+    if let Ok(s) = sparklines {
+        for series in s.series {
+            let key = (series.item_id, series.hq);
+            by_key.entry(key).or_default().sparkline = Some(series.points);
+        }
     }
+    // Map order is irrelevant: this feeds another map, never the DOM.
+    by_key.into_iter().collect()
 }
 
 /// Stable URL IDs for optional columns. Required columns (HQ, Item,
@@ -1567,9 +1615,9 @@ fn AnalyzerTable(
     };
 
     // Accumulating CH enrichment (quality + sparkline + settled), grown by the
-    // visible-window fetch effect below; never wholesale-replaced (except on a
-    // world change). Cells + the suspicious filter read it reactively.
-    let enrichment = RwSignal::new(EnrichmentMaps::default());
+    // visible-window fetch below; never wholesale-replaced (except on a world
+    // change). Cells + three filter passes read it reactively, by key.
+    let enrichment = RwSignal::new(FlipStore::default());
 
     let filtered_rows = Memo::new(move |_| {
         let include_tax = tax_enabled().unwrap_or(true);
@@ -1645,8 +1693,8 @@ fn AnalyzerTable(
                 velocity_floor()
                     .map(|min| {
                         let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                        let ch =
-                            enrichment.with(|maps| maps.quality_for(&key).map(|q| q.sales_per_day));
+                        let ch = enrichment
+                            .with(|store| quality_for(store, &key).map(|q| q.sales_per_day));
                         passes_velocity_floor(min, ch, velocity_per_day(&data.inner.sale_summary))
                     })
                     .unwrap_or(true)
@@ -1703,9 +1751,8 @@ fn AnalyzerTable(
                 if confidence_min.is_some() || volume_min.is_some() {
                     let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
                     // One lookup serves both floors.
-                    let ch = enrichment.with(|maps| {
-                        maps.quality_for(&key)
-                            .map(|q| (q.confidence_band, q.sample_size))
+                    let ch = enrichment.with(|store| {
+                        quality_for(store, &key).map(|q| (q.confidence_band, q.sample_size))
                     });
                     if let Some(floor) = confidence_min {
                         let band = ch.map(|(band, _)| band);
@@ -1782,13 +1829,15 @@ fn AnalyzerTable(
                 if show_suspicious_active() {
                     return true;
                 }
-                let maps = enrichment.get();
                 let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
-                let Some(q) = maps.quality_for(&key) else {
-                    return true;
-                };
-                !(matches!(q.confidence_band, ConfidenceBand::Unusable)
-                    || q.launder_suspicion > 0.7)
+                // Keyed `with` read: the previous per-row `get()` cloned the
+                // whole store once per row per recompute.
+                enrichment.with(|store| {
+                    quality_for(store, &key).is_none_or(|q| {
+                        !(matches!(q.confidence_band, ConfidenceBand::Unusable)
+                            || q.launder_suspicion > 0.7)
+                    })
+                })
             })
             .collect::<Vec<_>>();
 
@@ -1897,7 +1946,7 @@ fn AnalyzerTable(
     // data must not leak.
     Effect::new(move |_| {
         let _ = world.get(); // subscribe: re-run on world change
-        enrichment.set(EnrichmentMaps::default());
+        enrichment.set(FlipStore::default());
         requested.update_value(|s| s.clear());
         // Invalidate any in-flight fetch from the previous world: bumping the
         // generation makes it bail at the guard below before it claims keys,
@@ -1963,20 +2012,8 @@ fn AnalyzerTable(
             // (success OR error) so cells switch loading -> value / "—". On a CH
             // blip the rows degrade to "—" (same as today) — no retry loop; a
             // world change resets everything.
-            let _ = enrichment.try_update(|m| {
-                if let Ok(q) = &quality {
-                    m.quality
-                        .extend(q.rows.iter().map(|r| ((r.item_id, r.hq), r.clone())));
-                }
-                if let Ok(s) = &sparklines {
-                    m.sparkline.extend(
-                        s.series
-                            .iter()
-                            .map(|r| ((r.item_id, r.hq), r.points.clone())),
-                    );
-                }
-                m.settled.extend(keys.iter().copied());
-            });
+            let _ = enrichment
+                .try_update(|store| store.merge(&keys, zip_flip_enrichment(quality, sparklines)));
         });
     });
 
@@ -2766,15 +2803,14 @@ fn AnalyzerTable(
                                                 if visible_cols().contains(COL_CONFIDENCE) {
                                                     return None;
                                                 }
-                                                let maps = enrichment.get();
-                                                maps.quality_for(&row_key).map(|q| {
-                                                    view! {
-                                                        <ConfidenceBadge
-                                                            band=q.confidence_band
-                                                            sample_size=q.sample_size
-                                                        />
-                                                    }
-                                                })
+                                                enrichment
+                                                    .with(|store| {
+                                                        quality_for(store, &row_key)
+                                                            .map(|q| (q.confidence_band, q.sample_size))
+                                                    })
+                                                    .map(|(band, sample_size)| {
+                                                        view! { <ConfidenceBadge band=band sample_size=sample_size /> }
+                                                    })
                                             }}
                                         </a>
                                         <Clipboard clipboard_text=item.to_string() />
@@ -2819,8 +2855,9 @@ fn AnalyzerTable(
                                     {move || visible_cols().contains(COL_CONFIDENCE).then(|| {
                                         // ClickHouse band where it exists, else the band derived
                                         // from buffer depth + velocity.
-                                        let maps = enrichment.get();
-                                        let (label, class) = match maps.quality_for(&row_key).map(|q| q.confidence_band) {
+                                        let ch_band = enrichment
+                                            .with(|store| quality_for(store, &row_key).map(|q| q.confidence_band));
+                                        let (label, class) = match ch_band {
                                             Some(ConfidenceBand::High) => (t_string!(i18n, analyzer_confidence_high).to_string(), "text-emerald-300"),
                                             Some(ConfidenceBand::Medium) => (t_string!(i18n, analyzer_confidence_medium).to_string(), "text-amber-300"),
                                             Some(ConfidenceBand::Low) | Some(ConfidenceBand::Unusable) => (t_string!(i18n, analyzer_confidence_low).to_string(), "text-red-300"),
@@ -2881,11 +2918,15 @@ fn AnalyzerTable(
                                         </div>
                                     })}
                                     {move || visible_cols().contains(COL_TREND).then(|| {
-                                        let maps = enrichment.get();
-                                        let inner = if let Some(pts) = maps.sparkline_for(&row_key) {
-                                            let pct = maps.quality_for(&row_key)
-                                                .map(|q| {
-                                                    let vwap = q.vwap as f32;
+                                        let (points, vwap, settled) = enrichment.with(|store| (
+                                            sparkline_for(store, &row_key).map(<[u32]>::to_vec),
+                                            quality_for(store, &row_key).map(|q| q.vwap),
+                                            store.is_settled(&row_key),
+                                        ));
+                                        let inner = if let Some(pts) = points {
+                                            let pct = vwap
+                                                .map(|vwap| {
+                                                    let vwap = vwap as f32;
                                                     if vwap <= 0.0 {
                                                         0.0
                                                     } else {
@@ -2893,8 +2934,8 @@ fn AnalyzerTable(
                                                     }
                                                 })
                                                 .unwrap_or(0.0);
-                                            view! { <Sparkline points=pts.clone() pct_change=pct /> }.into_any()
-                                        } else if maps.is_settled(&row_key) {
+                                            view! { <Sparkline points=pts pct_change=pct /> }.into_any()
+                                        } else if settled {
                                             // fetched, no series -> empty sparkline (prior behavior)
                                             view! { <Sparkline points=Vec::new() pct_change=0.0 /> }.into_any()
                                         } else {
@@ -2911,11 +2952,14 @@ fn AnalyzerTable(
                                         // falls back to the buffer-derived rate — the same
                                         // rate the velocity floor filter evaluates — so
                                         // every row renders something.
-                                        let maps = enrichment.get();
-                                        let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
-                                            (Some(q), _) => {
-                                                let cadence = get_sales_cadence(q.sales_per_day, q.sample_size as usize);
-                                                view! { <SalesCadenceBadge cadence sales_per_day=q.sales_per_day compact=true /> }.into_any()
+                                        let (quality, settled) = enrichment.with(|store| (
+                                            quality_for(store, &row_key).map(|q| (q.sales_per_day, q.sample_size)),
+                                            store.is_settled(&row_key),
+                                        ));
+                                        let inner = match (quality, settled) {
+                                            (Some((sales_per_day, sample_size)), _) => {
+                                                let cadence = get_sales_cadence(sales_per_day, sample_size as usize);
+                                                view! { <SalesCadenceBadge cadence sales_per_day=sales_per_day compact=true /> }.into_any()
                                             }
                                             (None, true) => match row_velocity {
                                                 Some(spd) => {
@@ -2933,9 +2977,12 @@ fn AnalyzerTable(
                                         }
                                     })}
                                     {move || visible_cols().contains(COL_VOLUME_30D).then(|| {
-                                        let maps = enrichment.get();
-                                        let inner = match (maps.quality_for(&row_key), maps.is_settled(&row_key)) {
-                                            (Some(q), _) => view! { {q.sample_size.to_string()} }.into_any(),
+                                        let (sample_size, settled) = enrichment.with(|store| (
+                                            quality_for(store, &row_key).map(|q| q.sample_size),
+                                            store.is_settled(&row_key),
+                                        ));
+                                        let inner = match (sample_size, settled) {
+                                            (Some(n), _) => view! { {n.to_string()} }.into_any(),
                                             (None, true) => view! { "—" }.into_any(),
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
@@ -3825,6 +3872,154 @@ mod tests {
             return_on_investment: roi,
             profit_per_day: ppd,
         }
+    }
+
+    use ultros_api_types::sparklines::SparklineSeries;
+
+    fn quality_row(item_id: i32, hq: bool, band: ConfidenceBand, launder: f32) -> ResaleQualityRow {
+        ResaleQualityRow {
+            item_id,
+            hq,
+            world_id: 100,
+            window_days: 30,
+            vwap: 1_000,
+            sample_size: 12,
+            sales_per_day: 0.4,
+            confidence_band: band,
+            launder_suspicion: launder,
+        }
+    }
+
+    fn series(item_id: i32, hq: bool, points: Vec<u32>) -> SparklineSeries {
+        SparklineSeries {
+            item_id,
+            hq,
+            world_id: 100,
+            points,
+            first_price: 0,
+            last_price: 0,
+        }
+    }
+
+    #[test]
+    fn zip_folds_both_feeds_into_one_value_per_key() {
+        let quality = Ok(ResaleQualityResponse {
+            world_id: 100,
+            window_days: 30,
+            rows: vec![
+                quality_row(1, false, ConfidenceBand::High, 0.0),
+                quality_row(2, true, ConfidenceBand::Low, 0.9),
+            ],
+        });
+        let sparklines = Ok(SparklinesResponse {
+            world_id: 100,
+            series: vec![series(1, false, vec![5, 6]), series(3, false, vec![1])],
+        });
+        let mut got = zip_flip_enrichment(quality, sparklines);
+        got.sort_by_key(|(k, _)| *k);
+        assert_eq!(got.len(), 3);
+        // Both halves.
+        assert_eq!(got[0].0, (1, false));
+        assert_eq!(
+            got[0].1.quality.as_ref().map(|q| q.confidence_band),
+            Some(ConfidenceBand::High)
+        );
+        assert_eq!(got[0].1.sparkline, Some(vec![5, 6]));
+        // Quality only.
+        assert_eq!(got[1].0, (2, true));
+        assert!(got[1].1.quality.is_some());
+        assert_eq!(got[1].1.sparkline, None);
+        // Sparkline only.
+        assert_eq!(got[2].0, (3, false));
+        assert_eq!(got[2].1.quality, None);
+        assert_eq!(got[2].1.sparkline, Some(vec![1]));
+    }
+
+    #[test]
+    fn zip_keeps_the_feed_that_succeeded() {
+        let sparklines = Ok(SparklinesResponse {
+            world_id: 100,
+            series: vec![series(1, false, vec![2, 3])],
+        });
+        assert_eq!(
+            zip_flip_enrichment(Err(AppError::NoItem), sparklines),
+            vec![(
+                (1, false),
+                FlipEnrichment {
+                    quality: None,
+                    sparkline: Some(vec![2, 3]),
+                }
+            )]
+        );
+        assert!(zip_flip_enrichment(Err(AppError::NoItem), Err(AppError::NoItem)).is_empty());
+    }
+
+    /// The three states every lazy cell and floor distinguishes, read the
+    /// way the page reads them after the switch: keyed, through the store.
+    #[test]
+    fn flip_store_reads_tell_loading_from_missing_from_ready() {
+        let mut store = FlipStore::default();
+        // Nothing fetched: loading everywhere.
+        assert!(quality_for(&store, &(1, false)).is_none());
+        assert!(sparkline_for(&store, &(1, false)).is_none());
+        assert!(!store.is_settled(&(1, false)));
+        store.merge(
+            &[(1, false), (2, false)],
+            zip_flip_enrichment(
+                Ok(ResaleQualityResponse {
+                    world_id: 100,
+                    window_days: 30,
+                    rows: vec![quality_row(1, false, ConfidenceBand::Medium, 0.1)],
+                }),
+                Err(AppError::NoItem),
+            ),
+        );
+        // One half ready, the other missing, on the same settled key.
+        assert_eq!(
+            quality_for(&store, &(1, false)).map(|q| q.confidence_band),
+            Some(ConfidenceBand::Medium)
+        );
+        assert!(sparkline_for(&store, &(1, false)).is_none());
+        assert!(store.is_settled(&(1, false)));
+        // Asked for, nothing known: settled with both halves absent -> "—".
+        assert!(quality_for(&store, &(2, false)).is_none());
+        assert!(store.is_settled(&(2, false)));
+        // Never asked for: skeleton.
+        assert!(!store.is_settled(&(3, false)));
+    }
+
+    /// Today's two maps `extend` independently; the composite must not lose
+    /// a half when a later batch for the same key lost one feed.
+    #[test]
+    fn flip_enrichment_absorbs_per_feed() {
+        let mut store = FlipStore::default();
+        store.merge(
+            &[(1, false)],
+            vec![(
+                (1, false),
+                FlipEnrichment {
+                    quality: Some(quality_row(1, false, ConfidenceBand::High, 0.0)),
+                    sparkline: Some(vec![1, 2]),
+                },
+            )],
+        );
+        // Sparklines came back, quality did not: the quality half survives,
+        // the sparkline half is the newer one.
+        store.merge(
+            &[(1, false)],
+            vec![(
+                (1, false),
+                FlipEnrichment {
+                    quality: None,
+                    sparkline: Some(vec![3]),
+                },
+            )],
+        );
+        assert_eq!(
+            quality_for(&store, &(1, false)).map(|q| q.confidence_band),
+            Some(ConfidenceBand::High)
+        );
+        assert_eq!(sparkline_for(&store, &(1, false)), Some(&[3u32][..]));
     }
 
     #[test]
