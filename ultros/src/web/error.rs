@@ -4,10 +4,7 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use axum_extra::extract::{
-    PrivateCookieJar,
-    cookie::{Cookie, Key},
-};
+use axum_extra::extract::{PrivateCookieJar, cookie::Key};
 use hyper::StatusCode;
 use oauth2::{
     ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
@@ -261,7 +258,7 @@ impl IntoResponse for ApiError {
         if let ApiError::DiscordTokenInvalid(mut cookies) = self {
             // remove the discord user cookie
             info!("Removed invalid Discord token");
-            cookies = cookies.remove(Cookie::from("discord_auth"));
+            cookies = cookies.remove(super::oauth::discord_auth_removal_cookie());
             // An expired/revoked token is an auth failure like any other, so it
             // gets the same 401. Without an explicit status this tuple response
             // defaulted to `200`.

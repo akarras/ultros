@@ -132,6 +132,64 @@ impl Display for OAuthScope {
 
 const LOGIN_NEXT_COOKIE: &str = "login_next";
 
+/// The cookie the Discord OAuth access token is stored in.
+pub(crate) const DISCORD_AUTH_COOKIE: &str = "discord_auth";
+
+/// Whether `discord_auth` is written with `Secure`.
+///
+/// Production is https-only, so the cookie is `Secure` there. The `test-auth`
+/// build exists so the E2E harness can drive login over plain http, where a
+/// `Secure` cookie is dropped on arrival — so that build, and only that build,
+/// omits the flag. The write and the removal both read this one constant: a
+/// removal that disagreed with the write here would be thrown away in exactly
+/// the build where the write was kept.
+const DISCORD_AUTH_SECURE: bool = !cfg!(feature = "test-auth");
+
+/// The attributes every `discord_auth` cookie carries, applied by both the
+/// write and the removal so the two cannot drift apart.
+///
+/// A browser files a stored cookie under `(name, domain, path)` alone.
+/// `SameSite`, `Secure` and `HttpOnly` are not part of that key, but `Path`
+/// is — so a removal that leaves `Path` off is matched against the *document's*
+/// default path rather than the cookie's `/`. From `/` the delete happens to
+/// land; from a nested route such as `/api/v1/list/5`, which is where
+/// [`ApiError::DiscordTokenInvalid`] is answered, it does not, and an invalid
+/// Discord token never clears — the user stays in a broken auth state until
+/// they clear cookies by hand. Neither sets `Domain`, which leaves both
+/// host-only for the serving host and keeps that half of the key matching too.
+///
+/// This is the server-side counterpart of the client-side fix in #1258.
+fn set_discord_auth_attributes(cookie: &mut Cookie<'static>) {
+    cookie.set_secure(DISCORD_AUTH_SECURE);
+    cookie.set_same_site(SameSite::Lax);
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+}
+
+/// The cookie that stores `token` for a logged-in session.
+pub(crate) fn discord_auth_cookie(token: String) -> Cookie<'static> {
+    let mut cookie = Cookie::new(DISCORD_AUTH_COOKIE, token);
+    set_discord_auth_attributes(&mut cookie);
+    cookie.make_permanent();
+    cookie
+}
+
+/// The cookie that tells a browser to drop the stored `discord_auth`.
+///
+/// Hand this to `CookieJar::remove` instead of a bare
+/// `Cookie::from("discord_auth")`. `remove` calls [`Cookie::make_removal`] on
+/// whatever it is given (cookie 0.18.2, `jar.rs:233`), which blanks the value
+/// and back-dates the expiry but keeps only the attributes already on that
+/// cookie — so they have to be put there first. A cookie read back out of the
+/// jar is no substitute: a browser sends `Cookie:` name/value pairs with no
+/// attributes at all, so the parsed cookie has an empty `Path` too.
+pub(crate) fn discord_auth_removal_cookie() -> Cookie<'static> {
+    let mut cookie = Cookie::new(DISCORD_AUTH_COOKIE, "");
+    set_discord_auth_attributes(&mut cookie);
+    cookie.make_removal();
+    cookie
+}
+
 #[derive(Deserialize, Default)]
 pub struct LoginParameters {
     next: Option<String>,
@@ -261,13 +319,7 @@ pub async fn redirect(
         .secret()
         .clone();
     // store the token into a cookie
-    let mut cookie = Cookie::new("discord_auth", token);
-    cookie.set_secure(true);
-    cookie.set_same_site(SameSite::Lax);
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.make_permanent();
-    cookies = cookies.add(cookie);
+    cookies = cookies.add(discord_auth_cookie(token));
     Ok((cookies, Redirect::to(&redirect_to)))
 }
 
@@ -299,7 +351,7 @@ pub async fn logout(
         }
     }
 
-    let cookie_jar = cookie_jar.remove(cookie);
+    let cookie_jar = cookie_jar.remove(discord_auth_removal_cookie());
     Ok((cookie_jar, Redirect::to("/")))
 }
 
@@ -457,7 +509,68 @@ impl DiscordAuthConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_login_next;
+    use super::*;
+
+    /// Every attribute the browser matches a removal on must be repeated from
+    /// the write, or the removal is filed against a different stored cookie
+    /// and the real one survives. This is the invariant that keeps `logout`,
+    /// `delete_user` and `ApiError::DiscordTokenInvalid` able to log a user
+    /// out at all from a nested route.
+    #[test]
+    fn discord_auth_removal_matches_the_writes_attributes() {
+        let write = discord_auth_cookie("a-token".to_string());
+        let removal = discord_auth_removal_cookie();
+
+        assert_eq!(removal.name(), write.name());
+        assert_eq!(
+            removal.path(),
+            write.path(),
+            "Path is part of the match key"
+        );
+        assert_eq!(
+            removal.domain(),
+            write.domain(),
+            "Domain is part of the match key"
+        );
+        assert_eq!(removal.secure(), write.secure());
+        assert_eq!(removal.http_only(), write.http_only());
+        assert_eq!(removal.same_site(), write.same_site());
+    }
+
+    /// ...and it has to actually expire. Matching attributes alone would just
+    /// overwrite the token with an empty value the browser keeps forever.
+    #[test]
+    fn discord_auth_removal_expires_in_the_past() {
+        let removal = discord_auth_removal_cookie();
+
+        assert_eq!(removal.value(), "");
+        assert_eq!(removal.max_age(), Some(Duration::seconds(0)));
+        let expires = removal
+            .expires_datetime()
+            .expect("a removal must carry an expiry");
+        assert!(
+            expires < cookie::time::OffsetDateTime::now_utc(),
+            "expiry must be in the past, got {expires}"
+        );
+    }
+
+    /// The end-to-end shape, through the jar the handlers actually use: what
+    /// reaches the browser as `Set-Cookie` must still carry `Path=/`.
+    ///
+    /// `CookieJar::remove` calls `make_removal` on the cookie it is handed and
+    /// keeps only the attributes already on it, so passing a bare
+    /// `Cookie::from("discord_auth")` — what all three removal sites did
+    /// before — produced `Path: None` here.
+    #[test]
+    fn discord_auth_removal_reaches_the_browser_with_the_path() {
+        let mut jar = cookie::CookieJar::new();
+        jar.add_original(discord_auth_cookie("a-token".to_string()));
+        jar.remove(discord_auth_removal_cookie());
+
+        let removal = jar.delta().next().expect("a removal must be emitted");
+        assert_eq!(removal.path(), Some("/"));
+        assert_eq!(removal.value(), "");
+    }
 
     #[test]
     fn safe_login_next_accepts_same_origin_relative_paths() {
@@ -507,10 +620,7 @@ pub mod test_auth {
         extract::{Query, State},
         response::Redirect,
     };
-    use axum_extra::extract::{
-        PrivateCookieJar,
-        cookie::{Cookie, SameSite},
-    };
+    use axum_extra::extract::PrivateCookieJar;
     use serde::Deserialize;
     use ultros_db::UltrosDb;
 
@@ -553,13 +663,10 @@ pub mod test_auth {
         };
         cache.store_user(&token, user).await;
 
-        let mut cookie = Cookie::new("discord_auth", token);
-        // Mirror oauth::redirect, but allow non-https so local E2E works.
-        cookie.set_secure(false);
-        cookie.set_same_site(SameSite::Lax);
-        cookie.set_http_only(true);
-        cookie.set_path("/");
-        cookie.make_permanent();
+        // Same builder as `oauth::redirect`. It drops `Secure` under this
+        // feature so local E2E works over plain http — see
+        // `DISCORD_AUTH_SECURE` — and the removal follows it there.
+        let cookie = super::discord_auth_cookie(token);
 
         let redirect = if params.redirect.starts_with('/') {
             params.redirect.as_str()
