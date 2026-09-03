@@ -4,7 +4,7 @@ use crate::analysis::{
     return_on_investment, roi_badge_class, sale_tax, sniper_clamp, velocity_per_day,
 };
 use crate::analyzer_kit::enrichment::{
-    Absorb, DEBOUNCE_MS, Enrichment, PREFETCH_MARGIN, visible_keys,
+    Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
 };
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -121,6 +121,50 @@ fn zip_flip_enrichment(
     // Map order is irrelevant: this feeds another map, never the DOM.
     by_key.into_iter().collect()
 }
+
+/// The hook's `key_of` for the sorted rows: `(item_id, hq)`.
+fn flip_key((_, row): &(usize, CalculatedProfitData)) -> FlipKey {
+    (row.inner.sale_summary.item_id, row.inner.sale_summary.hq)
+}
+
+/// The hook's `fetch`: both ClickHouse feeds for one batch of keys on
+/// `world`, in parallel — a 30-day resale-quality window and a 168-hour
+/// sparkline. Client-only by construction: the hook calls it from an
+/// `Effect`, and `post_api`'s SSR arm is `unreachable!`.
+async fn fetch_flip_enrichment(
+    world: String,
+    keys: Vec<FlipKey>,
+) -> Vec<(FlipKey, FlipEnrichment)> {
+    let (quality, sparklines) = futures::join!(
+        get_resale_quality(&world, keys.clone(), 30),
+        post_sparklines(
+            &world,
+            SparklinesRequest {
+                items: keys,
+                hours: Some(168),
+            },
+        ),
+    );
+    zip_flip_enrichment(quality, sparklines)
+}
+
+/// Both endpoints cap a batch — sparklines at 200 keys, resale quality at
+/// 250 — and the smaller wins. The window is 88–92 keys, so this never
+/// chunks below a 5280 px usable viewport
+/// (`flip_window_is_one_request_below_the_derived_threshold` derives that);
+/// above it the old single sparklines POST was rejected (400, `movers.rs:134`)
+/// and Trend showed the empty series, so the chunked path only adds data.
+const FLIP_ENRICHMENT: EnrichmentConfig = EnrichmentConfig {
+    prefetch_margin: PREFETCH_MARGIN,
+    debounce_ms: DEBOUNCE_MS,
+    max_keys_per_request: 200,
+};
+
+/// The `VirtualScroller` geometry the table passes in `view!`, named so the
+/// window test binds to the same values instead of copied literals.
+const FLIP_ROW_HEIGHT_PX: f64 = 40.0;
+const FLIP_OVERSCAN_ROWS: u32 = 8;
+const FLIP_HEADER_HEIGHT_PX: f64 = 56.0;
 
 /// Stable URL IDs for optional columns. Required columns (HQ, Item,
 /// Profit, Buy Price) are not in this list — they always render.
@@ -1172,7 +1216,7 @@ fn AnalyzerTable(
     /// taking them as plain values meant this component was disposed and
     /// rebuilt on every tick — throwing away the scroll position, the
     /// accumulated ClickHouse enrichment (so every visible row re-fetched it),
-    /// the `requested` dedupe set, and the realtime subscription that had just
+    /// the enrichment hook's claim set, and the realtime subscription that had just
     /// delivered the event. As a signal, a tick invalidates
     /// `filtered_rows` -> `sorted_data` and the `VirtualScroller`'s keyed
     /// `<For>` diffs only the rows that actually moved.
@@ -1688,8 +1732,8 @@ fn AnalyzerTable(
                 // ClickHouse rate first, derived rate as fallback — so the
                 // number shown is the number evaluated. Reading `enrichment`
                 // here is the same pattern the suspicious filter below uses;
-                // the non-reactive `requested` dedupe breaks the recompute ->
-                // refetch loop.
+                // the hook's non-reactive claim set (`analyzer_kit::enrichment`)
+                // breaks the recompute -> refetch loop.
                 velocity_floor()
                     .map(|min| {
                         let key = (data.inner.sale_summary.item_id, data.inner.sale_summary.hq);
@@ -1733,8 +1777,8 @@ fn AnalyzerTable(
                 // CH band first, derived fallback — the same preference the
                 // Confidence column renders, so the label shown is the label
                 // filtered. Reading `enrichment` here follows the velocity
-                // filter's pattern; the non-reactive `requested` dedupe is
-                // what keeps recompute -> refetch from looping.
+                // filter's pattern; the hook's non-reactive claim set
+                // (`analyzer_kit::enrichment`) keeps recompute -> refetch from looping.
                 let drift_min = drift_floor();
                 let confidence_min = min_confidence();
                 let volume_min = min_volume();
@@ -1862,15 +1906,10 @@ fn AnalyzerTable(
     let rows_lacking_data = Memo::new(move |_| filtered_rows.with(|f| f.rows_lacking_data));
 
     // --- Visible-window lazy enrichment -------------------------------------
-    // Dedupe / loop-breaker: keys we've already scheduled a fetch for. Non-
-    // reactive (StoredValue) on purpose — claiming a key must not retrigger the
-    // fetch effect.
-    let requested = StoredValue::new(std::collections::HashSet::<(i32, bool)>::new());
     // Rendered row range published by the VirtualScroller (see view! below).
+    // Page-owned: the realtime market subscription below slices the same
+    // window, so the hook only reads it.
     let visible_range = RwSignal::new((0usize, 0usize));
-    // Generation counter for debounce-with-cancellation (RwSignal, mirroring
-    // components/search_box.rs). `gen` is a reserved keyword in edition 2024.
-    let fetch_id = RwSignal::new(0u64);
     let analyzer_market_subscription = StoredValue::new(None::<RealtimeSubscription>);
     let worlds_for_market = worlds.clone();
 
@@ -1941,81 +1980,17 @@ fn AnalyzerTable(
         analyzer_market_subscription.update_value(|sub| *sub = None);
     });
 
-    // Reset accumulated enrichment when the world changes. Defense-in-depth: if
-    // the component is updated in place rather than remounted, another world's
-    // data must not leak.
-    Effect::new(move |_| {
-        let _ = world.get(); // subscribe: re-run on world change
-        enrichment.set(FlipStore::default());
-        requested.update_value(|s| s.clear());
-        // Invalidate any in-flight fetch from the previous world: bumping the
-        // generation makes it bail at the guard below before it claims keys,
-        // so a stale batch can't repopulate `requested` (which would strand
-        // those rows on the skeleton) or merge another world's data.
-        fetch_id.update(|n| *n += 1);
-    });
-
-    // Select the visible-window keys (honoring the active sort/filter via
-    // sorted_data), debounce, fetch both batches, and merge — accumulating.
-    Effect::new(move |_| {
-        let range = visible_range.get(); // reactive: scroll
-        let keys = sorted_data.with(|data| {
-            requested.with_value(|seen| {
-                visible_keys(data, range, PREFETCH_MARGIN, seen, |(_, d)| {
-                    (d.inner.sale_summary.item_id, d.inner.sale_summary.hq)
-                })
-            })
-        });
-        if keys.is_empty() {
-            return;
-        }
-        fetch_id.update(|n| *n += 1);
-        let current_id = fetch_id.get_untracked();
-        let world_name = world.get_untracked();
-        leptos::task::spawn_local(async move {
-            TimeoutFuture::new(DEBOUNCE_MS).await; // debounce
-            // Past this await the component can be disposed (user navigated away
-            // / changed world), which disposes these signals. Every access here
-            // uses a `try_*` variant so touching a disposed signal returns
-            // quietly instead of panicking (RustWasmPanic / "unreachable").
-            if fetch_id.try_get_untracked() != Some(current_id) {
-                return; // superseded by a newer range, or component disposed
-            }
-            // Claim post-debounce so superseded generations never claim.
-            if requested
-                .try_update_value(|s| s.extend(keys.iter().copied()))
-                .is_none()
-            {
-                return; // component disposed
-            }
-            // window <= ~86 keys << 200 cap -> single batch, no chunking.
-            let (quality, sparklines) = futures::join!(
-                get_resale_quality(&world_name, keys.clone(), 30),
-                post_sparklines(
-                    &world_name,
-                    SparklinesRequest {
-                        items: keys.clone(),
-                        hours: Some(168),
-                    },
-                ),
-            );
-            // The join above awaits the network, so the world may have changed
-            // (or the component been disposed) while this batch was in flight.
-            // Don't merge one world's enrichment into another's map (the
-            // world-change reset already cleared `requested`, so the new world
-            // refetches these keys). A disposed `world` signal yields None here,
-            // which also bails.
-            if world.try_get_untracked().as_deref() != Some(world_name.as_str()) {
-                return;
-            }
-            // Merge whatever succeeded and mark every fetched key settled
-            // (success OR error) so cells switch loading -> value / "—". On a CH
-            // blip the rows degrade to "—" (same as today) — no retry loop; a
-            // world change resets everything.
-            let _ = enrichment
-                .try_update(|store| store.merge(&keys, zip_flip_enrichment(quality, sparklines)));
-        });
-    });
+    // Fill `enrichment` for the rows in and around the window, debounced,
+    // deduped, reset on a world change; see `analyzer_kit::enrichment`.
+    use_visible_enrichment(
+        enrichment,
+        sorted_data.into(),
+        visible_range.into(),
+        world,
+        flip_key,
+        fetch_flip_enrichment,
+        FLIP_ENRICHMENT,
+    );
 
     view! {
         <div class="flex flex-col gap-4">
@@ -2546,8 +2521,8 @@ fn AnalyzerTable(
                 <VirtualScroller
                         scroll_source=ScrollSource::Window { sticky_offset: STICKY_BAR_HEIGHT }
                         viewport_height=720.0
-                        row_height=40.0
-                        overscan=8
+                        row_height=FLIP_ROW_HEIGHT_PX
+                        overscan=FLIP_OVERSCAN_ROWS
                         // The header row's own height. The rendered element is
                         // up to ~15px taller, because `.tool-hscroll`
                         // reserves a horizontal scrollbar, but that height
@@ -2557,7 +2532,7 @@ fn AnalyzerTable(
                         // the scroll position, and `overscan=8` (320px) covers
                         // the error many times over, so the content height is
                         // deliberately the value passed.
-                        header_height=56.0
+                        header_height=FLIP_HEADER_HEIGHT_PX
                         variable_height=false
                         visible_range=visible_range
                         list_ref=list_scroll
@@ -4020,6 +3995,51 @@ mod tests {
             Some(ConfidenceBand::High)
         );
         assert_eq!(sparkline_for(&store, &(1, false)), Some(&[3u32][..]));
+    }
+
+    use crate::analyzer_kit::enrichment::chunk_keys;
+
+    #[test]
+    fn flip_key_is_item_and_hq() {
+        let mut row = calc(0, 0, 0);
+        Arc::make_mut(&mut row.inner).sale_summary.item_id = 42;
+        Arc::make_mut(&mut row.inner).sale_summary.hq = true;
+        assert_eq!(flip_key(&(0, row)), (42, true));
+    }
+
+    /// Row counts from `rows_for_viewport` with the values the `view!` passes
+    /// to `VirtualScroller` (the `FLIP_*` geometry consts), not copied
+    /// literals: the SSR shape (20 rows) and a 1080p window each fit in one
+    /// request under the smaller endpoint cap, and the viewport at which a
+    /// second chunk starts is derived, not quoted.
+    #[test]
+    fn flip_window_is_one_request_below_the_derived_threshold() {
+        // `viewport_px` in Window mode: SSR_FALLBACK_ROWS * row_height until
+        // hydrated, then (innerHeight - sticky bar) - header.
+        let rows_at = |viewport: f64| {
+            rows_for_viewport(viewport, FLIP_ROW_HEIGHT_PX, FLIP_OVERSCAN_ROWS) as usize
+        };
+        let ssr_rows = rows_at(SSR_FALLBACK_ROWS as f64 * FLIP_ROW_HEIGHT_PX);
+        let hd_rows = rows_at(1080.0 - STICKY_BAR_HEIGHT - FLIP_HEADER_HEIGHT_PX);
+        assert_eq!((ssr_rows, hd_rows), (28, 32));
+        assert_eq!(FLIP_ENRICHMENT.max_keys_per_request, 200);
+        let cap = FLIP_ENRICHMENT.max_keys_per_request;
+        let margin = FLIP_ENRICHMENT.prefetch_margin;
+        let chunks_for = |rows: usize| {
+            let keys: Vec<FlipKey> = (0..rows + 2 * margin).map(|i| (i as i32, false)).collect();
+            chunk_keys(&keys, cap).len()
+        };
+        assert_eq!((chunks_for(ssr_rows), chunks_for(hd_rows)), (1, 1));
+        // The most rendered rows that still fit one request: the cap minus the
+        // margin either side and the overscan — 132 rows, a 5280 px usable
+        // viewport (innerHeight 5412 with the sticky bar and header). One
+        // pixel more and the window chunks; there the old single sparklines
+        // POST was rejected with a 400 instead.
+        let fits_rows = cap - 2 * margin - FLIP_OVERSCAN_ROWS as usize;
+        assert_eq!(fits_rows, 132);
+        let fits_px = fits_rows as f64 * FLIP_ROW_HEIGHT_PX;
+        assert_eq!(chunks_for(rows_at(fits_px)), 1);
+        assert_eq!(chunks_for(rows_at(fits_px + 1.0)), 2);
     }
 
     #[test]
