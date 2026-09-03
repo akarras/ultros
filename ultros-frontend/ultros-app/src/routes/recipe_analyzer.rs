@@ -59,7 +59,7 @@ use leptos_router::{
     hooks::{query_signal, use_navigate, use_query_map},
 };
 use percent_encoding::utf8_percent_encode;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::LazyLock;
 use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use thousands::Separable;
@@ -2517,6 +2517,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         let needs = RecipeNeeds {
             outliers: false,
             buy_scope_is_sell_world: false,
+            cost_signals: BTreeSet::new(),
         };
         needed_bodies(&formula, &needs)
             .contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS))

@@ -56,6 +56,29 @@ pub fn stat_price(row: &ItemSaleStats, stat: SaleStat) -> i32 {
     }
 }
 
+/// The bare statistic for `(item, hq)`: no listing fallback, `None` when
+/// the row is missing or zero. Alternative revenue columns read this so a
+/// world with no sale history shows "—" rather than a listing.
+pub fn stat_only(index: &StatsIndex, item_id: i32, hq: bool, stat: SaleStat) -> Option<i32> {
+    index
+        .get(&(item_id, hq))
+        .map(|row| stat_price(row, stat))
+        .filter(|p| *p > 0)
+}
+
+/// The cheaper of the NQ and HQ bare statistics — today's revenue rule
+/// (the cheaper quality sells first).
+pub fn stat_only_cheapest(index: &StatsIndex, item_id: i32, stat: SaleStat) -> Option<i32> {
+    match (
+        stat_only(index, item_id, false, stat),
+        stat_only(index, item_id, true, stat),
+    ) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(a), Some(b)) => Some(a.min(b)),
+    }
+}
+
 /// A price view layered from three sources without copying any of them:
 /// the `over` listings win where present (the sell world's own price),
 /// `base` listings fill the rest (the buy scope), and when a sale statistic
@@ -258,5 +281,52 @@ mod tests {
         assert_eq!(takes(&base), Some(100));
         assert_eq!(takes(&arc), Some(100));
         assert_eq!(takes(&&base), Some(100));
+    }
+
+    #[test]
+    fn stat_only_has_no_fallback() {
+        let mut index = StatsIndex::new();
+        index.insert(
+            (7, false),
+            ItemSaleStats {
+                item_id: 7,
+                hq: false,
+                min_price: 90,
+                median_price: 100,
+                avg_price: 110,
+                num_sold: 3,
+                ..Default::default()
+            },
+        );
+        index.insert(
+            (7, true),
+            ItemSaleStats {
+                item_id: 7,
+                hq: true,
+                min_price: 0,
+                median_price: 80,
+                avg_price: 0,
+                num_sold: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stat_only(&index, 7, false, SaleStat::Median), Some(100));
+        assert_eq!(
+            stat_only(&index, 7, true, SaleStat::Min),
+            None,
+            "a zero stat is no stat"
+        );
+        assert_eq!(
+            stat_only(&index, 8, false, SaleStat::Median),
+            None,
+            "no row, no number"
+        );
+        assert_eq!(stat_only_cheapest(&index, 7, SaleStat::Median), Some(80));
+        assert_eq!(
+            stat_only_cheapest(&index, 7, SaleStat::Avg),
+            Some(110),
+            "the zero HQ avg is skipped"
+        );
+        assert_eq!(stat_only_cheapest(&index, 8, SaleStat::Min), None);
     }
 }
