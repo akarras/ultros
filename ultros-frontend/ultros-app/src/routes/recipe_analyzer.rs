@@ -891,6 +891,24 @@ const HEAD: &str = "w-32 shrink-0 p-4";
 const HEAD_MD: &str = "w-32 shrink-0 p-4 hidden md:block";
 const HEAD_28_MD: &str = "w-28 shrink-0 p-4 hidden md:block";
 
+/// The kit's `VirtualScroller` runs in **container** mode, where the row
+/// spacer carries no width of its own and so resolves to the port width,
+/// clipping every row there while the header — a sibling outside that box —
+/// keeps painting the full grid. Sizing the spacer is what reaches the
+/// scroller's scrollable overflow region; widening the rows alone cannot,
+/// because the row box carries `contain: layout`.
+///
+/// `max-content` rather than an arithmetic sum: every column here is a fixed
+/// `w-*` with `shrink-0`, the rows are fixed-height (no `content-visibility`
+/// to make an intrinsic measurement unstable), and it follows the
+/// `hidden md:block` columns across the breakpoint on its own, so no constant
+/// has to track `RECIPE_COLUMNS`.
+const RECIPE_ROW_MIN_WIDTH: &str = "max-content";
+
+/// `min-w-max` so the header's tint band spans the whole scrolled width
+/// instead of stopping at the viewport edge, matching the spacer above.
+const RECIPE_HEADER_CLASS: &str = "min-w-max flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]";
+
 /// The two-line, wider variants a formula column switches to while the
 /// ledger marks are on.
 const FORMULA_HEAD: &str = "w-40 shrink-0 px-3 py-2 leading-tight";
@@ -3097,7 +3115,8 @@ fn RecipeAnalyzerTable(
                         header_height: 64.0,
                         overscan: 8,
                     }
-                    header_class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+                    header_class=RECIPE_HEADER_CLASS
+                    row_min_width=RECIPE_ROW_MIN_WIDTH
                     row_class=stripe
                     marks=marks
                     extras=header_extras
@@ -3694,6 +3713,35 @@ mod test {
     use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
+
+    /// `analyzer_kit::grid`'s own test pins the *plumbing* — that a
+    /// `row_min_width` reaches the scroller's row spacer. Nothing pinned the
+    /// *wiring*: deleting the two props from this page's `<AnalyzerGrid>`
+    /// call re-blanks every cell past the viewport width and leaves the whole
+    /// suite green. `AnalyzerGrid` cannot be rendered here without the full
+    /// route context, so the call site is read back from source instead.
+    #[test]
+    fn the_grid_call_opts_into_a_sized_row_spacer() {
+        const SRC: &str = include_str!("recipe_analyzer.rs");
+        // Assembled at run time: `include_str!` pulls in this test's own
+        // source too, so a literal needle would satisfy itself.
+        let passes = |prop: &str, konst: &str| SRC.contains(&format!("{prop}={konst}"));
+
+        assert_eq!(RECIPE_ROW_MIN_WIDTH, "max-content");
+        assert!(
+            passes("row_min_width", "RECIPE_ROW_MIN_WIDTH"),
+            "the <AnalyzerGrid> call must pass row_min_width, or the spacer resolves to the port width and clips every row"
+        );
+
+        assert!(
+            RECIPE_HEADER_CLASS.contains("min-w-max"),
+            "the header band must span the scrolled width: {RECIPE_HEADER_CLASS}"
+        );
+        assert!(
+            passes("header_class", "RECIPE_HEADER_CLASS"),
+            "the <AnalyzerGrid> call must pass header_class"
+        );
+    }
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
     /// Toolbar wrote verbatim — a drifted id here silently breaks every
