@@ -391,6 +391,9 @@ fn lab_title(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
         crate::global_state::labs::LAB_ANALYZER_LEDGER => {
             t_string!(i18n, labs_analyzer_ledger_title).to_string()
         }
+        crate::global_state::labs::LAB_ANALYZER_SIGNAL_COLUMNS => {
+            t_string!(i18n, labs_analyzer_signal_columns_title).to_string()
+        }
         _ => token.to_string(),
     }
 }
@@ -399,6 +402,9 @@ fn lab_desc(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
     match token {
         crate::global_state::labs::LAB_ANALYZER_LEDGER => {
             t_string!(i18n, labs_analyzer_ledger_desc).to_string()
+        }
+        crate::global_state::labs::LAB_ANALYZER_SIGNAL_COLUMNS => {
+            t_string!(i18n, labs_analyzer_signal_columns_desc).to_string()
         }
         _ => String::new(),
     }

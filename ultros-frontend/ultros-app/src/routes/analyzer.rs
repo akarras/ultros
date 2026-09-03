@@ -1379,10 +1379,7 @@ fn AnalyzerTable(
     let column_options = Memo::new(move |_| {
         ALL_OPTIONAL_COLS
             .iter()
-            .map(|col| ColumnOption {
-                id: col,
-                label: col_label(col),
-            })
+            .map(|col| ColumnOption::new(col, col_label(col)))
             .collect::<Vec<_>>()
     });
 

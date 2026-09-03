@@ -9,14 +9,14 @@ use leptos_i18n::I18nContext;
 pub struct ToolCalculation {
     title: String,
     formula: Signal<String>,
-    details: String,
+    details: Signal<String>,
 }
 
 impl ToolCalculation {
     pub fn new(
         title: impl Into<String>,
         formula: impl Into<Signal<String>>,
-        details: impl Into<String>,
+        details: impl Into<Signal<String>>,
     ) -> Self {
         Self {
             title: title.into(),
@@ -128,7 +128,7 @@ pub fn ToolHeader(
                                     {calculation.formula}
                                 </code>
                                 <p class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">
-                                    {calculation.details}
+                                    {move || calculation.details.get()}
                                 </p>
                             </div>
                         })

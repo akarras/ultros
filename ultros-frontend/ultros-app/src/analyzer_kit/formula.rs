@@ -43,6 +43,25 @@ impl PriceSignal {
             PriceSignal::SaleAvg => Some(SaleStat::Avg),
         }
     }
+
+    /// Every signal in token order; also the index order of the per-signal
+    /// arrays a priced row carries (`cost_alt`, `rev_alt`).
+    pub const ALL: [PriceSignal; 4] = [
+        PriceSignal::ListingMin,
+        PriceSignal::SaleMin,
+        PriceSignal::SaleMedian,
+        PriceSignal::SaleAvg,
+    ];
+
+    /// Position in [`PriceSignal::ALL`].
+    pub fn index(self) -> usize {
+        match self {
+            PriceSignal::ListingMin => 0,
+            PriceSignal::SaleMin => 1,
+            PriceSignal::SaleMedian => 2,
+            PriceSignal::SaleAvg => 3,
+        }
+    }
 }
 
 impl FromStr for PriceSignal {
@@ -137,11 +156,13 @@ pub enum TaxPolicy {
     MarketBoard,
 }
 
-/// How the 5% is rounded. The recipe analyzer floors in integer math;
-/// the flip finder and vendor resale truncate an f32 product. The two
-/// agree for every sale price below 2,207,541 gil.
+/// How the 5% is rounded.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TaxMath {
+    /// `net = gross * 95 / 100` in integer math: the *net* is floored, so
+    /// the tax itself rounds up (5% of 3,911 shows as 196, not 195). The
+    /// flip finder and vendor pages truncate an f32 instead; the two agree
+    /// below 2,207,541 gil.
     IntegerFloor,
 }
 
@@ -347,6 +368,15 @@ mod tests {
         let cost: CostBasis = PriceSignal::SaleMin;
         let revenue: RevenueMetric = cost;
         assert_eq!(revenue, PriceSignal::SaleMin);
+    }
+
+    #[test]
+    fn price_signal_index_matches_all_order() {
+        for (i, s) in PriceSignal::ALL.iter().enumerate() {
+            assert_eq!(s.index(), i);
+        }
+        assert_eq!(PriceSignal::ALL[0], PriceSignal::ListingMin);
+        assert_eq!(PriceSignal::ALL[3], PriceSignal::SaleAvg);
     }
 
     fn recipe_default() -> ProfitFormula {

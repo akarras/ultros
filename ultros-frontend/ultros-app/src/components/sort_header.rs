@@ -217,6 +217,12 @@ pub fn SortableHeaderCell<M>(
     /// Brand tint plus a bottom hairline: this column feeds Profit.
     #[prop(optional, into)]
     emphasized: Option<Signal<bool>>,
+    /// Line-2 content after the sub-label (the "use" pill). Rendered only
+    /// alongside `sub_label`; DOM order is the `SortHeader` `<a>` first,
+    /// then the sub-label line `<div>` holding the text `<span>` and this
+    /// `<button>` — two focus stops, never nested.
+    #[prop(optional)]
+    trailing: Option<ViewFn>,
 ) -> impl IntoView
 where
     M: SortColumn,
@@ -262,8 +268,18 @@ where
                                 .into_any()
                         }
                     }}
-                    {sub_label.map(|s| view! {
-                        <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
+                    {sub_label.map(|s| match trailing {
+                        None => view! {
+                            <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">{move || s.get()}</div>
+                        }
+                        .into_any(),
+                        Some(trailing) => view! {
+                            <div class="text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] flex items-center gap-1 max-w-full">
+                                <span class="truncate">{move || s.get()}</span>
+                                {trailing.run()}
+                            </div>
+                        }
+                        .into_any(),
                     })}
                 }
                 .into_any(),
@@ -551,6 +567,50 @@ mod test {
                 "cell added its own hydration marker(s): {plain}"
             );
             assert_eq!(plain.matches("role=\"columnheader\"").count(), 1, "{plain}");
+        });
+    }
+
+    /// The pill slot lives inside the sub-label line, after the text, as a
+    /// separate focus stop; unset it adds no markup to a two-line header.
+    #[test]
+    fn trailing_renders_after_the_sub_label_and_adds_nothing_when_unset() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let with = view! {
+                <SortableHeaderCell
+                    mode=Col::Cost
+                    label="Sale median (7d)"
+                    class="w-40"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                    sub_label=Signal::derive(|| "7d median · Aether".to_string())
+                    trailing=ViewFn::from(|| view! { <button type="button">"use"</button> }.into_any())
+                />
+            }
+            .to_html();
+            let sub_at = with.find("7d median · Aether").unwrap();
+            let btn_at = with.find("<button").unwrap();
+            assert!(sub_at < btn_at, "{with}");
+            assert!(with.contains("flex items-center gap-1"), "{with}");
+            let without = view! {
+                <SortableHeaderCell
+                    mode=Col::Cost
+                    label="Sale median (7d)"
+                    class="w-40"
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                    sub_label=Signal::derive(|| "7d median · Aether".to_string())
+                />
+            }
+            .to_html();
+            assert!(!without.contains("<button"), "{without}");
+            assert!(!without.contains("flex items-center gap-1"), "{without}");
+            assert!(
+                without.contains("text-[color:var(--color-text-muted)] truncate max-w-full\">7d median · Aether</div>"),
+                "{without}"
+            );
         });
     }
 

@@ -11,10 +11,12 @@ use std::sync::Arc;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 
+use crate::components::icon::Icon;
 use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::term_badge::TermRole;
 use crate::components::virtual_scroller::VirtualScroller;
 use crate::i18n::*;
+use icondata as i;
 
 use super::cells::{CellValue, render_cell};
 use super::columns::{CellCtx, ColumnKind, Sortability, ToolColumnMeta};
@@ -47,6 +49,73 @@ pub type CustomCell<T> = Arc<dyn Fn(&T, ColumnKind, &'static str) -> AnyView + S
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkLabels {
     pub labels: HashMap<TermRole, String>,
+}
+
+/// The "use" pill on an alternative-signal header: pressed when that
+/// signal is the selected input (the button is then disabled).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderPill {
+    pub aria: String,
+    pub pressed: bool,
+}
+
+/// Line 2 of an alternative-signal header: `‹short signal› · ‹place›` (or
+/// "(= Cost / unit)") plus the pill.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderLine2 {
+    pub sub_label: String,
+    pub pill: HeaderPill,
+}
+
+/// What a page hangs off an unmarked sortable header: a hover title and,
+/// for the signal columns, line 2. Columns with no entry render exactly as
+/// they did before this existed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderExtra {
+    pub title: String,
+    pub line2: Option<HeaderLine2>,
+}
+
+/// Header extras by column kind. Looked up by key only, never iterated.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct HeaderExtras {
+    pub by_kind: HashMap<ColumnKind, HeaderExtra>,
+}
+
+const PILL_OFF: &str = "inline-flex items-center gap-0.5 shrink-0 rounded-full border border-[color:var(--color-outline)] px-1.5 text-[10px] leading-3 font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] hover:border-[color:var(--brand-ring)]";
+const PILL_ON: &str = "inline-flex items-center gap-0.5 shrink-0 rounded-full border border-[color:var(--brand-ring)] bg-[color:color-mix(in_srgb,var(--brand-ring)_20%,transparent)] px-1.5 text-[10px] leading-3 font-medium text-[color:var(--brand-fg)]";
+
+/// `<button type=button aria-pressed>`: pressing it writes one URL param
+/// on the page (`on_pill`), which moves the badge, tint and sub-label to
+/// the slot header; the pressed column stays on screen as a muted
+/// duplicate with its pill filled and disabled.
+fn pill_view(
+    kind: ColumnKind,
+    pill: HeaderPill,
+    on_pill: Option<Callback<ColumnKind>>,
+    i18n: I18nContext<Locale, I18nKeys>,
+) -> AnyView {
+    let pressed = pill.pressed;
+    view! {
+        <button
+            type="button"
+            class=if pressed { PILL_ON } else { PILL_OFF }
+            aria-pressed=if pressed { "true" } else { "false" }
+            aria-label=pill.aria
+            disabled=pressed
+            on:click=move |ev| {
+                ev.prevent_default();
+                ev.stop_propagation();
+                if let Some(cb) = on_pill {
+                    cb.run(kind);
+                }
+            }
+        >
+            <Icon icon=i::AiCalculatorOutlined width="0.9em" height="0.9em" />
+            <span>{t_string!(i18n, analyzer_use_pill).to_string()}</span>
+        </button>
+    }
+    .into_any()
 }
 
 /// Reads the marks in effect without cloning them: this runs once per
@@ -88,6 +157,8 @@ fn header_cell<T: 'static, M: SortColumn>(
     sort_dir: Signal<Option<SortDir>>,
     i18n: I18nContext<Locale, I18nKeys>,
     marks: Option<Signal<Option<MarkLabels>>>,
+    extras: Option<Signal<HeaderExtras>>,
+    on_pill: Option<Callback<ColumnKind>>,
 ) -> AnyView {
     let label_fn = col.spec.label;
     let role = marked_role(col, marks);
@@ -116,10 +187,33 @@ fn header_cell<T: 'static, M: SortColumn>(
             />
         }
         .into_any(),
-        (Sortability::By(mode), None) => view! {
-            <SortableHeaderCell mode=mode label=label_fn(i18n) class=col.header_class sort_mode sort_dir />
+        (Sortability::By(mode), None) => {
+            let kind = col.spec.kind;
+            let extra = extras.and_then(|e| e.with(|e| e.by_kind.get(&kind).cloned()));
+            match extra {
+                None => view! {
+                    <SortableHeaderCell mode=mode label=label_fn(i18n) class=col.header_class sort_mode sort_dir />
+                }
+                .into_any(),
+                Some(HeaderExtra { title, line2: None }) => view! {
+                    <SortableHeaderCell mode=mode label=label_fn(i18n) title=title class=col.header_class sort_mode sort_dir />
+                }
+                .into_any(),
+                Some(HeaderExtra { title, line2: Some(HeaderLine2 { sub_label, pill }) }) => view! {
+                    <SortableHeaderCell
+                        mode=mode
+                        label=label_fn(i18n)
+                        title=title
+                        class=format!("{} truncate", col.header_class)
+                        sort_mode
+                        sort_dir
+                        sub_label=Signal::derive(move || sub_label.clone())
+                        trailing=ViewFn::from(move || pill_view(kind, pill.clone(), on_pill, i18n))
+                    />
+                }
+                .into_any(),
+            }
         }
-        .into_any(),
         // Unsortable headers were `t!(..)` on the page (locale-reactive);
         // keep that by resolving the label inside a closure.
         (Sortability::No, _) => view! {
@@ -159,6 +253,20 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// Per-role header sub-labels. `None` leaves every column unmarked.
     #[prop(optional, into)]
     marks: Option<Signal<Option<MarkLabels>>>,
+    /// Per-kind header titles and line-2 (sub-label + "use" pill) for the
+    /// unmarked sortable columns. `None` leaves every header as it was.
+    #[prop(optional, into)]
+    extras: Option<Signal<HeaderExtras>>,
+    /// Runs when a header pill is pressed, with the column's kind.
+    #[prop(optional)]
+    on_pill: Option<Callback<ColumnKind>>,
+    /// Whether lab-gated columns (`lab.is_some()`) are part of this mount.
+    /// Off, they are dropped from the header at build time: a hidden
+    /// optional column still writes a `<!>` marker (an `Option` child), so
+    /// a `?cols=` contract alone cannot keep the flag-off header
+    /// byte-identical. The page remounts the grid on a lab flip.
+    #[prop(optional)]
+    lab_columns: bool,
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
 
@@ -166,18 +274,21 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
         <div class=header_class role="rowgroup">
             {columns
                 .iter()
+                .filter(|col| col.lab.is_none() || lab_columns)
                 .map(|col| {
                     if col.id.is_empty() {
                         // Reactive even though visibility is fixed: a
                         // marked column has to re-render when the marks
                         // (or their labels) change.
-                        (move || header_cell(col, sort_mode, sort_dir, i18n, marks)).into_any()
+                        (move || {
+                            header_cell(col, sort_mode, sort_dir, i18n, marks, extras, on_pill)
+                        })
+                            .into_any()
                     } else {
                         (move || {
-                            visible_cols
-                                .get()
-                                .contains(col.id)
-                                .then(|| header_cell(col, sort_mode, sort_dir, i18n, marks))
+                            visible_cols.get().contains(col.id).then(|| {
+                                header_cell(col, sort_mode, sort_dir, i18n, marks, extras, on_pill)
+                            })
                         })
                             .into_any()
                     }
@@ -235,7 +346,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer_kit::columns::{ColumnKind, ColumnSpec, Layer, sortability_for};
+    use crate::analyzer_kit::columns::{
+        ColumnKind, ColumnSpec, Layer, PickerGroup, sortability_for,
+    };
     use leptos_i18n::context::init_i18n_context;
     use std::fmt;
 
@@ -273,14 +386,17 @@ mod tests {
     static A: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Item,
         label: label_a,
+        group: PickerGroup::Other,
     };
     static B: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Profit,
         label: label_b,
+        group: PickerGroup::Other,
     };
     static C: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Tax,
         label: label_c,
+        group: PickerGroup::Other,
     };
     fn custom_cell(_: &Row, _: &CellCtx) -> CellValue {
         CellValue::Custom
@@ -304,6 +420,7 @@ mod tests {
         side: None,
         formula_header_class: "",
         formula_cell_class: "",
+        lab: None,
     };
 
     static COLS: [ToolColumnMeta<Row, Col>; 3] = [
@@ -353,7 +470,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -395,7 +512,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -437,7 +554,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
                     custom=Arc::new(|_: &Row, _: ColumnKind, _: &'static str| {
                         view! { <div role="cell"></div> }.into_any()
                     })
@@ -462,6 +579,187 @@ mod tests {
                 html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
                 "{html}"
             );
+        });
+    }
+
+    fn label_d(_: I18nContext<Locale, I18nKeys>) -> String {
+        "Sale median (7d)".into()
+    }
+    static D: ColumnSpec = ColumnSpec {
+        kind: ColumnKind::CostSignal(crate::analyzer_kit::formula::PriceSignal::SaleMedian),
+        label: label_d,
+        group: crate::analyzer_kit::columns::PickerGroup::Cost,
+    };
+    static SIGNAL_COL: ToolColumnMeta<Row, Col> = ToolColumnMeta {
+        spec: &D,
+        id: "cost-sale-median",
+        sort_id: "cost-sale-median",
+        sort: sortability_for(Layer::Computed, Some(Col::Profit)),
+        header_class: "w-40 px-3 py-2 leading-tight",
+        cell_class: "w-40",
+        lab: Some("analyzer-signal-columns"),
+        ..BASE
+    };
+
+    static COLS_PLUS: [ToolColumnMeta<Row, Col>; 4] = [
+        ToolColumnMeta {
+            spec: &A,
+            header_class: "w-64",
+            cell_class: "w-64",
+            cell: custom_cell,
+            ..BASE
+        },
+        ToolColumnMeta {
+            spec: &B,
+            sort_id: "profit",
+            sort: sortability_for(Layer::Computed, Some(Col::Profit)),
+            header_class: "w-32",
+            cell_class: "w-32",
+            side: Some(TermRole::Revenue),
+            formula_header_class: "w-40 px-3 py-2 leading-tight",
+            formula_cell_class: "w-40",
+            ..BASE
+        },
+        ToolColumnMeta {
+            spec: &C,
+            id: "extra",
+            header_class: "w-28",
+            cell_class: "w-28",
+            default_on: false,
+            ..BASE
+        },
+        ToolColumnMeta {
+            spec: &D,
+            id: "cost-sale-median",
+            sort_id: "cost-sale-median",
+            sort: sortability_for(Layer::Computed, Some(Col::Profit)),
+            header_class: "w-40 px-3 py-2 leading-tight",
+            cell_class: "w-40",
+            lab: Some("analyzer-signal-columns"),
+            ..BASE
+        },
+    ];
+
+    #[test]
+    fn header_extras_render_title_sub_label_and_pill() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let i18n = crate::i18n::use_i18n();
+            let kind = SIGNAL_COL.spec.kind;
+            let extras = |pressed: bool| {
+                let mut by_kind = HashMap::new();
+                by_kind.insert(
+                    kind,
+                    HeaderExtra {
+                        title: "The middle price".into(),
+                        line2: Some(HeaderLine2 {
+                            sub_label: "7d median · Aether".into(),
+                            pill: HeaderPill {
+                                aria: "Use Sale median (7d) as the cost in Profit".into(),
+                                pressed,
+                            },
+                        }),
+                    },
+                );
+                Signal::derive(move || HeaderExtras {
+                    by_kind: by_kind.clone(),
+                })
+            };
+            let clicked = RwSignal::new(None::<ColumnKind>);
+            let on_pill = Callback::new(move |k| clicked.set(Some(k)));
+            let none = Signal::derive(|| None::<Col>);
+            let none_dir = Signal::derive(|| None::<SortDir>);
+            let off = header_cell(
+                &SIGNAL_COL,
+                none,
+                none_dir,
+                i18n,
+                None,
+                Some(extras(false)),
+                Some(on_pill),
+            )
+            .to_html();
+            assert!(off.contains("title=\"The middle price\""), "{off}");
+            assert!(off.contains("7d median · Aether"), "{off}");
+            assert!(off.contains("aria-pressed=\"false\""), "{off}");
+            assert!(
+                off.contains("aria-label=\"Use Sale median (7d) as the cost in Profit\""),
+                "{off}"
+            );
+            assert!(off.contains(">use<"), "{off}");
+            assert!(!off.contains("disabled"), "{off}");
+            let on = header_cell(
+                &SIGNAL_COL,
+                none,
+                none_dir,
+                i18n,
+                None,
+                Some(extras(true)),
+                Some(on_pill),
+            )
+            .to_html();
+            assert!(
+                on.contains("aria-pressed=\"true\"") && on.contains("disabled"),
+                "{on}"
+            );
+            // No extras: the plain sortable header, exactly as before.
+            let plain = header_cell(&SIGNAL_COL, none, none_dir, i18n, None, None, None).to_html();
+            assert!(
+                !plain.contains("<button") && !plain.contains("title="),
+                "{plain}"
+            );
+            // The flag-off page passes `Some(empty map)`: identical by construction.
+            let empty = header_cell(
+                &SIGNAL_COL,
+                none,
+                none_dir,
+                i18n,
+                None,
+                Some(Signal::derive(HeaderExtras::default)),
+                Some(on_pill),
+            )
+            .to_html();
+            assert_eq!(
+                empty, plain,
+                "an empty extras map is the flag-off page path"
+            );
+        });
+    }
+
+    /// A hidden optional column still writes a `<!>` marker into the header
+    /// (an `Option` child), so the flag-off header would grow by one marker
+    /// per lab column; `lab_columns=false` drops them at build time.
+    #[test]
+    fn lab_columns_are_absent_from_the_header_unless_enabled() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let render = |cols: &'static [ToolColumnMeta<Row, Col>], lab: bool, visible: &'static [&'static str]| {
+                view! {
+                    <AnalyzerGrid
+                        columns=cols
+                        rows=Signal::derive(|| vec![(0usize, Row(1))])
+                        visible_cols=Signal::derive(move || visible.iter().copied().collect::<HashSet<_>>())
+                        sort_mode=Signal::derive(|| None::<Col>)
+                        sort_dir=Signal::derive(|| None::<SortDir>)
+                        ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
+                        custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
+                        layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
+                        header_class="h"
+                        row_class=|_| "r"
+                        lab_columns=lab
+                    />
+                }
+                .to_html()
+            };
+            let base = render(&COLS, false, &[]);
+            let with_lab_col_off = render(&COLS_PLUS, false, &[]);
+            assert_eq!(with_lab_col_off, base, "a hidden lab column must add nothing to the flag-off header");
+            let with_lab_col_on = render(&COLS_PLUS, true, &["cost-sale-median"]);
+            assert!(with_lab_col_on.contains("Sale median (7d)"), "{with_lab_col_on}");
         });
     }
 }

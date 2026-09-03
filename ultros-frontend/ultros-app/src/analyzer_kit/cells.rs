@@ -4,14 +4,17 @@
 
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
+use thousands::Separable;
 use ultros_api_types::trends::ConfidenceBand;
 
 use crate::analysis::roi_badge_class;
 use crate::components::confidence_badge::ConfidenceBadge;
-use crate::components::gil::{Gil, GilOrDash};
+use crate::components::gil::{Gil, GilIcon, GilOrDash};
+use crate::components::term_badge::TermRole;
 use crate::i18n::*;
 
 use super::columns::CellCtx;
+use super::hop::HopGain;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CellValue {
@@ -26,9 +29,61 @@ pub enum CellValue {
         amount: i32,
         pct: Option<f32>,
     },
+    /// An alternative-signal amount: muted, with an always-present 10px
+    /// sub-line holding the delta against the same-side formula input.
+    /// `capped` = the sub-craft cap left it unpriced (a different title).
+    MutedGil {
+        amount: Option<i32>,
+        pct: Option<f32>,
+        side: TermRole,
+        capped: bool,
+    },
+    /// A gil amount with an always-present note sub-line (the Price slot's
+    /// "listing" fallback tell).
+    GilWithNote {
+        amount: i32,
+        note: CellNote,
+    },
+    /// Hop gain / unit: signed gil, the word "needed", or the dash, in one
+    /// shape; `daily_sales` feeds the gil/day title.
+    Hop {
+        gain: HopGain,
+        daily_sales: f32,
+    },
     /// The page renders this cell itself.
     Custom,
 }
+
+/// The sub-line under a [`CellValue::GilWithNote`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CellNote {
+    None,
+    /// The price fell back to a listing (the selected signal had no row on
+    /// the sell world, or the sell world had no listing at all).
+    ListingFallback,
+}
+
+/// "13.5k", "632", "1.5M": the gil/day figure in a hop title.
+pub fn gil_per_day_label(gil: f32) -> String {
+    let abs = gil.abs();
+    if abs >= 1_000_000.0 {
+        format!("{:.1}M", gil / 1_000_000.0)
+    } else if abs >= 1_000.0 {
+        format!("{:.1}k", gil / 1_000.0)
+    } else {
+        format!("{gil:.0}")
+    }
+}
+
+fn signed_gil(g: i32) -> String {
+    if g > 0 {
+        format!("+{}", g.separate_with_commas())
+    } else {
+        g.separate_with_commas()
+    }
+}
+
+const SUB_LINE: &str = "text-[10px] leading-3 text-[color:var(--color-text-muted)]";
 
 /// Resting label for the last-sold cell — same day/hour/just-now buckets
 /// and i18n keys as the flip finder's `COL_LAST_SOLD` cell. A zero or
@@ -98,6 +153,83 @@ pub fn render_cell(
             }
             .into_any()
         }
+        CellValue::MutedGil {
+            amount,
+            pct,
+            side,
+            capped,
+        } => {
+            let amount = amount.filter(|a| *a > 0);
+            let sub = pct
+                .filter(|_| amount.is_some())
+                .map(|p| format!("{p:+.0}%"))
+                .unwrap_or_default();
+            let title = if capped {
+                t_string!(i18n, analyzer_alt_cost_capped_title).to_string()
+            } else if side == TermRole::Revenue {
+                t_string!(i18n, analyzer_alt_revenue_delta_title).to_string()
+            } else {
+                t_string!(i18n, analyzer_alt_cost_delta_title).to_string()
+            };
+            view! {
+                <div role="cell" class=class title=title>
+                    <div class="text-[color:var(--color-text-muted)]">
+                        <GilOrDash amount=amount />
+                    </div>
+                    <div class=SUB_LINE>{sub}</div>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::GilWithNote { amount, note } => {
+            let note = match note {
+                CellNote::None => String::new(),
+                CellNote::ListingFallback => {
+                    t_string!(i18n, analyzer_price_listing_fallback).to_string()
+                }
+            };
+            view! {
+                <div role="cell" class=class>
+                    <Gil amount=amount />
+                    <div class=SUB_LINE>{note}</div>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::Hop { gain, daily_sales } => {
+            let (text, has_amount, title) = match gain {
+                HopGain::Gain(g) => (
+                    signed_gil(g),
+                    true,
+                    Some(
+                        t_string!(
+                            i18n,
+                            analyzer_hop_gain_title,
+                            gil = gil_per_day_label(g as f32 * daily_sales),
+                            rate = format!("{daily_sales:.1}")
+                        )
+                        .to_string(),
+                    ),
+                ),
+                HopGain::Needed => (
+                    t_string!(i18n, analyzer_hop_needed).to_string(),
+                    false,
+                    None,
+                ),
+                HopGain::Unavailable => ("—".to_string(), false, None),
+            };
+            // One shape (the `GilOrDash` rule): the icon hides and the value
+            // mutes by class; the arms never swap elements.
+            view! {
+                <div role="cell" class=class title=title>
+                    <div class="flex flex-row items-center">
+                        <span class=if has_amount { "inline-flex" } else { "hidden" }><GilIcon /></span>
+                        <div class=if has_amount { "" } else { "text-[color:var(--color-text-muted)]" }>{text}</div>
+                    </div>
+                </div>
+            }
+            .into_any()
+        }
         CellValue::Custom => return None,
     })
 }
@@ -126,6 +258,8 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
+                signal_columns: false,
+                capped_cost: [false; 4],
             };
             let a = render_cell(
                 "w-32",
@@ -162,6 +296,111 @@ mod tests {
             assert_eq!(count(&never, "<div"), count(&recent, "<div"));
             assert!(render_cell("w-32", CellValue::Custom, i18n, &ctx).is_none());
         });
+    }
+
+    #[test]
+    fn new_cells_keep_one_shape_per_variant() {
+        use crate::analyzer_kit::hop::HopGain;
+        use crate::components::term_badge::TermRole;
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let i18n = crate::i18n::use_i18n();
+            let ctx = CellCtx {
+                now_unix: 1_700_000_000,
+                signal_columns: true,
+                capped_cost: [false; 4],
+            };
+            let render = |v: CellValue| render_cell("w-40", v, i18n, &ctx).unwrap().to_html();
+            let a = render(CellValue::MutedGil {
+                amount: Some(138),
+                pct: Some(38.0),
+                side: TermRole::Cost,
+                capped: false,
+            });
+            let b = render(CellValue::MutedGil {
+                amount: None,
+                pct: None,
+                side: TermRole::Cost,
+                capped: false,
+            });
+            let c = render(CellValue::MutedGil {
+                amount: None,
+                pct: None,
+                side: TermRole::Cost,
+                capped: true,
+            });
+            assert_eq!(count(&a, "<div"), count(&b, "<div"), "{a}\n{b}");
+            assert_eq!(count(&b, "<div"), count(&c, "<div"));
+            assert!(a.contains("+38%"), "{a}");
+            assert!(a.contains("title=\"vs the formula's cost input\""), "{a}");
+            assert!(b.contains("—"), "{b}");
+            assert!(c.contains("Not priced"), "{c}");
+            let r = render(CellValue::MutedGil {
+                amount: Some(1),
+                pct: Some(-4.0),
+                side: TermRole::Revenue,
+                capped: false,
+            });
+            assert!(
+                r.contains("vs the formula's revenue input") && r.contains("-4%"),
+                "{r}"
+            );
+
+            let plain = render(CellValue::GilWithNote {
+                amount: 120,
+                note: CellNote::None,
+            });
+            let tell = render(CellValue::GilWithNote {
+                amount: 120,
+                note: CellNote::ListingFallback,
+            });
+            assert_eq!(count(&plain, "<div"), count(&tell, "<div"));
+            assert!(tell.contains(">listing<"), "{tell}");
+            assert!(!plain.contains("listing"), "{plain}");
+
+            let gain = render(CellValue::Hop {
+                gain: HopGain::Gain(2_150),
+                daily_sales: 6.3,
+            });
+            let loss = render(CellValue::Hop {
+                gain: HopGain::Gain(-300),
+                daily_sales: 1.0,
+            });
+            let needed = render(CellValue::Hop {
+                gain: HopGain::Needed,
+                daily_sales: 6.3,
+            });
+            let none = render(CellValue::Hop {
+                gain: HopGain::Unavailable,
+                daily_sales: 6.3,
+            });
+            for h in [&loss, &needed, &none] {
+                assert_eq!(count(&gain, "<div"), count(h, "<div"), "{gain}\n{h}");
+                assert_eq!(count(&gain, "<span"), count(h, "<span"));
+            }
+            assert!(
+                gain.contains("+2,150")
+                    && gain.contains("title=\"≈ 13.5k gil/day at 6.3 sales/day\""),
+                "{gain}"
+            );
+            assert!(loss.contains("-300") && !loss.contains("+"), "{loss}");
+            assert!(
+                needed.contains(">needed<") && !needed.contains("title="),
+                "{needed}"
+            );
+            assert!(none.contains("—"), "{none}");
+        });
+    }
+
+    #[test]
+    fn gil_per_day_label_abbreviates() {
+        assert_eq!(gil_per_day_label(13_545.0), "13.5k");
+        assert_eq!(gil_per_day_label(632.0), "632");
+        assert_eq!(gil_per_day_label(-2_150.0), "-2.2k");
+        assert_eq!(gil_per_day_label(1_500_000.0), "1.5M");
+        assert_eq!(gil_per_day_label(0.0), "0");
     }
 
     #[test]

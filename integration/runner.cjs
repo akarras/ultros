@@ -84,6 +84,12 @@ const ROUTE_ASSERTS = {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],
   },
+  // Both labs on with the four Phase D columns requested. The new columns
+  // are md+ only, so the only cross-device assertion is the title; the
+  // sweep still checks console errors and horizontal overflow.
+  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger,analyzer-signal-columns&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds": {
+    titleIncludes: "Recipe Analyzer",
+  },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
   "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
@@ -131,6 +137,7 @@ function getRoutes() {
     "/currency-exchange",
     "/recipe-analyzer?world=Gilgamesh",
     "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger",
+    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger,analyzer-signal-columns&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds",
     "/history",
     "/settings",
     "/groups",

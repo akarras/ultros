@@ -17,18 +17,26 @@ pub const LABS_COOKIE: &str = "LABS";
 /// panel (kit Phase C).
 pub const LAB_ANALYZER_LEDGER: &str = "analyzer-ledger";
 
+/// The recipe analyzer's price signals as columns, their "use" pills,
+/// Hop gain / unit and Worlds to visit (kit Phase D).
+pub const LAB_ANALYZER_SIGNAL_COLUMNS: &str = "analyzer-signal-columns";
+
 pub struct LabInfo {
     pub token: &'static str,
 }
 
 /// Every live experiment. Adding one here is what makes it appear in
 /// Settings; deleting it is part of shipping the feature. Each entry's
-/// comment names the phase that deletes it (a struct field for that would
-/// have no non-test reader, which `-D warnings` rejects).
+/// comment names when it is deleted (a struct field for that would have
+/// no non-test reader, which `-D warnings` rejects).
 pub const LABS: &[LabInfo] = &[
-    // Deleted in kit Phase D, after Kosyne has used the strip.
+    // Deleted in the phase after the strip is validated (kit §11).
     LabInfo {
         token: LAB_ANALYZER_LEDGER,
+    },
+    // Deleted in the phase after the signal columns are validated (kit §11).
+    LabInfo {
+        token: LAB_ANALYZER_SIGNAL_COLUMNS,
     },
 ];
 
@@ -103,6 +111,18 @@ mod tests {
         let empty: Labs = "".parse().unwrap();
         assert!(!empty.has(LAB_ANALYZER_LEDGER));
         assert_eq!(empty.to_string(), "");
+        let both: Labs = "analyzer-signal-columns,analyzer-ledger".parse().unwrap();
+        assert!(both.has(LAB_ANALYZER_SIGNAL_COLUMNS));
+        assert_eq!(both.to_string(), "analyzer-ledger,analyzer-signal-columns");
+    }
+
+    #[test]
+    fn every_lab_token_is_listed_once() {
+        let mut tokens: Vec<&str> = LABS.iter().map(|l| l.token).collect();
+        tokens.sort_unstable();
+        tokens.dedup();
+        assert_eq!(tokens.len(), LABS.len());
+        assert!(tokens.contains(&LAB_ANALYZER_SIGNAL_COLUMNS));
     }
 
     #[test]
