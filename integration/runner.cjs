@@ -76,6 +76,14 @@ const ROUTE_ASSERTS = {
   "/list": { titleIncludes: "Ultros" },
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
+  "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
+  // With the lab on, the Profit header carries an "after 5% tax" sub-label
+  // at every width. The strip row itself is md+ only, and the mobile pass
+  // reads innerText, which drops display:none content.
+  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger": {
+    titleIncludes: "Recipe Analyzer",
+    bodyIncludesAny: ["after 5% tax"],
+  },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
   "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
@@ -121,6 +129,8 @@ function getRoutes() {
     "/list",
     "/retainers",
     "/currency-exchange",
+    "/recipe-analyzer?world=Gilgamesh",
+    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger",
     "/history",
     "/settings",
     "/groups",

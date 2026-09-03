@@ -39,6 +39,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-09-02",
+        title: "Recipe Analyzer: try the profit formula as a control (Labs)",
+        blurb: "Turn on \"Recipe Analyzer: profit formula strip\" under Settings › Labs and the formula behind every row becomes a control above the table: pick the revenue signal and the cost signal, and the columns that feed Profit are marked so you can see exactly what the number is made of. Hover a profit for the row's arithmetic. While it's on, absurd ROIs from one fake listing are capped at 100,000%.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-09-02",
         title: "Pages that failed to load are fixed",
         blurb: "Some pages would occasionally come back blank or half-rendered because a link on them could crash the page while it was being built. Links no longer depend on the piece that was failing, so those pages load every time.",
         link: None,

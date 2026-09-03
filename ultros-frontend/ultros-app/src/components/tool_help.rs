@@ -8,14 +8,14 @@ use leptos_i18n::I18nContext;
 #[derive(Clone)]
 pub struct ToolCalculation {
     title: String,
-    formula: String,
+    formula: Signal<String>,
     details: String,
 }
 
 impl ToolCalculation {
     pub fn new(
         title: impl Into<String>,
-        formula: impl Into<String>,
+        formula: impl Into<Signal<String>>,
         details: impl Into<String>,
     ) -> Self {
         Self {

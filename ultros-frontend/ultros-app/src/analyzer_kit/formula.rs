@@ -150,6 +150,9 @@ pub enum TaxMath {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RoiMath {
     UnclampedF64,
+    /// `analysis::return_on_investment`: f64 ratio, clamped at ±100,000
+    /// and truncated to i32.
+    ClampedF64,
 }
 
 /// Which rows the tool removes outright.
@@ -233,6 +236,27 @@ impl ProfitFormula {
     }
 }
 
+/// What the header marks and the readout need to know about the
+/// selected formula, with places already resolved to names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormulaMarks {
+    pub revenue: PriceSignal,
+    pub cost: PriceSignal,
+    pub sell_place: String,
+    pub buy_place: String,
+}
+
+impl ProfitFormula {
+    pub fn marks(&self, sell_place: String, buy_place: String) -> FormulaMarks {
+        FormulaMarks {
+            revenue: self.revenue_signal(),
+            cost: self.cost_signal(),
+            sell_place,
+            buy_place,
+        }
+    }
+}
+
 /// One row's arithmetic under the selected formula.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ProfitLine {
@@ -281,6 +305,7 @@ pub fn profit_line(gross: i32, cost_per_unit: i32, f: &ProfitFormula) -> (Profit
                 0
             }
         }
+        RoiMath::ClampedF64 => crate::analysis::return_on_investment(profit, cost_per_unit),
     };
     let dropped = match f.drop {
         DropRule::CostAtOrAboveNet => cost_per_unit >= net,
@@ -394,6 +419,16 @@ mod tests {
         let (line, dropped) = profit_line(100, 0, &f);
         assert!(!dropped);
         assert_eq!(line.roi, 0);
+    }
+
+    #[test]
+    fn roi_is_clamped_at_display_ceiling_when_asked() {
+        let mut f = recipe_default();
+        f.roi = RoiMath::ClampedF64;
+        let (line, _) = profit_line(999_999, 261, &f);
+        assert_eq!(line.roi, 100_000);
+        let (line, _) = profit_line(12_560, 11_300, &f);
+        assert_eq!(line.roi, 5);
     }
 
     #[test]
