@@ -1,7 +1,8 @@
 use crate::analysis::{
-    DerivedConfidence, SaleSummary, derived_confidence, flip_estimated_sale_price, flip_profit,
-    get_sales_cadence, is_troll_listing, median_in_place_i32, price_drift_pct, profit_per_day,
-    return_on_investment, roi_badge_class, sale_tax, sniper_clamp, velocity_per_day,
+    DELTA_DEAD_BAND_PCT, DerivedConfidence, SaleSummary, derived_confidence,
+    flip_estimated_sale_price, flip_profit, get_sales_cadence, is_troll_listing,
+    median_in_place_i32, price_drift_pct, profit_per_day, return_on_investment, roi_badge_class,
+    sale_tax, signed_delta_class, sniper_clamp, velocity_per_day,
 };
 use crate::analyzer_kit::enrichment::{
     Absorb, DEBOUNCE_MS, Enrichment, EnrichmentConfig, PREFETCH_MARGIN, use_visible_enrichment,
@@ -2806,14 +2807,13 @@ fn AnalyzerTable(
                                     })}
                                     {move || visible_cols().contains(COL_DRIFT).then(|| {
                                         // +/- 1% is inside the noise floor of a 6-sale window,
-                                        // so it renders neutral rather than green/red.
-                                        let (text, class, title) = match row_drift {
-                                            Some(d) if d > 1.0 => (format!("+{d:.0}%"), "text-emerald-300", None),
-                                            Some(d) if d < -1.0 => (format!("{d:.0}%"), "text-red-300", None),
-                                            Some(d) => (format!("{d:+.0}%"), "text-[color:var(--color-text-muted)]", None),
+                                        // so it renders neutral rather than green/red — the
+                                        // dead band `signed_delta_class` was folded out of.
+                                        let class = signed_delta_class(row_drift, DELTA_DEAD_BAND_PCT);
+                                        let (text, title) = match row_drift {
+                                            Some(d) => (format!("{d:+.0}%"), None),
                                             None => (
                                                 "—".to_string(),
-                                                "text-[color:var(--color-text-muted)]",
                                                 Some(t_string!(i18n, analyzer_drift_unavailable).to_string()),
                                             ),
                                         };
