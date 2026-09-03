@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-03",
+        title: "Active listings are tidier to browse",
+        blurb: "The listings table's Show more control now matches sale history and stays outside the table's scroll area. Datacenter exclusions use one clear, theme-aware toggle per datacenter, show how many listings remain, and offer a reset instead of leaving an empty table behind. They also stay scoped to the listings table, so filtering it no longer blanks the price summary or other item-page sections.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
         date: "2026-09-02",
         title: "Recipe Analyzer: try the profit formula as a control (Labs)",
         blurb: "Turn on \"Recipe Analyzer: profit formula strip\" under Settings › Labs and the formula behind every row becomes a control above the table: pick the revenue signal and the cost signal, and the columns that feed Profit are marked so you can see exactly what the number is made of. Hover a profit for the row's arithmetic. While it's on, absurd ROIs from one fake listing are capped at 100,000%.",

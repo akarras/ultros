@@ -21,6 +21,9 @@
 //     actually has,
 //  4. the crafting-recipes grid spans its panel (no half-empty panel), when
 //     the item has recipes.
+//  5. active listings use the same reachable, outside-the-scrollport footer,
+//  6. datacenter exclusions render once, stay local to the listings panel,
+//     and replace a fully filtered table with a resettable empty state.
 //
 // Document-level overflow (the ad rail bug) is the generic runner's job —
 // its DEVICE=wide pass covers that for every route, not just this one.
@@ -87,6 +90,25 @@ function measure() {
     };
   }
 
+  const listingsTableBox = [...listings.querySelectorAll('div')].find(
+    (d) => d.querySelector('table') && getComputedStyle(d).overflowX !== 'visible',
+  );
+  const listingsShowMore = listings.querySelector('[data-testid="listings-show-more"]');
+  let listingsShowMoreInfo = null;
+  if (listingsShowMore) {
+    listingsShowMore.scrollIntoView({ block: 'center' });
+    const r = listingsShowMore.getBoundingClientRect();
+    const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+    listingsShowMoreInfo = {
+      right: Math.round(r.right),
+      reachable: Boolean(hit) &&
+        (hit === listingsShowMore || listingsShowMore.contains(hit)),
+      insideScrollport: Boolean(
+        listingsTableBox && listingsTableBox.contains(listingsShowMore),
+      ),
+    };
+  }
+
   // (3): stacked vs split, judged against the width the grid actually has.
   const grid = listings.parentElement;
   const gridW = grid.getBoundingClientRect().width;
@@ -122,10 +144,94 @@ function measure() {
       : null,
     hasTable: Boolean(table),
     showMore: showMoreInfo,
+    listingsShowMore: listingsShowMoreInfo,
     gridW: Math.round(gridW),
     sideBySide,
     recipes,
   };
+}
+
+async function verifyDatacenterExclusions(page, failures) {
+  await page.setViewport({ width: 1280, height: 1100, deviceScaleFactor: 1 });
+  await page.goto(`${BASE_URL}${ROUTE}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+  await sleep(SETTLE_MS);
+
+  const fixture = await page.evaluate(() => {
+    const listings = document.getElementById('listings');
+    const summary = listings?.querySelector('[data-testid="datacenter-exclusions"] > summary');
+    const marketCount = [...document.querySelectorAll('#overview a[href$="#listings"]')]
+      .find((link) => /active listings/i.test(link.textContent || ''))?.textContent || '';
+    return {
+      hasSummary: Boolean(summary),
+      initialMarketCount: marketCount.replace(/\s+/g, ' ').trim(),
+      initialRows: listings?.querySelectorAll('tbody tr').length || 0,
+    };
+  });
+
+  if (!fixture.hasSummary || fixture.initialRows === 0) {
+    console.log('[skip] datacenter exclusion probe: fixture has no filterable listings');
+    return;
+  }
+
+  await page.click('#listings [data-testid="datacenter-exclusions"] > summary');
+  const datacenterButtons = await page.$$('#listings [data-datacenter]');
+  if (datacenterButtons.length === 0) {
+    console.log('[skip] datacenter exclusion probe: fixture exposes no datacenter');
+    return;
+  }
+
+  const selectedName = await datacenterButtons[0].evaluate((button) =>
+    button.getAttribute('data-datacenter'),
+  );
+  await datacenterButtons[0].click();
+  await page.waitForFunction(
+    () => document.querySelector('#listings [data-datacenter][aria-pressed="true"]'),
+    { timeout: TIMEOUT_MS },
+  );
+
+  const filtered = await page.evaluate((name) => {
+    const listings = document.getElementById('listings');
+    const matchingButtons = [...listings.querySelectorAll('[data-datacenter]')]
+      .filter((button) => button.getAttribute('data-datacenter') === name);
+    const count = listings.querySelector('[data-testid="listings-count"]');
+    const marketCount = [...document.querySelectorAll('#overview a[href$="#listings"]')]
+      .find((link) => /active listings/i.test(link.textContent || ''))?.textContent || '';
+    return {
+      matchingButtons: matchingButtons.length,
+      filteredCount: count?.textContent?.trim() || '',
+      marketCount: marketCount.replace(/\s+/g, ' ').trim(),
+      hasEmptyState: Boolean(listings.querySelector('[data-testid="listings-filter-empty"]')),
+      hasTable: Boolean(listings.querySelector('table')),
+      hasReset: Boolean(listings.querySelector('[data-testid="reset-datacenter-exclusions"]')),
+    };
+  }, selectedName);
+
+  if (filtered.matchingButtons !== 1) {
+    failures.push(`datacenter exclusion renders ${selectedName} ${filtered.matchingButtons} times`);
+  }
+  if (!filtered.filteredCount.includes(' of ')) {
+    failures.push(`filtered listing count lost its total: "${filtered.filteredCount}"`);
+  }
+  if (filtered.marketCount !== fixture.initialMarketCount) {
+    failures.push('datacenter exclusion changed the page-level Active Listings summary');
+  }
+
+  // A world-scoped fixture has one datacenter, so excluding it should exercise
+  // the dedicated empty state. Multi-datacenter fixtures may retain rows.
+  if (filtered.filteredCount.startsWith('0 ')) {
+    if (!filtered.hasEmptyState || filtered.hasTable || !filtered.hasReset) {
+      failures.push('fully filtered listings did not show the resettable empty state');
+    }
+  }
+
+  const resetSelector = filtered.hasReset
+    ? '#listings [data-testid="reset-datacenter-exclusions"]'
+    : '#listings [data-testid="clear-datacenter-exclusions"]';
+  await page.click(resetSelector);
+  await page.waitForFunction(
+    () => !document.querySelector('#listings [data-datacenter][aria-pressed="true"]'),
+    { timeout: TIMEOUT_MS },
+  );
 }
 
 async function main() {
@@ -176,7 +282,20 @@ async function main() {
         }
       }
 
-
+      if (m.listingsShowMore) {
+        if (m.listingsShowMore.insideScrollport) {
+          failures.push(
+            `${width}px: listings "Show more" is inside the table scrollport`,
+          );
+        }
+        if (m.listingsShowMore.right > width) {
+          failures.push(
+            `${width}px: listings "Show more" ends at x=${m.listingsShowMore.right}, past the viewport edge`,
+          );
+        } else if (!m.listingsShowMore.reachable) {
+          failures.push(`${width}px: listings "Show more" is not hit-testable`);
+        }
+      }
       const expectSplit = m.gridW >= SPLIT_MIN_CONTAINER_PX;
       if (m.sideBySide !== expectSplit) {
         failures.push(
@@ -199,6 +318,8 @@ async function main() {
           `show-more ${m.showMore ? 'present' : 'absent'}, recipes ${m.recipes ? 'measured' : 'absent'}`,
       );
     }
+
+    await verifyDatacenterExclusions(page, failures);
   } finally {
     await browser.close();
   }
