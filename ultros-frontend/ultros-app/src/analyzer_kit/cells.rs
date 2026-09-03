@@ -7,13 +7,15 @@ use leptos_i18n::I18nContext;
 use thousands::Separable;
 use ultros_api_types::trends::ConfidenceBand;
 
-use crate::analysis::roi_badge_class;
+use crate::analysis::{DELTA_DEAD_BAND_PCT, roi_badge_class, signed_delta_class};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::gil::{Gil, GilIcon, GilOrDash};
+use crate::components::sparkline::Sparkline;
 use crate::components::term_badge::TermRole;
 use crate::i18n::*;
 
 use super::columns::CellCtx;
+use super::enrichment::SparkValue;
 use super::hop::HopGain;
 
 /// The three states a resource-backed cell can be in: the fetch has not
@@ -74,6 +76,18 @@ pub enum CellValue {
         amount: i32,
         note: CellNote,
     },
+    /// A lazily fetched hourly price series, coloured by its own
+    /// first-to-last percent.
+    Sparkline(Enrich<SparkValue>),
+    /// A lazily fetched signed percent (Drift). `Ready(None)` means the
+    /// series had no first trade, so no percentage exists — it reads like
+    /// `Missing`, with the same "not enough sales" tell.
+    LazyPct(Enrich<Option<f32>>),
+    /// A count from a body that lands after the table (Volume 30d).
+    LateCount(Enrich<u64>),
+    /// A gil amount and its percent against Price, from a body that lands
+    /// after the table (VWAP 30d).
+    LateGilWithPct(Enrich<(i32, Option<f32>)>),
     /// Hop gain / unit: signed gil, the word "needed", or the dash, in one
     /// shape; `daily_sales` feeds the gil/day title.
     Hop {
@@ -85,12 +99,19 @@ pub enum CellValue {
 }
 
 /// The sub-line under a [`CellValue::GilWithNote`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CellNote {
     None,
     /// The price fell back to a listing (the selected signal had no row on
     /// the sell world, or the sell world had no listing at all).
     ListingFallback,
+    /// This price against the sell world's 7-day sale median, signed and
+    /// coloured; `listing` keeps the fallback tell in front of it, so the
+    /// line reads `listing · vs median +4%`.
+    VsMedian {
+        listing: bool,
+        pct: f32,
+    },
 }
 
 /// "13.5k", "632", "1.5M": the gil/day figure in a hop title.
@@ -114,6 +135,21 @@ fn signed_gil(g: i32) -> String {
 }
 
 const SUB_LINE: &str = "text-[10px] leading-3 text-[color:var(--color-text-muted)]";
+/// The geometry half of [`SUB_LINE`], so a coloured sub-line can compose it
+/// with `signed_delta_class`. Inside the dead band that composition is
+/// `SUB_LINE` character for character, which is what keeps the Price note
+/// identical for the states that predate the median tell.
+const SUB_LINE_GEOM: &str = "text-[10px] leading-3";
+
+/// The bar a lazy or late cell shows while its fetch is in flight. Inline
+/// rather than `SingleLineSkeleton`: one shape needs the element present in
+/// every state, and that component's `sr-only` "Loading…" would then be
+/// announced on settled rows.
+const SKELETON_BAR: &str = "skeleton-block skeleton-shimmer w-full h-3 rounded-md";
+
+fn bar_class(loading: bool) -> &'static str {
+    if loading { SKELETON_BAR } else { "hidden" }
+}
 
 /// Resting label for the last-sold cell — same day/hour/just-now buckets
 /// and i18n keys as the flip finder's `COL_LAST_SOLD` cell. A zero or
@@ -212,16 +248,114 @@ pub fn render_cell(
             .into_any()
         }
         CellValue::GilWithNote { amount, note } => {
-            let note = match note {
-                CellNote::None => String::new(),
-                CellNote::ListingFallback => {
-                    t_string!(i18n, analyzer_price_listing_fallback).to_string()
+            let (text, note_class) = match note {
+                CellNote::None => (String::new(), SUB_LINE.to_string()),
+                CellNote::ListingFallback => (
+                    t_string!(i18n, analyzer_price_listing_fallback).to_string(),
+                    SUB_LINE.to_string(),
+                ),
+                CellNote::VsMedian { listing, pct } => {
+                    let tell =
+                        t_string!(i18n, analyzer_price_vs_median, pct = format!("{pct:+.0}%"))
+                            .to_string();
+                    let text = if listing {
+                        format!(
+                            "{} · {}",
+                            t_string!(i18n, analyzer_price_listing_fallback),
+                            tell
+                        )
+                    } else {
+                        tell
+                    };
+                    (
+                        text,
+                        format!(
+                            "{SUB_LINE_GEOM} {}",
+                            signed_delta_class(Some(pct), DELTA_DEAD_BAND_PCT)
+                        ),
+                    )
                 }
             };
             view! {
                 <div role="cell" class=class>
                     <Gil amount=amount />
-                    <div class=SUB_LINE>{note}</div>
+                    <div class=note_class>{text}</div>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::Sparkline(state) => {
+            let loading = state.is_loading();
+            let (points, pct) = match state {
+                Enrich::Ready(v) => (v.points, v.delta_pct.unwrap_or(0.0)),
+                _ => (Vec::new(), 0.0),
+            };
+            view! {
+                <div role="cell" class=class>
+                    <div class=bar_class(loading) aria-hidden="true"></div>
+                    <span class=if loading { "hidden" } else { "" }>
+                        <Sparkline points=points pct_change=pct />
+                    </span>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::LazyPct(state) => {
+            let loading = state.is_loading();
+            let pct = match state {
+                Enrich::Ready(p) => p,
+                _ => None,
+            };
+            let (text, title) = match (loading, pct) {
+                (true, _) => (String::new(), None),
+                (false, Some(p)) => (format!("{p:+.0}%"), None),
+                (false, None) => (
+                    "—".to_string(),
+                    Some(t_string!(i18n, analyzer_drift_unavailable).to_string()),
+                ),
+            };
+            let colour = signed_delta_class(pct, DELTA_DEAD_BAND_PCT);
+            view! {
+                <div role="cell" class=class title=title>
+                    <div class=bar_class(loading) aria-hidden="true"></div>
+                    <span class=if loading { "hidden" } else { colour }>{text}</span>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::LateCount(state) => {
+            let loading = state.is_loading();
+            let text = match state {
+                Enrich::Ready(n) => n.to_string(),
+                Enrich::Missing => "—".to_string(),
+                Enrich::Loading => String::new(),
+            };
+            view! {
+                <div role="cell" class=class>
+                    <div class=bar_class(loading) aria-hidden="true"></div>
+                    <span class=if loading { "hidden" } else { "" }>{text}</span>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::LateGilWithPct(state) => {
+            let loading = state.is_loading();
+            let (amount, sub) = match state {
+                Enrich::Ready((amount, pct)) => (
+                    (amount > 0).then_some(amount),
+                    pct.filter(|_| amount > 0)
+                        .map(|p| format!("{p:+.0}%"))
+                        .unwrap_or_default(),
+                ),
+                _ => (None, String::new()),
+            };
+            view! {
+                <div role="cell" class=class>
+                    <div class=bar_class(loading) aria-hidden="true"></div>
+                    <div class=if loading { "hidden" } else { "" }>
+                        <GilOrDash amount=amount />
+                        <div class="text-xs text-[color:var(--color-text-muted)]">{sub}</div>
+                    </div>
                 </div>
             }
             .into_any()
@@ -461,5 +595,180 @@ mod tests {
         assert!(Enrich::<u8>::Loading.is_loading());
         assert!(!Enrich::<u8>::Missing.is_loading());
         assert!(!Enrich::Ready(1u8).is_loading());
+    }
+
+    /// Every lazy or late cell renders the same elements in every state:
+    /// the skeleton bar and the value slot are both always present and swap
+    /// by class. The one exception, and why it is safe: the Trend cell's
+    /// `Ready` adds the `<svg>` the `Sparkline` component draws *inside*
+    /// its fixed span. `Loading` and `Missing` are shaped alike, and
+    /// `Loading` is what the server and the first client paint both render
+    /// (the stores are empty on both sides), so hydration never sees
+    /// `Ready`.
+    #[test]
+    fn lazy_cells_keep_one_shape_per_variant() {
+        use crate::analyzer_kit::enrichment::SparkValue;
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let i18n = crate::i18n::use_i18n();
+            let ctx = CellCtx {
+                now_unix: 1_700_000_000,
+                preview: true,
+                capped_cost: [false; 4],
+                sparklines: None,
+                stats_30: None,
+            };
+            let render = |v: CellValue| render_cell("w-28", v, i18n, &ctx).unwrap().to_html();
+
+            let spark = |e| render(CellValue::Sparkline(e));
+            let loading = spark(Enrich::Loading);
+            let missing = spark(Enrich::Missing);
+            let ready = spark(Enrich::Ready(SparkValue {
+                points: vec![100, 110, 120],
+                delta_pct: Some(20.0),
+            }));
+            assert_eq!(count(&loading, "<div"), count(&missing, "<div"));
+            assert_eq!(count(&loading, "<span"), count(&missing, "<span"));
+            assert_eq!(count(&loading, "role=\"cell\""), 1);
+            assert_eq!(count(&ready, "role=\"cell\""), 1);
+            assert!(loading.contains("skeleton-shimmer"), "{loading}");
+            assert!(!missing.contains("skeleton-shimmer"), "{missing}");
+            assert!(ready.contains("<svg"), "{ready}");
+            assert!(!loading.contains("<svg") && !missing.contains("<svg"));
+
+            let pct = |e| render(CellValue::LazyPct(e));
+            let p_loading = pct(Enrich::Loading);
+            let p_missing = pct(Enrich::Missing);
+            let p_up = pct(Enrich::Ready(Some(4.0)));
+            let p_down = pct(Enrich::Ready(Some(-4.0)));
+            let p_flat = pct(Enrich::Ready(Some(0.4)));
+            let p_none = pct(Enrich::Ready(None));
+            for h in [&p_missing, &p_up, &p_down, &p_flat, &p_none] {
+                assert_eq!(
+                    count(&p_loading, "<div"),
+                    count(h, "<div"),
+                    "{p_loading}\n{h}"
+                );
+                assert_eq!(count(&p_loading, "<span"), count(h, "<span"));
+            }
+            assert!(
+                p_up.contains("+4%") && p_up.contains("text-emerald-300"),
+                "{p_up}"
+            );
+            assert!(
+                p_down.contains("-4%") && p_down.contains("text-red-300"),
+                "{p_down}"
+            );
+            assert!(
+                p_flat.contains("+0%") && !p_flat.contains("emerald"),
+                "{p_flat}"
+            );
+            // Settled with no percentage reads like no data, with the tell.
+            assert!(
+                p_none.contains("—") && p_none.contains("Not enough sales"),
+                "{p_none}"
+            );
+            assert!(p_missing.contains("—"), "{p_missing}");
+
+            let cnt = |e| render(CellValue::LateCount(e));
+            let c_loading = cnt(Enrich::Loading);
+            let c_missing = cnt(Enrich::Missing);
+            let c_ready = cnt(Enrich::Ready(1_234u64));
+            for h in [&c_missing, &c_ready] {
+                assert_eq!(count(&c_loading, "<div"), count(h, "<div"));
+                assert_eq!(count(&c_loading, "<span"), count(h, "<span"));
+            }
+            assert!(c_ready.contains("1234"), "{c_ready}");
+            assert!(c_missing.contains("—"), "{c_missing}");
+
+            let gil = |e| render(CellValue::LateGilWithPct(e));
+            let g_loading = gil(Enrich::Loading);
+            let g_missing = gil(Enrich::Missing);
+            let g_ready = gil(Enrich::Ready((820, Some(-6.0))));
+            let g_zero = gil(Enrich::Ready((0, None)));
+            for h in [&g_missing, &g_ready, &g_zero] {
+                assert_eq!(
+                    count(&g_loading, "<div"),
+                    count(h, "<div"),
+                    "{g_loading}\n{h}"
+                );
+                assert_eq!(count(&g_loading, "<span"), count(h, "<span"));
+            }
+            assert!(g_ready.contains("-6%"), "{g_ready}");
+            assert!(g_missing.contains("—") && g_zero.contains("—"));
+        });
+    }
+
+    /// The Price note line keeps Phase D's exact class and text until the
+    /// median tell is in it, and the tell's colour composes back to that
+    /// same class inside the dead band.
+    #[test]
+    fn the_price_note_adds_the_median_tell_without_moving_phase_d() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let i18n = crate::i18n::use_i18n();
+            let ctx = CellCtx {
+                now_unix: 0,
+                preview: true,
+                capped_cost: [false; 4],
+                sparklines: None,
+                stats_30: None,
+            };
+            let render = |note| {
+                render_cell(
+                    "w-32",
+                    CellValue::GilWithNote { amount: 120, note },
+                    i18n,
+                    &ctx,
+                )
+                .unwrap()
+                .to_html()
+            };
+            let plain = render(CellNote::None);
+            let listing = render(CellNote::ListingFallback);
+            let up = render(CellNote::VsMedian {
+                listing: false,
+                pct: 4.0,
+            });
+            let both = render(CellNote::VsMedian {
+                listing: true,
+                pct: -4.0,
+            });
+            let flat = render(CellNote::VsMedian {
+                listing: false,
+                pct: 0.4,
+            });
+            for h in [&listing, &up, &both, &flat] {
+                assert_eq!(count(&plain, "<div"), count(h, "<div"), "{plain}\n{h}");
+            }
+            // Phase D's two notes are byte-for-byte what they were.
+            let sub = format!("class=\"{SUB_LINE}\"");
+            assert!(plain.contains(&sub), "{plain}");
+            assert!(
+                listing.contains(&sub) && listing.contains(">listing<"),
+                "{listing}"
+            );
+            assert!(
+                up.contains("vs median +4%") && up.contains("text-emerald-300"),
+                "{up}"
+            );
+            assert!(
+                both.contains("listing · vs median -4%") && both.contains("text-red-300"),
+                "{both}"
+            );
+            // Inside the dead band the composed class IS the plain one.
+            assert!(flat.contains(&sub), "{flat}");
+            assert_eq!(
+                format!(
+                    "{SUB_LINE_GEOM} {}",
+                    crate::analysis::signed_delta_class(None, crate::analysis::DELTA_DEAD_BAND_PCT)
+                ),
+                SUB_LINE
+            );
+        });
     }
 }
