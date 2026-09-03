@@ -3385,13 +3385,16 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // (the lab), so the default page load is unchanged. Basis toggles
     // between sale stats recompute client-side; only a scope change
     // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
-    // fetched separately below.)
+    // fetched separately below.) This key answers the BUY-SCOPE body only,
+    // so it pins `stats_30: false`: the 30-day sell-world body the opt-in
+    // Volume/VWAP columns want is a different role with its own key.
     let buy_sale_stats_scope = Memo::new(move |_| {
         let formula = ProfitFormula::recipe_from_query(cost_basis(), None, buy_scope());
         let needs = RecipeNeeds {
             outliers: false,
             buy_scope_is_sell_world: buy_scope_is_sell_world.get(),
             cost_signals: needs_page.get().cost,
+            stats_30: false,
         };
         buy_stats_scope_key(&formula, &needs, buy_scope_name.get())
     });
