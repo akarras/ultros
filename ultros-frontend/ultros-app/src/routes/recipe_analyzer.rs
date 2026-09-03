@@ -1,4 +1,4 @@
-use crate::analyzer_kit::cells::CellValue;
+use crate::analyzer_kit::cells::{CellNote, CellValue};
 use crate::analyzer_kit::columns::{
     CellCtx, ColumnKind, ColumnSpec, Layer, PickerGroup, Sortability, ToolColumnMeta,
     default_dir_for, picker_options, sort_from_token, sort_token, sortability_for,
@@ -25,7 +25,7 @@ use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap}
 use crate::components::related_items::is_shard_item;
 use crate::components::term_badge::TermRole;
 use crate::global_state::craft_options::{self, CraftOptions};
-use crate::global_state::labs::{LAB_ANALYZER_LEDGER, use_lab};
+use crate::global_state::labs::{LAB_ANALYZER_LEDGER, LAB_ANALYZER_SIGNAL_COLUMNS, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -46,7 +46,7 @@ use crate::{
         query_button::QueryButton,
         realtime_status::RealtimeStatus,
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
-        sort_header::{SortColumn, SortDir},
+        sort_header::{SortColumn, SortDir, cmp_none_last},
         tool_help::*,
         tooltip::Tooltip,
         world_picker::WorldOnlyPicker,
@@ -523,12 +523,35 @@ const COL_VWAP: &str = "vwap";
 const COL_TAX: &str = "tax";
 const COL_LISTING_WORLD: &str = "listing-world";
 const COL_LISTING_DC: &str = "listing-dc";
+// Phase D, behind `analyzer-signal-columns`: appended after the seven
+// above so every serialized old URL stays byte-identical.
+const COL_REV_LISTING_MIN: &str = "rev-listing-min";
+const COL_REV_SALE_MIN: &str = "rev-sale-min";
+const COL_REV_SALE_MEDIAN: &str = "rev-sale-median";
+const COL_REV_SALE_AVG: &str = "rev-sale-avg";
+const COL_COST_LISTING_MIN: &str = "cost-listing-min";
+const COL_COST_SALE_MIN: &str = "cost-sale-min";
+const COL_COST_SALE_MEDIAN: &str = "cost-sale-median";
+const COL_COST_SALE_AVG: &str = "cost-sale-avg";
+const COL_HOP_GAIN: &str = "hop-gain";
+const COL_HOP_WORLDS: &str = "hop-worlds";
 /// `?cols=` order, derived from the table so the URL contract has one
 /// source: the picker, the grid and the serializer cannot disagree.
 static OPTIONAL_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     RECIPE_COLUMNS
         .iter()
         .filter(|c| !c.id.is_empty())
+        .map(|c| c.id)
+        .collect()
+});
+/// The `?cols=` contract while the signal-columns lab is off: every token
+/// not gated by a lab. `parse_visible_cols` over this slice drops the
+/// Phase D tokens, so a shared `?cols=hop-gain` renders as before the
+/// phase for a player without the lab.
+static BASE_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    RECIPE_COLUMNS
+        .iter()
+        .filter(|c| !c.id.is_empty() && c.lab.is_none())
         .map(|c| c.id)
         .collect()
 });
@@ -604,6 +627,24 @@ fn label_dc(i18n: I18nContext<Locale, I18nKeys>) -> String {
 }
 fn label_actions(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, actions).to_string()
+}
+fn label_listing_min(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, price_basis_listing_min).to_string()
+}
+fn label_sale_min(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, price_basis_sale_min).to_string()
+}
+fn label_sale_median(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, price_basis_sale_median).to_string()
+}
+fn label_sale_avg(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, price_basis_sale_avg).to_string()
+}
+fn label_hop_gain(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_hop_gain).to_string()
+}
+fn label_hop_worlds(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_hop_worlds).to_string()
 }
 
 static SPEC_ITEM: ColumnSpec = ColumnSpec {
@@ -682,6 +723,57 @@ static SPEC_ACTIONS: ColumnSpec = ColumnSpec {
     group: PickerGroup::Other,
 };
 
+static SPEC_REV_LISTING_MIN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::RevSignal(PriceSignal::ListingMin),
+    label: label_listing_min,
+    group: PickerGroup::Revenue,
+};
+static SPEC_REV_SALE_MIN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::RevSignal(PriceSignal::SaleMin),
+    label: label_sale_min,
+    group: PickerGroup::Revenue,
+};
+static SPEC_REV_SALE_MEDIAN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::RevSignal(PriceSignal::SaleMedian),
+    label: label_sale_median,
+    group: PickerGroup::Revenue,
+};
+static SPEC_REV_SALE_AVG: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::RevSignal(PriceSignal::SaleAvg),
+    label: label_sale_avg,
+    group: PickerGroup::Revenue,
+};
+static SPEC_COST_LISTING_MIN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::CostSignal(PriceSignal::ListingMin),
+    label: label_listing_min,
+    group: PickerGroup::Cost,
+};
+static SPEC_COST_SALE_MIN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::CostSignal(PriceSignal::SaleMin),
+    label: label_sale_min,
+    group: PickerGroup::Cost,
+};
+static SPEC_COST_SALE_MEDIAN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::CostSignal(PriceSignal::SaleMedian),
+    label: label_sale_median,
+    group: PickerGroup::Cost,
+};
+static SPEC_COST_SALE_AVG: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::CostSignal(PriceSignal::SaleAvg),
+    label: label_sale_avg,
+    group: PickerGroup::Cost,
+};
+static SPEC_HOP_GAIN: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::HopGain,
+    label: label_hop_gain,
+    group: PickerGroup::Travel,
+};
+static SPEC_HOP_WORLDS: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::HopWorlds,
+    label: label_hop_worlds,
+    group: PickerGroup::Travel,
+};
+
 // Cell extractors. `Custom` = the page renders it (needs context the row
 // does not carry: item names, the world link, the on-hand list button).
 fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
@@ -690,8 +782,21 @@ fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
 fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::RoiBadge(r.return_on_investment)
 }
-fn cell_price(r: &RecipeRow, _: &CellCtx) -> CellValue {
-    CellValue::Gil(r.market_price)
+/// The Price slot: under the lab it carries the always-present note
+/// sub-line so a price that fell back to a listing says so.
+fn cell_price(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
+    if ctx.signal_columns {
+        CellValue::GilWithNote {
+            amount: r.market_price,
+            note: if r.revenue_fell_back {
+                CellNote::ListingFallback
+            } else {
+                CellNote::None
+            },
+        }
+    } else {
+        CellValue::Gil(r.market_price)
+    }
 }
 fn cell_avg(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::Gil(r.avg_price)
@@ -715,6 +820,64 @@ fn cell_tax(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::Gil(r.tax)
 }
 
+/// Percent of an alternative against the same-side formula input; `None`
+/// when either is unpriced, or when they are equal (the selected signal's
+/// own duplicate column shows no "+0%").
+fn delta_pct(alt: Option<i32>, input: i32) -> Option<f32> {
+    let alt = alt.filter(|a| *a > 0)?;
+    (input > 0 && alt != input).then(|| (alt - input) as f32 / input as f32 * 100.0)
+}
+
+fn cost_alt_cell(r: &RecipeRow, ctx: &CellCtx, s: PriceSignal) -> CellValue {
+    let alt = r.cost_alt[s.index()];
+    CellValue::MutedGil {
+        amount: alt,
+        pct: delta_pct(alt, r.cost),
+        side: TermRole::Cost,
+        capped: ctx.capped_cost[s.index()],
+    }
+}
+fn rev_alt_cell(r: &RecipeRow, s: PriceSignal) -> CellValue {
+    let alt = r.rev_alt[s.index()];
+    CellValue::MutedGil {
+        amount: alt,
+        pct: delta_pct(alt, r.market_price),
+        side: TermRole::Revenue,
+        capped: false,
+    }
+}
+// One `fn` per column: the table needs fn pointers, not closures.
+fn cell_rev_listing_min(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    rev_alt_cell(r, PriceSignal::ListingMin)
+}
+fn cell_rev_sale_min(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    rev_alt_cell(r, PriceSignal::SaleMin)
+}
+fn cell_rev_sale_median(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    rev_alt_cell(r, PriceSignal::SaleMedian)
+}
+fn cell_rev_sale_avg(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    rev_alt_cell(r, PriceSignal::SaleAvg)
+}
+fn cell_cost_listing_min(r: &RecipeRow, c: &CellCtx) -> CellValue {
+    cost_alt_cell(r, c, PriceSignal::ListingMin)
+}
+fn cell_cost_sale_min(r: &RecipeRow, c: &CellCtx) -> CellValue {
+    cost_alt_cell(r, c, PriceSignal::SaleMin)
+}
+fn cell_cost_sale_median(r: &RecipeRow, c: &CellCtx) -> CellValue {
+    cost_alt_cell(r, c, PriceSignal::SaleMedian)
+}
+fn cell_cost_sale_avg(r: &RecipeRow, c: &CellCtx) -> CellValue {
+    cost_alt_cell(r, c, PriceSignal::SaleAvg)
+}
+fn cell_hop_gain(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Hop {
+        gain: r.hop.unwrap_or(HopGain::Unavailable),
+        daily_sales: r.daily_sales,
+    }
+}
+
 const CELL_R: &str = "px-4 py-2 w-32 shrink-0 text-right";
 const CELL_R_MD: &str = "px-4 py-2 w-32 shrink-0 text-right hidden md:block";
 const CELL_28_MD: &str = "px-4 py-2 w-28 shrink-0 text-right hidden md:block";
@@ -726,6 +889,13 @@ const HEAD_28_MD: &str = "w-28 shrink-0 p-4 hidden md:block";
 /// ledger marks are on.
 const FORMULA_HEAD: &str = "w-40 shrink-0 px-3 py-2 leading-tight";
 const FORMULA_CELL: &str = "px-3 py-2 w-40 shrink-0 text-right";
+
+/// The alternative-signal columns: two-line headers (sub-label + pill)
+/// at the formula width, desktop only. `md:flex`, not `md:block`:
+/// `SortableHeaderCell` appends `flex flex-col justify-center` for a
+/// two-line header, and a later `md:block` would override it at md+.
+const HEAD_40_MD: &str = "w-40 shrink-0 px-3 py-2 leading-tight hidden md:flex";
+const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
 
 /// Every field at its table-wide default, so each column below spells
 /// out only what it actually differs in.
@@ -748,7 +918,7 @@ const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
 /// The recipe table, column by column, classes copied verbatim from the
 /// markup this replaced. `id` = the `?cols=` token (always-on columns
 /// have none); `sort_id` = the `?sort=` token.
-static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 15] = [
+static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
     ToolColumnMeta {
         spec: &SPEC_ITEM,
         header_class: "w-64 md:w-80 shrink-0 p-4",
@@ -889,6 +1059,149 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 15] = [
         ..RECIPE_BASE
     },
     ToolColumnMeta {
+        spec: &SPEC_REV_LISTING_MIN,
+        id: COL_REV_LISTING_MIN,
+        sort_id: COL_REV_LISTING_MIN,
+        sort: sortability_for(
+            Layer::RowLocal,
+            Some(SortMode::RevSignal(PriceSignal::ListingMin)),
+        ),
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_rev_listing_min,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_REV_SALE_MIN,
+        id: COL_REV_SALE_MIN,
+        sort_id: COL_REV_SALE_MIN,
+        sort: sortability_for(Layer::Bulk, Some(SortMode::RevSignal(PriceSignal::SaleMin))),
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_rev_sale_min,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_REV_SALE_MEDIAN,
+        id: COL_REV_SALE_MEDIAN,
+        sort_id: COL_REV_SALE_MEDIAN,
+        sort: sortability_for(
+            Layer::Bulk,
+            Some(SortMode::RevSignal(PriceSignal::SaleMedian)),
+        ),
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_rev_sale_median,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_REV_SALE_AVG,
+        id: COL_REV_SALE_AVG,
+        sort_id: COL_REV_SALE_AVG,
+        sort: sortability_for(Layer::Bulk, Some(SortMode::RevSignal(PriceSignal::SaleAvg))),
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_rev_sale_avg,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_COST_LISTING_MIN,
+        id: COL_COST_LISTING_MIN,
+        sort_id: COL_COST_LISTING_MIN,
+        sort: sortability_for(
+            Layer::Computed,
+            Some(SortMode::CostSignal(PriceSignal::ListingMin)),
+        ),
+        default_dir: SortDir::Asc,
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_cost_listing_min,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_COST_SALE_MIN,
+        id: COL_COST_SALE_MIN,
+        sort_id: COL_COST_SALE_MIN,
+        sort: sortability_for(
+            Layer::Computed,
+            Some(SortMode::CostSignal(PriceSignal::SaleMin)),
+        ),
+        default_dir: SortDir::Asc,
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_cost_sale_min,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_COST_SALE_MEDIAN,
+        id: COL_COST_SALE_MEDIAN,
+        sort_id: COL_COST_SALE_MEDIAN,
+        sort: sortability_for(
+            Layer::Computed,
+            Some(SortMode::CostSignal(PriceSignal::SaleMedian)),
+        ),
+        default_dir: SortDir::Asc,
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_cost_sale_median,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_COST_SALE_AVG,
+        id: COL_COST_SALE_AVG,
+        sort_id: COL_COST_SALE_AVG,
+        sort: sortability_for(
+            Layer::Computed,
+            Some(SortMode::CostSignal(PriceSignal::SaleAvg)),
+        ),
+        default_dir: SortDir::Asc,
+        header_class: HEAD_40_MD,
+        cell_class: CELL_40_MD,
+        default_on: false,
+        cell: cell_cost_sale_avg,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_HOP_GAIN,
+        id: COL_HOP_GAIN,
+        sort_id: COL_HOP_GAIN,
+        sort: sortability_for(Layer::Computed, Some(SortMode::HopGain)),
+        header_class: HEAD_28_MD,
+        cell_class: CELL_28_MD,
+        default_on: false,
+        cell: cell_hop_gain,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_HOP_WORLDS,
+        id: COL_HOP_WORLDS,
+        sort_id: COL_HOP_WORLDS,
+        sort: sortability_for(Layer::Computed, Some(SortMode::HopWorlds)),
+        default_dir: SortDir::Asc,
+        header_class: HEAD_28_MD,
+        // Custom: the tooltip needs the page's world names.
+        cell_class: CELL_28_MD,
+        default_on: false,
+        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
         spec: &SPEC_ACTIONS,
         header_class: "w-20 shrink-0 p-4",
         ..RECIPE_BASE
@@ -980,6 +1293,26 @@ enum SortMode {
     Vwap,
     Tax,
     Confidence,
+    /// An alternative revenue column (`rev-‹token›`).
+    RevSignal(PriceSignal),
+    /// An alternative cost column (`cost-‹token›`).
+    CostSignal(PriceSignal),
+    HopGain,
+    HopWorlds,
+}
+
+impl SortMode {
+    /// Sorts that exist only under the signal-columns lab. With the lab
+    /// off the page treats them as unset, as it did before they existed.
+    fn lab_only(self) -> bool {
+        matches!(
+            self,
+            SortMode::RevSignal(_)
+                | SortMode::CostSignal(_)
+                | SortMode::HopGain
+                | SortMode::HopWorlds
+        )
+    }
 }
 
 impl FromStr for SortMode {
@@ -1012,23 +1345,59 @@ impl SortColumn for SortMode {
     }
 }
 
-fn compare_recipes(mode: SortMode, a: &RecipeProfitData, b: &RecipeProfitData) -> Ordering {
+fn hop_sort_key(hop: Option<HopGain>) -> Option<i32> {
+    match hop {
+        Some(HopGain::Gain(g)) => Some(g),
+        _ => None,
+    }
+}
+
+/// The ordering for `mode` with `dir` already applied. The plain modes
+/// flip whole; the alternative-signal and hop modes flip only between two
+/// present values (`cmp_none_last`), so "—" / "needed" rows stay last
+/// whichever way the header points.
+fn compare_recipes(
+    mode: SortMode,
+    dir: SortDir,
+    a: &RecipeProfitData,
+    b: &RecipeProfitData,
+) -> Ordering {
+    let oriented = |o: Ordering| match dir {
+        SortDir::Asc => o,
+        SortDir::Desc => o.reverse(),
+    };
     match mode {
-        SortMode::Roi => a.return_on_investment.cmp(&b.return_on_investment),
-        SortMode::Profit => a.profit.cmp(&b.profit),
-        SortMode::Velocity => a
-            .daily_sales
-            .partial_cmp(&b.daily_sales)
-            .unwrap_or(Ordering::Equal),
-        SortMode::CostPerUnit => a.cost.cmp(&b.cost),
-        SortMode::Price => a.market_price.cmp(&b.market_price),
-        SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
+        SortMode::Roi => oriented(a.return_on_investment.cmp(&b.return_on_investment)),
+        SortMode::Profit => oriented(a.profit.cmp(&b.profit)),
+        SortMode::Velocity => oriented(
+            a.daily_sales
+                .partial_cmp(&b.daily_sales)
+                .unwrap_or(Ordering::Equal),
+        ),
+        SortMode::CostPerUnit => oriented(a.cost.cmp(&b.cost)),
+        SortMode::Price => oriented(a.market_price.cmp(&b.market_price)),
+        SortMode::AvgPrice => oriented(a.avg_price.cmp(&b.avg_price)),
         // Desc (the default) = most recent first: larger unix is newer.
-        SortMode::LastSold => a.last_sold_unix.cmp(&b.last_sold_unix),
-        SortMode::Volume => a.units_sold.cmp(&b.units_sold),
-        SortMode::Vwap => a.vwap.cmp(&b.vwap),
-        SortMode::Tax => a.tax.cmp(&b.tax),
-        SortMode::Confidence => confidence_rank(a.confidence).cmp(&confidence_rank(b.confidence)),
+        SortMode::LastSold => oriented(a.last_sold_unix.cmp(&b.last_sold_unix)),
+        SortMode::Volume => oriented(a.units_sold.cmp(&b.units_sold)),
+        SortMode::Vwap => oriented(a.vwap.cmp(&b.vwap)),
+        SortMode::Tax => oriented(a.tax.cmp(&b.tax)),
+        SortMode::Confidence => {
+            oriented(confidence_rank(a.confidence).cmp(&confidence_rank(b.confidence)))
+        }
+        SortMode::RevSignal(s) => {
+            cmp_none_last(a.rev_alt[s.index()], b.rev_alt[s.index()], dir, i32::cmp)
+        }
+        SortMode::CostSignal(s) => {
+            cmp_none_last(a.cost_alt[s.index()], b.cost_alt[s.index()], dir, i32::cmp)
+        }
+        SortMode::HopGain => cmp_none_last(hop_sort_key(a.hop), hop_sort_key(b.hop), dir, i32::cmp),
+        SortMode::HopWorlds => cmp_none_last(
+            a.worlds.as_ref().map(|w| w.worlds.len()),
+            b.worlds.as_ref().map(|w| w.worlds.len()),
+            dir,
+            usize::cmp,
+        ),
     }
 }
 
@@ -1369,14 +1738,10 @@ fn filter_and_sort(
     // The table is virtualized, so retaining the full result set adds
     // browser-side rows without increasing DOM size or server work.
     kept.sort_by(|a, b| {
-        let ord = match dir {
-            SortDir::Asc => compare_recipes(mode, a, b),
-            SortDir::Desc => compare_recipes(mode, a, b).reverse(),
-        };
         // Deterministic tiebreak: the input comes from a std HashMap, so
         // without it ties could order differently on the server and the
         // client and mismatch the SSR-rendered rows.
-        ord.then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
+        compare_recipes(mode, dir, a, b).then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
     });
     kept.into_iter().enumerate().collect()
 }
@@ -2966,7 +3331,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::analyzer_kit::columns::{PickerContext, grouped_picker_options};
     use crate::analyzer_kit::needed::{SignalWants, needed_signals};
+    use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
 
@@ -3086,26 +3453,47 @@ mod test {
         );
     }
 
+    const ALL_SORT_MODES: [SortMode; 21] = [
+        SortMode::Roi,
+        SortMode::Profit,
+        SortMode::Velocity,
+        SortMode::CostPerUnit,
+        SortMode::Price,
+        SortMode::AvgPrice,
+        SortMode::LastSold,
+        SortMode::Volume,
+        SortMode::Vwap,
+        SortMode::Tax,
+        SortMode::Confidence,
+        SortMode::RevSignal(PriceSignal::ListingMin),
+        SortMode::RevSignal(PriceSignal::SaleMin),
+        SortMode::RevSignal(PriceSignal::SaleMedian),
+        SortMode::RevSignal(PriceSignal::SaleAvg),
+        SortMode::CostSignal(PriceSignal::ListingMin),
+        SortMode::CostSignal(PriceSignal::SaleMin),
+        SortMode::CostSignal(PriceSignal::SaleMedian),
+        SortMode::CostSignal(PriceSignal::SaleAvg),
+        SortMode::HopGain,
+        SortMode::HopWorlds,
+    ];
+
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.
     #[test]
     fn sort_mode_round_trips_through_the_url() {
-        for mode in [
-            SortMode::Roi,
-            SortMode::Profit,
-            SortMode::Velocity,
-            SortMode::CostPerUnit,
-            SortMode::Price,
-            SortMode::AvgPrice,
-            SortMode::LastSold,
-            SortMode::Volume,
-            SortMode::Vwap,
-            SortMode::Tax,
-            SortMode::Confidence,
-        ] {
+        for mode in ALL_SORT_MODES {
             assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
         }
         assert!("bogus".parse::<SortMode>().is_err());
+        // malformed signal tokens are rejected
+        assert!("rev-".parse::<SortMode>().is_err());
+        assert!("cost-mars".parse::<SortMode>().is_err());
+        assert!("rev-listing-min".parse::<SortMode>().is_ok());
+        assert_eq!(
+            SortMode::CostSignal(PriceSignal::SaleAvg).to_string(),
+            "cost-sale-avg"
+        );
+        assert_eq!(SortMode::HopWorlds.to_string(), "hop-worlds");
     }
 
     /// `?cols=` tokens and the default set are a bookmark contract; both
@@ -3115,6 +3503,29 @@ mod test {
     fn recipe_optional_column_order_is_a_stable_url_contract() {
         assert_eq!(
             OPTIONAL_COLUMN_ORDER.as_slice(),
+            &[
+                "confidence",
+                "last-sold",
+                "volume",
+                "vwap",
+                "tax",
+                "listing-world",
+                "listing-dc",
+                "rev-listing-min",
+                "rev-sale-min",
+                "rev-sale-median",
+                "rev-sale-avg",
+                "cost-listing-min",
+                "cost-sale-min",
+                "cost-sale-median",
+                "cost-sale-avg",
+                "hop-gain",
+                "hop-worlds",
+            ]
+        );
+        // The contract the page uses while the lab is off: the seven of Phase B.
+        assert_eq!(
+            BASE_COLUMN_ORDER.as_slice(),
             &[
                 "confidence",
                 "last-sold",
@@ -3133,19 +3544,7 @@ mod test {
     /// and none makes the mode unreachable from a URL.
     #[test]
     fn every_recipe_sort_mode_is_catalogued_exactly_once() {
-        for mode in [
-            SortMode::Roi,
-            SortMode::Profit,
-            SortMode::Velocity,
-            SortMode::CostPerUnit,
-            SortMode::Price,
-            SortMode::AvgPrice,
-            SortMode::LastSold,
-            SortMode::Volume,
-            SortMode::Vwap,
-            SortMode::Tax,
-            SortMode::Confidence,
-        ] {
+        for mode in ALL_SORT_MODES {
             let hits = RECIPE_COLUMNS
                 .iter()
                 .filter(|c| matches!(c.sort, Sortability::By(m) if m == mode))
@@ -3155,6 +3554,17 @@ mod test {
         }
         assert_eq!(SortMode::CostPerUnit.default_dir(), SortDir::Asc);
         assert_eq!(SortMode::Profit.default_dir(), SortDir::Desc);
+        // new default directions
+        assert_eq!(SortMode::HopWorlds.default_dir(), SortDir::Asc);
+        assert_eq!(SortMode::HopGain.default_dir(), SortDir::Desc);
+        assert_eq!(
+            SortMode::CostSignal(PriceSignal::SaleMin).default_dir(),
+            SortDir::Asc
+        );
+        assert_eq!(
+            SortMode::RevSignal(PriceSignal::SaleMin).default_dir(),
+            SortDir::Desc
+        );
     }
 
     /// Better bands sort above worse ones, and rows without deep-scan data
@@ -3864,6 +4274,147 @@ mod test {
         };
         let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn signal_columns_have_unique_ids_and_sort_tokens() {
+        let mut ids: Vec<&str> = RECIPE_COLUMNS
+            .iter()
+            .map(|c| c.id)
+            .filter(|i| !i.is_empty())
+            .collect();
+        let mut sorts: Vec<&str> = RECIPE_COLUMNS
+            .iter()
+            .map(|c| c.sort_id)
+            .filter(|i| !i.is_empty())
+            .collect();
+        let (n_ids, n_sorts) = (ids.len(), sorts.len());
+        ids.sort_unstable();
+        ids.dedup();
+        sorts.sort_unstable();
+        sorts.dedup();
+        assert_eq!((ids.len(), sorts.len()), (n_ids, n_sorts));
+        assert_eq!(n_ids, 17);
+        assert_eq!(
+            n_sorts, 21,
+            "the eleven sorts at HEAD plus the ten signal and hop columns; listing world/dc do not sort"
+        );
+        for c in RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()) {
+            assert!(!c.default_on, "{} must start hidden", c.id);
+            assert_eq!(c.lab, Some(LAB_ANALYZER_SIGNAL_COLUMNS));
+            assert!(
+                c.header_class.contains("hidden md:"),
+                "{}: desktop-only (kit decision 7)",
+                c.id
+            );
+        }
+        assert_eq!(
+            RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()).count(),
+            10
+        );
+    }
+
+    fn hop_row(key: i32, hop: Option<HopGain>, alt: Option<i32>) -> Arc<RecipeProfitData> {
+        let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
+        r.hop = hop;
+        r.cost_alt[PriceSignal::SaleMedian.index()] = alt;
+        Arc::new(r)
+    }
+
+    /// `Needed` / `Unavailable` (and an unrun alt signal) sort last in both
+    /// directions; `HopWorlds` defaults ascending.
+    #[test]
+    fn hop_needed_sorts_last_both_directions() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(4)
+            .map(|r| r.key_id.0)
+            .collect();
+        let rows = vec![
+            hop_row(keys[0], Some(HopGain::Gain(5)), Some(300)),
+            hop_row(keys[1], Some(HopGain::Needed), None),
+            hop_row(keys[2], Some(HopGain::Gain(-3)), Some(100)),
+            hop_row(keys[3], Some(HopGain::Unavailable), Some(200)),
+        ];
+        let names = HashMap::new();
+        let order = |mode: SortMode, dir: SortDir| -> Vec<i32> {
+            filter_and_sort(&rows, &Thresholds::default(), &names, mode, dir)
+                .into_iter()
+                .map(|(_, r)| r.recipe.key_id.0)
+                .collect()
+        };
+        assert_eq!(
+            order(SortMode::HopGain, SortDir::Desc),
+            vec![keys[0], keys[2], keys[1], keys[3]]
+        );
+        assert_eq!(
+            order(SortMode::HopGain, SortDir::Asc),
+            vec![keys[2], keys[0], keys[1], keys[3]]
+        );
+        let median = SortMode::CostSignal(PriceSignal::SaleMedian);
+        assert_eq!(
+            order(median, SortDir::Asc),
+            vec![keys[2], keys[3], keys[0], keys[1]]
+        );
+        assert_eq!(
+            order(median, SortDir::Desc),
+            vec![keys[0], keys[3], keys[2], keys[1]]
+        );
+        // The pre-existing modes still flip whole.
+        assert_eq!(order(SortMode::Profit, SortDir::Desc).len(), 4);
+    }
+
+    #[test]
+    fn delta_pct_math() {
+        assert_eq!(delta_pct(Some(138), 100), Some(38.0));
+        assert_eq!(delta_pct(Some(50), 100), Some(-50.0));
+        assert_eq!(delta_pct(None, 100), None);
+        assert_eq!(
+            delta_pct(Some(0), 100),
+            None,
+            "an unpriced alt has no delta"
+        );
+        assert_eq!(delta_pct(Some(100), 0), None);
+        assert_eq!(
+            delta_pct(Some(100), 100),
+            None,
+            "the duplicate column shows no +0%"
+        );
+    }
+
+    #[test]
+    fn lab_only_sort_modes_are_exactly_the_ten() {
+        assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 10);
+        assert!(!SortMode::CostPerUnit.lab_only() && !SortMode::Price.lab_only());
+    }
+
+    /// Every picker entry is a `?cols=` token (both derive from the table).
+    #[test]
+    fn picker_columns_are_a_subset_of_optional_column_order() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let ctx = PickerContext {
+                sell_place: String::new(),
+                buy_place: String::new(),
+                revenue: PriceSignal::ListingMin,
+                cost: PriceSignal::ListingMin,
+                capped: BTreeSet::new(),
+            };
+            let ids: Vec<&str> = grouped_picker_options(&RECIPE_COLUMNS, i18n, &ctx)
+                .iter()
+                .map(|o| o.id)
+                .collect();
+            assert_eq!(ids.len(), 17);
+            assert!(ids.iter().all(|id| OPTIONAL_COLUMN_ORDER.contains(id)));
+            let flat: Vec<&str> = picker_options(&RECIPE_COLUMNS, i18n)
+                .iter()
+                .map(|o| o.id)
+                .collect();
+            assert_eq!(flat, BASE_COLUMN_ORDER.as_slice());
+        });
     }
 
     #[test]
