@@ -1039,9 +1039,10 @@ const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
 /// unsortable), so the class carries `flex flex-col` for the label and its
 /// "7d · ‹sell world›" line. `md:flex`, never `md:block`, for the same
 /// reason `HEAD_40_MD` is.
-const HEAD_LAZY_MD: &str = "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex flex-col";
-const HEAD_LAZY_MD_END: &str =
-    "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex flex-col items-end";
+const HEAD_LAZY_MD: &str =
+    "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex flex-col justify-center gap-0.5";
+const HEAD_LAZY_MD_END: &str = "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex flex-col \
+     justify-center gap-0.5 items-end";
 /// A cell that centres a fixed-width graphic (the 80 px sparkline in a
 /// `w-28` column, the same 16 px of padding either side as the numbers).
 const CELL_28_MID_MD: &str = "px-4 py-2 w-28 shrink-0 hidden md:flex items-center justify-center";
@@ -1170,7 +1171,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 30] = [
         sort_id: "volume",
         sort: sortability_for(Layer::Bulk, Some(SortMode::Volume)),
         header_class: HEAD_28_MD,
-        cell_class: "px-4 py-2 w-28 shrink-0 text-right hidden md:block font-mono tabular-nums",
+        cell_class: CELL_28_NUM_MD,
         default_on: false,
         cell: cell_volume,
         ..RECIPE_BASE
@@ -1693,10 +1694,6 @@ fn hop_sort_key(hop: Option<HopGain>) -> Option<i32> {
     }
 }
 
-/// The ordering for `mode` with `dir` already applied. The plain modes
-/// flip whole; the alternative-signal and hop modes flip only between two
-/// present values (`cmp_none_last`), so "—" / "needed" rows stay last
-/// whichever way the header points.
 /// A row's 30-day statistics, when that body has landed. Keyed on the same
 /// quality the row's 7-day figures came from.
 fn stat_30<'a>(index: Option<&'a StatsIndex>, r: &RecipeProfitData) -> Option<&'a ItemSaleStats> {
@@ -1718,6 +1715,10 @@ fn effective_sort_mode(mode: SortMode, stats_30_loaded: bool) -> SortMode {
     }
 }
 
+/// The ordering for `mode` with `dir` already applied. The plain modes
+/// flip whole; the alternative-signal and hop modes flip only between two
+/// present values (`cmp_none_last`), so "—" / "needed" rows stay last
+/// whichever way the header points.
 fn compare_recipes(
     mode: SortMode,
     dir: SortDir,
@@ -5255,9 +5256,13 @@ mod test {
                 "{id}: `hidden md:flex`, never `md:block` ({class})"
             );
             assert!(
-                class.contains("flex-col"),
-                "{id}: the grid's unsortable arm adds no direction, so the \
-                 column must ({class})"
+                class.contains("flex-col")
+                    && class.contains("justify-center")
+                    && class.contains("gap-0.5"),
+                "{id}: the grid's unsortable arm appends nothing, so the \
+                 column carries everything SortableHeaderCell would have \
+                 added — flex-col to stack, justify-center to sit level \
+                 with its neighbours, gap-0.5 for the line spacing ({class})"
             );
         }
     }
