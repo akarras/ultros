@@ -365,7 +365,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
 mod tests {
     use super::*;
     use crate::analyzer_kit::columns::{
-        ColumnKind, ColumnSpec, Layer, PickerGroup, sortability_for,
+        ColumnKind, ColumnSpec, Layer, LazyFeed, PickerGroup, sortability_for,
     };
     use leptos_i18n::context::init_i18n_context;
     use std::fmt;
@@ -469,6 +469,23 @@ mod tests {
             ..BASE
         },
     ];
+    /// A lazy column names a sort id and a mode, and is still unsortable.
+    static LAZY_COLS: [ToolColumnMeta<Row, Col>; 1] = [ToolColumnMeta {
+        spec: &C,
+        id: "extra",
+        sort_id: "trend",
+        sort: sortability_for(
+            Layer::Lazy(LazyFeed::Sparklines { hours: 168 }),
+            Some(Col::Profit),
+        ),
+        header_class: "w-28",
+        cell_class: "w-28",
+        // A custom cell, so the only markup this test can see besides the
+        // header is an inert `<div role="cell">` — `BASE`'s Gil cell would
+        // put a `<button>` in the body and blunt the assertion below.
+        cell: custom_cell,
+        ..BASE
+    }];
     fn stripe(_: usize) -> &'static str {
         "row"
     }
@@ -826,6 +843,40 @@ mod tests {
             assert_eq!(with_lab_col_off, base, "a hidden lab column must add nothing to the flag-off header");
             let with_lab_col_on = render(&COLS_PLUS, true, &["cost-sale-median"]);
             assert!(with_lab_col_on.contains("Sale median (7d)"), "{with_lab_col_on}");
+        });
+    }
+
+    /// `LazyNever` shares `header_cell`'s unsortable arm with `No`, so it
+    /// must render the plain header even though the column names both a
+    /// sort id and a sort mode.
+    #[test]
+    fn a_lazy_column_renders_an_unsortable_header() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let html = view! {
+                <AnalyzerGrid
+                    columns=&LAZY_COLS
+                    rows=Signal::derive(|| vec![(0usize, Row(1))])
+                    visible_cols=Signal::derive(|| ["extra"].into_iter().collect::<HashSet<_>>())
+                    sort_mode=Signal::derive(|| Some(Col::Profit))
+                    sort_dir=Signal::derive(|| Some(SortDir::Desc))
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
+                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
+                    layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
+                    header_class="h"
+                    row_class=|_| "r"
+                    lab_columns=true
+                />
+            }
+            .to_html();
+            assert!(html.contains("role=\"columnheader\""), "{html}");
+            assert!(
+                !html.contains("<button"),
+                "a lazy column must never render a sort control: {html}"
+            );
+            assert!(!html.contains("aria-sort"), "{html}");
         });
     }
 }

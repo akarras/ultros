@@ -80,9 +80,10 @@ pub enum PickerGroup {
     Market,
     /// Where the cheapest listing is: world, datacenter.
     Location,
-    /// The always-on columns. None of them has a `?cols=` token, so this
-    /// group never reaches the picker; it exists because every
-    /// `ColumnSpec` names one.
+    /// The fallback group for everything the others don't name. It is not
+    /// picker-invisible: a column here with a `?cols=` token renders under
+    /// an "Other" heading, which is what the recipe analyzer's market
+    /// columns still do until they move to [`PickerGroup::Market`].
     Other,
 }
 
@@ -565,6 +566,9 @@ mod tests {
     fn lbl_world(_: I18nContext<Locale, I18nKeys>) -> String {
         "Listing world".into()
     }
+    fn lbl_other(_: I18nContext<Locale, I18nKeys>) -> String {
+        "Tax".into()
+    }
     static P_CONF: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Confidence,
         label: lbl_conf,
@@ -600,6 +604,11 @@ mod tests {
         label: lbl_world,
         group: PickerGroup::Location,
     };
+    static P_OTHER: ColumnSpec = ColumnSpec {
+        kind: ColumnKind::Tax,
+        label: lbl_other,
+        group: PickerGroup::Other,
+    };
     fn any_cell(_: &(), _: &CellCtx) -> CellValue {
         CellValue::Custom
     }
@@ -618,7 +627,7 @@ mod tests {
         formula_cell_class: "",
         lab: None,
     };
-    static PICKER: [ToolColumnMeta<(), Col>; 7] = [
+    static PICKER: [ToolColumnMeta<(), Col>; 8] = [
         ToolColumnMeta {
             spec: &P_CONF,
             id: "confidence",
@@ -663,6 +672,15 @@ mod tests {
             id: "listing-world",
             ..PBASE
         },
+        // `Other` is still a live picker heading until the market columns
+        // move, so one fixture column has to keep covering it. Lab-gated so
+        // the flat-picker assertion below stays unchanged.
+        ToolColumnMeta {
+            spec: &P_OTHER,
+            id: "tax",
+            lab: Some("analyzer-recipe"),
+            ..PBASE
+        },
     ];
 
     /// Groups come out in `PickerGroup` order, entries in table order within
@@ -694,7 +712,8 @@ mod tests {
                     "hop-gain",
                     "confidence",
                     "trend",
-                    "listing-world"
+                    "listing-world",
+                    "tax"
                 ]
             );
             assert_eq!(got[0].label, "Sale median (7d) (= Price)");
@@ -712,6 +731,7 @@ mod tests {
             assert_eq!(got[4].group.as_ref().unwrap().label, "Market");
             assert_eq!(got[5].group.as_ref().unwrap().label, "Market");
             assert_eq!(got[6].group.as_ref().unwrap().label, "Location");
+            assert_eq!(got[7].group.as_ref().unwrap().label, "Other");
             // The flat picker never lists a lab-gated column.
             let flat = picker_options(&PICKER, i18n);
             assert_eq!(
