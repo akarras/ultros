@@ -11,6 +11,9 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
+use gloo_timers::future::TimeoutFuture;
+use leptos::prelude::*;
+
 /// Rows fetched above and below the rendered window, so enrichment lands
 /// just before a row scrolls into view. The flip finder's Window-mode
 /// scroller renders 28 rows on the SSR shape and about 32 at 1080p, so a
@@ -122,6 +125,140 @@ pub fn visible_keys<T, K: Eq + Hash>(
 /// `max == 0` is treated as 1 (a `chunks(0)` would panic).
 pub fn chunk_keys<K: Copy>(keys: &[K], max: usize) -> Vec<Vec<K>> {
     keys.chunks(max.max(1)).map(<[K]>::to_vec).collect()
+}
+
+/// What an in-flight fetch does with a signal it re-reads after an await.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// Alive and unchanged since the fetch was scheduled.
+    Proceed,
+    /// Alive but moved on: a newer window superseded this generation, or
+    /// the scope (world) changed while the request was in flight.
+    Stale,
+    /// The owning component was disposed: the `try_*` read returned `None`.
+    Disposed,
+}
+
+/// The guard a fetch runs after every await. `observed` is a
+/// `try_get_untracked()` of the signal whose value was captured as
+/// `expected` when the fetch was scheduled. Reading through `try_*` is
+/// load-bearing (see `search_box::search_outcome`): a plain read of a
+/// disposed signal panics and takes the wasm bundle down.
+pub fn verdict<T: PartialEq>(observed: Option<T>, expected: &T) -> Verdict {
+    match observed {
+        None => Verdict::Disposed,
+        Some(seen) if seen == *expected => Verdict::Proceed,
+        Some(_) => Verdict::Stale,
+    }
+}
+
+/// Fill `store` for the rows the scroller shows, `cfg.prefetch_margin` rows
+/// either side, as the window moves — accumulating, never wholesale-replaced
+/// except on a scope change.
+///
+/// Behaviours, in order (kit spec §6): visible keys with the margin; a
+/// generation bump per trigger; a debounce; bail if superseded or disposed;
+/// claim keys only after the debounce (so a superseded generation never
+/// claims); chunk above `cfg.max_keys_per_request`; bail if the scope
+/// changed while the requests were in flight; merge; settle every requested
+/// key on success or error.
+///
+/// `requested` is a `StoredValue` — non-reactive on purpose: the page's
+/// filter memo reads `store`, so a reactive claim set would loop
+/// recompute -> refetch. The scope-change reset (store cleared, claims
+/// cleared, generation bumped) lives here too.
+///
+/// Call it inside a component: it creates two `Effect::new`s, whose bodies
+/// are compiled out under `leptos/ssr` (no `reactive_graph/effects`), which
+/// is what keeps `fetch` — a `post_api` caller whose SSR arm is
+/// `unreachable!` — client-only. Never `new_isomorphic` / `new_sync` here,
+/// and never a `spawn_local` or `TimeoutFuture` outside an effect body.
+pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
+    store: RwSignal<Enrichment<K, V>>,
+    rows: Signal<Vec<T>>,
+    visible_range: Signal<(usize, usize)>,
+    scope: Signal<S>,
+    key_of: fn(&T) -> K,
+    fetch: F,
+    cfg: EnrichmentConfig,
+) where
+    T: Send + Sync + 'static,
+    K: Copy + Eq + Hash + Send + Sync + 'static,
+    V: Absorb + Send + Sync + 'static,
+    S: Clone + PartialEq + Send + Sync + 'static,
+    F: Fn(S, Vec<K>) -> Fut + Clone + 'static,
+    Fut: Future<Output = Vec<(K, V)>> + 'static,
+{
+    // Dedupe / loop-breaker: keys a fetch has been scheduled for.
+    let requested = StoredValue::new(HashSet::<K>::new());
+    // Generation counter for debounce-with-cancellation (`gen` is a reserved
+    // keyword in edition 2024).
+    let fetch_id = RwSignal::new(0u64);
+
+    // Scope change: drop everything and invalidate any in-flight fetch.
+    // Bumping the generation makes it bail at the guard below before it
+    // claims keys, so a stale batch can neither repopulate `requested`
+    // (which would strand those rows on the skeleton) nor merge another
+    // scope's data. Runs once on mount too, so the first generation is >= 1.
+    Effect::new(move |_| {
+        let _ = scope.get(); // subscribe: re-run on scope change
+        store.set(Enrichment::default());
+        requested.update_value(|s| s.clear());
+        fetch_id.update(|n| *n += 1);
+    });
+
+    // Select the window's keys (honouring the page's sort/filter through
+    // `rows`), debounce, fetch, merge.
+    Effect::new(move |_| {
+        let range = visible_range.get(); // reactive: scroll
+        let keys = rows.with(|data| {
+            requested
+                .with_value(|seen| visible_keys(data, range, cfg.prefetch_margin, seen, key_of))
+        });
+        if keys.is_empty() {
+            return;
+        }
+        fetch_id.update(|n| *n += 1);
+        let current_id = fetch_id.get_untracked();
+        let scope_now = scope.get_untracked();
+        let fetch = fetch.clone();
+        leptos::task::spawn_local(async move {
+            TimeoutFuture::new(cfg.debounce_ms).await; // debounce
+            // Past this await the component can be disposed (navigated away,
+            // scope remounted), which disposes these signals: every access
+            // below is a `try_*` read through `verdict`.
+            if verdict(fetch_id.try_get_untracked(), &current_id) != Verdict::Proceed {
+                return; // superseded by a newer window, or disposed
+            }
+            // Claim post-debounce so superseded generations never claim.
+            if requested
+                .try_update_value(|s| s.extend(keys.iter().copied()))
+                .is_none()
+            {
+                return; // disposed
+            }
+            let results: Vec<(K, V)> = futures::future::join_all(
+                chunk_keys(&keys, cfg.max_keys_per_request)
+                    .into_iter()
+                    .map(|chunk| fetch(scope_now.clone(), chunk)),
+            )
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+            // The requests awaited the network: the scope may have changed
+            // (the reset above already cleared `requested`, so the new scope
+            // refetches these keys) or the component been disposed. Never
+            // merge one scope's data into another's store.
+            if verdict(scope.try_get_untracked(), &scope_now) != Verdict::Proceed {
+                return;
+            }
+            // Merge whatever came back and settle every requested key —
+            // success or error — so cells switch loading -> value / "—". No
+            // retry loop: a scope change resets everything.
+            let _ = store.try_update(|s| s.merge(&keys, results));
+        });
+    });
 }
 
 #[cfg(test)]
@@ -250,5 +387,26 @@ mod tests {
         store = Enrichment::default();
         assert_eq!(store.get(&1), None);
         assert!(!store.is_settled(&1));
+    }
+
+    #[test]
+    fn verdict_proceeds_only_on_an_unchanged_live_signal() {
+        assert_eq!(verdict(Some(7u64), &7), Verdict::Proceed);
+        assert_eq!(verdict(Some(8u64), &7), Verdict::Stale);
+        assert_eq!(verdict(None::<u64>, &7), Verdict::Disposed);
+    }
+
+    #[test]
+    fn verdict_treats_a_scope_change_as_stale() {
+        let started = "Gilgamesh".to_string();
+        assert_eq!(
+            verdict(Some("Gilgamesh".to_string()), &started),
+            Verdict::Proceed
+        );
+        assert_eq!(
+            verdict(Some("Cactuar".to_string()), &started),
+            Verdict::Stale
+        );
+        assert_eq!(verdict(None::<String>, &started), Verdict::Disposed);
     }
 }
