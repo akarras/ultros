@@ -671,6 +671,12 @@ mod tests {
                 "{p_none}"
             );
             assert!(p_missing.contains("—"), "{p_missing}");
+            // Shape parity alone would pass if Loading rendered a value or a
+            // dash, so pin the shimmer itself: it is the only thing that
+            // separates "still fetching" from "fetched, nothing there".
+            assert!(p_loading.contains("skeleton-shimmer"), "{p_loading}");
+            assert!(!p_loading.contains("—"), "{p_loading}");
+            assert!(!p_missing.contains("skeleton-shimmer"), "{p_missing}");
 
             let cnt = |e| render(CellValue::LateCount(e));
             let c_loading = cnt(Enrich::Loading);
@@ -682,6 +688,9 @@ mod tests {
             }
             assert!(c_ready.contains("1234"), "{c_ready}");
             assert!(c_missing.contains("—"), "{c_missing}");
+            assert!(c_loading.contains("skeleton-shimmer"), "{c_loading}");
+            assert!(!c_loading.contains("1234"), "{c_loading}");
+            assert!(!c_missing.contains("skeleton-shimmer"), "{c_missing}");
 
             let gil = |e| render(CellValue::LateGilWithPct(e));
             let g_loading = gil(Enrich::Loading);
@@ -696,8 +705,17 @@ mod tests {
                 );
                 assert_eq!(count(&g_loading, "<span"), count(h, "<span"));
             }
-            assert!(g_ready.contains("-6%"), "{g_ready}");
+            assert!(
+                g_ready.contains("-6%") && g_ready.contains("820"),
+                "{g_ready}"
+            );
             assert!(g_missing.contains("—") && g_zero.contains("—"));
+            // Loading renders `GilOrDash(None)` too — hidden, but the em dash
+            // is in the markup — so the assertion above cannot tell the two
+            // apart on its own. The shimmer can.
+            assert!(g_loading.contains("skeleton-shimmer"), "{g_loading}");
+            assert!(!g_missing.contains("skeleton-shimmer"), "{g_missing}");
+            assert!(!g_loading.contains("820"), "{g_loading}");
         });
     }
 
