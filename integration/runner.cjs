@@ -77,18 +77,15 @@ const ROUTE_ASSERTS = {
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
   "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
-  // With the lab on, the Profit header carries an "after 5% tax" sub-label
-  // at every width. The strip row itself is md+ only, and the mobile pass
-  // reads innerText, which drops display:none content.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger": {
+  // One Labs toggle for the whole tool. With it on, the Profit header
+  // carries an "after 5% tax" sub-label at every width; the strip row
+  // itself is md+ only, and the mobile pass reads innerText, which drops
+  // display:none content. The lab columns are md+ only too, so the only
+  // cross-device assertions are the title and that sub-label; the sweep
+  // still checks console errors and horizontal overflow.
+  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds": {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],
-  },
-  // Both labs on with the four Phase D columns requested. The new columns
-  // are md+ only, so the only cross-device assertion is the title; the
-  // sweep still checks console errors and horizontal overflow.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger,analyzer-signal-columns&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds": {
-    titleIncludes: "Recipe Analyzer",
   },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
@@ -136,8 +133,7 @@ function getRoutes() {
     "/retainers",
     "/currency-exchange",
     "/recipe-analyzer?world=Gilgamesh",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger,analyzer-signal-columns&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds",
+    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds",
     "/history",
     "/settings",
     "/groups",

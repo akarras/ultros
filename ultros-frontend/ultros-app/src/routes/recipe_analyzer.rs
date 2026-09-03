@@ -30,7 +30,7 @@ use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap}
 use crate::components::related_items::is_shard_item;
 use crate::components::term_badge::TermRole;
 use crate::global_state::craft_options::{self, CraftOptions};
-use crate::global_state::labs::{LAB_ANALYZER_LEDGER, LAB_ANALYZER_SIGNAL_COLUMNS, use_lab};
+use crate::global_state::labs::{LAB_ANALYZER_RECIPE, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
@@ -341,7 +341,7 @@ fn PricingSelect(
 
 /// Always-visible `Market` button in the control bar's first row, opening a
 /// popover with the buy-scope / cost-basis / revenue-metric selects — or,
-/// while the analyzer-ledger lab is on, the stacked formula strip and the
+/// while the analyzer-recipe lab is on, the stacked formula strip and the
 /// four price-basis explanations.
 ///
 /// These existed as permanent toolbar fields (#1206), then the
@@ -356,8 +356,9 @@ fn MarketMenu(
     /// The same ledger chips the inline strip renders, built once on the
     /// page (this component lives inside the table's `ControlBar`).
     terms: Callback<(), Vec<StripTerm>>,
-    /// The analyzer-ledger lab. Off = exactly the three selects below.
-    ledger: Signal<bool>,
+    /// The `analyzer-recipe` Labs toggle. Off = exactly the three selects
+    /// below.
+    preview: bool,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
@@ -385,14 +386,14 @@ fn MarketMenu(
             </button>
             <Show when=move || open.get()>
                 <div class=move || {
-                    if ledger.get() {
+                    if preview {
                         "sticky-bar-popover p-3 w-[min(92vw,20rem)] flex flex-col gap-2 text-sm"
                     } else {
                         "sticky-bar-popover p-3 w-[min(92vw,16rem)] flex flex-col gap-2 text-sm"
                     }
                 }>
                     <Show
-                        when=move || ledger.get()
+                        when=move || preview
                         fallback=move || {
                             view! {
                                 <PricingSelect
@@ -529,7 +530,7 @@ const COL_VWAP: &str = "vwap";
 const COL_TAX: &str = "tax";
 const COL_LISTING_WORLD: &str = "listing-world";
 const COL_LISTING_DC: &str = "listing-dc";
-// Phase D, behind `analyzer-signal-columns`: appended after the seven
+// Phase D, behind `analyzer-recipe`: appended after the seven
 // above so every serialized old URL stays byte-identical.
 const COL_REV_LISTING_MIN: &str = "rev-listing-min";
 const COL_REV_SALE_MIN: &str = "rev-sale-min";
@@ -791,7 +792,7 @@ fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
 /// The Price slot: under the lab it carries the always-present note
 /// sub-line so a price that fell back to a listing says so.
 fn cell_price(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
-    if ctx.signal_columns {
+    if ctx.preview {
         CellValue::GilWithNote {
             amount: r.market_price,
             note: if r.revenue_fell_back {
@@ -1094,7 +1095,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_listing_min,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1106,7 +1107,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_sale_min,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1121,7 +1122,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_sale_median,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1133,7 +1134,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_rev_sale_avg,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1149,7 +1150,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_listing_min,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1165,7 +1166,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_sale_min,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1181,7 +1182,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_sale_median,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1197,7 +1198,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_40_MD,
         default_on: false,
         cell: cell_cost_sale_avg,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1209,7 +1210,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         cell_class: CELL_28_MD,
         default_on: false,
         cell: cell_hop_gain,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1222,7 +1223,7 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         // Custom: the tooltip needs the page's world names.
         cell_class: CELL_28_MD,
         default_on: false,
-        lab: Some(LAB_ANALYZER_SIGNAL_COLUMNS),
+        lab: Some(LAB_ANALYZER_RECIPE),
         ..RECIPE_BASE
     },
     ToolColumnMeta {
@@ -1959,9 +1960,6 @@ fn RecipeAnalyzerTable(
     sort_mode: Memo<Option<SortMode>>,
     /// Current `?dir=`, owned by the parent for the same remount reason.
     sort_dir: Memo<Option<SortDir>>,
-    /// The analyzer-ledger lab: header marks, the profit readout, the
-    /// clamped ROI and the popover's strip all hang off this.
-    ledger: Signal<bool>,
     /// `(buy, sell)` stats-*loaded* flags: the very pair this table's
     /// `formula` memo hands `ProfitFormula::effective`. Written here —
     /// this is where the resource outcomes are known — and read by the
@@ -1977,11 +1975,13 @@ fn RecipeAnalyzerTable(
     /// The ledger chips, built on the page (the popover that renders them
     /// lives inside this table's `ControlBar`).
     strip_terms: Callback<(), Vec<StripTerm>>,
-    /// The analyzer-signal-columns lab: alternative columns, pills, the
-    /// grouped picker, the Price tell and the "n unpriced" note. A plain
-    /// bool: the page reads the lab inside its Suspense join, so a flip
-    /// remounts this table (the grid's header is built once per mount).
-    signal_cols: bool,
+    /// The `analyzer-recipe` Labs toggle: the formula strip and marks, the
+    /// clamped ROI, the profit readout, the alternative columns and pills,
+    /// the grouped picker, the Price tell, the "n unpriced" note and the
+    /// market columns all hang off this one flag. A plain bool: the page
+    /// reads the lab inside its Suspense join, so a flip remounts this
+    /// table (the grid's header is built once per mount).
+    preview: bool,
     /// The cost signals to run per recipe and the hop flags (page-level,
     /// because the fetch gate reads the same value).
     needs: Memo<NeededSignals>,
@@ -2118,7 +2118,7 @@ fn RecipeAnalyzerTable(
         // The phase's one number change, and it only happens under the
         // lab: a 363,884% ROI off a single fake listing reads as noise, so
         // the clamped policy caps it at the display ceiling.
-        if ledger.get() {
+        if preview {
             f.roi = RoiMath::ClampedF64;
         }
         f
@@ -2131,7 +2131,7 @@ fn RecipeAnalyzerTable(
     // cell per row, and a derived signal would rebuild the label map (and
     // re-render every row on any unrelated query change) each time.
     let marks = Memo::new(move |_| {
-        ledger.get().then(|| {
+        preview.then(|| {
             let f = formula.get();
             let m = f.marks(sell_place.get(), buy_place.get());
             mark_labels(
@@ -2149,7 +2149,7 @@ fn RecipeAnalyzerTable(
     // it writes). Empty with the lab off: every header renders as before.
     let header_extras = Memo::new(move |_| {
         let mut by_kind = HashMap::new();
-        if !signal_cols {
+        if !preview {
             return HeaderExtras { by_kind };
         }
         let f = formula.get();
@@ -2421,7 +2421,7 @@ fn RecipeAnalyzerTable(
     // (recognition, not recall — same rationale as the filter menu), read
     // straight off the column table.
     let column_options = Signal::derive(move || {
-        if signal_cols {
+        if preview {
             let f = formula.get();
             grouped_picker_options(
                 &RECIPE_COLUMNS,
@@ -2545,7 +2545,7 @@ fn RecipeAnalyzerTable(
                 let readout = {
                     let data = data.clone();
                     move || {
-                        ledger.get().then(|| {
+                        preview.then(|| {
                             t_string!(
                                 i18n,
                                 recipe_analyzer_profit_readout,
@@ -2612,7 +2612,7 @@ fn RecipeAnalyzerTable(
                         </Show>
                     }
                 };
-                if signal_cols && data.unpriced > 0 {
+                if preview && data.unpriced > 0 {
                     let n = data.unpriced;
                     view! {
                         <div role="cell" class=class>
@@ -2783,7 +2783,7 @@ fn RecipeAnalyzerTable(
     }
     let cell_ctx = Signal::derive(move || CellCtx {
         now_unix: chrono::Utc::now().timestamp(),
-        signal_columns: signal_cols,
+        preview,
         // `with`, not `get`: this is read once per rendered row and `get`
         // would clone both sets each time.
         capped_cost: needs.with(|n| capped_flags(&n.capped)),
@@ -2811,7 +2811,7 @@ fn RecipeAnalyzerTable(
                 actions=move || {
                     view! {
                         <RealtimeStatus status=realtime_status last_update=last_update />
-                        <MarketMenu terms=strip_terms ledger=ledger />
+                        <MarketMenu terms=strip_terms preview=preview />
                     }
                         .into_any()
                 }
@@ -3121,7 +3121,7 @@ fn RecipeAnalyzerTable(
                     marks=marks
                     extras=header_extras
                     on_pill=on_pill
-                    lab_columns=signal_cols
+                    lab_columns=preview
                 />
              </div>
         </div>
@@ -3163,8 +3163,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
-    let ledger = use_lab(LAB_ANALYZER_LEDGER);
-    let signal_cols = use_lab(LAB_ANALYZER_SIGNAL_COLUMNS);
+    let preview = use_lab(LAB_ANALYZER_RECIPE);
     // Sub-crafts drive the cost-column cap; read here so the fetch gate
     // (page level) and the pass (table) agree.
     let (use_subcrafts_page, _) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
@@ -3187,16 +3186,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // reads as unset while the lab is off, exactly as its token did before
     // the variant existed.
     let (sort_param, _) = query_signal::<SortMode>("sort");
-    let sort_mode = Memo::new(move |_| {
-        sort_param
-            .get()
-            .filter(|m| signal_cols.get() || !m.lab_only())
-    });
+    let sort_mode = Memo::new(move |_| sort_param.get().filter(|m| preview.get() || !m.lab_only()));
     let (sort_dir, _) = query_signal::<SortDir>("dir");
     // The lab widens the `?cols=` contract; off, the Phase D tokens drop
     // like any unknown token.
     let visible_cols = Memo::new(move |_| {
-        let all: &'static [&'static str] = if signal_cols.get() {
+        let all: &'static [&'static str] = if preview.get() {
             &OPTIONAL_COLUMN_ORDER
         } else {
             &BASE_COLUMN_ORDER
@@ -3209,7 +3204,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // columns. Off the lab this is exactly {selected}: today's fetches.
     let needs_page: Memo<NeededSignals> = Memo::new(move |_| {
         let f = formula_page.get();
-        if signal_cols.get() {
+        if preview.get() {
             needed_signals(
                 &f,
                 &signal_wants(&visible_cols.get(), sort_mode.get()),
@@ -3374,7 +3369,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // sell-world stats body doubles as the buy-scope body (one body, not
     // two identical ones). Lab-gated so the flag-off page fetches as before.
     let buy_scope_is_sell_world = Memo::new(move |_| {
-        signal_cols.get()
+        preview.get()
             && buy_scope().unwrap_or_default() == BuyScope::World
             && selected_world.get().is_some()
     });
@@ -3517,7 +3512,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     calculation=ToolCalculation::new(
                         t_string!(i18n, recipe_analyzer_calc_title).to_string(),
                         Signal::derive(move || {
-                            if ledger.get() {
+                            if preview.get() {
                                 // The EFFECTIVE formula: a failed stats body
                                 // downgrades the signal, and the sentence must
                                 // never name a signal the numbers ignore.
@@ -3548,7 +3543,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                         }),
                         Signal::derive(move || {
                             let mut details = t_string!(i18n, recipe_analyzer_calc_details).to_string();
-                            if signal_cols.get() {
+                            if preview.get() {
                                 details.push(' ');
                                 details.push_str(t_string!(i18n, recipe_analyzer_calc_signal_semantics));
                             }
@@ -3618,7 +3613,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                 // below that the chips would wrap into four full-width rows
                 // and push the table off the first screen — the Market
                 // popover carries the same controls stacked.
-                <Show when=move || ledger.get()>
+                <Show when=move || preview.get()>
                     <div class="hidden md:flex flex-wrap items-center gap-2">
                         <FormulaStrip terms=strip_terms() layout=StripLayout::Inline />
                     </div>
@@ -3672,12 +3667,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         set_cols_param=set_cols_param
                                         sort_mode=sort_mode
                                         sort_dir=sort_dir
-                                        ledger=ledger
                                         stats_loaded=stats_loaded
                                         sell_place=sell_place
                                         buy_place=buy_place
                                         strip_terms=Callback::new(move |()| strip_terms())
-                                        signal_cols=signal_cols.get()
+                                        preview=preview.get()
                                         needs=needs_page
                                         buy_stats_aliased=buy_scope_is_sell_world.get()
                                         home_world_id=home_world_id
@@ -4707,7 +4701,7 @@ mod test {
         );
         for c in RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()) {
             assert!(!c.default_on, "{} must start hidden", c.id);
-            assert_eq!(c.lab, Some(LAB_ANALYZER_SIGNAL_COLUMNS));
+            assert_eq!(c.lab, Some(LAB_ANALYZER_RECIPE));
             assert!(
                 c.header_class.contains("hidden md:"),
                 "{}: desktop-only (kit decision 7)",

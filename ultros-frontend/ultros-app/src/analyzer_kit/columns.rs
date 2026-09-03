@@ -98,9 +98,9 @@ pub const fn sortability_for<M: Copy>(layer: Layer, wanted: Option<M>) -> Sortab
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CellCtx {
     pub now_unix: i64,
-    /// The `analyzer-signal-columns` lab: the Price slot renders its
-    /// listing-fallback tell only under it.
-    pub signal_columns: bool,
+    /// The page's Labs toggle (`analyzer-recipe` on the recipe analyzer):
+    /// the Price slot renders its note sub-line only under it.
+    pub preview: bool,
     /// Cost signals the sub-craft cap left unpriced, by
     /// `PriceSignal::index`; their cells render "—" with the cap title.
     pub capped_cost: [bool; 4],
@@ -437,7 +437,7 @@ mod tests {
     fn cell_extractors_are_plain_fn_pointers() {
         let ctx = CellCtx {
             now_unix: 0,
-            signal_columns: false,
+            preview: false,
             capped_cost: [false; 4],
         };
         assert_eq!((COLS[1].cell)(&42, &ctx), CellValue::Gil(42));
@@ -515,25 +515,25 @@ mod tests {
         ToolColumnMeta {
             spec: &P_REV,
             id: "rev-sale-median",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
         ToolColumnMeta {
             spec: &P_COST,
             id: "cost-listing-min",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
         ToolColumnMeta {
             spec: &P_COST2,
             id: "cost-sale-avg",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
         ToolColumnMeta {
             spec: &P_HOP,
             id: "hop-gain",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
     ];

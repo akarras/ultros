@@ -258,7 +258,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                signal_columns: false,
+                preview: false,
                 capped_cost: [false; 4],
             };
             let a = render_cell(
@@ -309,7 +309,7 @@ mod tests {
             let i18n = crate::i18n::use_i18n();
             let ctx = CellCtx {
                 now_unix: 1_700_000_000,
-                signal_columns: true,
+                preview: true,
                 capped_cost: [false; 4],
             };
             let render = |v: CellValue| render_cell("w-40", v, i18n, &ctx).unwrap().to_html();
