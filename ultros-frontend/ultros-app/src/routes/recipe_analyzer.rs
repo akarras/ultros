@@ -1,7 +1,7 @@
 use crate::analyzer_kit::cells::CellValue;
 use crate::analyzer_kit::columns::{
-    CellCtx, ColumnKind, ColumnSpec, Layer, Sortability, ToolColumnMeta, default_dir_for,
-    picker_options, sort_from_token, sort_token, sortability_for,
+    CellCtx, ColumnKind, ColumnSpec, Layer, PickerGroup, Sortability, ToolColumnMeta,
+    default_dir_for, picker_options, sort_from_token, sort_token, sortability_for,
 };
 use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, per_unit_cost, profit_line,
@@ -586,62 +586,77 @@ fn label_actions(i18n: I18nContext<Locale, I18nKeys>) -> String {
 static SPEC_ITEM: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Item,
     label: label_item,
+    group: PickerGroup::Other,
 };
 static SPEC_PROFIT: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Profit,
     label: label_profit,
+    group: PickerGroup::Other,
 };
 static SPEC_ROI: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Roi,
     label: label_roi,
+    group: PickerGroup::Other,
 };
 static SPEC_COST: ColumnSpec = ColumnSpec {
     kind: ColumnKind::CostSlot,
     label: label_cost,
+    group: PickerGroup::Other,
 };
 static SPEC_PRICE: ColumnSpec = ColumnSpec {
     kind: ColumnKind::RevenueSlot,
     label: label_price,
+    group: PickerGroup::Other,
 };
 static SPEC_DAILY: ColumnSpec = ColumnSpec {
     kind: ColumnKind::SalesPerDay7,
     label: label_daily,
+    group: PickerGroup::Other,
 };
 static SPEC_AVG: ColumnSpec = ColumnSpec {
     kind: ColumnKind::AvgPrice,
     label: label_avg,
+    group: PickerGroup::Other,
 };
 static SPEC_CONFIDENCE: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Confidence,
     label: label_confidence,
+    group: PickerGroup::Other,
 };
 static SPEC_LAST_SOLD: ColumnSpec = ColumnSpec {
     kind: ColumnKind::LastSold,
     label: label_last_sold,
+    group: PickerGroup::Other,
 };
 static SPEC_VOLUME: ColumnSpec = ColumnSpec {
     kind: ColumnKind::VolumeUnits7,
     label: label_volume,
+    group: PickerGroup::Other,
 };
 static SPEC_VWAP: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Vwap7,
     label: label_vwap,
+    group: PickerGroup::Other,
 };
 static SPEC_TAX: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Tax,
     label: label_tax,
+    group: PickerGroup::Other,
 };
 static SPEC_WORLD: ColumnSpec = ColumnSpec {
     kind: ColumnKind::ListingWorld,
     label: label_world,
+    group: PickerGroup::Other,
 };
 static SPEC_DC: ColumnSpec = ColumnSpec {
     kind: ColumnKind::ListingDc,
     label: label_dc,
+    group: PickerGroup::Other,
 };
 static SPEC_ACTIONS: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Actions,
     label: label_actions,
+    group: PickerGroup::Other,
 };
 
 // Cell extractors. `Custom` = the page renders it (needs context the row
@@ -704,6 +719,7 @@ const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
     side: None,
     formula_header_class: "",
     formula_cell_class: "",
+    lab: None,
 };
 
 /// The recipe table, column by column, classes copied verbatim from the
@@ -1955,6 +1971,8 @@ fn RecipeAnalyzerTable(
     }
     let cell_ctx = Signal::derive(|| CellCtx {
         now_unix: chrono::Utc::now().timestamp(),
+        signal_columns: false,
+        capped_cost: [false; 4],
     });
 
     view! {

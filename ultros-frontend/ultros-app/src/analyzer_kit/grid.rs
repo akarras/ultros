@@ -235,7 +235,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer_kit::columns::{ColumnKind, ColumnSpec, Layer, sortability_for};
+    use crate::analyzer_kit::columns::{
+        ColumnKind, ColumnSpec, Layer, PickerGroup, sortability_for,
+    };
     use leptos_i18n::context::init_i18n_context;
     use std::fmt;
 
@@ -273,14 +275,17 @@ mod tests {
     static A: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Item,
         label: label_a,
+        group: PickerGroup::Other,
     };
     static B: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Profit,
         label: label_b,
+        group: PickerGroup::Other,
     };
     static C: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Tax,
         label: label_c,
+        group: PickerGroup::Other,
     };
     fn custom_cell(_: &Row, _: &CellCtx) -> CellValue {
         CellValue::Custom
@@ -304,6 +309,7 @@ mod tests {
         side: None,
         formula_header_class: "",
         formula_cell_class: "",
+        lab: None,
     };
 
     static COLS: [ToolColumnMeta<Row, Col>; 3] = [
@@ -353,7 +359,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -395,7 +401,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -437,7 +443,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0 })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
                     custom=Arc::new(|_: &Row, _: ColumnKind, _: &'static str| {
                         view! { <div role="cell"></div> }.into_any()
                     })

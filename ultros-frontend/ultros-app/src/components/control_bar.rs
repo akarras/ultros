@@ -40,17 +40,37 @@ use icondata as i;
 /// not counted as visible, and is pinned by the bar's own `h-[76px]`.
 pub const STICKY_BAR_HEIGHT: f64 = 76.0;
 
+/// A group heading in the columns picker. Options carrying the same
+/// heading (by label) are rendered under one heading.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PickerHeading {
+    pub label: String,
+    /// Hover text on the heading ("Shows sale history for Aether (loads once)").
+    pub title: Option<String>,
+}
+
 /// One column the picker can turn on or off.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnOption {
     /// Stable token, as persisted in `?cols=`.
     pub id: &'static str,
     pub label: String,
+    /// `None` = the flat, ungrouped picker every page renders today.
+    pub group: Option<PickerHeading>,
+    /// Greyed out and not toggleable; `hint` says why.
+    pub disabled: bool,
+    pub hint: Option<String>,
 }
 
 impl ColumnOption {
     pub fn new(id: &'static str, label: String) -> Self {
-        Self { id, label }
+        Self {
+            id,
+            label,
+            group: None,
+            disabled: false,
+            hint: None,
+        }
     }
 }
 

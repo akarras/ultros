@@ -699,22 +699,22 @@ fn ExchangeItemContent() -> impl IntoView {
     });
     let column_options = Memo::new(move |_| {
         vec![
-            ColumnOption {
-                id: COL_PRICE_PER_ITEM,
-                label: t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
-            },
-            ColumnOption {
-                id: COL_SHOPS,
-                label: t_string!(i18n, currency_exchange_table_shops).to_string(),
-            },
-            ColumnOption {
-                id: COL_COST,
-                label: t_string!(i18n, currency_exchange_table_cost).to_string(),
-            },
-            ColumnOption {
-                id: COL_HOURS,
-                label: t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
-            },
+            ColumnOption::new(
+                COL_PRICE_PER_ITEM,
+                t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
+            ),
+            ColumnOption::new(
+                COL_SHOPS,
+                t_string!(i18n, currency_exchange_table_shops).to_string(),
+            ),
+            ColumnOption::new(
+                COL_COST,
+                t_string!(i18n, currency_exchange_table_cost).to_string(),
+            ),
+            ColumnOption::new(
+                COL_HOURS,
+                t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
+            ),
         ]
     });
     let toggle_column = Callback::new(move |col: &'static str| {
