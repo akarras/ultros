@@ -3983,14 +3983,24 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // across column toggles. Never a `Resource`: it must not join the
     // Suspense gate, or the whole table would wait 700 ms for a column two
     // players use.
+    // `(wanted, key)`, split deliberately: `stats_30_key` returns `None`
+    // both when no column asked for the body and when there is no sell
+    // world to ask about, and those two need different endings. Nothing
+    // asked: do nothing. Asked but worldless: settle the cells, because a
+    // body that can never arrive must not leave them shimmering — the
+    // sparkline pair already degrades that way, and this is the same
+    // "an empty index means settled" convention the failed fetch uses.
     let stats_30_source = Memo::new(move |_| {
-        stats_30_key(
-            &formula_page.get(),
-            &RecipeNeeds {
-                stats_30: stats_30_wanted(&visible_cols.get(), sort_mode.get()),
-                ..RecipeNeeds::default()
-            },
-            sell_world_name.get().as_deref(),
+        let needs = RecipeNeeds {
+            stats_30: stats_30_wanted(&visible_cols.get(), sort_mode.get()),
+            ..RecipeNeeds::default()
+        };
+        let formula = formula_page.get();
+        let wanted = needed_bodies(&formula, &needs)
+            .contains(&BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS));
+        (
+            wanted,
+            stats_30_key(&formula, &needs, sell_world_name.get().as_deref()),
         )
     });
     let stats_30_fetching = StoredValue::new(false);
@@ -4010,7 +4020,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             }
             stats_30_fetching.set_value(false);
         }
-        let Some(name) = stats_30_source.get() else {
+        let (wanted, key) = stats_30_source.get();
+        let Some(name) = key else {
+            if wanted && market.stats_30.with_untracked(Option::is_none) {
+                market.stats_30.set(Some(Arc::new(StatsIndex::default())));
+            }
             return;
         };
         if stats_30_fetching.get_value() || market.stats_30.with_untracked(Option::is_some) {
@@ -6421,14 +6435,16 @@ mod test {
         // Anchored on the attribute too: a bare `mod test {` could appear
         // in a doc comment or a string above and silently truncate the
         // region being searched, failing this test with nothing wrong.
-        let header = format!(
-            "#[cfg({0})]
-mod {0} {{",
-            "test"
+        // Split on the two anchors rather than one needle holding a
+        // real newline: a CRLF checkout would make that needle miss and
+        // panic here with nothing actually wrong.
+        let (production, rest) = SRC
+            .split_once(&format!("#[cfg({})]", "test"))
+            .expect("the production half ends at the test module attribute");
+        assert!(
+            rest.trim_start().starts_with(&format!("mod {} {{", "test")),
+            "the attribute ending the production half must be the test module's"
         );
-        let (production, _) = SRC
-            .split_once(&header)
-            .expect("the production half ends at the test module header");
         assert!(
             production.contains(&format!("{}: {}(", "stats_30", "stats_30_wanted")),
             "the page's RecipeNeeds must take stats_30 from the visible columns and the sort target"
