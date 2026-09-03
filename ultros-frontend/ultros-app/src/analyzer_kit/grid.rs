@@ -88,8 +88,12 @@ pub struct HeaderExtras {
 }
 
 /// Line 2's own classes on a header the grid draws itself (an unsortable
-/// one). Identical to what `SortableHeaderCell` puts on its sub-label, so
-/// the two kinds of header line up.
+/// one). The same class string `SortableHeaderCell` puts on its sub-label
+/// (`sort_header.rs:273`), so the two kinds of header line up — but on a
+/// `<span>`, where that one uses a `<div>`. `truncate` and `max-w-full`
+/// only bite once the span is a flex item, and unlike `SortableHeaderCell`
+/// this arm does not append `flex flex-col` of its own, so a column using
+/// this arm has to supply the column direction in its own `header_class`.
 const HEADER_SUB_LINE: &str = "text-[10px] leading-3 font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full";
 
 const PILL_OFF: &str = "inline-flex items-center gap-0.5 shrink-0 rounded-full border border-[color:var(--color-outline)] px-1.5 text-[10px] leading-3 font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] hover:border-[color:var(--brand-ring)]";
@@ -329,9 +333,15 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     lab_columns: bool,
     /// Writeback of the rendered row range `(start, end)`, forwarded to the
     /// scroller so the page can fetch data only for rows in view. Omitted,
-    /// the grid keeps a range signal of its own that nothing reads: the
+    /// the grid keeps a range signal of its own, fresh per mount: the
     /// scroller's prop is `#[prop(optional, into)]` on an `Option`, which
     /// strips the `Option`, so there is no `None` to forward.
+    ///
+    /// That means the scroller's range `Effect` runs on every scroll for
+    /// every grid, not only for grids that pass this prop — omitting it
+    /// buys a signal with no subscribers, not a skipped effect. Splitting
+    /// the two would mean duplicating the whole `<VirtualScroller>` call
+    /// across two `view!` branches, which costs more than the effect does.
     #[prop(optional)]
     visible_range: Option<RwSignal<(usize, usize)>>,
 ) -> impl IntoView {
