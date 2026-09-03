@@ -1062,21 +1062,11 @@ mod tests {
         }
 
         // This mimics the child_start binary search
-        let find_first_gte = |scroll: f64| {
-            let mut lo: i32 = 0;
-            let mut hi: i32 = n as i32;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let base = mid as f64 * row_height;
-                let delta = f.sum(mid as usize);
-                if base + delta < scroll {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            lo.max(0) as u32
-        };
+        // Calls the production search rather than mimicking it — a copy
+        // of the loop here would let the two drift with both tests green.
+        // Overscan 0 makes `first_visible_row` exactly this search.
+        let find_first_gte =
+            |scroll: f64| first_visible_row(n, row_height, scroll, |i| f.sum(i), 0);
 
         // Before modified items
         assert_eq!(find_first_gte(100.0), 5); // 5 * 20 = 100
@@ -1101,21 +1091,11 @@ mod tests {
         // Simulate a row that shrunk
         f.add(1, -5.0); // Item 1 is 15px tall
 
-        let find_first_gte = |scroll: f64| {
-            let mut lo: i32 = 0;
-            let mut hi: i32 = n as i32;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let base = mid as f64 * row_height;
-                let delta = f.sum(mid as usize);
-                if base + delta < scroll {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            lo.max(0) as u32
-        };
+        // Calls the production search rather than mimicking it — a copy
+        // of the loop here would let the two drift with both tests green.
+        // Overscan 0 makes `first_visible_row` exactly this search.
+        let find_first_gte =
+            |scroll: f64| first_visible_row(n, row_height, scroll, |i| f.sum(i), 0);
 
         assert_eq!(find_first_gte(15.0), 1); // 1 * 20 = 20 > 15
         assert_eq!(find_first_gte(20.0), 1); // 1 * 20 = 20 >= 20

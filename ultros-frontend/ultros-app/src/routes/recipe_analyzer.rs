@@ -2676,9 +2676,12 @@ fn RecipeAnalyzerTable(
         };
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        // Reactive on the 30-day body: `None` until it lands (and forever
-        // when no 30-day column asked for it), so this only re-runs when
-        // something actually arrived.
+        // Reactive on the 30-day body: `None` until it lands, and forever
+        // when no 30-day column asked for it. `RwSignal::set` notifies
+        // whatever it is handed, so the world-change reset below only
+        // writes when there is something to clear — otherwise every
+        // sell-world change would re-sort the whole table to absorb a
+        // `None` -> `None`, on the flag-off page too.
         let stats_30 = market.stats_30.get();
         filter_and_sort(
             &priced(),
@@ -3893,13 +3896,19 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     });
     let stats_30_fetching = StoredValue::new(false);
     let stats_30_world = StoredValue::new(None::<String>);
+    // Bumped once per spawn. The world alone cannot tell two runs apart:
+    // a flip A -> B -> A while A is still in flight leaves the first
+    // response passing a world check that the second run also passes.
+    let stats_30_gen = StoredValue::new(0u64);
     Effect::new(move |_| {
         let world = sell_world_name.get();
         // A world change drops the stored body even when nothing wants one
         // right now: it describes the old world.
         if stats_30_world.get_value() != world {
             stats_30_world.set_value(world);
-            market.stats_30.set(None);
+            if market.stats_30.with_untracked(Option::is_some) {
+                market.stats_30.set(None);
+            }
             stats_30_fetching.set_value(false);
         }
         let Some(name) = stats_30_source.get() else {
@@ -3909,6 +3918,8 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             return;
         }
         stats_30_fetching.set_value(true);
+        let my_gen = stats_30_gen.get_value() + 1;
+        stats_30_gen.set_value(my_gen);
         let captured = Some(name.clone());
         leptos::task::spawn_local(async move {
             // A failed fetch stores the empty index on purpose: the cells
@@ -3921,6 +3932,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             // Past the await the page may be gone and the world may have
             // moved: every touch is a `try_*`.
             if verdict(sell_world_name.try_get_untracked(), &captured) != Verdict::Proceed {
+                return;
+            }
+            // A newer run owns the flag and the store from here on; leave
+            // both to it, exactly as the stale-world path does.
+            if stats_30_gen.try_get_value() != Some(my_gen) {
                 return;
             }
             let _ = market.stats_30.try_set(Some(Arc::new(index)));
@@ -6076,10 +6092,17 @@ mod test {
         // Assembled at run time: `include_str!` pulls in this test module
         // too, so a literal needle would satisfy itself. Splitting on the
         // module header keeps the search to the production half.
-        let production = SRC
-            .split(&format!("mod {} {{", "test"))
-            .next()
-            .expect("split yields at least one part");
+        // Anchored on the attribute too: a bare `mod test {` could appear
+        // in a doc comment or a string above and silently truncate the
+        // region being searched, failing this test with nothing wrong.
+        let header = format!(
+            "#[cfg({0})]
+mod {0} {{",
+            "test"
+        );
+        let (production, _) = SRC
+            .split_once(&header)
+            .expect("the production half ends at the test module header");
         assert!(
             production.contains(&format!("{}: {}(", "stats_30", "stats_30_wanted")),
             "the page's RecipeNeeds must take stats_30 from the visible columns and the sort target"
