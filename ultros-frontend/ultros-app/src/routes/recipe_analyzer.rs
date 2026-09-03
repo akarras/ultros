@@ -1,15 +1,20 @@
 use crate::analyzer_kit::cells::{CellNote, CellValue};
 use crate::analyzer_kit::columns::{
-    CellCtx, ColumnKind, ColumnSpec, Layer, PickerGroup, Sortability, ToolColumnMeta,
-    default_dir_for, picker_options, sort_from_token, sort_token, sortability_for,
+    CellCtx, ColumnKind, ColumnSpec, Layer, PickerContext, PickerGroup, Sortability,
+    ToolColumnMeta, default_dir_for, grouped_picker_options, picker_options, sort_from_token,
+    sort_token, sortability_for,
 };
 use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, per_unit_cost, profit_line,
 };
-use crate::analyzer_kit::grid::{AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, MarkLabels};
+use crate::analyzer_kit::grid::{
+    AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, HeaderExtra, HeaderExtras, HeaderLine2,
+    HeaderPill, MarkLabels,
+};
 use crate::analyzer_kit::hop::{HopGain, WorldsToVisit, hop_gain, worlds_to_visit};
 use crate::analyzer_kit::needed::{
-    BodyRole, NeededSignals, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies,
+    BodyRole, NeededSignals, RecipeNeeds, SALE_STATS_WINDOW_DAYS, SignalWants, needed_bodies,
+    needed_signals,
 };
 use crate::analyzer_kit::signals::{
     PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
@@ -1234,6 +1239,120 @@ fn migrate_legacy_params(pairs: &[(String, String)]) -> Option<Vec<(String, Stri
     )
 }
 
+/// What the visible columns and the sort target ask of the pricing pass.
+/// Visible cost columns come out in table order (the cap claims them in
+/// that order).
+fn signal_wants(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> SignalWants {
+    let visible_cost = RECIPE_COLUMNS
+        .iter()
+        .filter(|c| !c.id.is_empty() && visible.contains(c.id))
+        .filter_map(|c| match c.spec.kind {
+            ColumnKind::CostSignal(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    let sort_cost = match sort {
+        Some(SortMode::CostSignal(s)) => Some(s),
+        _ => None,
+    };
+    SignalWants {
+        visible_cost,
+        sort_cost,
+        hop: visible.contains(COL_HOP_GAIN) || sort == Some(SortMode::HopGain),
+        worlds: visible.contains(COL_HOP_WORLDS) || sort == Some(SortMode::HopWorlds),
+    }
+}
+
+/// The buy-scope sale-stats resource key: the scope name when the body is
+/// needed, `None` (no fetch) otherwise.
+fn buy_stats_scope_key(
+    formula: &ProfitFormula,
+    needs: &RecipeNeeds,
+    scope_name: String,
+) -> Option<String> {
+    needed_bodies(formula, needs)
+        .contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS))
+        .then_some(scope_name)
+}
+
+/// Which formula side a header pill writes, and the signal it writes.
+fn pill_param(kind: ColumnKind) -> Option<(TermRole, PriceSignal)> {
+    match kind {
+        ColumnKind::RevSignal(s) => Some((TermRole::Revenue, s)),
+        ColumnKind::CostSignal(s) => Some((TermRole::Cost, s)),
+        _ => None,
+    }
+}
+
+/// `NeededSignals::capped` as the `[bool; 4]` the cell context carries.
+fn capped_flags(capped: &BTreeSet<PriceSignal>) -> [bool; 4] {
+    let mut flags = [false; 4];
+    for s in capped {
+        flags[s.index()] = true;
+    }
+    flags
+}
+
+/// The full picker label of a signal ("Sale median (7d)").
+fn signal_label(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
+    match s {
+        PriceSignal::ListingMin => t_string!(i18n, price_basis_listing_min).to_string(),
+        PriceSignal::SaleMin => t_string!(i18n, price_basis_sale_min).to_string(),
+        PriceSignal::SaleMedian => t_string!(i18n, price_basis_sale_median).to_string(),
+        PriceSignal::SaleAvg => t_string!(i18n, price_basis_sale_avg).to_string(),
+    }
+}
+
+/// The one-sentence definition of a signal, for header titles.
+fn signal_help(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
+    match s {
+        PriceSignal::ListingMin => t_string!(i18n, price_basis_listing_min_help).to_string(),
+        PriceSignal::SaleMin => t_string!(i18n, price_basis_sale_min_help).to_string(),
+        PriceSignal::SaleMedian => t_string!(i18n, price_basis_sale_median_help).to_string(),
+        PriceSignal::SaleAvg => t_string!(i18n, price_basis_sale_avg_help).to_string(),
+    }
+}
+
+/// One Worlds-to-visit line: (world id, (world name, datacenter) when
+/// known, ingredient lines priced there). An alias, or the tuple trips
+/// `clippy::type_complexity`.
+type WorldLine = (i32, Option<(String, String)>, u16);
+
+/// The Worlds-to-visit tooltip: "• world · ingredients: n" lines grouped
+/// by datacenter in first-appearance order (a `Vec`, never a map), then the
+/// datacenter count and the buy-side note. An unknown world shows its id.
+/// The bullet lives in the locale string, as the sub-craft tooltip's does.
+fn worlds_tooltip(i18n: I18nContext<Locale, I18nKeys>, entries: &[WorldLine], dcs: u8) -> String {
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (id, names, n) in entries {
+        let (world, dc) = match names {
+            Some((w, d)) => (w.clone(), d.clone()),
+            None => (id.to_string(), String::new()),
+        };
+        let line = t_string!(i18n, analyzer_hop_worlds_row, world = world, n = *n).to_string();
+        match groups.iter_mut().find(|(g, _)| *g == dc) {
+            Some((_, lines)) => lines.push(line),
+            None => groups.push((dc, vec![line])),
+        }
+    }
+    let mut out = String::new();
+    for (dc, lines) in groups {
+        if !dc.is_empty() {
+            out.push_str(&dc);
+            out.push('\n');
+        }
+        for line in lines {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out.push_str(&t_string!(i18n, analyzer_hop_worlds_dcs, n = dcs).to_string());
+    out.push('\n');
+    // A plain-key `t_string!` is already a `&'static str`.
+    out.push_str(t_string!(i18n, analyzer_hop_worlds_note));
+    out
+}
+
 /// Whether any crafter is above level 0. A user with all-zero levels can't
 /// craft anything, so the analyzer has nothing to rank.
 fn has_any_level(levels: &CrafterLevels) -> bool {
@@ -1710,7 +1829,9 @@ struct Thresholds {
     listing_dc: Option<String>,
 }
 
-/// Apply the thresholds and sort. Pure, so a header click never re-prices.
+/// Apply the thresholds and sort. Pure, so a header click never re-prices
+/// by itself (a lab sort whose signal the pass has not run changes
+/// `needs`, which does).
 fn filter_and_sort(
     rows: &[Arc<RecipeProfitData>],
     t: &Thresholds,
@@ -1832,6 +1953,19 @@ fn RecipeAnalyzerTable(
     /// The ledger chips, built on the page (the popover that renders them
     /// lives inside this table's `ControlBar`).
     strip_terms: Callback<(), Vec<StripTerm>>,
+    /// The analyzer-signal-columns lab: alternative columns, pills, the
+    /// grouped picker, the Price tell and the "n unpriced" note. A plain
+    /// bool: the page reads the lab inside its Suspense join, so a flip
+    /// remounts this table (the grid's header is built once per mount).
+    signal_cols: bool,
+    /// The cost signals to run per recipe and the hop flags (page-level,
+    /// because the fetch gate reads the same value).
+    needs: Memo<NeededSignals>,
+    /// The buy scope IS the sell world: reuse its stats index as the
+    /// buy-scope index instead of a second identical body.
+    buy_stats_aliased: bool,
+    #[prop(into)] home_world_id: Signal<i32>,
+    on_pill: Callback<ColumnKind>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -1846,8 +1980,12 @@ fn RecipeAnalyzerTable(
     let prices = Arc::new(CheapestListingsMap::from(global_cheapest_listings));
     // An absent payload behaves as "no sales anywhere": every sale-stat
     // basis degrades to the listing basis (`ProfitFormula::effective`).
-    let buy_stats_loaded = sale_stats.is_some();
     let sell_stats_loaded = sell_world_sale_stats.is_some();
+    // Aliased = the sell body IS the buy body, so its outcome is the buy
+    // outcome: a failed sell fetch degrades the cost signal too, and
+    // `effective()` must see that (labels never name a signal the numbers
+    // fell back from).
+    let buy_stats_loaded = sale_stats.is_some() || (buy_stats_aliased && sell_stats_loaded);
     let sale_stats = sale_stats.unwrap_or_default();
     let sell_world_sale_stats = sell_world_sale_stats.unwrap_or_default();
     let sell_world_prices = sell_world_listings.map(|l| Arc::new(CheapestListingsMap::from(l)));
@@ -1941,8 +2079,13 @@ fn RecipeAnalyzerTable(
 
     // Indexes are built once per payload, not once per recompute.
     let sell_stats_index: Arc<StatsIndex> = Arc::new(stats_index(&sell_world_sale_stats));
-    let buy_stats_index: Option<Arc<StatsIndex>> =
-        buy_stats_loaded.then(|| Arc::new(stats_index(&sale_stats)));
+    let buy_stats_index: Option<Arc<StatsIndex>> = buy_stats_loaded.then(|| {
+        if buy_stats_aliased {
+            sell_stats_index.clone()
+        } else {
+            Arc::new(stats_index(&sale_stats))
+        }
+    });
     let all_recipes: Arc<Vec<&'static Recipe>> = Arc::new(recipes.values().collect());
 
     let formula = Memo::new(move |_| {
@@ -1976,9 +2119,78 @@ fn RecipeAnalyzerTable(
         })
     });
 
+    // Line 2 and titles for the alternative-signal and hop headers. The
+    // "(= …)" mark follows the *effective* formula (what the numbers use);
+    // the pill's pressed state follows the *selected* one (what pressing
+    // it writes). Empty with the lab off: every header renders as before.
+    let header_extras = Memo::new(move |_| {
+        let mut by_kind = HashMap::new();
+        if !signal_cols {
+            return HeaderExtras { by_kind };
+        }
+        let f = formula.get();
+        let selected_cost = cost_basis().unwrap_or_default();
+        let selected_revenue = revenue_metric().unwrap_or_default();
+        for col in RECIPE_COLUMNS.iter() {
+            let extra = match col.spec.kind {
+                ColumnKind::RevSignal(s) => HeaderExtra {
+                    title: signal_help(i18n, s),
+                    line2: Some(HeaderLine2 {
+                        sub_label: if s == f.revenue_signal() {
+                            t_string!(i18n, analyzer_equals_price_slot).to_string()
+                        } else {
+                            format!("{} · {}", short_signal(i18n, s), sell_place.get())
+                        },
+                        pill: HeaderPill {
+                            aria: t_string!(
+                                i18n,
+                                analyzer_use_as_revenue_aria,
+                                signal = signal_label(i18n, s)
+                            )
+                            .to_string(),
+                            pressed: s == selected_revenue,
+                        },
+                    }),
+                },
+                ColumnKind::CostSignal(s) => HeaderExtra {
+                    title: signal_help(i18n, s),
+                    line2: Some(HeaderLine2 {
+                        sub_label: if s == f.cost_signal() {
+                            t_string!(i18n, analyzer_equals_cost_slot).to_string()
+                        } else {
+                            format!("{} · {}", short_signal(i18n, s), buy_place.get())
+                        },
+                        pill: HeaderPill {
+                            aria: t_string!(
+                                i18n,
+                                analyzer_use_as_cost_aria,
+                                signal = signal_label(i18n, s)
+                            )
+                            .to_string(),
+                            pressed: s == selected_cost,
+                        },
+                    }),
+                },
+                ColumnKind::HopGain => HeaderExtra {
+                    title: t_string!(i18n, analyzer_hop_gain_help).to_string(),
+                    line2: None,
+                },
+                ColumnKind::HopWorlds => HeaderExtra {
+                    title: t_string!(i18n, analyzer_hop_worlds_help).to_string(),
+                    line2: None,
+                },
+                _ => continue,
+            };
+            by_kind.insert(col.spec.kind, extra);
+        }
+        HeaderExtras { by_kind }
+    });
+
     // The pricing pass. Rebuilt only when a pricing input changes — a
-    // header click or a threshold edit re-runs `filter_and_sort` alone.
+    // header click or a threshold edit re-runs `filter_and_sort` alone,
+    // unless the new sort target adds a signal to `needs`.
     let on_hand_map = use_context::<OnHandMap>();
+    let world_names_for_pricing = world_names.clone();
     let priced: Memo<Arc<Vec<Arc<RecipeProfitData>>>> = {
         let prices = prices.clone();
         let sell_world_prices = sell_world_prices.clone();
@@ -2001,6 +2213,8 @@ fn RecipeAnalyzerTable(
             let on_hand = use_on_hand_enabled()
                 .then(|| on_hand_map.map(|m| m.0.get_untracked()).unwrap_or_default());
             let recipes_by_output = recipes_by_output();
+            let needs = needs.get();
+            let dc_of = |id: i32| world_names_for_pricing.get(&id).map(|(_, dc)| dc.as_str());
             let inp = PriceInputs {
                 recipes: &all_recipes,
                 recipe_level_tables,
@@ -2022,10 +2236,10 @@ fn RecipeAnalyzerTable(
                     ShardsMode::IncludeMarket
                 },
                 on_hand: on_hand.as_ref(),
-                needs: &NeededSignals::default(),
+                needs: &needs,
                 sell_stats_loaded,
-                home_world_id: 0,
-                dc_of: &|_| None,
+                home_world_id: home_world_id.get(),
+                dc_of: &dc_of,
             };
             #[cfg(all(debug_assertions, feature = "hydrate"))]
             let t0 = js_sys::Date::now();
@@ -2182,7 +2396,24 @@ fn RecipeAnalyzerTable(
     // Optional-column picker, flip-finder style. Long labels for the picker
     // (recognition, not recall — same rationale as the filter menu), read
     // straight off the column table.
-    let column_options = Signal::derive(move || picker_options(&RECIPE_COLUMNS, i18n));
+    let column_options = Signal::derive(move || {
+        if signal_cols {
+            let f = formula.get();
+            grouped_picker_options(
+                &RECIPE_COLUMNS,
+                i18n,
+                &PickerContext {
+                    sell_place: sell_place.get(),
+                    buy_place: buy_place.get(),
+                    revenue: f.revenue_signal(),
+                    cost: f.cost_signal(),
+                    capped: needs.get().capped,
+                },
+            )
+        } else {
+            picker_options(&RECIPE_COLUMNS, i18n)
+        }
+    });
     let toggle_column = Callback::new(move |col: &'static str| {
         let mut set = visible_cols.get_untracked();
         if !set.remove(col) {
@@ -2256,7 +2487,10 @@ fn RecipeAnalyzerTable(
         let item_id = ItemId(data.recipe.item_result);
         match kind {
             ColumnKind::Item => {
-                let item = items.get(&item_id).map(|i| i.name.as_str()).unwrap_or("Unknown");
+                let item = items
+                    .get(&item_id)
+                    .map(|i| i.name.as_str())
+                    .unwrap_or("Unknown");
                 let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                 let job_abbrev = craft_type_acronym(data.recipe.craft_type);
                 view! {
@@ -2309,57 +2543,78 @@ fn RecipeAnalyzerTable(
                 }
                 .into_any()
             }
-            ColumnKind::CostSlot => view! {
-                <div role="cell" class=class>
-                    <Gil amount=data.cost />
-                    {
-                        let data_for_yield = data.clone();
-                        (data.recipe.amount_result > 1)
-                            .then(|| view! {
-                                <div class="text-xs text-[color:var(--color-text-muted)]">
-                                    {t!(i18n, recipe_analyzer_yield_note, n = move || data_for_yield.recipe.amount_result)}
-                                </div>
-                            })
-                    }
-                    {
-                        let has_sub_crafts = !data.sub_crafts.is_empty();
-                        let sub_crafts = data.sub_crafts.clone();
-                        view! {
-                            <Show when=move || has_sub_crafts>
-                                {
-                                    let sub_crafts_for_text = sub_crafts.clone();
-                                    let count = sub_crafts.len();
-                                    view! {
-                                        <Tooltip
-                                            tooltip_text={
-                                                let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
-                                                    let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
-                                                    (name, sub.amount, sub.unit_cost)
-                                                }).collect();
-                                                Signal::derive(move || {
-                                                    let mut tooltip = t_string!(i18n, recipe_analyzer_subcraft_header).to_string();
-                                                    for (name, amount, cost) in &sub_crafts_details {
-                                                        tooltip.push_str(
-                                                            &t_string!(i18n, recipe_analyzer_subcraft_row, count = *amount, name = name.clone(), gil = *cost).to_string(),
-                                                        );
-                                                    }
-                                                    tooltip
-                                                })
-                                            }
-                                        >
-                                            <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
-                                                <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
-                                                <span>{count} " " {t!(i18n, recipe_analyzer_sub_suffix)}</span>
-                                            </div>
-                                        </Tooltip>
-                                    }
+            ColumnKind::CostSlot => {
+                let yield_note = {
+                    let data_for_yield = data.clone();
+                    (data.recipe.amount_result > 1).then(|| view! {
+                        <div class="text-xs text-[color:var(--color-text-muted)]">
+                            {t!(i18n, recipe_analyzer_yield_note, n = move || data_for_yield.recipe.amount_result)}
+                        </div>
+                    })
+                };
+                let sub_badge = {
+                    let has_sub_crafts = !data.sub_crafts.is_empty();
+                    let sub_crafts = data.sub_crafts.clone();
+                    view! {
+                        <Show when=move || has_sub_crafts>
+                            {
+                                let sub_crafts_for_text = sub_crafts.clone();
+                                let count = sub_crafts.len();
+                                view! {
+                                    <Tooltip
+                                        tooltip_text={
+                                            let sub_crafts_details: Vec<(String, i32, i32)> = sub_crafts_for_text.iter().map(|sub| {
+                                                let name = items.get(&sub.item_id).map(|i| i.name.to_string()).unwrap_or("Unknown".to_string());
+                                                (name, sub.amount, sub.unit_cost)
+                                            }).collect();
+                                            Signal::derive(move || {
+                                                let mut tooltip = t_string!(i18n, recipe_analyzer_subcraft_header).to_string();
+                                                for (name, amount, cost) in &sub_crafts_details {
+                                                    tooltip.push_str(
+                                                        &t_string!(i18n, recipe_analyzer_subcraft_row, count = *amount, name = name.clone(), gil = *cost).to_string(),
+                                                    );
+                                                }
+                                                tooltip
+                                            })
+                                        }
+                                    >
+                                        <div class="text-xs text-brand-300 flex items-center justify-end gap-1 cursor-help">
+                                            <Icon icon=i::FaHammerSolid width="0.8em" height="0.8em" />
+                                            <span>{count} " " {t!(i18n, recipe_analyzer_sub_suffix)}</span>
+                                        </div>
+                                    </Tooltip>
                                 }
-                            </Show>
-                        }
+                            }
+                        </Show>
                     }
-                </div>
+                };
+                if signal_cols && data.unpriced > 0 {
+                    let n = data.unpriced;
+                    view! {
+                        <div role="cell" class=class>
+                            <Gil amount=data.cost />
+                            {yield_note}
+                            {sub_badge}
+                            <div
+                                class="text-[10px] leading-3 text-amber-300 cursor-help"
+                                title=t_string!(i18n, analyzer_cost_unpriced_title, n = n).to_string()
+                            >
+                                {t_string!(i18n, analyzer_cost_unpriced, n = n).to_string()}
+                            </div>
+                        </div>
+                    }
+                    .into_any()
+                } else {
+                    view! {
+                        <div role="cell" class=class>
+                            <Gil amount=data.cost />
+                            {yield_note}
+                            {sub_badge}
+                        </div>
+                    }
+                    .into_any()
+                }
             }
-            .into_any(),
             ColumnKind::SalesPerDay7 => {
                 // Window length, approximated back out of the sample count
                 // and the per-day rate.
@@ -2367,7 +2622,10 @@ fn RecipeAnalyzerTable(
                     i18n,
                     recipe_analyzer_sales_tooltip,
                     count = data.total_sales,
-                    days = format!("{:.1}", data.total_sales as f32 / data.daily_sales.max(0.001))
+                    days = format!(
+                        "{:.1}",
+                        data.total_sales as f32 / data.daily_sales.max(0.001)
+                    )
                 )
                 .to_string();
                 let per_day = t_string!(
@@ -2451,6 +2709,36 @@ fn RecipeAnalyzerTable(
                     }.into_any(),
                 }
             }
+            ColumnKind::HopWorlds => {
+                let (count, tooltip) = match &data.worlds {
+                    Some(w) => {
+                        let entries: Vec<WorldLine> = w
+                            .worlds
+                            .iter()
+                            .map(|(id, n)| (*id, world_names_for_cells.get(id).cloned(), *n))
+                            .collect();
+                        (Some(w.worlds.len()), worlds_tooltip(i18n, &entries, w.dcs))
+                    }
+                    None => (None, t_string!(i18n, analyzer_hop_worlds_note).to_string()),
+                };
+                let text = count
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "—".to_string());
+                let muted = if count.is_some() {
+                    ""
+                } else {
+                    "text-[color:var(--color-text-muted)]"
+                };
+                // `Tooltip`'s children are an `Fn` closure: clone, never move.
+                view! {
+                    <div role="cell" class=class>
+                        <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
+                            <span class=muted>{text.clone()}</span>
+                        </Tooltip>
+                    </div>
+                }
+                .into_any()
+            }
             ColumnKind::Actions => view! {
                 <div role="cell" class="px-4 py-2 w-20 shrink-0">
                     <AddRecipeToList recipe=data.recipe />
@@ -2469,10 +2757,12 @@ fn RecipeAnalyzerTable(
             "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
         }
     }
-    let cell_ctx = Signal::derive(|| CellCtx {
+    let cell_ctx = Signal::derive(move || CellCtx {
         now_unix: chrono::Utc::now().timestamp(),
-        signal_columns: false,
-        capped_cost: [false; 4],
+        signal_columns: signal_cols,
+        // `with`, not `get`: this is read once per rendered row and `get`
+        // would clone both sets each time.
+        capped_cost: needs.with(|n| capped_flags(&n.capped)),
     });
 
     view! {
@@ -2804,6 +3094,9 @@ fn RecipeAnalyzerTable(
                     header_class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
                     row_class=stripe
                     marks=marks
+                    extras=header_extras
+                    on_pill=on_pill
+                    lab_columns=signal_cols
                 />
              </div>
         </div>
@@ -2846,6 +3139,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
     let ledger = use_lab(LAB_ANALYZER_LEDGER);
+    let signal_cols = use_lab(LAB_ANALYZER_SIGNAL_COLUMNS);
+    // Sub-crafts drive the cost-column cap; read here so the fetch gate
+    // (page level) and the pass (table) agree.
+    let (use_subcrafts_page, _) = filter_query_signal::<bool>(FILTER_SUBCRAFTS);
     // `(buy, sell)` stats-loaded flags — written by an Effect inside the
     // table, where the resource outcomes are known. `(true, true)` until
     // then, so SSR and the pre-Effect client render name the selected
@@ -2861,15 +3158,41 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // `?cols=` lives here rather than in the table because the table
     // remounts whenever its resources change.
     let (cols_param, set_cols_param) = query_signal::<String>("cols");
-    // `?sort=` / `?dir=` are hoisted for the same reason.
-    let (sort_mode, _) = query_signal::<SortMode>("sort");
+    // `?sort=` / `?dir=` are hoisted for the same reason. A lab-only sort
+    // reads as unset while the lab is off, exactly as its token did before
+    // the variant existed.
+    let (sort_param, _) = query_signal::<SortMode>("sort");
+    let sort_mode = Memo::new(move |_| {
+        sort_param
+            .get()
+            .filter(|m| signal_cols.get() || !m.lab_only())
+    });
     let (sort_dir, _) = query_signal::<SortDir>("dir");
+    // The lab widens the `?cols=` contract; off, the Phase D tokens drop
+    // like any unknown token.
     let visible_cols = Memo::new(move |_| {
-        parse_visible_cols(
-            cols_param().as_deref(),
-            &OPTIONAL_COLUMN_ORDER,
-            &DEFAULT_COLS,
-        )
+        let all: &'static [&'static str] = if signal_cols.get() {
+            &OPTIONAL_COLUMN_ORDER
+        } else {
+            &BASE_COLUMN_ORDER
+        };
+        parse_visible_cols(cols_param().as_deref(), all, &DEFAULT_COLS)
+    });
+
+    // Which cost signals the pass runs per recipe. Computed here because
+    // the buy-scope fetch key must see the sort target and the visible
+    // columns. Off the lab this is exactly {selected}: today's fetches.
+    let needs_page: Memo<NeededSignals> = Memo::new(move |_| {
+        let f = formula_page.get();
+        if signal_cols.get() {
+            needed_signals(
+                &f,
+                &signal_wants(&visible_cols.get(), sort_mode.get()),
+                use_subcrafts_page().unwrap_or(false),
+            )
+        } else {
+            needed_signals(&f, &SignalWants::default(), false)
+        }
     });
 
     // Rewrite pre-market-model query params once on mount, before the
@@ -3028,18 +3351,22 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // toggles between sale stats recompute client-side; only a scope change
     // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
     // fetched separately below.)
+    // Buy from = This world only means the sell world itself: the
+    // sell-world stats body doubles as the buy-scope body (one body, not
+    // two identical ones). Lab-gated so the flag-off page fetches as before.
+    let buy_scope_is_sell_world = Memo::new(move |_| {
+        signal_cols.get()
+            && buy_scope().unwrap_or_default() == BuyScope::World
+            && selected_world.get().is_some()
+    });
     let buy_sale_stats_scope = Memo::new(move |_| {
         let formula = ProfitFormula::recipe_from_query(cost_basis(), None, buy_scope());
-        // Phase A is fetch-identical to `main`: the dedupe of a buy scope
-        // that equals the sell world is Phase D's, so the flag stays false.
         let needs = RecipeNeeds {
             outliers: false,
-            buy_scope_is_sell_world: false,
-            cost_signals: BTreeSet::new(),
+            buy_scope_is_sell_world: buy_scope_is_sell_world.get(),
+            cost_signals: needs_page.get().cost,
         };
-        needed_bodies(&formula, &needs)
-            .contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS))
-            .then(|| buy_scope_name.get())
+        buy_stats_scope_key(&formula, &needs, buy_scope_name.get())
     });
     let sale_stats = ArcResource::new(
         buy_sale_stats_scope,
@@ -3133,6 +3460,20 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         },
     );
 
+    // A header pill writes exactly one param through the filter signal
+    // (no scroll-to-top, no history spam); the default is stripped like
+    // the Market popover's setters do.
+    let on_pill = Callback::new(move |kind: ColumnKind| match pill_param(kind) {
+        Some((TermRole::Cost, s)) => {
+            set_cost_basis(Some(s).filter(|s| *s != CostBasis::default()));
+        }
+        Some((TermRole::Revenue, s)) => {
+            set_revenue_metric(Some(s).filter(|s| *s != RevenueMetric::default()));
+        }
+        _ => {}
+    });
+    let home_world_id = Memo::new(move |_| selected_world.get().map(|w| w.id).unwrap_or(0));
+
     let sell_history_for_header = sell_history.clone();
     let raw_sales_for_header = raw_sales.clone();
     view! {
@@ -3179,7 +3520,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                 t_string!(i18n, recipe_analyzer_calc_formula).to_string()
                             }
                         }),
-                        t_string!(i18n, recipe_analyzer_calc_details).to_string(),
+                        Signal::derive(move || {
+                            let mut details = t_string!(i18n, recipe_analyzer_calc_details).to_string();
+                            if signal_cols.get() {
+                                details.push(' ');
+                                details.push_str(t_string!(i18n, recipe_analyzer_calc_signal_semantics));
+                            }
+                            details
+                        }),
                     )
                     assumptions=vec![
                         t_string!(i18n, recipe_analyzer_assumption_crafter_levels).to_string(),
@@ -3303,6 +3651,11 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         sell_place=sell_place
                                         buy_place=buy_place
                                         strip_terms=Callback::new(move |()| strip_terms())
+                                        signal_cols=signal_cols.get()
+                                        needs=needs_page
+                                        buy_stats_aliased=buy_scope_is_sell_world.get()
+                                        home_world_id=home_world_id
+                                        on_pill=on_pill
                                     />
                                 }.into_any()
                             }
@@ -3331,8 +3684,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::analyzer_kit::columns::{PickerContext, grouped_picker_options};
-    use crate::analyzer_kit::needed::{SignalWants, needed_signals};
     use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
@@ -4473,6 +4824,142 @@ mod test {
                     "no picker label for {token}"
                 );
             }
+        });
+    }
+
+    /// A pill writes exactly one param: `cost-basis` for a cost column,
+    /// `revenue` for a revenue column, nothing for anything else.
+    #[test]
+    fn use_as_pill_writes_exactly_one_param() {
+        assert_eq!(
+            pill_param(ColumnKind::CostSignal(PriceSignal::SaleMedian)),
+            Some((TermRole::Cost, PriceSignal::SaleMedian))
+        );
+        assert_eq!(
+            pill_param(ColumnKind::RevSignal(PriceSignal::SaleAvg)),
+            Some((TermRole::Revenue, PriceSignal::SaleAvg))
+        );
+        assert_eq!(pill_param(ColumnKind::HopGain), None);
+        assert_eq!(pill_param(ColumnKind::CostSlot), None);
+    }
+
+    #[test]
+    fn signal_wants_reads_visible_columns_and_the_sort_target() {
+        let visible: HashSet<&'static str> = [
+            COL_CONFIDENCE,
+            COL_COST_SALE_AVG,
+            COL_COST_LISTING_MIN,
+            COL_REV_SALE_MIN,
+        ]
+        .into_iter()
+        .collect();
+        let w = signal_wants(&visible, Some(SortMode::CostSignal(PriceSignal::SaleMin)));
+        assert_eq!(
+            w.visible_cost,
+            vec![PriceSignal::ListingMin, PriceSignal::SaleAvg],
+            "table order"
+        );
+        assert_eq!(w.sort_cost, Some(PriceSignal::SaleMin));
+        assert!(!w.hop && !w.worlds);
+        let w = signal_wants(&HashSet::new(), Some(SortMode::HopGain));
+        assert!(w.hop && !w.worlds);
+        let visible: HashSet<&'static str> = [COL_HOP_WORLDS].into_iter().collect();
+        let w = signal_wants(&visible, None);
+        assert!(w.worlds && !w.hop);
+        assert_eq!(
+            signal_wants(&HashSet::new(), Some(SortMode::Profit)),
+            SignalWants::default()
+        );
+    }
+
+    #[test]
+    fn buy_stats_fetch_only_when_a_sale_cost_signal_is_needed() {
+        let listing = ProfitFormula::recipe_from_query(None, None, None);
+        let plain = RecipeNeeds::default();
+        assert_eq!(buy_stats_scope_key(&listing, &plain, "Aether".into()), None);
+        let median = ProfitFormula::recipe_from_query(Some(PriceSignal::SaleMedian), None, None);
+        assert_eq!(
+            buy_stats_scope_key(&median, &plain, "Aether".into()),
+            Some("Aether".into())
+        );
+        // A visible / sorted sale-cost column forces the body under a listing basis.
+        let mut wants_col = RecipeNeeds::default();
+        wants_col.cost_signals.insert(PriceSignal::SaleMin);
+        assert_eq!(
+            buy_stats_scope_key(&listing, &wants_col, "Aether".into()),
+            Some("Aether".into())
+        );
+        // A revenue signal never does: it reads the sell-world body.
+        let rev = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None);
+        assert_eq!(buy_stats_scope_key(&rev, &plain, "Aether".into()), None);
+    }
+
+    #[test]
+    fn buy_stats_key_is_none_when_buy_scope_is_the_sell_world() {
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::SaleMedian),
+            None,
+            Some(BuyScope::World),
+        );
+        let same = RecipeNeeds {
+            buy_scope_is_sell_world: true,
+            ..RecipeNeeds::default()
+        };
+        assert_eq!(buy_stats_scope_key(&f, &same, "Gilgamesh".into()), None);
+        let other = RecipeNeeds::default();
+        assert_eq!(
+            buy_stats_scope_key(&f, &other, "Gilgamesh".into()),
+            Some("Gilgamesh".into())
+        );
+        // Only a World scope can alias; a datacenter never does.
+        let dc = ProfitFormula::recipe_from_query(Some(PriceSignal::SaleMedian), None, None);
+        assert_eq!(
+            buy_stats_scope_key(&dc, &same, "Aether".into()),
+            Some("Aether".into())
+        );
+    }
+
+    #[test]
+    fn capped_flags_index_by_signal() {
+        let capped = [PriceSignal::SaleAvg, PriceSignal::SaleMin]
+            .into_iter()
+            .collect();
+        assert_eq!(capped_flags(&capped), [false, true, false, true]);
+        assert_eq!(capped_flags(&BTreeSet::new()), [false; 4]);
+    }
+
+    #[test]
+    fn worlds_tooltip_groups_by_datacenter_in_first_appearance_order() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let entries = vec![
+                (5, Some(("Cactuar".to_string(), "Aether".to_string())), 2),
+                (9, Some(("Behemoth".to_string(), "Primal".to_string())), 1),
+                (
+                    7,
+                    Some(("Adamantoise".to_string(), "Aether".to_string())),
+                    1,
+                ),
+                (999, None, 1),
+            ];
+            let text = worlds_tooltip(i18n, &entries, 2);
+            let aether = text.find("Aether").unwrap();
+            let primal = text.find("Primal").unwrap();
+            let cactuar = text.find("• Cactuar · ingredients: 2").unwrap();
+            let adamantoise = text.find("• Adamantoise · ingredients: 1").unwrap();
+            assert!(
+                aether < cactuar && cactuar < adamantoise && adamantoise < primal,
+                "{text}"
+            );
+            assert!(text.contains("• 999 · ingredients: 1"), "{text}");
+            assert!(text.contains("Datacenters: 2"), "{text}");
+            assert!(
+                text.ends_with("buy side only · sub-craft materials not counted"),
+                "{text}"
+            );
         });
     }
 }
