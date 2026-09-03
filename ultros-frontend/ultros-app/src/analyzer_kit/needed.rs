@@ -81,8 +81,12 @@ pub struct NeededSignals {
 /// {effective cost} ∪ {ListingMin when Worlds is wanted} ∪ {the sort
 /// target} ∪ {visible cost-* columns}. With sub-crafts on, at most two
 /// signals beyond the selected one are kept, claimed in that order; the
-/// rest are `capped`. Enforced here, not in the picker, so it holds for any
-/// bookmarked URL and identically on SSR and CSR.
+/// rest are `capped`. Once the cap is full, every `PriceSignal` not in the
+/// result — including ones the caller never asked for — is also marked
+/// `capped`, so the picker can grey the entries a player has not ticked yet
+/// rather than let them tick a column that renders "—". Enforced here, not
+/// in the picker, so it holds for any bookmarked URL and identically on SSR
+/// and CSR.
 pub fn needed_signals(
     formula: &ProfitFormula,
     wants: &SignalWants,
@@ -113,6 +117,17 @@ pub fn needed_signals(
     }
     for s in &wants.visible_cost {
         claim(*s, &mut cost, &mut capped);
+    }
+    // The cap is full: mark every OTHER cost signal capped too, requested
+    // or not, so the picker greys entries a player has not ticked yet
+    // instead of letting them tick a fourth column that only then shows
+    // the hint.
+    if use_subcrafts && extras == cap {
+        for s in PriceSignal::ALL {
+            if !cost.contains(&s) {
+                capped.insert(s);
+            }
+        }
     }
     NeededSignals {
         cost,
@@ -277,6 +292,43 @@ mod tests {
             ])
         );
         assert_eq!(got.capped, set(&[PriceSignal::SaleMin]));
+    }
+
+    /// Once the cap is full every unrequested cost signal is capped too, so
+    /// the picker can grey the entries a player has not ticked yet.
+    #[test]
+    fn full_cap_greys_the_unrequested_signals() {
+        let f = ProfitFormula::recipe_from_query(None, None, None); // listing-min
+        let wants = SignalWants {
+            visible_cost: vec![PriceSignal::SaleMin, PriceSignal::SaleMedian],
+            ..SignalWants::default()
+        };
+        let got = needed_signals(&f, &wants, true);
+        assert_eq!(
+            got.cost,
+            set(&[
+                PriceSignal::ListingMin,
+                PriceSignal::SaleMin,
+                PriceSignal::SaleMedian
+            ])
+        );
+        assert_eq!(
+            got.capped,
+            set(&[PriceSignal::SaleAvg]),
+            "the untouched fourth signal is capped"
+        );
+        // One extra short of the cap: nothing is capped.
+        let wants = SignalWants {
+            visible_cost: vec![PriceSignal::SaleMin],
+            ..SignalWants::default()
+        };
+        assert!(needed_signals(&f, &wants, true).capped.is_empty());
+        // Sub-crafts off: never capped.
+        let wants = SignalWants {
+            visible_cost: PriceSignal::ALL.to_vec(),
+            ..SignalWants::default()
+        };
+        assert!(needed_signals(&f, &wants, false).capped.is_empty());
     }
 
     #[test]
