@@ -16,6 +16,36 @@ pub const SALE_STATS_WINDOW_DAYS: u16 = 7;
 /// (`LateStats`).
 pub const STATS_30_WINDOW_DAYS: u16 = 30;
 
+/// The windows `/api/v1/sale_stats` accepts (`SUPPORTED_WINDOWS` in
+/// `ultros/src/web/api/sale_stats.rs`); anything else is a 400.
+///
+/// Both window constants above are checked against this at compile time.
+/// Without that, editing either one to an unsupported value — 14, say —
+/// compiles, passes every test in this file, and fails only as a runtime
+/// 400 on a deployed page, because nothing on the client side validates
+/// the window it asks for.
+const SERVER_SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
+
+const fn is_supported_window(days: u16) -> bool {
+    let mut i = 0;
+    while i < SERVER_SUPPORTED_WINDOWS.len() {
+        if SERVER_SUPPORTED_WINDOWS[i] == days {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+const _: () = assert!(
+    is_supported_window(SALE_STATS_WINDOW_DAYS),
+    "SALE_STATS_WINDOW_DAYS is not a window the server accepts"
+);
+const _: () = assert!(
+    is_supported_window(STATS_30_WINDOW_DAYS),
+    "STATS_30_WINDOW_DAYS is not a window the server accepts"
+);
+
 /// A whole-scope body the page fetches. Symbolic: the page resolves each
 /// role to a world / datacenter / region name.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
