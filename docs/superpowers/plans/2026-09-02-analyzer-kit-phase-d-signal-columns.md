@@ -20,7 +20,7 @@
 - Every new cell keeps one element shape between its value and no-value states (the `GilOrDash` rule): class toggles, never arm switches.
 - The three existing URL params (`revenue`, `cost-basis`, `buy-scope`) *are* the formula; the pills write exactly one of them through `filter_query_signal`. No new URL key. `?cols=` gains the ten tokens below appended after the existing seven; `DEFAULT_COLS` stays `["confidence"]`; `migrate_legacy_params` is untouched.
 - `?cols=` / `?sort=` tokens (exact): `rev-listing-min, rev-sale-min, rev-sale-median, rev-sale-avg, cost-listing-min, cost-sale-min, cost-sale-median, cost-sale-avg, hop-gain, hop-worlds`.
-- `SortMode` grows to **21** variants: the eleven today plus `RevSignal(PriceSignal)`, `CostSignal(PriceSignal)`, `HopGain`, `HopWorlds`. Hop and alt-signal columns sort with `cmp_none_last`; `HopWorlds` and every `cost-*` default ascending; `rev-*` and `hop-gain` default descending.
+- `SortMode` gains four variants — `RevSignal(PriceSignal)`, `CostSignal(PriceSignal)`, `HopGain`, `HopWorlds` — for **21** distinct sort modes (the eleven today plus 4 + 4 + 2). Hop and alt-signal columns sort with `cmp_none_last`; `HopWorlds` and every `cost-*` default ascending; `rev-*` and `hop-gain` default descending.
 - New columns keep the page's `hidden md:block` convention (kit decision 7).
 - Run `cargo` in the **foreground** inside subagents (a backgrounded build that outlives its session leaves uncommitted work behind).
 - Do **not** post anything to Kosyne on #1233 (Aaron's decision, 2026-09-02). The spec's "Kosyne validates hop semantics" becomes "Aaron validates hop semantics on the PR".
@@ -42,17 +42,22 @@
 | Cost-* under a missing buy-scope body | `cost_alt` for sale signals is `None` ("—"): the page never shows a listing number under a sale-signal heading. |
 | Hop under a sale cost signal with the sell-world body missing | Both sides degrade to the listing pass (v1 L205). |
 | Sub-craft rescue gating | Not gated by the lab (see Global Constraints); the PR records the prod row delta with sub-crafts on. |
+| "(= …)" mark vs pill state under a degraded formula | The equals-slot sub-label and the picker suffix follow the *effective* formula (what the numbers use); the pill's pressed/disabled state follows the *selected* param (what pressing it writes). Under a degraded formula the effective column reads "(= …)" with a live pill and the selected column keeps its pressed, disabled pill. |
+| Picker greying under the sub-craft cap | A ticked column is never disabled (it must stay untickable); a capped option is hinted, and disabled only while unchecked. |
+| Flag-off header identity | Ten hidden optional columns would each write a `<!>` marker into the header rowgroup (an `Option` child), so the grid takes a `lab_columns: bool` and drops lab-gated columns from the header at build time when it is false; the table remounts on a lab flip because the Suspense join reads the lab. |
+| Info-panel semantics sentence (v1 L121-128) | Implemented: `ToolCalculation.details` becomes a `Signal<String>` (as Phase C did for `formula`) and the recipe page appends the per-signal rules sentence under the lab. |
+| Tax comment | The peer review of #1257 found `net_after_tax` floors the *net* (`gross * 95 / 100`), so the tax rounds up; the `TaxMath::IntegerFloor` doc comment said the opposite. Task 3 fixes the comment; the math is untouched. |
 
 ## File map
 
 | File | Responsibility in this phase |
 |---|---|
-| `ultros-frontend/ultros-app/locales/{en,fr,de,ja,cn,ko,tc}.json` | 27 new keys (Task 1). |
+| `ultros-frontend/ultros-app/locales/{en,fr,de,ja,cn,ko,tc}.json` | 28 new keys (Task 1). |
 | `ultros-frontend/ultros-app/src/global_state/labs.rs` | `LAB_ANALYZER_SIGNAL_COLUMNS` + `LABS` entry (Task 1). |
 | `ultros-frontend/ultros-app/src/routes/settings.rs` | Labs title/desc arms (Task 1). |
 | `ultros-api-types/src/cheapest_listings.rs` | `PriceSummary::chosen` (Task 2). |
 | `ultros-frontend/ultros-app/src/components/crafting_cost.rs` | `IngredientLine.world_id`, `CostBreakdown.unpriced_market_lines`, the rescue (Task 2). |
-| `ultros-frontend/ultros-app/src/analyzer_kit/formula.rs` | `PriceSignal::ALL`, `PriceSignal::index` (Task 3). |
+| `ultros-frontend/ultros-app/src/analyzer_kit/formula.rs` | `PriceSignal::ALL`, `PriceSignal::index`, the `TaxMath::IntegerFloor` comment (Task 3). |
 | `ultros-frontend/ultros-app/src/analyzer_kit/signals.rs` | `stat_only`, `stat_only_cheapest` (Task 3). |
 | `ultros-frontend/ultros-app/src/analyzer_kit/needed.rs` | `SignalWants`, `NeededSignals`, `needed_signals`, `RecipeNeeds.cost_signals` (Task 3). |
 | `ultros-frontend/ultros-app/src/analyzer_kit/hop.rs` (new) | `HopGain`, `WorldsToVisit`, `hop_gain`, `worlds_to_visit` (Task 4). |
@@ -63,6 +68,7 @@
 | `ultros-frontend/ultros-app/src/components/sort_header.rs` | `trailing` prop (Task 7). |
 | `ultros-frontend/ultros-app/src/analyzer_kit/grid.rs` | `HeaderExtras`, `HeaderExtra`, `HeaderLine2`, `HeaderPill`, pill rendering, `extras` / `on_pill` props (Task 7). |
 | `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs` | Row fields + `price_rows` (Task 8); table rows, `SortMode`, sorting, URL tests (Task 9); page wiring, headers, picker, cells (Task 10). |
+| `ultros-frontend/ultros-app/src/components/tool_help.rs` | `ToolCalculation.details: Signal<String>` (Task 10). |
 | `ultros-frontend/ultros-app/src/routes/changelog.rs`, `integration/runner.cjs` | Changelog entry, e2e route (Task 11). |
 
 ## Test commands used below
@@ -90,10 +96,10 @@ owner.with(|| {
 **Files:**
 - Modify: `ultros-frontend/ultros-app/src/global_state/labs.rs:16-33` (token + `LABS` entry) and its tests
 - Modify: `ultros-frontend/ultros-app/src/routes/settings.rs:389-405` (`lab_title` / `lab_desc` arms)
-- Modify: `ultros-frontend/ultros-app/locales/en.json`, `fr.json`, `de.json`, `ja.json`, `cn.json`, `ko.json`, `tc.json` (27 keys each, inserted after `signal_short_sale_avg`)
+- Modify: `ultros-frontend/ultros-app/locales/en.json`, `fr.json`, `de.json`, `ja.json`, `cn.json`, `ko.json`, `tc.json` (28 keys each, inserted after `signal_short_sale_avg`)
 
 **Interfaces:**
-- Produces: `pub const LAB_ANALYZER_SIGNAL_COLUMNS: &str = "analyzer-signal-columns";` in `global_state/labs.rs`; the 27 keys below, read by Tasks 5–10.
+- Produces: `pub const LAB_ANALYZER_SIGNAL_COLUMNS: &str = "analyzer-signal-columns";` in `global_state/labs.rs`; the 28 keys below, read by Tasks 5–10.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -180,7 +186,7 @@ and
         }
 ```
 
-- [ ] **Step 5: Add the 27 keys to all seven locales**
+- [ ] **Step 5: Add the 28 keys to all seven locales**
 
 Write this script to the scratchpad as `add_phase_d_keys.py` and run it from the worktree root with `python add_phase_d_keys.py`. It inserts each key after the line holding `"signal_short_sale_avg"` in every locale, keeping the file's indentation and key order, and refuses to run twice.
 
@@ -208,14 +214,15 @@ KEYS = {
   "analyzer_alt_cost_capped_title": "Not priced: with sub-crafts on, only two extra cost columns are priced",
   "analyzer_hop_needed": "needed",
   "analyzer_hop_gain_title": "≈ {{gil}} gil/day at {{rate}} sales/day",
-  "analyzer_hop_gain_help": "Home cost minus buy-scope cost, per unit, buy side only: positive means the trip saves gil, negative means stay home. “needed” marks an ingredient with no home listing and no vendor. Sub-craft materials are not counted.",
+  "analyzer_hop_gain_help": "Home cost minus buy-scope cost, per unit, buy side only: positive means the trip saves gil, negative means stay home. “needed” marks an ingredient with no home listing and no vendor.",
   "analyzer_hop_worlds_help": "Worlds other than the sell world holding the cheapest listing of an ingredient. Buy side only; sub-craft materials are not counted.",
-  "analyzer_hop_worlds_row": "{{world}} · {{n}} ingredients",
-  "analyzer_hop_worlds_dcs": "{{n}} datacenters",
+  "analyzer_hop_worlds_row": "• {{world}} · ingredients: {{n}}",
+  "analyzer_hop_worlds_dcs": "Datacenters: {{n}}",
   "analyzer_hop_worlds_note": "buy side only · sub-craft materials not counted",
   "analyzer_price_listing_fallback": "listing",
   "analyzer_cost_unpriced": "{{n}} unpriced",
-  "analyzer_cost_unpriced_title": "{{n}} ingredients have no listing in the buy scope and no vendor; they cost 0 here",
+  "analyzer_cost_unpriced_title": "Unpriced ingredients: {{n}} — no listing in the buy scope and no vendor; they cost 0 here",
+  "recipe_analyzer_calc_signal_semantics": "Alternative columns follow the same rule per signal: ingredients take the cheapest matching listing (HQ-preferred under Require HQ) or the chosen sale statistic, revenue the cheaper of NQ and HQ on the sell world. A missing or zero statistic falls through to the listing per ingredient, never to 0; alternative revenue shows — when the sell world has no sale history.",
  },
  "fr": {
   "labs_analyzer_signal_columns_title": "Analyseur de recettes : les signaux de prix en colonnes",
@@ -237,17 +244,18 @@ KEYS = {
   "analyzer_alt_cost_capped_title": "Non calculé : avec les sous-crafts activés, seules deux colonnes de coût supplémentaires sont calculées",
   "analyzer_hop_needed": "requis",
   "analyzer_hop_gain_title": "≈ {{gil}} gils/jour à {{rate}} ventes/jour",
-  "analyzer_hop_gain_help": "Coût sur le monde de vente moins coût dans la zone d'achat, par unité, côté achat uniquement : positif, le déplacement fait économiser des gils ; négatif, restez chez vous. « requis » signale un ingrédient sans annonce sur votre monde ni vendeur PNJ. Les matériaux des sous-crafts ne sont pas comptés.",
+  "analyzer_hop_gain_help": "Coût sur le monde de vente moins coût dans la zone d'achat, par unité, côté achat uniquement : positif, le déplacement fait économiser des gils ; négatif, restez chez vous. « requis » signale un ingrédient sans annonce sur votre monde ni vendeur PNJ.",
   "analyzer_hop_worlds_help": "Mondes autres que le monde de vente où se trouve l'annonce la moins chère d'un ingrédient. Côté achat uniquement ; les matériaux des sous-crafts ne sont pas comptés.",
-  "analyzer_hop_worlds_row": "{{world}} · {{n}} ingrédients",
-  "analyzer_hop_worlds_dcs": "{{n}} centres de données",
+  "analyzer_hop_worlds_row": "• {{world}} · ingrédients : {{n}}",
+  "analyzer_hop_worlds_dcs": "Centres de données : {{n}}",
   "analyzer_hop_worlds_note": "côté achat uniquement · matériaux des sous-crafts non comptés",
   "analyzer_price_listing_fallback": "annonce",
   "analyzer_cost_unpriced": "{{n}} sans prix",
-  "analyzer_cost_unpriced_title": "{{n}} ingrédients n'ont ni annonce dans la zone d'achat ni vendeur PNJ ; ils comptent pour 0 ici",
+  "analyzer_cost_unpriced_title": "Ingrédients sans prix : {{n}} — ni annonce dans la zone d'achat ni vendeur PNJ ; ils comptent pour 0 ici",
+  "recipe_analyzer_calc_signal_semantics": "Les colonnes alternatives suivent la même règle par signal : les ingrédients prennent l'annonce correspondante la moins chère (HQ en priorité avec « HQ requis ») ou la statistique de vente choisie, le revenu le moins cher entre NQ et HQ sur le monde de vente. Une statistique absente ou nulle retombe sur l'annonce, ingrédient par ingrédient, jamais sur 0 ; un revenu alternatif affiche — quand le monde de vente n'a pas d'historique de ventes.",
  },
  "de": {
-  "labs_analyzer_signal_columns_title": "Rezeptanalyse: Preissignale als Spalten",
+  "labs_analyzer_signal_columns_title": "Rezept-Analyse: Preissignale als Spalten",
   "labs_analyzer_signal_columns_desc": "Jedes Preissignal wird zu einer sortierbaren Spalte mit einer „verwenden“-Schaltfläche, dazu Sprunggewinn / Einheit und zu besuchende Welten.",
   "analyzer_col_hop_gain": "Sprunggewinn / Einheit",
   "analyzer_col_hop_worlds": "Zu besuchende Welten",
@@ -266,14 +274,15 @@ KEYS = {
   "analyzer_alt_cost_capped_title": "Nicht berechnet: mit aktiven Unterrezepten werden nur zwei zusätzliche Kostenspalten berechnet",
   "analyzer_hop_needed": "nötig",
   "analyzer_hop_gain_title": "≈ {{gil}} Gil/Tag bei {{rate}} Verkäufen/Tag",
-  "analyzer_hop_gain_help": "Kosten auf der Verkaufswelt minus Kosten im Kaufbereich, pro Einheit, nur Kaufseite: positiv heißt, die Reise spart Gil; negativ heißt, zu Hause bleiben. „nötig“ markiert eine Zutat ohne Angebot auf der Heimatwelt und ohne Händler. Materialien aus Unterrezepten werden nicht gezählt.",
+  "analyzer_hop_gain_help": "Kosten auf der Verkaufswelt minus Kosten im Kaufbereich, pro Einheit, nur Kaufseite: positiv heißt, die Reise spart Gil; negativ heißt, zu Hause bleiben. „nötig“ markiert eine Zutat ohne Angebot auf der Heimatwelt und ohne Händler.",
   "analyzer_hop_worlds_help": "Welten außer der Verkaufswelt, auf denen das günstigste Angebot einer Zutat liegt. Nur Kaufseite; Materialien aus Unterrezepten werden nicht gezählt.",
-  "analyzer_hop_worlds_row": "{{world}} · {{n}} Zutaten",
-  "analyzer_hop_worlds_dcs": "{{n}} Datenzentren",
+  "analyzer_hop_worlds_row": "• {{world}} · Zutaten: {{n}}",
+  "analyzer_hop_worlds_dcs": "Datenzentren: {{n}}",
   "analyzer_hop_worlds_note": "nur Kaufseite · Materialien aus Unterrezepten nicht gezählt",
   "analyzer_price_listing_fallback": "Angebot",
   "analyzer_cost_unpriced": "{{n}} ohne Preis",
-  "analyzer_cost_unpriced_title": "{{n}} Zutaten haben weder ein Angebot im Kaufbereich noch einen Händler; sie zählen hier mit 0",
+  "analyzer_cost_unpriced_title": "Zutaten ohne Preis: {{n}} — weder Angebot im Kaufbereich noch Händler; sie zählen hier mit 0",
+  "recipe_analyzer_calc_signal_semantics": "Alternative Spalten folgen derselben Regel je Signal: Zutaten nehmen das günstigste passende Angebot (HQ bevorzugt bei „HQ erforderlich“) oder die gewählte Verkaufsstatistik, der Erlös das günstigere von NQ und HQ auf der Verkaufswelt. Eine fehlende oder leere Statistik fällt je Zutat auf das Angebot zurück, nie auf 0; ein alternativer Erlös zeigt —, wenn die Verkaufswelt keine Verkaufshistorie hat.",
  },
  "ja": {
   "labs_analyzer_signal_columns_title": "レシピアナライザー：価格シグナルを列として表示",
@@ -285,7 +294,7 @@ KEYS = {
   "analyzer_picker_group_other": "その他",
   "analyzer_picker_cost_group_title": "{{place}} の販売履歴を表示します（読み込みは1回のみ）",
   "analyzer_picker_subcraft_cap_hint": "サブクラフト有効時：追加のコスト列は最大2つまで計算されます",
-  "analyzer_equals_cost_slot": "（= 単価コスト）",
+  "analyzer_equals_cost_slot": "（= コスト / 個）",
   "analyzer_equals_price_slot": "（= 価格）",
   "analyzer_use_pill": "使う",
   "analyzer_use_as_cost_aria": "{{signal}} を利益計算のコストとして使う",
@@ -295,14 +304,15 @@ KEYS = {
   "analyzer_alt_cost_capped_title": "未計算：サブクラフト有効時は追加のコスト列を2つまでしか計算しません",
   "analyzer_hop_needed": "要移動",
   "analyzer_hop_gain_title": "1日あたり {{rate}} 件の売上で ≈ {{gil}} ギル/日",
-  "analyzer_hop_gain_help": "販売ワールドでのコストから購入範囲でのコストを引いた単価（購入側のみ）：正なら移動で節約でき、負ならホームに留まるべきです。「要移動」はホームに出品がなくNPC販売もない素材を示します。サブクラフトの素材は含みません。",
+  "analyzer_hop_gain_help": "販売ワールドでのコストから購入範囲でのコストを引いた単価（購入側のみ）：正なら移動で節約でき、負ならホームに留まるべきです。「要移動」はホームに出品がなくNPC販売もない素材を示します。",
   "analyzer_hop_worlds_help": "素材の最安出品がある、販売ワールド以外のワールド。購入側のみで、サブクラフトの素材は含みません。",
-  "analyzer_hop_worlds_row": "{{world}} · 素材 {{n}} 種",
+  "analyzer_hop_worlds_row": "• {{world}} · 素材 {{n}} 種",
   "analyzer_hop_worlds_dcs": "データセンター {{n}} 件",
   "analyzer_hop_worlds_note": "購入側のみ · サブクラフトの素材は含まず",
   "analyzer_price_listing_fallback": "出品",
   "analyzer_cost_unpriced": "価格なし {{n}}",
   "analyzer_cost_unpriced_title": "{{n}} 種の素材は購入範囲に出品がなくNPC販売もないため、ここでは0として計算しています",
+  "recipe_analyzer_calc_signal_semantics": "代替列も各シグナルで同じルールに従います：素材は最安の該当出品（「HQ必須」時はHQ優先）または選択した販売統計、収入は販売ワールドでのNQ/HQの安い方を使います。統計が無いかゼロの場合は素材ごとに出品価格へ戻り、0にはなりません。販売ワールドに販売履歴が無ければ代替収入は — と表示します。",
  },
  "cn": {
   "labs_analyzer_signal_columns_title": "配方分析器：将价格信号显示为列",
@@ -324,18 +334,19 @@ KEYS = {
   "analyzer_alt_cost_capped_title": "未计算：启用子制作时只计算两个额外的成本列",
   "analyzer_hop_needed": "需跨服",
   "analyzer_hop_gain_title": "按每天 {{rate}} 笔销售计算 ≈ {{gil}} 金币/天",
-  "analyzer_hop_gain_help": "售出服务器成本减去购买范围成本（每单位，仅计购买侧）：正数表示跨服可省钱，负数表示留在本服更好。“需跨服”表示某材料在本服没有挂单也没有 NPC 出售。不计入子制作的材料。",
+  "analyzer_hop_gain_help": "售出服务器成本减去购买范围成本（每单位，仅计购买侧）：正数表示跨服可省钱，负数表示留在本服更好。“需跨服”表示某材料在本服没有挂单也没有 NPC 出售。",
   "analyzer_hop_worlds_help": "拥有某材料最低价挂单的、售出服务器以外的服务器。仅计购买侧，不计入子制作的材料。",
-  "analyzer_hop_worlds_row": "{{world}} · {{n}} 种材料",
+  "analyzer_hop_worlds_row": "• {{world}} · {{n}} 种材料",
   "analyzer_hop_worlds_dcs": "{{n}} 个数据中心",
   "analyzer_hop_worlds_note": "仅计购买侧 · 不计入子制作材料",
   "analyzer_price_listing_fallback": "挂单",
   "analyzer_cost_unpriced": "{{n}} 项无价格",
   "analyzer_cost_unpriced_title": "{{n}} 种材料在购买范围内没有挂单也没有 NPC 出售，此处按 0 计算",
+  "recipe_analyzer_calc_signal_semantics": "备选列遵循相同的每信号规则：材料取最便宜的匹配挂单（勾选“需要 HQ”时优先 HQ）或所选的销售统计，收入取售出服务器上 NQ 与 HQ 中较低者。统计缺失或为零时按材料回退到挂单价，绝不为 0；售出服务器没有销售历史时，备选收入显示 —。",
  },
  "ko": {
-  "labs_analyzer_signal_columns_title": "레시피 분석기: 가격 신호를 열로 표시",
-  "labs_analyzer_signal_columns_desc": "모든 가격 신호가 “사용” 버튼이 있는 정렬 가능한 열이 되고, 서버 이동 이득 / 개와 방문할 서버가 추가됩니다.",
+  "labs_analyzer_signal_columns_title": "제작 레시피 분석기: 가격 신호를 열로 표시",
+  "labs_analyzer_signal_columns_desc": "모든 가격 신호가 “사용” 버튼이 있는 정렬 가능한 열이 되고, 이동 이득 / 개와 방문할 서버가 추가됩니다.",
   "analyzer_col_hop_gain": "이동 이득 / 개",
   "analyzer_col_hop_worlds": "방문할 서버",
   "analyzer_picker_group_place": "{{name}} · {{place}}",
@@ -343,24 +354,25 @@ KEYS = {
   "analyzer_picker_group_other": "기타",
   "analyzer_picker_cost_group_title": "{{place}}의 판매 기록을 표시합니다 (한 번만 불러옴)",
   "analyzer_picker_subcraft_cap_hint": "하위 제작 켜짐: 추가 비용 열은 최대 두 개까지만 계산됩니다",
-  "analyzer_equals_cost_slot": "(= 개당 비용)",
+  "analyzer_equals_cost_slot": "(= 단가)",
   "analyzer_equals_price_slot": "(= 가격)",
   "analyzer_use_pill": "사용",
   "analyzer_use_as_cost_aria": "{{signal}}을(를) 이익 계산의 비용으로 사용",
-  "analyzer_use_as_revenue_aria": "{{signal}}을(를) 이익 계산의 수익으로 사용",
+  "analyzer_use_as_revenue_aria": "{{signal}}을(를) 이익 계산의 매출로 사용",
   "analyzer_alt_cost_delta_title": "공식의 비용 입력 대비",
-  "analyzer_alt_revenue_delta_title": "공식의 수익 입력 대비",
+  "analyzer_alt_revenue_delta_title": "공식의 매출 입력 대비",
   "analyzer_alt_cost_capped_title": "계산 안 됨: 하위 제작이 켜져 있으면 추가 비용 열은 두 개만 계산됩니다",
   "analyzer_hop_needed": "필요",
   "analyzer_hop_gain_title": "하루 {{rate}}건 판매 기준 ≈ {{gil}} 길/일",
-  "analyzer_hop_gain_help": "판매 서버 비용에서 구매 범위 비용을 뺀 개당 값(구매 측만): 양수면 이동이 이득, 음수면 홈에 머무는 편이 낫습니다. “필요”는 홈 서버에 매물도 NPC 판매도 없는 재료를 뜻합니다. 하위 제작 재료는 세지 않습니다.",
+  "analyzer_hop_gain_help": "판매 서버 비용에서 구매 범위 비용을 뺀 개당 값(구매 측만): 양수면 이동이 이득, 음수면 홈에 머무는 편이 낫습니다. “필요”는 홈 서버에 매물도 NPC 판매도 없는 재료를 뜻합니다.",
   "analyzer_hop_worlds_help": "재료의 최저가 매물이 있는, 판매 서버 이외의 서버. 구매 측만 계산하며 하위 제작 재료는 세지 않습니다.",
-  "analyzer_hop_worlds_row": "{{world}} · 재료 {{n}}종",
+  "analyzer_hop_worlds_row": "• {{world}} · 재료 {{n}}종",
   "analyzer_hop_worlds_dcs": "데이터센터 {{n}}개",
   "analyzer_hop_worlds_note": "구매 측만 · 하위 제작 재료 제외",
   "analyzer_price_listing_fallback": "매물",
   "analyzer_cost_unpriced": "가격 없음 {{n}}",
   "analyzer_cost_unpriced_title": "{{n}}종의 재료는 구매 범위에 매물도 NPC 판매도 없어 여기서는 0으로 계산됩니다",
+  "recipe_analyzer_calc_signal_semantics": "대체 열도 신호별로 같은 규칙을 따릅니다. 재료는 가장 싼 매물(“HQ 필요” 시 HQ 우선) 또는 선택한 판매 통계를, 매출은 판매 서버의 NQ/HQ 중 싼 쪽을 씁니다. 통계가 없거나 0이면 재료별로 매물 가격으로 돌아가며 0이 되지 않습니다. 판매 서버에 판매 기록이 없으면 대체 매출은 —로 표시됩니다.",
  },
  "tc": {
   "labs_analyzer_signal_columns_title": "配方分析器：將價格訊號顯示為欄位",
@@ -382,20 +394,21 @@ KEYS = {
   "analyzer_alt_cost_capped_title": "未計算：啟用子製作時只計算兩個額外的成本欄位",
   "analyzer_hop_needed": "需跨服",
   "analyzer_hop_gain_title": "按每天 {{rate}} 筆銷售計算 ≈ {{gil}} 金幣/天",
-  "analyzer_hop_gain_help": "售出伺服器成本減去購買範圍成本（每單位，僅計購買側）：正數表示跨服可省錢，負數表示留在本服較好。「需跨服」表示某材料在本服沒有掛單也沒有 NPC 販售。不計入子製作的材料。",
+  "analyzer_hop_gain_help": "售出伺服器成本減去購買範圍成本（每單位，僅計購買側）：正數表示跨服可省錢，負數表示留在本服較好。「需跨服」表示某材料在本服沒有掛單也沒有 NPC 販售。",
   "analyzer_hop_worlds_help": "擁有某材料最低價掛單的、售出伺服器以外的伺服器。僅計購買側，不計入子製作的材料。",
-  "analyzer_hop_worlds_row": "{{world}} · {{n}} 種材料",
+  "analyzer_hop_worlds_row": "• {{world}} · {{n}} 種材料",
   "analyzer_hop_worlds_dcs": "{{n}} 個資料中心",
   "analyzer_hop_worlds_note": "僅計購買側 · 不計入子製作材料",
   "analyzer_price_listing_fallback": "掛單",
   "analyzer_cost_unpriced": "{{n}} 項無價格",
   "analyzer_cost_unpriced_title": "{{n}} 種材料在購買範圍內沒有掛單也沒有 NPC 販售，此處按 0 計算",
+  "recipe_analyzer_calc_signal_semantics": "替代欄位遵循相同的每訊號規則：材料取最便宜的相符掛單（勾選「需要 HQ」時優先 HQ）或所選的銷售統計，收入取售出伺服器上 NQ 與 HQ 中較低者。統計缺失或為零時按材料回退到掛單價，絕不為 0；售出伺服器沒有銷售歷史時，替代收入顯示 —。",
  },
 }
 
 ROOT = "ultros-frontend/ultros-app/locales"
 for locale, keys in KEYS.items():
-    assert len(keys) == 27, locale
+    assert len(keys) == 28, locale
     path = os.path.join(ROOT, f"{locale}.json")
     with io.open(path, encoding="utf-8") as f:
         lines = f.read().split("\n")
@@ -421,12 +434,12 @@ for l in en fr de ja cn ko tc; do python -c "import json,sys; d=json.load(open('
 grep -c '"analyzer_hop_needed"' ultros-frontend/ultros-app/locales/*.json
 ```
 
-Expected: every locale prints `1777` and its translation of "needed"; every `grep -c` prints `1`.
+Expected: every locale prints `1778` and its translation of "needed"; every `grep -c` prints `1`.
 
 - [ ] **Step 7: Run the tests**
 
 Run: `cargo test -p ultros-app --lib -- global_state::labs`
-Expected: PASS (3 tests). Any locale key the build cannot find in every file fails compilation here, so a passing build is the seven-locale check.
+Expected: PASS (3 tests). Note: a key missing from a non-default locale only warns (`cargo::warning=Missing key … in locale …`) and falls back to en, so a green build is not the seven-locale check — Step 6's `grep -c` / 1778 count is. A locale that misspells a `{{var}}` does break the build, at every `t_string!` call site for that key, because the builder takes the union of variable names across locales.
 
 - [ ] **Step 8: Commit**
 
@@ -962,6 +975,16 @@ In `formula.rs`, inside the existing `impl PriceSignal` (the one with `sale_stat
     }
 ```
 
+Also in `formula.rs`, replace the doc comment on `TaxMath::IntegerFloor` (the enum at `formula.rs:143-146`) with the truth the #1257 review established — the math itself does not change:
+
+```rust
+    /// `net = gross * 95 / 100` in integer math: the *net* is floored, so
+    /// the tax itself rounds up (5% of 3,911 shows as 196, not 195). The
+    /// flip finder and vendor pages truncate an f32 instead; the two agree
+    /// below 2,207,541 gil.
+    IntegerFloor,
+```
+
 - [ ] **Step 4: `stat_only` / `stat_only_cheapest`**
 
 In `signals.rs`, after `stat_price`:
@@ -1351,7 +1374,7 @@ git commit -m "feat(analyzer-kit): hop.rs — signed hop gain per unit and world
 - Modify: `ultros-frontend/ultros-app/src/analyzer_kit/columns.rs` (`ColumnKind`, `ColumnSpec`, `CellCtx`, `ToolColumnMeta`, `picker_options`, new `PickerGroup`, `PickerContext`, `grouped_picker_options`) and its tests
 - Modify: `ultros-frontend/ultros-app/src/analyzer_kit/cells.rs` (`CellValue`, `CellNote`, `render_cell`, `gil_per_day_label`) and its tests
 - Modify: `ultros-frontend/ultros-app/src/components/control_bar.rs:43-55` (`ColumnOption` fields + `PickerHeading`; rendering is Task 6)
-- Modify: every `ColumnSpec` / `ToolColumnMeta` / `CellCtx` literal the compiler reports: `routes/recipe_analyzer.rs` (15 `SPEC_*`, `RECIPE_BASE`, `cell_ctx`), `analyzer_kit/grid.rs` tests, `analyzer_kit/cells.rs` tests
+- Modify: every `ColumnSpec` / `ToolColumnMeta` / `CellCtx` / `ColumnOption` literal the compiler reports: `routes/recipe_analyzer.rs` (15 `SPEC_*`, `RECIPE_BASE`, `cell_ctx`), `analyzer_kit/grid.rs` tests, `analyzer_kit/cells.rs` tests, `analyzer_kit/columns.rs` tests, `routes/analyzer.rs:1382-1385`, `routes/currency_exchange.rs:702-717`
 
 **Interfaces:**
 - Consumes: `PriceSignal` (formula), `HopGain` (Task 4), `TermRole`, `GilIcon` / `Gil` / `GilOrDash` (`components/gil.rs`, all `pub`).
@@ -1434,6 +1457,7 @@ columns.rs tests (the module has a `Col` enum and a `BASE`-style table; add a se
 
 ```rust
     use crate::analyzer_kit::formula::PriceSignal;
+    use leptos::prelude::{Owner, provide_context};
     use std::collections::BTreeSet;
 
     fn lbl_conf(_: I18nContext<Locale, I18nKeys>) -> String { "Confidence".into() }
@@ -1608,7 +1632,8 @@ fn heading(
 
 /// The picker with group headings: every optional column (lab-gated ones
 /// included), sorted by group then table position, the selected signals
-/// suffixed, the capped cost columns disabled with a hint.
+/// suffixed, the capped cost columns hinted (and, in the list, disabled
+/// only while unchecked — a ticked column must stay untickable).
 pub fn grouped_picker_options<T, M>(
     cols: &'static [ToolColumnMeta<T, M>],
     i18n: I18nContext<Locale, I18nKeys>,
@@ -1623,14 +1648,16 @@ pub fn grouped_picker_options<T, M>(
             let mut disabled = false;
             let mut hint = None;
             match c.spec.kind {
+                // Plain-key `t_string!` yields a `&'static str`: pass it
+                // straight through (`&t_string!(..)` is `needless_borrow`).
                 ColumnKind::RevSignal(s) if s == ctx.revenue => {
                     label.push(' ');
-                    label.push_str(&t_string!(i18n, analyzer_equals_price_slot));
+                    label.push_str(t_string!(i18n, analyzer_equals_price_slot));
                 }
                 ColumnKind::CostSignal(s) => {
                     if s == ctx.cost {
                         label.push(' ');
-                        label.push_str(&t_string!(i18n, analyzer_equals_cost_slot));
+                        label.push_str(t_string!(i18n, analyzer_equals_cost_slot));
                     }
                     if ctx.capped.contains(&s) {
                         disabled = true;
@@ -1696,7 +1723,7 @@ impl ColumnOption {
 
 - [ ] **Step 5: `cells.rs` variants and arms**
 
-Imports: add `use thousands::Separable;`, `use crate::components::gil::GilIcon;`, `use crate::components::term_badge::TermRole;`, `use super::hop::HopGain;`.
+Imports: add `use thousands::Separable;`, `use crate::components::term_badge::TermRole;`, `use super::hop::HopGain;`, and extend the existing `use crate::components::gil::{Gil, GilOrDash};` to `{Gil, GilIcon, GilOrDash}`.
 
 `CellValue` gains, before `Custom`:
 
@@ -1835,8 +1862,10 @@ const SUB_LINE: &str = "text-[10px] leading-3 text-[color:var(--color-text-muted
 - [ ] **Step 6: Fix the literals the compiler reports**
 
 - `routes/recipe_analyzer.rs`: every `static SPEC_*: ColumnSpec` (15) gains `group: PickerGroup::Other,`; `RECIPE_BASE` gains `lab: None,`; `cell_ctx` becomes `CellCtx { now_unix: chrono::Utc::now().timestamp(), signal_columns: false, capped_cost: [false; 4] }` (Task 10 makes it live); the `custom` closure's `other => unreachable!(..)` arm already covers the new kinds. Import `PickerGroup` from `crate::analyzer_kit::columns`.
-- `analyzer_kit/grid.rs` tests: the three `ColumnSpec` statics gain `group: PickerGroup::Other,`; `BASE` gains `lab: None,`; the `CellCtx` literal gains the two fields.
+- `analyzer_kit/grid.rs` tests: the three `ColumnSpec` statics gain `group: PickerGroup::Other,`; `BASE` gains `lab: None,`; the three `CellCtx` literals (grid.rs:356, 398, 440) gain the two fields.
+- `analyzer_kit/columns.rs` tests: `SPEC_ITEM` / `SPEC_PROFIT` / `SPEC_COST` (columns.rs:184-195) gain `group: PickerGroup::Other,`; the test `BASE` (:206-219) gains `lab: None,`; the `CellCtx { now_unix: 0 }` in `cell_extractors_are_plain_fn_pointers` (:295) becomes `CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] }`.
 - `analyzer_kit/cells.rs` tests: done in Step 1.
+- The two `ColumnOption` struct-literal sites (they must compile for this task's gate): `routes/analyzer.rs:1382-1385` becomes `.map(|col| ColumnOption::new(col, col_label(col)))`; in `routes/currency_exchange.rs:702-717` each `ColumnOption { id: X, label: Y }` becomes `ColumnOption::new(X, Y)`.
 
 - [ ] **Step 7: Run the kit tests**
 
@@ -1846,7 +1875,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add ultros-frontend/ultros-app/src/analyzer_kit/columns.rs ultros-frontend/ultros-app/src/analyzer_kit/cells.rs ultros-frontend/ultros-app/src/analyzer_kit/grid.rs ultros-frontend/ultros-app/src/components/control_bar.rs ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs
+git add ultros-frontend/ultros-app/src/analyzer_kit/columns.rs ultros-frontend/ultros-app/src/analyzer_kit/cells.rs ultros-frontend/ultros-app/src/analyzer_kit/grid.rs ultros-frontend/ultros-app/src/components/control_bar.rs ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs ultros-frontend/ultros-app/src/routes/analyzer.rs ultros-frontend/ultros-app/src/routes/currency_exchange.rs
 git commit -m "feat(analyzer-kit): signal and hop column kinds, picker groups, lab-gated columns, muted/note/hop cells"
 ```
 
@@ -1856,11 +1885,10 @@ git commit -m "feat(analyzer-kit): signal and hop column kinds, picker groups, l
 
 **Files:**
 - Modify: `ultros-frontend/ultros-app/src/components/control_bar.rs:324-373` (picker popover) and its tests
-- Modify: `ultros-frontend/ultros-app/src/routes/analyzer.rs:1382-1385` and `ultros-frontend/ultros-app/src/routes/currency_exchange.rs:702-717` (struct literals → `ColumnOption::new`)
 
 **Interfaces:**
 - Consumes: `ColumnOption { id, label, group, disabled, hint }`, `PickerHeading` (Task 5).
-- Produces: `#[component] pub fn ColumnsPickerList(columns: Signal<Vec<ColumnOption>>, visible_columns: Signal<HashSet<&'static str>>, on_toggle_column: Option<Callback<&'static str>>) -> impl IntoView` — the option list the popover renders; a heading is emitted whenever an option's `group` label differs from the previous option's.
+- Produces: `#[component] pub fn ColumnsPickerList(columns: Signal<Vec<ColumnOption>>, visible_columns: Signal<HashSet<&'static str>>, #[prop(optional_no_strip)] on_toggle_column: Option<Callback<&'static str>>) -> impl IntoView` — the option list the popover renders; a heading is emitted whenever an option's `group` label differs from the previous option's; a capped option is disabled only while it is unchecked.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1944,7 +1972,11 @@ Add the component to `control_bar.rs` (above `ControlBar`):
 pub fn ColumnsPickerList(
     #[prop(into)] columns: Signal<Vec<ColumnOption>>,
     #[prop(into)] visible_columns: Signal<HashSet<&'static str>>,
-    #[prop(optional)] on_toggle_column: Option<Callback<&'static str>>,
+    // `optional_no_strip`: `optional` on an `Option<T>` field strips the
+    // Option from the builder setter (leptos_macro `component.rs:1033`),
+    // which would reject both the bar's pass-through and the test's `None`.
+    #[prop(optional_no_strip)]
+    on_toggle_column: Option<Callback<&'static str>>,
 ) -> impl IntoView {
     move || {
         let mut out: Vec<AnyView> = Vec::new();
@@ -1972,14 +2004,17 @@ pub fn ColumnsPickerList(
                     toggle.run(id);
                 }
             };
-            out.push(if col.disabled || col.hint.is_some() {
+            // A ticked column is never locked: the cap greys an unchecked
+            // capped entry, and only hints a checked one.
+            let disabled = col.disabled && !visible_columns.get().contains(id);
+            out.push(if disabled || col.hint.is_some() {
                 let hint = col.hint.clone().unwrap_or_default();
                 view! {
                     <label class="inline-flex items-center gap-2 cursor-not-allowed opacity-60 text-[color:var(--color-text)]" title=hint>
                         <input
                             type="checkbox"
                             class="accent-brand-300"
-                            disabled=col.disabled
+                            disabled=disabled
                             prop:checked=move || visible_columns.get().contains(id)
                             on:change=toggle
                         />
@@ -2017,17 +2052,11 @@ In the popover (`control_bar.rs:332-355`) replace the `{move || { columns.get().
                                 />
 ```
 
-(`columns` and `visible_columns` are the bar's existing `Signal`s; `on_toggle_column` is its `Option<Callback<&'static str>>` prop — pass it through with `#[prop(optional)]` semantics: if the builder rejects an `Option`, write `on_toggle_column=on_toggle_column.unwrap_or_else(|| Callback::new(|_| {}))` and make the prop non-optional.)
+(`columns` and `visible_columns` are the bar's existing `Signal`s; `on_toggle_column` is its `Option<Callback<&'static str>>` prop, passed through as the `Option` it is — that is what `optional_no_strip` on the list's prop is for.)
 
-- [ ] **Step 4: `ColumnOption::new` at the literal sites**
+- [ ] **Step 4: Check the struct-literal sites are already converted**
 
-`routes/analyzer.rs:1382-1385`:
-
-```rust
-            .map(|col| ColumnOption::new(col, col_label(col)))
-```
-
-`routes/currency_exchange.rs:702-717`: each `ColumnOption { id: X, label: Y }` becomes `ColumnOption::new(X, Y)`.
+Task 5 converted `routes/analyzer.rs:1382-1385` and `routes/currency_exchange.rs:702-717` to `ColumnOption::new`; `grep -rn "ColumnOption {" ultros-frontend/ultros-app/src --include=*.rs` must now hit only `control_bar.rs` (the struct and the tests) and `analyzer_kit/columns.rs`.
 
 - [ ] **Step 5: Run the tests and the crate build**
 
@@ -2039,7 +2068,7 @@ Expected: OK (the two routes compile with `::new`).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ultros-frontend/ultros-app/src/components/control_bar.rs ultros-frontend/ultros-app/src/routes/analyzer.rs ultros-frontend/ultros-app/src/routes/currency_exchange.rs
+git add ultros-frontend/ultros-app/src/components/control_bar.rs
 git commit -m "feat(control-bar): grouped columns picker with headings, disabled options and hints"
 ```
 
@@ -2056,7 +2085,7 @@ git commit -m "feat(control-bar): grouped columns picker with headings, disabled
 - Produces:
   - `SortableHeaderCell` prop `#[prop(optional)] trailing: Option<ViewFn>` — rendered inside the sub-label line after the text; ignored without `sub_label`. Unset = byte-identical markup.
   - In `grid.rs`: `pub struct HeaderPill { pub aria: String, pub pressed: bool }`, `pub struct HeaderLine2 { pub sub_label: String, pub pill: HeaderPill }`, `pub struct HeaderExtra { pub title: String, pub line2: Option<HeaderLine2> }`, `pub struct HeaderExtras { pub by_kind: HashMap<ColumnKind, HeaderExtra> }` (all Clone, Debug, PartialEq, Eq; `HeaderExtras: Default`).
-  - `AnalyzerGrid` props `#[prop(optional, into)] extras: Option<Signal<HeaderExtras>>` and `#[prop(optional)] on_pill: Option<Callback<ColumnKind>>`.
+  - `AnalyzerGrid` props `#[prop(optional, into)] extras: Option<Signal<HeaderExtras>>`, `#[prop(optional)] on_pill: Option<Callback<ColumnKind>>` and `#[prop(optional)] lab_columns: bool` — when false (the default) lab-gated columns are left out of the header at build time, so the flag-off header carries no extra `<!>` markers.
   - The pill: `<button type="button" aria-pressed="true|false" aria-label=… disabled?>` with the calculator icon and the `analyzer_use_pill` word; clicking runs `on_pill(kind)`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2166,9 +2195,49 @@ grid.rs tests (the module already has `Row`, `Col`, `COLS`; add a signal column 
             // No extras: the plain sortable header, exactly as before.
             let plain = header_cell(&SIGNAL_COL, none, none_dir, i18n, None, None, None).to_html();
             assert!(!plain.contains("<button") && !plain.contains("title="), "{plain}");
+            // The flag-off page passes `Some(empty map)`: identical by construction.
+            let empty = header_cell(&SIGNAL_COL, none, none_dir, i18n, None, Some(Signal::derive(HeaderExtras::default)), Some(on_pill)).to_html();
+            assert_eq!(empty, plain, "an empty extras map is the flag-off page path");
+        });
+    }
+
+    /// A hidden optional column still writes a `<!>` marker into the header
+    /// (an `Option` child), so the flag-off header would grow by one marker
+    /// per lab column; `lab_columns=false` drops them at build time.
+    #[test]
+    fn lab_columns_are_absent_from_the_header_unless_enabled() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let render = |cols: &'static [ToolColumnMeta<Row, Col>], lab: bool, visible: &'static [&'static str]| {
+                view! {
+                    <AnalyzerGrid
+                        columns=cols
+                        rows=Signal::derive(|| vec![(0usize, Row(1))])
+                        visible_cols=Signal::derive(move || visible.iter().copied().collect::<HashSet<_>>())
+                        sort_mode=Signal::derive(|| None::<Col>)
+                        sort_dir=Signal::derive(|| None::<SortDir>)
+                        ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
+                        custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
+                        layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
+                        header_class="h"
+                        row_class=|_| "r"
+                        lab_columns=lab
+                    />
+                }
+                .to_html()
+            };
+            let base = render(&COLS, false, &[]);
+            let with_lab_col_off = render(&COLS_PLUS, false, &[]);
+            assert_eq!(with_lab_col_off, base, "a hidden lab column must add nothing to the flag-off header");
+            let with_lab_col_on = render(&COLS_PLUS, true, &["cost-sale-median"]);
+            assert!(with_lab_col_on.contains("Sale median (7d)"), "{with_lab_col_on}");
         });
     }
 ```
+
+`COLS_PLUS` is a second `static [ToolColumnMeta<Row, Col>; 4]` holding the three `COLS` entries plus the `SIGNAL_COL` entry, each written out again as a literal (a `static` cannot be read inside another `static`'s initializer, so the entries are duplicated verbatim, `..BASE` spreads included).
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -2182,8 +2251,8 @@ Expected: compile errors (`trailing`, `HeaderExtra`, `header_cell` arity).
 ```rust
     /// Line-2 content after the sub-label (the "use" pill). Rendered only
     /// alongside `sub_label`; DOM order is the `SortHeader` `<a>` first,
-    /// then the sub-label `<span>` containing this `<button>` — two focus
-    /// stops, never nested.
+    /// then the sub-label line `<div>` holding the text `<span>` and this
+    /// `<button>` — two focus stops, never nested.
     #[prop(optional)]
     trailing: Option<ViewFn>,
 ```
@@ -2325,9 +2394,16 @@ Imports: `use crate::components::icon::Icon; use icondata as i;`.
     /// Runs when a header pill is pressed, with the column's kind.
     #[prop(optional)]
     on_pill: Option<Callback<ColumnKind>>,
+    /// Whether lab-gated columns (`lab.is_some()`) are part of this mount.
+    /// Off, they are dropped from the header at build time: a hidden
+    /// optional column still writes a `<!>` marker (an `Option` child), so
+    /// a `?cols=` contract alone cannot keep the flag-off header
+    /// byte-identical. The page remounts the grid on a lab flip.
+    #[prop(optional)]
+    lab_columns: bool,
 ```
 
-and both `header_cell(..)` calls in the header pass `, extras, on_pill`.
+Both `header_cell(..)` calls in the header pass `, extras, on_pill`, and the header's `columns.iter().map(|col| {` becomes `columns.iter().filter(|col| col.lab.is_none() || lab_columns).map(|col| {` (the row side already filters by `visible_cols` and needs no change).
 
 - [ ] **Step 5: Run the tests**
 
@@ -2389,16 +2465,6 @@ In `mod test`, replace `run` with a parameterised runner and add tests. `BuyScop
         }
     }
 
-    /// Fixture geography: buy NQ on world 1 (Aether), buy HQ on world 2
-    /// (Primal), the sell world is 3 (Aether).
-    fn fixture_dc(world: i32) -> Option<&'static str> {
-        match world {
-            1 | 3 => Some("Aether"),
-            2 => Some("Primal"),
-            _ => None,
-        }
-    }
-
     fn run_with(cost: PriceSignal, revenue: PriceSignal, o: &RunOpts) -> Vec<RecipeProfitData> {
         let data = xiv_gen_db::data();
         let recipes = fixture_recipes();
@@ -2408,6 +2474,16 @@ In `mod test`, replace `run` with a parameterised runner and add tests. `BuyScop
         let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let raw_sales = HashMap::new();
         let levels = CrafterLevels::default(); // 100 in every job
+        // Fixture geography: buy NQ on world 1 (Aether), buy HQ on world 2
+        // (Primal), the sell world is 3 (Aether). A closure, not a fn item:
+        // a fn item's `Output` is fixed to `Option<&'static str>` and cannot
+        // unsize into `dyn Fn(i32) -> Option<&'a str>` while `'a` borrows
+        // the locals above.
+        let fixture_dc = |w: i32| match w {
+            1 | 3 => Some("Aether"),
+            2 => Some("Primal"),
+            _ => None,
+        };
         let inp = PriceInputs {
             recipes: &recipes,
             recipe_level_tables: &data.recipe_level_tables,
@@ -2430,7 +2506,7 @@ In `mod test`, replace `run` with a parameterised runner and add tests. `BuyScop
             home_world_id: 3,
             dc_of: &fixture_dc,
         };
-        price_rows(&inp)
+        price_rows(&inp).0
     }
 
     fn run(cost: PriceSignal, revenue: PriceSignal, outliers: bool) -> Vec<RecipeProfitData> {
@@ -2517,8 +2593,7 @@ In `mod test`, replace `run` with a parameterised runner and add tests. `BuyScop
             let nq = 100 + (out % 97) * 7;
             assert_eq!(r.rev_alt[PriceSignal::ListingMin.index()], Some(nq * 12 / 10), "sell listing, no fallback");
             let expect_stat = out % 3 == 0;
-            assert_eq!(r.rev_alt[PriceSignal::SaleMedian.index()].is_some(), expect_stat, "recipe {}", r.recipe.key_id.0);
-            assert_eq!(r.rev_alt[PriceSignal::SaleMedian.index()].map(|_| nq + 5).is_some(), expect_stat);
+            assert_eq!(r.rev_alt[PriceSignal::SaleMedian.index()], expect_stat.then_some(nq + 5), "recipe {}", r.recipe.key_id.0);
         }
     }
 
@@ -2548,7 +2623,10 @@ In `mod test`, replace `run` with a parameterised runner and add tests. `BuyScop
         );
         assert!(full.iter().all(|r| r.hop.is_some() && r.worlds.is_some()));
         // The sell world lists only outputs: every market ingredient is
-        // missing at home, so those rows read "needed".
+        // missing at home, so those rows read "needed". Depends on game
+        // data: some kept row needs a non-vendor, non-shard ingredient that
+        // is not one of the 300 fixture outputs (true for every pack so
+        // far; re-check on a game-data bump).
         assert!(full.iter().any(|r| r.hop == Some(HopGain::Needed)));
         // Cheapest ingredient listings sit on buy world 1 (NQ beats HQ + 50).
         let with_trip: Vec<&RecipeProfitData> = full.iter().filter(|r| !r.worlds.as_ref().unwrap().worlds.is_empty()).collect();
@@ -2629,9 +2707,10 @@ Expected: compile errors (fields missing).
 
 - [ ] **Step 5: `price_rows`**
 
-Replace the body from `// Ingredients price over the buy scope` through the end of the function:
+Replace the body from `// Ingredients price over the buy scope` through the end of the function. The function now also counts its `compute_cost` calls (a `Cell<u32>` the `cost_run` closure bumps) and returns them beside the rows — `fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32)` — so the debug timing log reports real calls rather than `needs.cost.len()`; the memo destructures the pair.
 
 ```rust
+    let runs_done = std::cell::Cell::new(0u32);
     let selected = inp.formula.cost_signal();
     let scope_is_home = inp.formula.buy_scope() == BuyScope::World;
     // A buy-scope view under `signal`: the listing, or the stat over it.
@@ -2737,8 +2816,9 @@ Replace the body from `// Ingredients price over the buy scope` through the end 
         // One `compute_cost` under `view`, over a fresh on-hand snapshot:
         // compute_cost consumes from the snapshot, and reusing one across
         // recipes (or across runs of one recipe) would wrongly deplete the
-        // user's stockpile.
+        // user's stockpile. `runs_done` feeds the debug timing log.
         let cost_run = |view: &SignalView<'_>| -> CostBreakdown {
+            runs_done.set(runs_done.get() + 1);
             let active: Box<dyn OnHand> = match inp.on_hand {
                 Some(map) => Box::new(LocalOnHand::from_map(map.clone())),
                 None => Box::new(EmptyOnHand),
@@ -2788,6 +2868,8 @@ Replace the body from `// Ingredients price over the buy scope` through the end 
         }
 
         let hop = match (&home_view, inp.needs.hop) {
+            // Buy from = This world only: no trip to price.
+            (Some(_), true) if scope_is_home => Some(HopGain::Unavailable),
             (Some(home), true) => {
                 let home_run = cost_run(home);
                 let owned;
@@ -2866,11 +2948,11 @@ Replace the body from `// Ingredients price over the buy scope` through the end 
         });
     }
 
-    results
+    (results, runs_done.get())
 }
 ```
 
-(`breakdown.sub_crafts` moves out of `breakdown` after the last use of `run_for`; the borrow checker accepts this because `run_for` is not used past the `worlds` block.)
+(`breakdown.sub_crafts` moves out of `breakdown` after the last use of `run_for`; the borrow checker accepts this because `run_for` is not used past the `worlds` block. `price_rows` now returns `(rows, compute_cost calls)`; the signature line becomes `fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32)` and every test caller destructures with `.0` — update `run_with` to `price_rows(&inp).0`.)
 
 - [ ] **Step 6: The priced memo passes the new inputs (compile only)**
 
@@ -2883,19 +2965,23 @@ In `RecipeAnalyzerTable`'s `priced` memo, the `PriceInputs` literal gains, for n
                 dc_of: &|_| None,
 ```
 
-and the debug log becomes:
+and the call plus debug log become:
 
 ```rust
+            let (rows, cost_runs) = price_rows(&inp);
+            #[cfg(all(debug_assertions, feature = "hydrate"))]
             leptos::logging::log!(
-                "price_rows: {} recipes priced in {:.1} ms (cost runs {}, hop {})",
+                "price_rows: {} recipes priced in {:.1} ms ({} compute_cost calls, hop {})",
                 rows.len(),
                 js_sys::Date::now() - t0,
-                inp.needs.cost.len(),
+                cost_runs,
                 inp.needs.hop
             );
+            #[cfg(not(all(debug_assertions, feature = "hydrate")))]
+            let _ = cost_runs;
 ```
 
-Task 10 wires the live values. `NeededSignals::default()` has an empty `cost` set, so only the selected run happens: numbers and CPU unchanged with the lab off.
+Task 10 wires the live values. `NeededSignals::default()` has an empty `cost` set, so only the selected run happens: numbers unchanged, CPU within about seven map lookups per kept row (the `rev_alt` reads), which the timing table in Task 11 will show.
 
 - [ ] **Step 7: Run the route tests**
 
@@ -3001,7 +3087,7 @@ Add:
         sorts.dedup();
         assert_eq!((ids.len(), sorts.len()), (n_ids, n_sorts));
         assert_eq!(n_ids, 17);
-        assert_eq!(n_sorts, 20, "hop-worlds and every signal column sort; listing world/dc do not");
+        assert_eq!(n_sorts, 21, "the eleven sorts at HEAD plus the ten signal and hop columns; listing world/dc do not sort");
         for c in RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()) {
             assert!(!c.default_on, "{} must start hidden", c.id);
             assert_eq!(c.lab, Some(LAB_ANALYZER_SIGNAL_COLUMNS));
@@ -3051,6 +3137,7 @@ Add:
         assert_eq!(delta_pct(None, 100), None);
         assert_eq!(delta_pct(Some(0), 100), None, "an unpriced alt has no delta");
         assert_eq!(delta_pct(Some(100), 0), None);
+        assert_eq!(delta_pct(Some(100), 100), None, "the duplicate column shows no +0%");
     }
 
     #[test]
@@ -3058,7 +3145,32 @@ Add:
         assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 10);
         assert!(!SortMode::CostPerUnit.lab_only() && !SortMode::Price.lab_only());
     }
+
+    /// Every picker entry is a `?cols=` token (both derive from the table).
+    #[test]
+    fn picker_columns_are_a_subset_of_optional_column_order() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let ctx = PickerContext {
+                sell_place: String::new(),
+                buy_place: String::new(),
+                revenue: PriceSignal::ListingMin,
+                cost: PriceSignal::ListingMin,
+                capped: BTreeSet::new(),
+            };
+            let ids: Vec<&str> = grouped_picker_options(&RECIPE_COLUMNS, i18n, &ctx).iter().map(|o| o.id).collect();
+            assert_eq!(ids.len(), 17);
+            assert!(ids.iter().all(|id| OPTIONAL_COLUMN_ORDER.contains(id)));
+            let flat: Vec<&str> = picker_options(&RECIPE_COLUMNS, i18n).iter().map(|o| o.id).collect();
+            assert_eq!(flat, BASE_COLUMN_ORDER.as_slice());
+        });
+    }
 ```
+
+(`PickerContext` / `grouped_picker_options` are imported in Task 10; import them here too: `use crate::analyzer_kit::columns::{PickerContext, grouped_picker_options};` and `use std::collections::BTreeSet;`.)
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -3163,10 +3275,11 @@ fn cell_price(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
 }
 
 /// Percent of an alternative against the same-side formula input; `None`
-/// when either is unpriced.
+/// when either is unpriced, or when they are equal (the selected signal's
+/// own duplicate column shows no "+0%").
 fn delta_pct(alt: Option<i32>, input: i32) -> Option<f32> {
     let alt = alt.filter(|a| *a > 0)?;
-    (input > 0).then(|| (alt - input) as f32 / input as f32 * 100.0)
+    (input > 0 && alt != input).then(|| (alt - input) as f32 / input as f32 * 100.0)
 }
 
 fn cost_alt_cell(r: &RecipeRow, ctx: &CellCtx, s: PriceSignal) -> CellValue {
@@ -3208,8 +3321,10 @@ Import `CellNote` from `crate::analyzer_kit::cells`. Classes (after `FORMULA_CEL
 
 ```rust
 /// The alternative-signal columns: two-line headers (sub-label + pill)
-/// at the formula width, desktop only.
-const HEAD_40_MD: &str = "w-40 shrink-0 px-3 py-2 leading-tight hidden md:block";
+/// at the formula width, desktop only. `md:flex`, not `md:block`:
+/// `SortableHeaderCell` appends `flex flex-col justify-center` for a
+/// two-line header, and a later `md:block` would override it at md+.
+const HEAD_40_MD: &str = "w-40 shrink-0 px-3 py-2 leading-tight hidden md:flex";
 const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
 ```
 
@@ -3345,6 +3460,8 @@ const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
     },
 ```
 
+Do not serve or e2e this commit: `?cols=hop-worlds` hits the custom closure's `unreachable!` until Task 10 adds the arm, and the lab gate on `?cols=` also lands in Task 10.
+
 - [ ] **Step 6: `SortMode` and the comparator**
 
 ```rust
@@ -3460,11 +3577,12 @@ git commit -m "feat(recipe-analyzer): ten lab-gated signal and hop columns, 21 s
 ### Task 10: Page wiring — the lab, the fetch gate, headers, pills, picker and cells
 
 **Files:**
-- Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs`: `RecipeAnalyzer` (`:2307-2360` signals, `:2500-2535` resources, `:2734-2806` Suspense join), `RecipeAnalyzerTable` (`:1281-1360` props and setup, `:1430-1530` indexes and memos, `:1665-1680` picker, `:1737-1960` custom cells, `:2272-2289` grid), `mod test`
+- Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs`: `RecipeAnalyzer` (`:2307-2360` signals, `:2500-2535` resources, `:2625-2670` info panel, `:2734-2806` Suspense join), `RecipeAnalyzerTable` (`:1281-1360` props and setup, `:1430-1530` indexes and memos, `:1665-1680` picker, `:1737-1960` custom cells, `:2272-2289` grid), `mod test`
+- Modify: `ultros-frontend/ultros-app/src/components/tool_help.rs:8-27` (`ToolCalculation.details`) and `:131` (its render)
 
 **Interfaces:**
 - Consumes: everything from Tasks 1–9; `grouped_picker_options`, `PickerContext` (Task 5); `HeaderExtras`, `HeaderExtra`, `HeaderLine2`, `HeaderPill` (Task 7); `SignalWants`, `needed_signals` (Task 3).
-- Produces (page-private): `signal_wants(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> SignalWants`, `buy_stats_scope_key(formula: &ProfitFormula, needs: &RecipeNeeds, scope_name: String) -> Option<String>`, `pill_param(kind: ColumnKind) -> Option<(TermRole, PriceSignal)>`, `pill_key(role: TermRole) -> &'static str`, `capped_flags(capped: &BTreeSet<PriceSignal>) -> [bool; 4]`, `worlds_tooltip(i18n, entries: &[(i32, Option<(String, String)>, u16)], dcs: u8) -> String`. New `RecipeAnalyzerTable` props: `signal_cols: Signal<bool>`, `needs: Memo<NeededSignals>`, `buy_stats_aliased: bool`, `#[prop(into)] home_world_id: Signal<i32>`, `on_pill: Callback<ColumnKind>`.
+- Produces (page-private): `signal_wants(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> SignalWants`, `buy_stats_scope_key(formula: &ProfitFormula, needs: &RecipeNeeds, scope_name: String) -> Option<String>`, `pill_param(kind: ColumnKind) -> Option<(TermRole, PriceSignal)>`, `capped_flags(capped: &BTreeSet<PriceSignal>) -> [bool; 4]`, `type WorldLine = (i32, Option<(String, String)>, u16)`, `worlds_tooltip(i18n, entries: &[WorldLine], dcs: u8) -> String`. New `RecipeAnalyzerTable` props: `signal_cols: bool` (read in the Suspense join, so a lab flip remounts the table), `needs: Memo<NeededSignals>`, `buy_stats_aliased: bool`, `#[prop(into)] home_world_id: Signal<i32>`, `on_pill: Callback<ColumnKind>`. `ToolCalculation::new`'s `details` becomes `impl Into<Signal<String>>`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3483,8 +3601,6 @@ git commit -m "feat(recipe-analyzer): ten lab-gated signal and hop columns, 21 s
         );
         assert_eq!(pill_param(ColumnKind::HopGain), None);
         assert_eq!(pill_param(ColumnKind::CostSlot), None);
-        assert_eq!(pill_key(TermRole::Cost), FILTER_COST_BASIS);
-        assert_eq!(pill_key(TermRole::Revenue), FILTER_REVENUE);
     }
 
     #[test]
@@ -3554,11 +3670,11 @@ git commit -m "feat(recipe-analyzer): ten lab-gated signal and hop columns, 21 s
             let text = worlds_tooltip(i18n, &entries, 2);
             let aether = text.find("Aether").unwrap();
             let primal = text.find("Primal").unwrap();
-            let cactuar = text.find("Cactuar · 2 ingredients").unwrap();
-            let adamantoise = text.find("Adamantoise · 1 ingredients").unwrap();
+            let cactuar = text.find("• Cactuar · ingredients: 2").unwrap();
+            let adamantoise = text.find("• Adamantoise · ingredients: 1").unwrap();
             assert!(aether < cactuar && cactuar < adamantoise && adamantoise < primal, "{text}");
-            assert!(text.contains("999 · 1 ingredients"), "{text}");
-            assert!(text.contains("2 datacenters"), "{text}");
+            assert!(text.contains("• 999 · ingredients: 1"), "{text}");
+            assert!(text.contains("Datacenters: 2"), "{text}");
             assert!(text.ends_with("buy side only · sub-craft materials not counted"), "{text}");
         });
     }
@@ -3619,14 +3735,6 @@ fn pill_param(kind: ColumnKind) -> Option<(TermRole, PriceSignal)> {
     }
 }
 
-/// The one URL param a pill writes for its side.
-fn pill_key(role: TermRole) -> &'static str {
-    match role {
-        TermRole::Revenue => FILTER_REVENUE,
-        _ => FILTER_COST_BASIS,
-    }
-}
-
 /// `NeededSignals::capped` as the `[bool; 4]` the cell context carries.
 fn capped_flags(capped: &BTreeSet<PriceSignal>) -> [bool; 4] {
     let mut flags = [false; 4];
@@ -3656,14 +3764,16 @@ fn signal_help(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
     }
 }
 
-/// The Worlds-to-visit tooltip: "world · n ingredients" lines grouped by
-/// datacenter in first-appearance order (a `Vec`, never a map), then the
+/// One Worlds-to-visit line: (world id, (world name, datacenter) when
+/// known, ingredient lines priced there). An alias, or the tuple trips
+/// `clippy::type_complexity`.
+type WorldLine = (i32, Option<(String, String)>, u16);
+
+/// The Worlds-to-visit tooltip: "• world · ingredients: n" lines grouped
+/// by datacenter in first-appearance order (a `Vec`, never a map), then the
 /// datacenter count and the buy-side note. An unknown world shows its id.
-fn worlds_tooltip(
-    i18n: I18nContext<Locale, I18nKeys>,
-    entries: &[(i32, Option<(String, String)>, u16)],
-    dcs: u8,
-) -> String {
+/// The bullet lives in the locale string, as the sub-craft tooltip's does.
+fn worlds_tooltip(i18n: I18nContext<Locale, I18nKeys>, entries: &[WorldLine], dcs: u8) -> String {
     let mut groups: Vec<(String, Vec<String>)> = Vec::new();
     for (id, names, n) in entries {
         let (world, dc) = match names {
@@ -3683,14 +3793,14 @@ fn worlds_tooltip(
             out.push('\n');
         }
         for line in lines {
-            out.push_str("• ");
             out.push_str(&line);
             out.push('\n');
         }
     }
     out.push_str(&t_string!(i18n, analyzer_hop_worlds_dcs, n = dcs).to_string());
     out.push('\n');
-    out.push_str(&t_string!(i18n, analyzer_hop_worlds_note).to_string());
+    // A plain-key `t_string!` is already a `&'static str`.
+    out.push_str(t_string!(i18n, analyzer_hop_worlds_note));
     out
 }
 ```
@@ -3730,7 +3840,7 @@ Replace the `sort_mode` / `visible_cols` block:
     });
 ```
 
-After `formula_page`:
+After the `visible_cols` memo (the block just replaced; `needs_page` reads `visible_cols` and `sort_mode`):
 
 ```rust
     // Which cost signals the pass runs per recipe. Computed here because
@@ -3750,7 +3860,7 @@ After `formula_page`:
     });
 ```
 
-After `sell_world_name` is defined (it is declared later in the file, at `:2576`; move the `buy_sale_stats_scope` memo below it if needed), replace the `buy_sale_stats_scope` memo:
+Replace the existing `buy_sale_stats_scope` memo (`recipe_analyzer.rs:2513-2524`) in place; everything it reads is declared above it:
 
 ```rust
     // Buy from = This world only means the sell world itself: the
@@ -3790,14 +3900,27 @@ Before the `view!`, the pill handler (the setters `set_cost_basis` / `set_revenu
     let home_world_id = Memo::new(move |_| selected_world.get().map(|w| w.id).unwrap_or(0));
 ```
 
-In the Suspense join, the table gains:
+In the Suspense join, the table gains (both `.get()` reads run inside the join closure, so a lab flip or a scope change remounts the table — the header is built once per mount):
 
 ```rust
-                                        signal_cols=signal_cols
+                                        signal_cols=signal_cols.get()
                                         needs=needs_page
                                         buy_stats_aliased=buy_scope_is_sell_world.get()
                                         home_world_id=home_world_id
                                         on_pill=on_pill
+```
+
+The info panel: `ToolCalculation.details` becomes reactive so the lab can append the per-signal rules sentence without touching the flag-off text. In `tool_help.rs`, change the field to `details: Signal<String>`, the constructor parameter to `details: impl Into<Signal<String>>` (with `details: details.into()`), and render it the way `formula` is rendered at `:131` (`{move || calculation.details.get()}` inside the same element that held `{calculation.details}`); the six other callers keep passing a `String` (`String: Into<Signal<String>>`). On the page, the third `ToolCalculation::new` argument becomes:
+
+```rust
+                        Signal::derive(move || {
+                            let mut details = t_string!(i18n, recipe_analyzer_calc_details).to_string();
+                            if signal_cols.get() {
+                                details.push(' ');
+                                details.push_str(t_string!(i18n, recipe_analyzer_calc_signal_semantics));
+                            }
+                            details
+                        }),
 ```
 
 - [ ] **Step 5: The table (`RecipeAnalyzerTable`)**
@@ -3806,8 +3929,10 @@ Props, after `strip_terms`:
 
 ```rust
     /// The analyzer-signal-columns lab: alternative columns, pills, the
-    /// grouped picker, the Price tell and the "n unpriced" note.
-    signal_cols: Signal<bool>,
+    /// grouped picker, the Price tell and the "n unpriced" note. A plain
+    /// bool: the page reads the lab inside its Suspense join, so a flip
+    /// remounts this table (the grid's header is built once per mount).
+    signal_cols: bool,
     /// The cost signals to run per recipe and the hop flags (page-level,
     /// because the fetch gate reads the same value).
     needs: Memo<NeededSignals>,
@@ -3822,19 +3947,27 @@ Props, after `strip_terms`:
 Setup (`:1342-1345` and `:1435-1438`) becomes:
 
 ```rust
-    let buy_stats_loaded = sale_stats.is_some() || buy_stats_aliased;
     let sell_stats_loaded = sell_world_sale_stats.is_some();
+    // Aliased = the sell body IS the buy body, so its outcome is the buy
+    // outcome: a failed sell fetch degrades the cost signal too, and
+    // `effective()` must see that (labels never name a signal the numbers
+    // fell back from).
+    let buy_stats_loaded = sale_stats.is_some() || (buy_stats_aliased && sell_stats_loaded);
     let sale_stats = sale_stats.unwrap_or_default();
     let sell_world_sale_stats = sell_world_sale_stats.unwrap_or_default();
     ...
     // Indexes are built once per payload, not once per recompute.
     let sell_stats_index: Arc<StatsIndex> = Arc::new(stats_index(&sell_world_sale_stats));
-    let buy_stats_index: Option<Arc<StatsIndex>> = if buy_stats_aliased {
-        Some(sell_stats_index.clone())
-    } else {
-        buy_stats_loaded.then(|| Arc::new(stats_index(&sale_stats)))
-    };
+    let buy_stats_index: Option<Arc<StatsIndex>> = buy_stats_loaded.then(|| {
+        if buy_stats_aliased {
+            sell_stats_index.clone()
+        } else {
+            Arc::new(stats_index(&sale_stats))
+        }
+    });
 ```
+
+Also amend two comments that stop being true for lab sorts: `:1201` "Pure, so a header click never re-prices." → "Pure, so a header click never re-prices by itself (a lab sort whose signal the pass has not run changes `needs`, which does)."; `:1471-1472` "a header click or a threshold edit re-runs `filter_and_sort` alone" → "… alone, unless the new sort target adds a signal to `needs`".
 
 The `priced` memo: clone `world_names` in before the memo (`let world_names_for_pricing = world_names.clone();`), and inside the closure, before the `PriceInputs` literal:
 
@@ -3857,8 +3990,10 @@ and the literal's last four fields become:
 ```rust
     let cell_ctx = Signal::derive(move || CellCtx {
         now_unix: chrono::Utc::now().timestamp(),
-        signal_columns: signal_cols.get(),
-        capped_cost: capped_flags(&needs.get().capped),
+        signal_columns: signal_cols,
+        // `with`, not `get`: this is read once per rendered row and `get`
+        // would clone both sets each time.
+        capped_cost: needs.with(|n| capped_flags(&n.capped)),
     });
 ```
 
@@ -3871,7 +4006,7 @@ Header extras (after `marks`):
     // it writes). Empty with the lab off: every header renders as before.
     let header_extras = Memo::new(move |_| {
         let mut by_kind = HashMap::new();
-        if !signal_cols.get() {
+        if !signal_cols {
             return HeaderExtras { by_kind };
         }
         let f = formula.get();
@@ -3927,7 +4062,7 @@ Picker (`:1670`):
 
 ```rust
     let column_options = Signal::derive(move || {
-        if signal_cols.get() {
+        if signal_cols {
             let f = formula.get();
             grouped_picker_options(
                 &RECIPE_COLUMNS,
@@ -3994,7 +4129,7 @@ Custom cells. The `CostSlot` arm becomes a two-way branch; arm A is the current 
                         </Show>
                     }
                 };
-                if signal_cols.get() && data.unpriced > 0 {
+                if signal_cols && data.unpriced > 0 {
                     let n = data.unpriced;
                     view! {
                         <div role="cell" class=class>
@@ -4029,7 +4164,7 @@ Add the `HopWorlds` arm before `ColumnKind::Actions`:
             ColumnKind::HopWorlds => {
                 let (count, tooltip) = match &data.worlds {
                     Some(w) => {
-                        let entries: Vec<(i32, Option<(String, String)>, u16)> = w
+                        let entries: Vec<WorldLine> = w
                             .worlds
                             .iter()
                             .map(|(id, n)| (*id, world_names_for_cells.get(id).cloned(), *n))
@@ -4040,10 +4175,11 @@ Add the `HopWorlds` arm before `ColumnKind::Actions`:
                 };
                 let text = count.map(|c| c.to_string()).unwrap_or_else(|| "—".to_string());
                 let muted = if count.is_some() { "" } else { "text-[color:var(--color-text-muted)]" };
+                // `Tooltip`'s children are an `Fn` closure: clone, never move.
                 view! {
                     <div role="cell" class=class>
                         <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
-                            <span class=muted>{text}</span>
+                            <span class=muted>{text.clone()}</span>
                         </Tooltip>
                     </div>
                 }
@@ -4057,6 +4193,7 @@ Grid:
                     marks=marks
                     extras=header_extras
                     on_pill=on_pill
+                    lab_columns=signal_cols
 ```
 
 - [ ] **Step 6: Run the route tests and check both targets**
@@ -4069,7 +4206,7 @@ Expected: both OK (the `dc_of` borrow inside the memo, the `Callback` in the joi
 - [ ] **Step 7: Commit**
 
 ```bash
-git add ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs
+git add ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs ultros-frontend/ultros-app/src/components/tool_help.rs
 git commit -m "feat(recipe-analyzer): signal columns lab — fetch gate, header pills, grouped picker, hop and unpriced cells"
 ```
 
@@ -4127,7 +4264,7 @@ export PATH="/c/Strawberry/perl/bin:/c/Strawberry/c/bin:$PATH"
 ./check_ci.sh > /tmp/ci.log 2>&1; echo "REAL_EXIT=$?"; tail -30 /tmp/ci.log
 ```
 
-Expected: every `REAL_EXIT=0`. Clippy runs `--all-targets` with `-D warnings`: fix every warning in place (no `#[allow]`). The usual suspects from this phase: an unused import left by a task, `clippy::too_many_arguments` on `header_cell` (seven parameters is the limit — if it fires, bundle `extras` and `on_pill` into a `HeaderHooks { extras, on_pill }` Copy struct), `manual_is_multiple_of`, and `needless_borrow` on `&needs`.
+Expected: every `REAL_EXIT=0`. Clippy runs `--all-targets` with `-D warnings`: fix every warning in place (no `#[allow]`). The usual suspects from this phase: an unused import left by a task; `needless_borrow` / `unnecessary_to_owned` on plain-key `t_string!` results (they are `&'static str`: never `&t_string!(..)` or `&t_string!(..).to_string()` in a `&str` position); `clippy::type_complexity` on any tuple slice or `Vec` that escaped the `WorldLine` alias; `manual_is_multiple_of`. `header_cell` sits exactly at the seven-parameter threshold (`too_many_arguments` fires only above it) — do not add an eighth.
 
 Commit the fixes with `git commit -am "chore(phase-d): fmt and clippy"` if any.
 
@@ -4135,7 +4272,7 @@ Commit the fixes with `git commit -am "chore(phase-d): fmt and clippy"` if any.
 
 Record in the PR body:
 
-1. **Timing (K cost runs)** — from the debug log line `price_rows: N recipes priced in X ms (cost runs K, hop H)` in a hydrate debug build (`cargo leptos watch` or the running dev server), on `/recipe-analyzer?world=Gilgamesh&labs=analyzer-signal-columns`: default (K=1), `&cols=confidence,cost-sale-median` (K=2), `&cols=confidence,cost-listing-min,cost-sale-min,cost-sale-median,cost-sale-avg` (K=4), each with and without `&subcrafts=true` (the cap makes the last one K=3 with sub-crafts). If no local build is available in the session, write "owed" next to the table and say so in the PR.
+1. **Timing (compute_cost calls)** — from the debug log line `price_rows: N recipes priced in X ms (C compute_cost calls, hop H)` in a hydrate debug build (`cargo leptos watch` or the running dev server), on `/recipe-analyzer?world=Gilgamesh&labs=analyzer-signal-columns`: default (K=1), `&cols=confidence,cost-sale-median` (K=2), `&cols=confidence,cost-listing-min,cost-sale-min,cost-sale-median,cost-sale-avg` (K=4), each with and without `&subcrafts=true` (the cap makes the last one K=3 with sub-crafts). If no local build is available in the session, write "owed" next to the table and say so in the PR.
 2. **Sub-craft rescue delta** — with `?world=Gilgamesh&subcrafts=true` (no lab needed): the "N recipes" count and the first ten rows sorted by `cost` ascending, on prod (`https://ultros.app`) and on the local build; the difference is the rescue. If no local build: "owed".
 
 - [ ] **Step 5: PR body**
@@ -4145,7 +4282,7 @@ Write `phase-d-pr-body.md` in the scratchpad from this template, filling the mea
 ```markdown
 # Analyzer kit phase D: price signals as columns, "use" pills, Hop gain (Labs)
 
-**Base branch: `claude/issue-1233-phase-c-ledger-ui`** (stacked on PR #1257 → `main`). `rust.yml` only fires for base `main`, so **CI will not run until this is retargeted** (`gh pr edit --base main` once #1257 lands, then `git rebase --onto origin/main <old base sha>`).
+**Base branch: `main`** (#1257, Phase C, merged as 190ea7cd; this branch is rebased onto it).
 
 Part of #1233. Everything here is behind Settings › Labs › "Recipe Analyzer: price signals as columns" (or `?labs=analyzer-signal-columns`). **Flag off = the page renders, requests and computes exactly as the base branch, on every URL without `subcrafts=true`.** The one number change for everyone is the sub-craft rescue (below). Plan: `docs/superpowers/plans/2026-09-02-analyzer-kit-phase-d-signal-columns.md`.
 
@@ -4158,7 +4295,8 @@ Part of #1233. Everything here is behind Settings › Labs › "Recipe Analyzer:
 - **Fetch gate**: the buy-scope stats body is fetched iff a sale cost signal is selected, visible or the sort target, and not when Buy from = This world only (the sell-world index is reused). `needed_signals` enforces the sub-craft cap (selected + two extra runs) so it holds for bookmarked URLs, identically on SSR and CSR.
 - **Price slot "listing" tell** when the shown price is not the selected signal on the sell world; **"n unpriced"** note on Cost / unit for ingredients with no listing and no vendor (they cost 0; row membership unchanged).
 - **Pricing core**: `PriceSummary::chosen`, `IngredientLine.world_id`, `CostBreakdown.unpriced_market_lines`, and the **sub-craft rescue** (`sub_unit > 0 && (unit_cost == 0 || sub_unit < unit_cost)`): an unlisted intermediate that can be crafted is no longer free with sub-crafts on. **Not lab-gated** — it is the phase's declared number change, changelog'd, delta below.
-- 27 i18n keys × 7 locales (machine-translated; native spot-check wanted, in particular the two `analyzer_hop_*_help` sentences).
+- 28 i18n keys × 7 locales (machine-translated; native spot-check wanted, in particular the two `analyzer_hop_*_help` sentences and `recipe_analyzer_calc_signal_semantics`).
+- Info panel: under the lab the "Ingredient policy" details gain the per-signal rules sentence (`ToolCalculation.details` is now reactive; the six other tools are unchanged).
 - Changelog entry; one e2e route with both labs on.
 
 ## Numbers
@@ -4167,7 +4305,9 @@ Part of #1233. Everything here is behind Settings › Labs › "Recipe Analyzer:
 |---|---|---|---|
 | default | 1 | … | … |
 | + cost-sale-median | 2 | … | … |
-| + four cost columns | 4 (3 capped) | … | … |
+| + hop-gain, hop-worlds | 1 (+1 home run) | … | … |
+| + four cost columns | 4 (3 with sub-crafts) | … | … |
+| + four cost columns + hop-gain | 5 (4 with sub-crafts) | … | … |
 
 Sub-craft rescue delta with `subcrafts=true` on Gilgamesh: prod N rows / local M rows; first ten by cost: …
 
@@ -4180,7 +4320,7 @@ Sub-craft rescue delta with `subcrafts=true` on Gilgamesh: prod N rows / local M
 ## Manual checks (reviewer step; not run in this pass unless stated)
 
 Lab off, `/recipe-analyzer?world=Gilgamesh`:
-1. header rowgroup and first-row outerHTML identical to the base branch (both a yield>1 row and a sub-craft row; the Cost / unit cell has no "unpriced" line, the Price cell no sub-line); Columns picker is the flat list of seven.
+1. header rowgroup and first-row outerHTML identical to the base branch (both a yield>1 row and a sub-craft row; the Cost / unit cell has no "unpriced" line, the Price cell no sub-line; the header carries no extra `<!>` markers — that is the grid's `lab_columns` filter, not `BASE_COLUMN_ORDER` alone); Columns picker is the flat list of seven.
 2. `?cols=hop-gain,cost-sale-median` and `?sort=hop-gain`: nothing new renders, sort falls back to Profit, no extra request.
 
 Lab on (`&labs=analyzer-signal-columns`, then via the Settings toggle):
@@ -4188,8 +4328,8 @@ Lab on (`&labs=analyzer-signal-columns`, then via the Settings toggle):
 4. Alternative columns are muted with a delta sub-line; the selected one reads "(= Cost / unit)" with a filled, disabled pill; pressing another column's pill changes exactly `cost-basis=` (or `revenue=`) in the URL, the badge/tint move to the slot, the row numbers recompute without reload.
 5. Buy from = This world only: no buy-scope stats request even with Sale median selected; Hop gain shows "—", Worlds "—".
 6. Tick Hop gain and Worlds to visit (no network): a "needed" row has an ingredient with no Gilgamesh listing and no vendor; sort by Hop gain desc then asc: "needed"/"—" rows last both ways; Worlds tooltip groups by datacenter and ends with the buy-side note; HopWorlds sorts ascending by default.
-7. `subcrafts=true` with four cost columns: the third and fourth are disabled in the picker with the hint and render "—" with the cap title.
-8. Block `/api/v1/sale_stats*`: cost-sale-* columns show "—", the selected sale basis degrades with the amber dot (Phase C), Hop gain under a sale basis matches the listing pass.
+7. `subcrafts=true` with four cost columns ticked: the capped ones show the hint and render "—" with the cap title, and remain untickable; an unticked cost entry is greyed while the cap is full.
+8. Block `/api/v1/sale_stats*`: cost-sale-* columns show "—", the selected sale basis degrades with the amber dot (Phase C), Hop gain under a sale basis matches the listing pass. Also with Buy from = This world only: the Cost chip's amber dot lights and the cost-sale-* cells show "—" (the aliased body's failure is the buy side's failure).
 9. 375px: no horizontal overflow; new columns hidden; picker groups wrap.
 10. Locale de and ja: headers fit w-40 or truncate with the full label on hover.
 11. `./scripts/run_e2e.sh` on both devices.
@@ -4205,14 +4345,14 @@ git commit -m "docs(changelog): Phase D signal columns, hop gain and the sub-cra
 git push -u origin claude/issue-1233-phase-d-signal-columns
 ```
 
-Open the PR stacked on `claude/issue-1233-phase-c-ledger-ui` with the body above (`gh pr create --base claude/issue-1233-phase-c-ledger-ui --title "Analyzer kit phase D: price signals as columns, use pills, Hop gain (Labs)" --body-file <path>`). If #1257 has already merged, rebase first: `git rebase --onto origin/main <last commit of the Phase C branch> claude/issue-1233-phase-d-signal-columns`, resolve the changelog conflict (keep every entry, ours on top), re-run `./check_ci.sh`, and open against `main`.
+Open the PR against `main` with the body above (`gh pr create --base main --title "Analyzer kit phase D: price signals as columns, use pills, Hop gain (Labs)" --body-file <path>`). If `main` has moved, rebase first (`git fetch origin && git rebase origin/main`), resolve any changelog conflict (keep every entry, ours on top) and re-run `./check_ci.sh`.
 
 ---
 
 ## Self-review (done while writing; kept for the executor)
 
-**Spec coverage.** Every item of the v1 Phase 2 paragraph maps to a task: `SIGNAL_COLUMNS` + hop tokens → Task 9; `PICKER_COLUMNS` with groups, "(= Price)", loads-once title, cap note → Tasks 5, 6, 10; `SortMode` variants → Task 9; page-level `needed_signals` re-gating fetch 2 and the buy-equals-sell reuse → Tasks 3, 10; `PricedRecipe` alt/hop/unpriced fields → Task 8; muted cells with delta sub-line → Tasks 5, 9; "use" pills → Tasks 7, 10; Price "listing" sub-line → Tasks 5, 9; "n unpriced" note → Task 10; `IngredientLine.world_id` + `PriceSummary::chosen` + `unpriced_market_lines` + the rescue → Task 2; hop cells and tooltips → Tasks 5, 10; i18n → Task 1; changelog → Task 11; the Labs token and its off-state → Tasks 1, 9, 10. Every named test exists under its spec name except `chosen_matches_lowest_gil_and_prefer_hq_with_tie_rule` (api-types crate) and `needed_signals_sets_hop_when_a_hop_column_is_the_sort_target` (split between needed.rs and the route's `signal_wants` test).
+**Spec coverage.** Every item of the v1 Phase 2 paragraph maps to a task: `SIGNAL_COLUMNS` + hop tokens → Task 9; `PICKER_COLUMNS` with groups, "(= Price)", loads-once title, cap note → Tasks 5, 6, 10; `SortMode` variants → Task 9; page-level `needed_signals` re-gating fetch 2 and the buy-equals-sell reuse → Tasks 3, 10; `PricedRecipe` alt/hop/unpriced fields → Task 8; muted cells with delta sub-line → Tasks 5, 9; "use" pills → Tasks 7, 10; Price "listing" sub-line → Tasks 5, 9; "n unpriced" note → Task 10; `IngredientLine.world_id` + `PriceSummary::chosen` + `unpriced_market_lines` + the rescue → Task 2; hop cells and tooltips → Tasks 5, 10; i18n → Task 1; changelog → Task 11; the Labs token and its off-state → Tasks 1, 9, 10. Every named test exists under its spec name except `chosen_matches_lowest_gil_and_prefer_hq_with_tie_rule` (api-types crate) and `needed_signals_sets_hop_when_a_hop_column_is_the_sort_target` (split between needed.rs and the route's `signal_wants` test). The route-level flag-off shape test kit §11 names is a manual diff, as in Phase C, because the custom cells live inside `RecipeAnalyzerTable`; the component paths are pinned (`sort_header` unset-trailing, `header_cell` empty-extras, the grid's `lab_columns` test).
 
 **Not in this plan, by decision:** `HopInfo` as one struct (two row fields instead); `signed_delta_class` (the delta sub-line is muted, not coloured); `layers.rs` (Phase E1); Market / Location picker groups (E2); Scope vs home (F); the Kosyne validation ping (dropped).
 
-**Type consistency checklist for the executor:** `CellCtx` has three fields everywhere (Tasks 5, 9, 10); `ToolColumnMeta.lab` exists before Task 9's table; `ColumnSpec.group` before the route's specs; `RecipeNeeds` is `Clone` not `Copy` (Task 3) so the route memo moves a fresh set each time; `compare_recipes` takes `dir` (Task 9) and `filter_and_sort` no longer reverses; `header_cell` takes seven parameters (Task 7) and both header call sites pass the two new ones; `PriceInputs` has four new fields and the test runner (`run_with`) sets all of them.
+**Type consistency checklist for the executor:** `CellCtx` has three fields everywhere (Tasks 5, 9, 10); `ToolColumnMeta.lab` exists before Task 9's table; `ColumnSpec.group` before the route's specs; `RecipeNeeds` is `Clone` not `Copy` (Task 3) so the route memo moves a fresh set each time; `compare_recipes` takes `dir` (Task 9) and `filter_and_sort` no longer reverses; `header_cell` takes seven parameters (Task 7) and both header call sites pass the two new ones; `price_rows` returns `(rows, compute_cost calls)` from Task 8 on and every caller destructures it; `PriceInputs` has four new fields and the test runner (`run_with`) sets all of them with a closure for `dc_of`; `RecipeAnalyzerTable.signal_cols` is a `bool` (Task 10), so nothing inside the table calls `.get()` on it.
