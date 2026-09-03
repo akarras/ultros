@@ -4,7 +4,10 @@ use crate::analyzer_kit::columns::{
     ToolColumnMeta, default_dir_for, grouped_picker_options, picker_options, sort_from_token,
     sort_token, sortability_for,
 };
-use crate::analyzer_kit::enrichment::SparkValue;
+use crate::analyzer_kit::enrichment::{
+    DEBOUNCE_MS, EnrichmentConfig, PREFETCH_MARGIN, SparkKey, SparkStore, SparkValue, Verdict,
+    use_visible_enrichment, verdict,
+};
 use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, per_unit_cost, profit_line,
 };
@@ -14,11 +17,12 @@ use crate::analyzer_kit::grid::{
 };
 use crate::analyzer_kit::hop::{HopGain, WorldsToVisit, hop_gain, worlds_to_visit};
 use crate::analyzer_kit::needed::{
-    BodyRole, NeededSignals, RecipeNeeds, SALE_STATS_WINDOW_DAYS, SignalWants, needed_bodies,
-    needed_signals,
+    BodyRole, NeededSignals, RecipeNeeds, SALE_STATS_WINDOW_DAYS, STATS_30_WINDOW_DAYS,
+    SignalWants, needed_bodies, needed_signals,
 };
 use crate::analyzer_kit::signals::{
-    PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_row_either, stats_index,
+    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_row_either,
+    stats_index,
 };
 use crate::analyzer_kit::strip::{FormulaStrip, StripLayout, StripSelect, StripTerm};
 use crate::components::crafting_cost::{
@@ -39,8 +43,8 @@ use crate::price_basis::{BuyScope, CostBasis, RevenueMetric};
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
-    analysis::{SalesStats, analyze_sales, profit_per_day_from_rate},
-    api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats},
+    analysis::{SalesStats, analyze_sales, first_to_last_pct, profit_per_day_from_rate},
+    api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats, post_sparklines},
     components::{
         add_recipe_to_list::AddRecipeToList,
         control_bar::{ControlBar, FilterOption, parse_visible_cols, serialize_visible_cols},
@@ -79,6 +83,7 @@ use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
     sale_stats::{BulkSaleStats, ItemSaleStats},
+    sparklines::{SparklineSeries, SparklinesRequest},
     trends::ConfidenceBand,
 };
 use xiv_gen::{ItemId, Recipe, RecipeLevelTableId};
@@ -607,6 +612,95 @@ impl AnalyzerRow for RecipeRow {
         self.recipe.key_id
     }
 }
+
+/// The page-level handles E2's market columns read and write. Page-level,
+/// not table-level, because the table remounts whenever one of its
+/// resources changes — a cost-basis switch does — and the store, the hook's
+/// claim set and the 30-day body all have to survive that. Only a sell-world
+/// change resets them, which is exactly the hook's own rule.
+///
+/// Both signals are handed to every `CellCtx` this page builds, on the
+/// server as well as the client. That is deliberate: `spark_with` reads a
+/// `None` handle as `Loading` while `late_30` reads it as `Missing`, and
+/// `CellValue::LateCount` renders those two with different *text*, so a
+/// handle that existed only on the client would be an SSR text-node
+/// mismatch. Present on both sides, both stores are empty on both sides,
+/// and every lazy cell paints its loading shape either way.
+#[derive(Copy, Clone)]
+struct MarketHandles {
+    /// Filled by `use_visible_enrichment`, called at page level.
+    sparklines: RwSignal<SparkStore>,
+    /// Filled by the page's 30-day `Effect`; `None` until it lands.
+    stats_30: LateStats,
+    /// Written by the scroller through the grid's `visible_range` prop.
+    visible_range: RwSignal<(usize, usize)>,
+    /// The table's sorted rows, mirrored for the hook. Empty unless Trend
+    /// or Drift is visible, so the toggle-off page never fetches.
+    rows: RwSignal<Vec<(usize, RecipeRow)>>,
+}
+
+/// The enrichment key: the item and the quality its statistics came from,
+/// so one request serves Trend and Drift and both agree with the 7-day
+/// numbers beside them.
+fn recipe_spark_key((_, row): &(usize, RecipeRow)) -> SparkKey {
+    (row.recipe.item_result, row.stat_hq)
+}
+
+/// One wire series to one stored value. The colour driver is computed here
+/// (both ends are on the wire), so no cell ever scans the points.
+fn spark_entry(s: SparklineSeries) -> (SparkKey, SparkValue) {
+    (
+        (s.item_id, s.hq),
+        SparkValue {
+            // Before `points`: the key and this field must be read while
+            // `s` is whole, and `points` moves it.
+            delta_pct: first_to_last_pct(s.first_price, s.last_price),
+            points: s.points,
+        },
+    )
+}
+
+/// The visible window's sparkline fetch. A world that has not resolved yet
+/// and a failed request both yield nothing; the hook settles every
+/// requested key either way, so a cell goes loading → "—" rather than
+/// shimmering forever. Only ever called from the hook's effect (`post_api`
+/// is `unreachable!` under SSR).
+async fn fetch_recipe_sparklines(
+    world: Option<String>,
+    keys: Vec<SparkKey>,
+) -> Vec<(SparkKey, SparkValue)> {
+    let Some(world) = world else {
+        return Vec::new();
+    };
+    match post_sparklines(
+        &world,
+        SparklinesRequest {
+            items: keys,
+            hours: Some(RECIPE_TREND_FEED.hours()),
+        },
+    )
+    .await
+    {
+        Ok(res) => res.series.into_iter().map(spark_entry).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+const RECIPE_ENRICHMENT: EnrichmentConfig = EnrichmentConfig {
+    prefetch_margin: PREFETCH_MARGIN,
+    debounce_ms: DEBOUNCE_MS,
+    // The sparklines endpoint rejects a request above 200 keys.
+    max_keys_per_request: 200,
+};
+
+/// The grid's geometry, hoisted out of the `view!` so the window test
+/// derives the batch size from the same numbers the scroller uses.
+const RECIPE_GRID: GridLayout = GridLayout {
+    viewport_height: 720.0,
+    row_height: 60.0,
+    header_height: 64.0,
+    overscan: 8,
+};
 
 // Labels: one fn per column so the table can be a `static`.
 fn label_item(i18n: I18nContext<Locale, I18nKeys>) -> String {
@@ -1488,6 +1582,39 @@ fn buy_stats_scope_key(
         .then_some(scope_name)
 }
 
+/// A 30-day column is visible or the sort target — the only reason to fetch
+/// that body. Not "the toggle is on": with it off neither token survives
+/// `parse_visible_cols` (the contract is `BASE_COLUMN_ORDER`) and neither
+/// mode survives `SortMode::lab_only`, so this is false by construction.
+fn stats_30_wanted(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> bool {
+    visible.contains(COL_VOLUME_30D)
+        || visible.contains(COL_VWAP_30D)
+        || matches!(sort, Some(SortMode::Volume30 | SortMode::Vwap30))
+}
+
+/// The 30-day body's key: the sell world's name when that body is needed,
+/// `None` (no fetch) otherwise. Goes through `needed_bodies` like every
+/// other body, so the gate lives in one place.
+fn stats_30_key(
+    formula: &ProfitFormula,
+    needs: &RecipeNeeds,
+    world: Option<&str>,
+) -> Option<String> {
+    needed_bodies(formula, needs)
+        .contains(&BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS))
+        .then(|| world.map(str::to_string))
+        .flatten()
+}
+
+/// Trend or Drift is visible: the only reason to mirror the table's sorted
+/// rows to the page, and so the only reason the sparkline hook ever sees a
+/// window to fetch. Same construction as [`stats_30_wanted`] — with the
+/// toggle off neither token survives `parse_visible_cols`, so the mirror
+/// stays empty and no sparklines POST is issued.
+fn spark_rows_wanted(visible: &HashSet<&'static str>) -> bool {
+    visible.contains(COL_TREND) || visible.contains(COL_DRIFT)
+}
+
 /// Which formula side a header pill writes, and the signal it writes.
 fn pill_param(kind: ColumnKind) -> Option<(TermRole, PriceSignal)> {
     match kind {
@@ -2238,6 +2365,10 @@ fn RecipeAnalyzerTable(
     buy_stats_aliased: bool,
     #[prop(into)] home_world_id: Signal<i32>,
     on_pill: Callback<ColumnKind>,
+    /// The page-level handles E2's market columns use: the sparkline store
+    /// the page's hook fills, the client-only 30-day body, the scroller's
+    /// rendered range and the rows mirror the hook reads.
+    market: MarketHandles,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -2545,9 +2676,30 @@ fn RecipeAnalyzerTable(
         };
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        // `None`: the 30-day body's signal is wired in Task 8. Until then
-        // the two 30-day sorts fall back to Profit for everyone.
-        filter_and_sort(&priced(), &t, &world_names_for_rows, mode, dir, None)
+        // Reactive on the 30-day body: `None` until it lands (and forever
+        // when no 30-day column asked for it), so this only re-runs when
+        // something actually arrived.
+        let stats_30 = market.stats_30.get();
+        filter_and_sort(
+            &priced(),
+            &t,
+            &world_names_for_rows,
+            mode,
+            dir,
+            stats_30.as_deref(),
+        )
+    });
+
+    // Publish the sorted rows for the page's lazy fetch — the hook reads
+    // this mirror, so an empty mirror is no request at all. The clone is
+    // one `Arc` per row and only happens while a lazy column is on.
+    let wants_lazy = Memo::new(move |_| visible_cols.with(spark_rows_wanted));
+    Effect::new(move |_| {
+        if wants_lazy.get() {
+            market.rows.set(computed_data.get());
+        } else if !market.rows.with_untracked(Vec::is_empty) {
+            market.rows.set(Vec::new());
+        }
     });
 
     let empty_state = Memo::new(move |_| {
@@ -3041,8 +3193,12 @@ fn RecipeAnalyzerTable(
         // `with`, not `get`: this is read once per rendered row and `get`
         // would clone both sets each time.
         capped_cost: needs.with(|n| capped_flags(&n.capped)),
-        sparklines: None,
-        stats_30: None,
+        // Copy handles: reading them costs nothing until a lazy cell
+        // actually looks inside, inside the row's own closure. Handed over
+        // unconditionally — on the server too — so both sides agree what a
+        // lazy cell's "no data yet" looks like.
+        sparklines: Some(market.sparklines),
+        stats_30: Some(market.stats_30),
     });
 
     view! {
@@ -3365,12 +3521,7 @@ fn RecipeAnalyzerTable(
                     sort_dir=sort_dir
                     ctx=cell_ctx
                     custom=custom
-                    layout=GridLayout {
-                        viewport_height: 720.0,
-                        row_height: 60.0,
-                        header_height: 64.0,
-                        overscan: 8,
-                    }
+                    layout=RECIPE_GRID
                     header_class=RECIPE_HEADER_CLASS
                     row_min_width=RECIPE_ROW_MIN_WIDTH
                     row_class=stripe
@@ -3378,6 +3529,7 @@ fn RecipeAnalyzerTable(
                     extras=header_extras
                     on_pill=on_pill
                     lab_columns=preview
+                    visible_range=market.visible_range
                 />
              </div>
         </div>
@@ -3700,6 +3852,82 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // Revenue is always the sell world's price now, so its listings are
     // always needed (the old fetch was gated on the world-min metric).
     let sell_world_name = Memo::new(move |_| selected_world.get().map(|w| w.name));
+
+    // E2's market columns. One set of handles for the page, so a table
+    // remount keeps every settled sparkline key and the 30-day body.
+    let market = MarketHandles {
+        sparklines: RwSignal::new(SparkStore::default()),
+        stats_30: RwSignal::new(None),
+        visible_range: RwSignal::new((0, 0)),
+        rows: RwSignal::new(Vec::new()),
+    };
+    // Trend and Drift: the flip finder's visible-window fetch, scoped to the
+    // sell world (the sparklines endpoint takes a world, never a datacenter).
+    // The hook's own effect resets the store when that world changes. Its
+    // rows come from the table's mirror, which stays empty unless one of
+    // those two columns is on, so the toggle-off page asks for nothing.
+    use_visible_enrichment(
+        market.sparklines,
+        market.rows.into(),
+        market.visible_range.into(),
+        sell_world_name.into(),
+        recipe_spark_key,
+        fetch_recipe_sparklines,
+        RECIPE_ENRICHMENT,
+    );
+
+    // The 30-day statistics body: client-only, one per sell world, fetched
+    // the first time a 30-day column is visible or the sort target and kept
+    // across column toggles. Never a `Resource`: it must not join the
+    // Suspense gate, or the whole table would wait 700 ms for a column two
+    // players use.
+    let stats_30_source = Memo::new(move |_| {
+        stats_30_key(
+            &formula_page.get(),
+            &RecipeNeeds {
+                stats_30: stats_30_wanted(&visible_cols.get(), sort_mode.get()),
+                ..RecipeNeeds::default()
+            },
+            sell_world_name.get().as_deref(),
+        )
+    });
+    let stats_30_fetching = StoredValue::new(false);
+    let stats_30_world = StoredValue::new(None::<String>);
+    Effect::new(move |_| {
+        let world = sell_world_name.get();
+        // A world change drops the stored body even when nothing wants one
+        // right now: it describes the old world.
+        if stats_30_world.get_value() != world {
+            stats_30_world.set_value(world);
+            market.stats_30.set(None);
+            stats_30_fetching.set_value(false);
+        }
+        let Some(name) = stats_30_source.get() else {
+            return;
+        };
+        if stats_30_fetching.get_value() || market.stats_30.with_untracked(Option::is_some) {
+            return;
+        }
+        stats_30_fetching.set_value(true);
+        let captured = Some(name.clone());
+        leptos::task::spawn_local(async move {
+            // A failed fetch stores the empty index on purpose: the cells
+            // settle to "—" instead of shimmering forever, and the next
+            // world change is what retries.
+            let index = get_sale_stats(&name, STATS_30_WINDOW_DAYS)
+                .await
+                .map(|body| stats_index(&body))
+                .unwrap_or_default();
+            // Past the await the page may be gone and the world may have
+            // moved: every touch is a `try_*`.
+            if verdict(sell_world_name.try_get_untracked(), &captured) != Verdict::Proceed {
+                return;
+            }
+            let _ = market.stats_30.try_set(Some(Arc::new(index)));
+            let _ = stats_30_fetching.try_update_value(|f| *f = false);
+        });
+    });
+
     let sell_world_listings =
         ArcResource::new(sell_world_name, move |world: Option<String>| async move {
             match world {
@@ -3935,6 +4163,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         buy_stats_aliased=buy_scope_is_sell_world.get()
                                         home_world_id=home_world_id
                                         on_pill=on_pill
+                                        market=market
                                     />
                                 }.into_any()
                             }
@@ -3963,6 +4192,14 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+    // Only the window tests read these. Imported here rather than at module
+    // level: they have no production caller on this page, and `--all-targets`
+    // also compiles the lib without `cfg(test)`, where `-D warnings` turns an
+    // unused import into a failure.
+    use crate::analyzer_kit::enrichment::{chunk_keys, visible_keys};
+    use crate::components::virtual_scroller::{
+        first_visible_row, rendered_range, rows_for_viewport,
+    };
     use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
@@ -5558,5 +5795,298 @@ mod test {
                 "{text}"
             );
         });
+    }
+
+    /// The enrichment key is the item the recipe produces plus the quality
+    /// the row's *statistics* resolved to, so Trend, Drift and the 7-day
+    /// numbers beside them all describe the same market.
+    #[test]
+    fn recipe_spark_key_is_item_and_stat_quality() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(1)
+            .map(|r| r.key_id.0)
+            .collect();
+        let mut r = Arc::try_unwrap(row(keys[0], 0, 0, 1.0, 1)).ok().unwrap();
+        assert_eq!(
+            recipe_spark_key(&(0, Arc::new(r.clone()))),
+            (r.recipe.item_result, false)
+        );
+        r.stat_hq = true;
+        assert_eq!(
+            recipe_spark_key(&(3, Arc::new(r.clone()))),
+            (r.recipe.item_result, true),
+            "the key follows the quality the row's statistics came from"
+        );
+    }
+
+    /// One series in, one keyed value out: the colour driver is computed
+    /// here, so the cell never scans the points.
+    #[test]
+    fn a_series_becomes_a_keyed_spark_value() {
+        let up = SparklineSeries {
+            item_id: 42,
+            hq: true,
+            world_id: 1,
+            points: vec![100, 0, 150],
+            first_price: 100,
+            last_price: 150,
+        };
+        let (key, value) = spark_entry(up);
+        assert_eq!(key, (42, true));
+        assert_eq!(value.points, vec![100, 0, 150]);
+        assert_eq!(value.delta_pct, Some(50.0));
+        // Nothing traded anywhere in the window (`first_price` is the first
+        // non-zero point): no percentage, so the sparkline reads neutral and
+        // Drift shows the dash.
+        let quiet = SparklineSeries {
+            item_id: 7,
+            hq: false,
+            world_id: 1,
+            points: vec![0, 0],
+            first_price: 0,
+            last_price: 0,
+        };
+        assert_eq!(spark_entry(quiet).1.delta_pct, None);
+    }
+
+    /// The visible window is one request, derived from the grid's own
+    /// geometry rather than a literal, and under the endpoint's 200-key cap.
+    #[test]
+    fn the_recipe_window_is_one_request_per_scroll_settle() {
+        let rendered = rows_for_viewport(
+            RECIPE_GRID.viewport_height - RECIPE_GRID.header_height,
+            RECIPE_GRID.row_height,
+            RECIPE_GRID.overscan,
+        ) as usize;
+        assert_eq!(rendered, 19, "11 rows in 656 px plus 8 overscan");
+        let keys: Vec<SparkKey> = (0..rendered + 2 * PREFETCH_MARGIN)
+            .map(|i| (i as i32, false))
+            .collect();
+        assert_eq!(keys.len(), 79);
+        assert_eq!(
+            chunk_keys(&keys, RECIPE_ENRICHMENT.max_keys_per_request).len(),
+            1
+        );
+        assert_eq!(RECIPE_TREND_FEED.hours(), 168);
+    }
+
+    /// Rows for the fetch-window tests: one per fixture recipe, so every
+    /// key is a distinct row rather than a repeat of the same item.
+    fn window_rows() -> Vec<(usize, RecipeRow)> {
+        let recipes = fixture_recipes();
+        let base = Arc::try_unwrap(row(recipes[0].key_id.0, 0, 0, 1.0, 1))
+            .ok()
+            .unwrap();
+        recipes
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let mut d = base.clone();
+                d.recipe = r;
+                (i, Arc::new(d))
+            })
+            .collect()
+    }
+
+    /// The window the lazy fetch actually asks for. Task 5 added the
+    /// `visible_range` prop and proved only that it is additive on the
+    /// server render; nothing exercised a real range. Both failure
+    /// directions matter here: a range that never moves means the columns
+    /// below the fold never load, and a range that spans the table means
+    /// one scroll settle fetches every row on the page.
+    #[test]
+    fn the_visible_range_follows_the_scroll_and_bounds_the_fetch() {
+        let shown = rows_for_viewport(
+            RECIPE_GRID.viewport_height - RECIPE_GRID.header_height,
+            RECIPE_GRID.row_height,
+            RECIPE_GRID.overscan,
+        ) as usize;
+
+        // Where the scroller starts rendering, for this grid's row height.
+        // Uniform rows, so no measured per-row deltas.
+        let first_at = |scroll: f64, len: usize| {
+            first_visible_row(
+                len,
+                RECIPE_GRID.row_height,
+                scroll,
+                |_| 0.0,
+                RECIPE_GRID.overscan,
+            ) as usize
+        };
+        // Unscrolled, the window starts at the top.
+        assert_eq!(first_at(0.0, 500), 0);
+        assert_eq!(first_at(1.0, 500), 0, "part of a row still shows row 0");
+        // Half the overscan renders above the fold, so a scroll of exactly
+        // n rows starts at n - 4: the range moves with the scroll.
+        assert_eq!(first_at(100.0 * RECIPE_GRID.row_height, 500), 96);
+        assert_eq!(first_at(200.0 * RECIPE_GRID.row_height, 500), 196);
+
+        // ... and the range that first row publishes.
+        assert_eq!(rendered_range(0, shown, 500), (0, 19));
+        assert_eq!(rendered_range(96, shown, 500), (96, 115));
+        // Near the end it clamps to the data instead of running past it.
+        assert_eq!(rendered_range(495, shown, 500), (495, 500));
+        // Fewer rows than the viewport holds: the whole table, once.
+        assert_eq!(rendered_range(0, shown, 4), (0, 4));
+        // Nothing rendered, nothing to fetch.
+        assert_eq!(rendered_range(0, shown, 0), (0, 0));
+
+        // What the hook does with that range: the rendered window plus the
+        // prefetch margin either side, in row order, never the whole table.
+        let rows = window_rows();
+        assert!(rows.len() > shown + 2 * PREFETCH_MARGIN);
+        let scrolled = first_at(100.0 * RECIPE_GRID.row_height, rows.len());
+        let range = rendered_range(scrolled, shown, rows.len());
+        assert_eq!(range, (96, 115));
+        let keys = visible_keys(
+            &rows,
+            range,
+            PREFETCH_MARGIN,
+            &HashSet::new(),
+            recipe_spark_key,
+        );
+        let expected: Vec<SparkKey> = rows[66..145]
+            .iter()
+            .map(|(_, r)| (r.recipe.item_result, r.stat_hq))
+            .collect();
+        assert_eq!(keys, expected);
+        assert_eq!(keys.len(), 79);
+        assert!(
+            keys.len() < rows.len(),
+            "a scroll settle must not fetch the whole table"
+        );
+        // Settling again in the same place: every key is claimed already, so
+        // the hook has nothing left to ask for.
+        let seen: HashSet<SparkKey> = keys.into_iter().collect();
+        assert!(visible_keys(&rows, range, PREFETCH_MARGIN, &seen, recipe_spark_key).is_empty());
+    }
+
+    /// The 30-day body is fetched only when a 30-day column asks for it,
+    /// and cannot be asked for at all with the toggle off. Nothing in
+    /// `needed.rs` can catch a gate that is never computed: with `stats_30`
+    /// left false those two columns shimmer forever and every test there
+    /// still passes.
+    #[test]
+    fn the_thirty_day_body_is_only_requested_when_a_30d_column_is() {
+        let f = ProfitFormula::recipe_from_query(None, None, None);
+        let idle = RecipeNeeds::default();
+        assert_eq!(stats_30_key(&f, &idle, Some("Gilgamesh")), None);
+        let wants = RecipeNeeds {
+            stats_30: true,
+            ..RecipeNeeds::default()
+        };
+        assert_eq!(
+            stats_30_key(&f, &wants, Some("Gilgamesh")),
+            Some("Gilgamesh".into())
+        );
+        // No sell world resolved yet: nothing to fetch from.
+        assert_eq!(stats_30_key(&f, &wants, None), None);
+
+        // Visibility and the sort target are separate paths into the gate,
+        // and each 30-day column reaches it on its own.
+        for token in [COL_VOLUME_30D, COL_VWAP_30D] {
+            let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            assert!(stats_30_wanted(&on, None), "{token} visible");
+            // Toggle off: the token is not in the contract, so it never
+            // survives parsing and the body is unreachable.
+            let off = parse_visible_cols(Some(token), &BASE_COLUMN_ORDER, &DEFAULT_COLS);
+            assert!(!stats_30_wanted(&off, None), "{token} with the toggle off");
+        }
+        for mode in [SortMode::Volume30, SortMode::Vwap30] {
+            assert!(stats_30_wanted(&HashSet::new(), Some(mode)), "{mode}");
+            // ... and off, where a lab-only sort token reads as unset.
+            assert!(mode.lab_only(), "{mode}");
+        }
+        // The off direction: neither a plain page nor another sort target
+        // reaches the 438 KB body.
+        assert!(!stats_30_wanted(&HashSet::new(), None));
+        assert!(!stats_30_wanted(&HashSet::new(), Some(SortMode::Profit)));
+        let default_page = parse_visible_cols(None, &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+        assert!(!stats_30_wanted(&default_page, None));
+
+        // End to end, the way the page composes them: the visible columns
+        // and the sort target are what the fetch key is built from.
+        let from = |visible: &HashSet<&'static str>, sort| {
+            stats_30_key(
+                &f,
+                &RecipeNeeds {
+                    stats_30: stats_30_wanted(visible, sort),
+                    ..RecipeNeeds::default()
+                },
+                Some("Gilgamesh"),
+            )
+        };
+        let vwap_on = parse_visible_cols(Some(COL_VWAP_30D), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+        assert_eq!(from(&vwap_on, None), Some("Gilgamesh".into()));
+        assert_eq!(
+            from(&HashSet::new(), Some(SortMode::Volume30)),
+            Some("Gilgamesh".into())
+        );
+        assert_eq!(from(&default_page, None), None);
+    }
+
+    /// The sparkline half of the same guarantee: the page mirrors its sorted
+    /// rows for the hook only while a lazy column is on, and an empty mirror
+    /// is no request at all. With the toggle off neither token survives
+    /// `parse_visible_cols`, so the flag-off page issues no sparklines POST.
+    #[test]
+    fn the_sparkline_fetch_is_unreachable_with_the_toggle_off() {
+        for token in [COL_TREND, COL_DRIFT] {
+            let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            assert!(spark_rows_wanted(&on), "{token} visible");
+            let off = parse_visible_cols(Some(token), &BASE_COLUMN_ORDER, &DEFAULT_COLS);
+            assert!(!spark_rows_wanted(&off), "{token} with the toggle off");
+        }
+        // The default page wants neither, toggle or no toggle.
+        assert!(!spark_rows_wanted(&parse_visible_cols(
+            None,
+            &OPTIONAL_COLUMN_ORDER,
+            &DEFAULT_COLS
+        )));
+        // An empty mirror is what the hook sees then, and it selects no
+        // keys at all: its effect returns before it schedules a fetch.
+        let empty: Vec<(usize, RecipeRow)> = Vec::new();
+        assert!(
+            visible_keys(
+                &empty,
+                rendered_range(0, 19, 0),
+                PREFETCH_MARGIN,
+                &HashSet::new(),
+                recipe_spark_key,
+            )
+            .is_empty()
+        );
+    }
+
+    /// Both gates above are pure functions, and nothing in a unit test can
+    /// render this page to see whether it consults them. `-D warnings`
+    /// proves only that something calls each one; it cannot see that the
+    /// answer is what the page acts on. So read the module's production half
+    /// back out of the source, the way
+    /// `the_grid_call_opts_into_a_sized_row_spacer` reads the grid call.
+    ///
+    /// The asymmetry is why this is worth a test: a gate wired to a constant
+    /// `false` leaves every test in `needed.rs` and every test here green
+    /// while the two 30-day columns shimmer forever, and a gate wired to a
+    /// constant `true` ships a 438 KB body to the default page.
+    #[test]
+    fn the_page_wires_both_gates_to_what_it_fetches() {
+        const SRC: &str = include_str!("recipe_analyzer.rs");
+        // Assembled at run time: `include_str!` pulls in this test module
+        // too, so a literal needle would satisfy itself. Splitting on the
+        // module header keeps the search to the production half.
+        let production = SRC
+            .split(&format!("mod {} {{", "test"))
+            .next()
+            .expect("split yields at least one part");
+        assert!(
+            production.contains(&format!("{}: {}(", "stats_30", "stats_30_wanted")),
+            "the page's RecipeNeeds must take stats_30 from the visible columns and the sort target"
+        );
+        assert!(
+            production.contains(&format!("visible_cols.with({})", "spark_rows_wanted")),
+            "the rows mirror must be gated on a visible Trend or Drift column"
+        );
     }
 }

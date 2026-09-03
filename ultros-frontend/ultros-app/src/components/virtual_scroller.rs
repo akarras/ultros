@@ -123,6 +123,50 @@ pub(crate) fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u3
     ((viewport / avg_row_height).ceil() as u32).max(1) + overscan
 }
 
+/// The first row to render for a scroll offset of `effective_scroll` px past
+/// the header: a binary search for the smallest `i` whose top edge is at or
+/// past that offset, then half the overscan rendered above it.
+///
+/// `prefix_delta(i)` is the measured height difference of rows `0..i` against
+/// `row_height` (the Fenwick prefix sum); it is `0.0` for a fixed-height
+/// list. Pulled out of the memo so the row a scroll position maps to can be
+/// tested without a DOM — `routes::recipe_analyzer`'s window test does, since
+/// its lazy fetch keys on the published range.
+pub(crate) fn first_visible_row(
+    len: usize,
+    row_height: f64,
+    effective_scroll: f64,
+    prefix_delta: impl Fn(usize) -> f64,
+    overscan: u32,
+) -> u32 {
+    let mut lo: i32 = 0;
+    let mut hi: i32 = len as i32;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let base = mid as f64 * row_height;
+        if base + prefix_delta(mid as usize) < effective_scroll {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo.max(0) as u32).saturating_sub(overscan / 2)
+}
+
+/// The rendered row range `(start, end)` published to a parent's
+/// `visible_range`, `end` exclusive: the scroller's first rendered row and
+/// the rows it renders, both clamped to the data it actually has. A parent
+/// fetches for exactly this slice (plus its own prefetch margin), so the
+/// clamping is what keeps a short table from asking for rows that do not
+/// exist and a long one from asking for all of them.
+pub(crate) fn rendered_range(first: usize, shown: usize, len: usize) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+    let start = first.min(len - 1);
+    (start, (start + shown).min(len))
+}
+
 /// Virtual scroller currently mimics the API of the ForEach components, but adds a row_height and viewport_height.
 /// It might be possible to not have a fixed row height in the future, but for now it's good enough!
 ///
@@ -363,26 +407,17 @@ where
         if len == 0 {
             return 0u32;
         }
-        // binary search for smallest i where i*row_height + prefix_sums[i] >= effective_scroll
         let effective_scroll = (scroll_offset() as f64 - header_h).max(0.0);
 
-        let lo_u32 = fenwick.with(|f| {
-            let mut lo: i32 = 0;
-            let mut hi: i32 = len as i32;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let base = mid as f64 * row_height;
-                let delta = f.sum(mid as usize);
-                if base + delta < effective_scroll {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            lo.max(0) as u32
-        });
-
-        lo_u32.saturating_sub(render_ahead / 2)
+        fenwick.with(|f| {
+            first_visible_row(
+                len,
+                row_height,
+                effective_scroll,
+                |i| f.sum(i),
+                render_ahead,
+            )
+        })
     });
     // In container mode this tracks `window_height` and `hydrated` needlessly,
     // but neither ever changes the result there, so the memo's own diffing
@@ -415,13 +450,14 @@ where
     if let Some(range_sig) = visible_range {
         Effect::new(move |_| {
             let len = children_len();
-            if len == 0 {
-                range_sig.set((0, 0));
+            // The empty case reads neither signal, so an empty list does not
+            // subscribe this effect to the scroll position.
+            let range = if len == 0 {
+                (0, 0)
             } else {
-                let start = (child_start() as usize).min(len.saturating_sub(1));
-                let end = (start + children_shown() as usize).min(len);
-                range_sig.set((start, end));
-            }
+                rendered_range(child_start() as usize, children_shown() as usize, len)
+            };
+            range_sig.set(range);
         });
     }
 
