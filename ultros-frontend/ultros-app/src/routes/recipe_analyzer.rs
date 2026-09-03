@@ -122,7 +122,8 @@ struct RecipeProfitData {
     /// Marketable ingredient lines no listing priced, under the selected
     /// signal. They cost 0 here (row membership unchanged) and are said so.
     unpriced: u16,
-    /// `None` when Hop gain was not wanted.
+    /// `None` when Hop gain was not wanted, or there is no sell-world
+    /// listing body to price the home side against.
     hop: Option<HopGain>,
     /// `None` when Worlds to visit was not wanted, or Buy from = This world.
     worlds: Option<WorldsToVisit>,
@@ -1737,6 +1738,9 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             (Some(home), true) => {
                 let home_run = cost_run(home);
                 let owned;
+                // Reachable when a sale cost signal is selected but the
+                // sell-world body failed: hop degrades to the listing
+                // pass, which is not otherwise in the run set.
                 let scope_run: &CostBreakdown = match run_for(hop_signal) {
                     Some(b) => b,
                     None => {
@@ -1757,6 +1761,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         // selected signal (`needed_signals` puts ListingMin in the set).
         let worlds = (inp.needs.worlds && !scope_is_home).then(|| {
             let owned;
+            // Unreachable via needed_signals (it claims ListingMin first
+            // whenever Worlds is wanted); kept for a hand-built NeededSignals.
             let listing_run: &CostBreakdown = match run_for(PriceSignal::ListingMin) {
                 Some(b) => b,
                 None => {
@@ -3345,12 +3351,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             get_cheapest_listings(&scope_name).await
         });
 
-    // Sale statistics back the sale-median/min/avg cost bases, over the buy
-    // scope. Fetched lazily — `None` (no fetch) while the cost basis sits
-    // on the listing basis, so the default page load is unchanged. Basis
-    // toggles between sale stats recompute client-side; only a scope change
-    // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
-    // fetched separately below.)
     // Buy from = This world only means the sell world itself: the
     // sell-world stats body doubles as the buy-scope body (one body, not
     // two identical ones). Lab-gated so the flag-off page fetches as before.
@@ -3359,6 +3359,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             && buy_scope().unwrap_or_default() == BuyScope::World
             && selected_world.get().is_some()
     });
+    // Sale statistics back the sale-median/min/avg cost bases, over the buy
+    // scope. Fetched lazily — `None` (no fetch) while the cost basis sits
+    // on the listing basis and no sale-cost column is visible or sorted
+    // (the lab), so the default page load is unchanged. Basis toggles
+    // between sale stats recompute client-side; only a scope change
+    // refetches. (Sale-stat *revenue* metrics read the sell world's stats,
+    // fetched separately below.)
     let buy_sale_stats_scope = Memo::new(move |_| {
         let formula = ProfitFormula::recipe_from_query(cost_basis(), None, buy_scope());
         let needs = RecipeNeeds {

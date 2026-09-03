@@ -295,6 +295,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
                     best_unpriced = sub_breakdown.unpriced_market_lines;
                 }
             }
+            // Promote the winning candidate (if any) and re-price the line.
             if !best_sub_crafts.is_empty() {
                 line.unit_price = unit_cost;
                 line.source = PriceSource::Subcraft;
