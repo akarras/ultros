@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-02",
+        title: "Recipe Analyzer: every price signal is a column you can sort, and Hop gain tells you whether the trip to another world pays (Labs)",
+        blurb: "Turn on \"Recipe Analyzer: price signals as columns\" under Settings › Labs. The Columns picker gains a column for every cost and revenue signal, each with a \"use\" pill that makes it the formula's input, plus Hop gain / unit (what buying at home would cost minus buying across the buy scope) and Worlds to visit (which worlds hold the cheapest ingredients). Rows with an ingredient that has no listing and no vendor now say how many are unpriced. For everyone, with sub-crafts on, an unlisted intermediate that can be crafted is now costed as a craft instead of as free, so Cost / unit rises on those rows.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-09-02",
         title: "Turning ads back on works again",
         blurb: "Switching \"hide ads\" off in Settings had no effect: the setting was never actually cleared, so ads stayed hidden and the toggle flipped itself back on after a reload. Turning the setting off now sticks, and ads come back.",
         link: Some("/settings"),
