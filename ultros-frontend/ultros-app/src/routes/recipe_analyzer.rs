@@ -2165,7 +2165,7 @@ fn RecipeAnalyzerTable(
                         } else {
                             format!("{} · {}", short_signal(i18n, s), sell_place.get())
                         },
-                        pill: HeaderPill {
+                        pill: Some(HeaderPill {
                             aria: t_string!(
                                 i18n,
                                 analyzer_use_as_revenue_aria,
@@ -2173,8 +2173,9 @@ fn RecipeAnalyzerTable(
                             )
                             .to_string(),
                             pressed: s == selected_revenue,
-                        },
+                        }),
                     }),
+                    header_class: None,
                 },
                 ColumnKind::CostSignal(s) => HeaderExtra {
                     title: signal_help(i18n, s),
@@ -2184,7 +2185,7 @@ fn RecipeAnalyzerTable(
                         } else {
                             format!("{} · {}", short_signal(i18n, s), buy_place.get())
                         },
-                        pill: HeaderPill {
+                        pill: Some(HeaderPill {
                             aria: t_string!(
                                 i18n,
                                 analyzer_use_as_cost_aria,
@@ -2192,16 +2193,19 @@ fn RecipeAnalyzerTable(
                             )
                             .to_string(),
                             pressed: s == selected_cost,
-                        },
+                        }),
                     }),
+                    header_class: None,
                 },
                 ColumnKind::HopGain => HeaderExtra {
                     title: t_string!(i18n, analyzer_hop_gain_help).to_string(),
                     line2: None,
+                    header_class: None,
                 },
                 ColumnKind::HopWorlds => HeaderExtra {
                     title: t_string!(i18n, analyzer_hop_worlds_help).to_string(),
                     line2: None,
+                    header_class: None,
                 },
                 _ => continue,
             };
