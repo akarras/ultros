@@ -118,7 +118,8 @@ fn viewport_px(
 /// Rows to render for a viewport of `viewport` px, including `overscan` rows
 /// beyond the fold. Extracted so the SSR fallback height can be checked to
 /// round-trip back to exactly [`SSR_FALLBACK_ROWS`] rows.
-fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u32) -> u32 {
+/// Also read by `routes::analyzer`'s window test.
+pub(crate) fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u32) -> u32 {
     ((viewport / avg_row_height).ceil() as u32).max(1) + overscan
 }
 
