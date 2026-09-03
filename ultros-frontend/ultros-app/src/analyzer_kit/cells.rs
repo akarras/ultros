@@ -16,6 +16,36 @@ use crate::i18n::*;
 use super::columns::CellCtx;
 use super::hop::HopGain;
 
+/// The three states a resource-backed cell can be in: the fetch has not
+/// answered for this key yet, it answered with nothing, or it answered.
+/// `Missing` and `Ready` are settled — only `Loading` shimmers, and it is
+/// what the server and the first client paint always render (the stores are
+/// empty on both sides), which is what keeps hydration honest.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Enrich<V> {
+    Loading,
+    Missing,
+    Ready(V),
+}
+
+impl<V> Enrich<V> {
+    /// Map the payload, keeping the state. Turns the borrowed
+    /// `Enrich<&V>` a store read yields into the owned value a cell holds.
+    pub fn map<U>(self, f: impl FnOnce(V) -> U) -> Enrich<U> {
+        match self {
+            Enrich::Loading => Enrich::Loading,
+            Enrich::Missing => Enrich::Missing,
+            Enrich::Ready(v) => Enrich::Ready(f(v)),
+        }
+    }
+
+    /// Whether the cell shows its skeleton — the one state difference the
+    /// one-shape rule lets a cell branch a class on.
+    pub fn is_loading(&self) -> bool {
+        matches!(self, Enrich::Loading)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum CellValue {
     Gil(i32),
@@ -260,6 +290,8 @@ mod tests {
                 now_unix: 1_700_000_000,
                 preview: false,
                 capped_cost: [false; 4],
+                sparklines: None,
+                stats_30: None,
             };
             let a = render_cell(
                 "w-32",
@@ -311,6 +343,8 @@ mod tests {
                 now_unix: 1_700_000_000,
                 preview: true,
                 capped_cost: [false; 4],
+                sparklines: None,
+                stats_30: None,
             };
             let render = |v: CellValue| render_cell("w-40", v, i18n, &ctx).unwrap().to_html();
             let a = render(CellValue::MutedGil {
@@ -417,5 +451,15 @@ mod tests {
             let three_hours = last_sold_label(i18n, now - 3 * 3_600, now);
             assert!(three_hours.contains('3'), "{three_hours}");
         });
+    }
+
+    #[test]
+    fn enrich_maps_the_payload_and_keeps_the_state() {
+        assert_eq!(Enrich::Ready(2u8).map(|v| v * 2), Enrich::Ready(4u8));
+        assert_eq!(Enrich::<u8>::Missing.map(|v| v * 2), Enrich::Missing);
+        assert_eq!(Enrich::<u8>::Loading.map(|v| v * 2), Enrich::Loading);
+        assert!(Enrich::<u8>::Loading.is_loading());
+        assert!(!Enrich::<u8>::Missing.is_loading());
+        assert!(!Enrich::Ready(1u8).is_loading());
     }
 }

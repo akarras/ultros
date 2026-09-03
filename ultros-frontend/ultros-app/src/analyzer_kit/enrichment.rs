@@ -14,6 +14,8 @@ use std::hash::Hash;
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 
+use super::cells::Enrich;
+
 /// Rows fetched above and below the rendered window, so enrichment lands
 /// just before a row scrolls into view. The flip finder's Window-mode
 /// scroller renders 28 rows on the SSR shape and about 32 at 1080p, so a
@@ -78,6 +80,18 @@ impl<K: Copy + Eq + Hash, V> Enrichment<K, V> {
         self.settled.contains(key)
     }
 
+    /// The key's cell state: `Ready` with the value, `Missing` once a fetch
+    /// has settled the key without one, `Loading` until then. The
+    /// three-way read every lazy cell makes, in one place, so no page
+    /// re-derives it from `get` and `is_settled`.
+    pub fn state(&self, key: &K) -> Enrich<&V> {
+        match (self.map.get(key), self.settled.contains(key)) {
+            (Some(v), _) => Enrich::Ready(v),
+            (None, true) => Enrich::Missing,
+            (None, false) => Enrich::Loading,
+        }
+    }
+
     /// Merge one batch: every value folds into `map` — a new key is
     /// inserted, an existing one [`Absorb`]s the newer value — and every
     /// `requested` key is settled whether or not a value came back for it.
@@ -99,6 +113,33 @@ impl<K: Copy + Eq + Hash, V> Enrichment<K, V> {
         self.settled.extend(requested.iter().copied());
     }
 }
+
+/// A sparkline key: `(item_id, the quality the row's statistics resolved
+/// to)`. The recipe analyzer's Trend and Drift columns share it — one feed,
+/// two columns, one request.
+pub type SparkKey = (i32, bool);
+
+/// One key's hourly price series plus the percent from its first traded
+/// price to its last, which colours the sparkline and is what the Drift
+/// column shows. A `Vec<u32>` rather than an `Arc<[u32]>`: the `Sparkline`
+/// component takes a `Vec` and would copy either way.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SparkValue {
+    pub points: Vec<u32>,
+    /// `None` when nothing traded anywhere in the window — `first_price`
+    /// is the first *non-zero* point, so it is 0 only for an all-empty
+    /// series (`analysis::first_to_last_pct`).
+    pub delta_pct: Option<f32>,
+}
+
+impl Absorb for SparkValue {
+    /// One indivisible feed: a key fetched again replaces.
+    fn absorb(&mut self, newer: Self) {
+        *self = newer;
+    }
+}
+
+pub type SparkStore = Enrichment<SparkKey, SparkValue>;
 
 /// Keys in the `[start - margin, end + margin)` slice of `data`, minus `seen`.
 /// Generic over the row type + a key extractor so it unit-tests with plain
@@ -410,5 +451,45 @@ mod tests {
             Verdict::Stale
         );
         assert_eq!(verdict(None::<String>, &started), Verdict::Disposed);
+    }
+
+    #[test]
+    fn state_tells_loading_from_missing_from_ready() {
+        let mut store: SparkStore = SparkStore::default();
+        let key: SparkKey = (42, true);
+        assert!(store.state(&key).is_loading());
+        store.merge(
+            &[key, (43, false)],
+            vec![(
+                key,
+                SparkValue {
+                    points: vec![1, 2, 3],
+                    delta_pct: Some(200.0),
+                },
+            )],
+        );
+        // The key that came back: Ready, with its payload.
+        match store.state(&key) {
+            Enrich::Ready(v) => {
+                assert_eq!(v.points, vec![1, 2, 3]);
+                assert_eq!(v.delta_pct, Some(200.0));
+            }
+            other => panic!("{other:?}"),
+        }
+        // Requested, nothing came back: settled without a value.
+        assert_eq!(store.state(&(43, false)), Enrich::Missing);
+        // Never requested: still loading.
+        assert!(store.state(&(44, false)).is_loading());
+        // Absorb replaces: one indivisible feed per key.
+        let mut v = SparkValue {
+            points: vec![1],
+            delta_pct: None,
+        };
+        v.absorb(SparkValue {
+            points: vec![9, 9],
+            delta_pct: Some(0.0),
+        });
+        assert_eq!(v.points, vec![9, 9]);
+        assert_eq!(v.delta_pct, Some(0.0));
     }
 }

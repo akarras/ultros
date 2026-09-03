@@ -215,8 +215,9 @@ fn header_cell<T: 'static, M: SortColumn>(
             }
         }
         // Unsortable headers were `t!(..)` on the page (locale-reactive);
-        // keep that by resolving the label inside a closure.
-        (Sortability::No, _) => view! {
+        // keep that by resolving the label inside a closure. A lazy column
+        // is unsortable for a different reason and renders the same way.
+        (Sortability::No | Sortability::LazyNever, _) => view! {
             <div role="columnheader" class=class>{move || label_fn(i18n)}</div>
         }
         .into_any(),
@@ -487,7 +488,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4] })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -529,7 +530,7 @@ mod tests {
                     visible_cols=visible
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4] })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
                         view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
@@ -571,7 +572,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4] })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, _: &'static str| {
                         view! { <div role="cell"></div> }.into_any()
                     })
@@ -761,7 +762,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4] })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
                     layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
                     header_class="h"
@@ -781,7 +782,7 @@ mod tests {
                     visible_cols=Signal::derive(HashSet::new)
                     sort_mode=Signal::derive(|| None::<Col>)
                     sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4] })
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
                     layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
                     header_class="h"
@@ -810,7 +811,7 @@ mod tests {
                         visible_cols=Signal::derive(move || visible.iter().copied().collect::<HashSet<_>>())
                         sort_mode=Signal::derive(|| None::<Col>)
                         sort_dir=Signal::derive(|| None::<SortDir>)
-                        ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4] })
+                        ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                         custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
                         layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
                         header_class="h"

@@ -2787,6 +2787,8 @@ fn RecipeAnalyzerTable(
         // `with`, not `get`: this is read once per rendered row and `get`
         // would clone both sets each time.
         capped_cost: needs.with(|n| capped_flags(&n.capped)),
+        sparklines: None,
+        stats_30: None,
     });
 
     view! {
