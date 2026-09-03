@@ -4200,7 +4200,7 @@ Grid:
 
 Run: `cargo test -p ultros-app --lib -- routes::recipe_analyzer`
 Expected: PASS.
-Run: `cargo check -p ultros-app --features ssr && cargo check -p ultros-app --features hydrate --target wasm32-unknown-unknown`
+Run: `cargo check -p ultros-app --features ssr && cargo check -p ultros-app --no-default-features --features hydrate --target wasm32-unknown-unknown`
 Expected: both OK (the `dc_of` borrow inside the memo, the `Callback` in the join and the `Memo<Option<SortMode>>` prop type are the likely trip-ups; fix in place).
 
 - [ ] **Step 7: Commit**
