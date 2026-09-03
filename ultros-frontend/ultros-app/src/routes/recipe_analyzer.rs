@@ -1,9 +1,10 @@
-use crate::analyzer_kit::cells::{CellNote, CellValue};
+use crate::analyzer_kit::cells::{CellNote, CellValue, Enrich};
 use crate::analyzer_kit::columns::{
-    CellCtx, ColumnKind, ColumnSpec, Layer, PickerContext, PickerGroup, Sortability,
+    CellCtx, ColumnKind, ColumnSpec, Layer, LazyFeed, PickerContext, PickerGroup, Sortability,
     ToolColumnMeta, default_dir_for, grouped_picker_options, picker_options, sort_from_token,
     sort_token, sortability_for,
 };
+use crate::analyzer_kit::enrichment::SparkValue;
 use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, per_unit_cost, profit_line,
 };
@@ -17,7 +18,7 @@ use crate::analyzer_kit::needed::{
     needed_signals,
 };
 use crate::analyzer_kit::signals::{
-    PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
+    PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_row_either, stats_index,
 };
 use crate::analyzer_kit::strip::{FormulaStrip, StripLayout, StripSelect, StripTerm};
 use crate::components::crafting_cost::{
@@ -38,7 +39,7 @@ use crate::price_basis::{BuyScope, CostBasis, RevenueMetric};
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
-    analysis::{SalesStats, analyze_sales},
+    analysis::{SalesStats, analyze_sales, profit_per_day_from_rate},
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats},
     components::{
         add_recipe_to_list::AddRecipeToList,
@@ -109,6 +110,11 @@ struct RecipeProfitData {
     /// The market board's cut of one unit's sale at `market_price`.
     tax: i32,
     confidence: ConfidenceBand,
+    /// Which quality the sell-world statistics above came from: the
+    /// required one, or the other when only that one traded. The lazy
+    /// sparkline feed and the 30-day columns key on it, so every figure in
+    /// a row describes the same quality.
+    stat_hq: bool,
     /// Per-unit cost under each cost signal that was run, by
     /// `PriceSignal::index`; `None` = not run (not needed, capped, or a
     /// sale signal with no buy-scope body).
@@ -542,6 +548,19 @@ const COL_COST_SALE_MEDIAN: &str = "cost-sale-median";
 const COL_COST_SALE_AVG: &str = "cost-sale-avg";
 const COL_HOP_GAIN: &str = "hop-gain";
 const COL_HOP_WORLDS: &str = "hop-worlds";
+// Phase E2's market columns, appended after the ten above for the same
+// reason: an old serialized `?cols=` must round-trip byte-identically.
+const COL_PROFIT_PER_DAY: &str = "profit-per-day";
+const COL_TREND: &str = "trend";
+const COL_DRIFT: &str = "drift";
+const COL_VOLUME_30D: &str = "volume-30d";
+const COL_VWAP_30D: &str = "vwap-30d";
+
+/// The lazy feed the Trend and Drift columns share: 168 hourly points, one
+/// request per visible window. `RECIPE_TREND_FEED.hours()` is what the
+/// fetch sends, so the column table and the request can never disagree.
+const RECIPE_TREND_FEED: LazyFeed = LazyFeed::Sparklines { hours: 168 };
+
 /// `?cols=` order, derived from the table so the URL contract has one
 /// source: the picker, the grid and the serializer cannot disagree.
 static OPTIONAL_COLUMN_ORDER: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -652,6 +671,26 @@ fn label_hop_gain(i18n: I18nContext<Locale, I18nKeys>) -> String {
 }
 fn label_hop_worlds(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, analyzer_col_hop_worlds).to_string()
+}
+fn label_profit_per_day(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_profit_per_day).to_string()
+}
+fn label_trend(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_spark).to_string()
+}
+/// The recipe analyzer's own Drift label, *not* the flip finder's
+/// `analyzer_col_drift`: fr and de translate that key and
+/// `analyzer_col_spark` to the same word, which would put two
+/// identically-labelled columns side by side here and two identical
+/// checkboxes in the Market picker group.
+fn label_drift(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, recipe_analyzer_col_drift).to_string()
+}
+fn label_volume_30d(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, recipe_analyzer_col_volume_30d).to_string()
+}
+fn label_vwap_30d(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, recipe_analyzer_col_vwap_30d).to_string()
 }
 
 static SPEC_ITEM: ColumnSpec = ColumnSpec {
@@ -780,6 +819,31 @@ static SPEC_HOP_WORLDS: ColumnSpec = ColumnSpec {
     label: label_hop_worlds,
     group: PickerGroup::Travel,
 };
+static SPEC_PROFIT_PER_DAY: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::ProfitPerDay,
+    label: label_profit_per_day,
+    group: PickerGroup::Market,
+};
+static SPEC_TREND: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Trend,
+    label: label_trend,
+    group: PickerGroup::Market,
+};
+static SPEC_DRIFT: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::DriftSpark,
+    label: label_drift,
+    group: PickerGroup::Market,
+};
+static SPEC_VOLUME_30D: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::VolumeUnits30,
+    label: label_volume_30d,
+    group: PickerGroup::Market,
+};
+static SPEC_VWAP_30D: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::Vwap30,
+    label: label_vwap_30d,
+    group: PickerGroup::Market,
+};
 
 // Cell extractors. `Custom` = the page renders it (needs context the row
 // does not carry: item names, the world link, the on-hand list button).
@@ -885,6 +949,55 @@ fn cell_hop_gain(r: &RecipeRow, _: &CellCtx) -> CellValue {
     }
 }
 
+fn cell_profit_per_day(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::Gil(profit_per_day_from_rate(r.profit, r.daily_sales))
+}
+
+/// One read of the page's sparkline store, projected. The read happens
+/// inside the row's reactive closure, which is what makes the cell re-render
+/// when a batch merges; with no store (every other page, and every test)
+/// the cell stays on its loading shape, which is also the server's.
+fn spark_with<V>(r: &RecipeRow, ctx: &CellCtx, f: impl Fn(&SparkValue) -> V) -> Enrich<V> {
+    let key = (r.recipe.item_result, r.stat_hq);
+    match ctx.sparklines {
+        Some(store) => store.with(|s| s.state(&key).map(f)),
+        None => Enrich::Loading,
+    }
+}
+
+fn cell_trend(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
+    CellValue::Sparkline(spark_with(r, ctx, SparkValue::clone))
+}
+
+fn cell_drift(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
+    CellValue::LazyPct(spark_with(r, ctx, |v| v.delta_pct))
+}
+
+/// The same, for the client-only 30-day body: `Loading` while it is in
+/// flight, `Missing` once it has landed with no row for this item (and on a
+/// page that has no such body).
+fn late_30<V>(r: &RecipeRow, ctx: &CellCtx, f: impl Fn(&ItemSaleStats) -> V) -> Enrich<V> {
+    let Some(stats) = ctx.stats_30 else {
+        return Enrich::Missing;
+    };
+    stats.with(|index| match index {
+        None => Enrich::Loading,
+        Some(index) => match stat_row_either(index, r.recipe.item_result, r.stat_hq) {
+            Some(row) => Enrich::Ready(f(row)),
+            None => Enrich::Missing,
+        },
+    })
+}
+
+fn cell_volume_30(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
+    CellValue::LateCount(late_30(r, ctx, |s| s.units_sold))
+}
+
+fn cell_vwap_30(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
+    let price = r.market_price;
+    CellValue::LateGilWithPct(late_30(r, ctx, move |s| (s.vwap, vwap_pct(price, s.vwap))))
+}
+
 const CELL_R: &str = "px-4 py-2 w-32 shrink-0 text-right";
 const CELL_R_MD: &str = "px-4 py-2 w-32 shrink-0 text-right hidden md:block";
 const CELL_28_MD: &str = "px-4 py-2 w-28 shrink-0 text-right hidden md:block";
@@ -922,6 +1035,21 @@ const FORMULA_CELL: &str = "px-3 py-2 w-40 shrink-0 text-right";
 const HEAD_40_MD: &str = "w-40 shrink-0 px-3 py-2 leading-tight hidden md:flex";
 const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
 
+/// The two lazy columns' headers: the grid draws these itself (they are
+/// unsortable), so the class carries `flex flex-col` for the label and its
+/// "7d · ‹sell world›" line. `md:flex`, never `md:block`, for the same
+/// reason `HEAD_40_MD` is.
+const HEAD_LAZY_MD: &str = "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex flex-col";
+const HEAD_LAZY_MD_END: &str =
+    "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex flex-col items-end";
+/// A cell that centres a fixed-width graphic (the 80 px sparkline in a
+/// `w-28` column, the same 16 px of padding either side as the numbers).
+const CELL_28_MID_MD: &str = "px-4 py-2 w-28 shrink-0 hidden md:flex items-center justify-center";
+/// A right-aligned numeric cell, as the 7-day Volume column already spells
+/// it inline.
+const CELL_28_NUM_MD: &str =
+    "px-4 py-2 w-28 shrink-0 text-right hidden md:block font-mono tabular-nums";
+
 /// Every field at its table-wide default, so each column below spells
 /// out only what it actually differs in.
 const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
@@ -943,7 +1071,7 @@ const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
 /// The recipe table, column by column, classes copied verbatim from the
 /// markup this replaced. `id` = the `?cols=` token (always-on columns
 /// have none); `sort_id` = the `?sort=` token.
-static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
+static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 30] = [
     ToolColumnMeta {
         spec: &SPEC_ITEM,
         header_class: "w-64 md:w-80 shrink-0 p-4",
@@ -1227,6 +1355,70 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 25] = [
         ..RECIPE_BASE
     },
     ToolColumnMeta {
+        spec: &SPEC_PROFIT_PER_DAY,
+        id: COL_PROFIT_PER_DAY,
+        sort_id: COL_PROFIT_PER_DAY,
+        sort: sortability_for(Layer::Computed, Some(SortMode::ProfitPerDay)),
+        header_class: HEAD_MD,
+        cell_class: CELL_R_MD,
+        default_on: false,
+        cell: cell_profit_per_day,
+        lab: Some(LAB_ANALYZER_RECIPE),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_TREND,
+        id: COL_TREND,
+        // Lazy: fetched per visible window, so it never sorts and carries
+        // no `?sort=` token.
+        sort: sortability_for(Layer::Lazy(RECIPE_TREND_FEED), None),
+        header_class: HEAD_LAZY_MD,
+        cell_class: CELL_28_MID_MD,
+        default_on: false,
+        cell: cell_trend,
+        lab: Some(LAB_ANALYZER_RECIPE),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_DRIFT,
+        id: COL_DRIFT,
+        // The same feed, read as a first-to-last percent: one request
+        // serves both columns.
+        sort: sortability_for(Layer::Lazy(RECIPE_TREND_FEED), None),
+        header_class: HEAD_LAZY_MD_END,
+        cell_class: CELL_28_NUM_MD,
+        default_on: false,
+        cell: cell_drift,
+        lab: Some(LAB_ANALYZER_RECIPE),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_VOLUME_30D,
+        id: COL_VOLUME_30D,
+        sort_id: COL_VOLUME_30D,
+        // Bulk: a whole-scope body, even though this one is fetched
+        // client-side after the table (`needed.rs`'s SellWorldStats(30)).
+        sort: sortability_for(Layer::Bulk, Some(SortMode::Volume30)),
+        header_class: HEAD_28_MD,
+        cell_class: CELL_28_NUM_MD,
+        default_on: false,
+        cell: cell_volume_30,
+        lab: Some(LAB_ANALYZER_RECIPE),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
+        spec: &SPEC_VWAP_30D,
+        id: COL_VWAP_30D,
+        sort_id: COL_VWAP_30D,
+        sort: sortability_for(Layer::Bulk, Some(SortMode::Vwap30)),
+        header_class: HEAD_MD,
+        cell_class: CELL_R_MD,
+        default_on: false,
+        cell: cell_vwap_30,
+        lab: Some(LAB_ANALYZER_RECIPE),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
         spec: &SPEC_ACTIONS,
         header_class: "w-20 shrink-0 p-4",
         ..RECIPE_BASE
@@ -1438,6 +1630,13 @@ enum SortMode {
     CostSignal(PriceSignal),
     HopGain,
     HopWorlds,
+    /// Profit times the 7-day rollup rate. Computed per comparison; there
+    /// is no row field to keep in sync.
+    ProfitPerDay,
+    /// Units sold over 30 days, from the client-only body.
+    Volume30,
+    /// The 30-day volume-weighted average price, from the same body.
+    Vwap30,
 }
 
 impl SortMode {
@@ -1450,6 +1649,9 @@ impl SortMode {
                 | SortMode::CostSignal(_)
                 | SortMode::HopGain
                 | SortMode::HopWorlds
+                | SortMode::ProfitPerDay
+                | SortMode::Volume30
+                | SortMode::Vwap30
         )
     }
 }
@@ -1495,11 +1697,33 @@ fn hop_sort_key(hop: Option<HopGain>) -> Option<i32> {
 /// flip whole; the alternative-signal and hop modes flip only between two
 /// present values (`cmp_none_last`), so "—" / "needed" rows stay last
 /// whichever way the header points.
+/// A row's 30-day statistics, when that body has landed. Keyed on the same
+/// quality the row's 7-day figures came from.
+fn stat_30<'a>(index: Option<&'a StatsIndex>, r: &RecipeProfitData) -> Option<&'a ItemSaleStats> {
+    stat_row_either(index?, r.recipe.item_result, r.stat_hq)
+}
+
+/// The mode the rows are actually sorted by. The 30-day body is client-only
+/// and lands after the first paint; sorting the whole table by "nothing
+/// yet" would leave it in key order and then shuffle it, so until the body
+/// arrives *with rows* a 30-day sort reads as Profit. "With rows", not
+/// merely "present": a failed fetch and a world with no 30-day history both
+/// store an empty index, which sorts no better than nothing. The header
+/// still shows what was asked for, and the table re-sorts itself the moment
+/// real rows land.
+fn effective_sort_mode(mode: SortMode, stats_30_loaded: bool) -> SortMode {
+    match mode {
+        SortMode::Volume30 | SortMode::Vwap30 if !stats_30_loaded => SortMode::Profit,
+        other => other,
+    }
+}
+
 fn compare_recipes(
     mode: SortMode,
     dir: SortDir,
     a: &RecipeProfitData,
     b: &RecipeProfitData,
+    stats_30: Option<&StatsIndex>,
 ) -> Ordering {
     let oriented = |o: Ordering| match dir {
         SortDir::Asc => o,
@@ -1536,6 +1760,22 @@ fn compare_recipes(
             b.worlds.as_ref().map(|w| w.worlds.len()),
             dir,
             usize::cmp,
+        ),
+        SortMode::ProfitPerDay => oriented(
+            profit_per_day_from_rate(a.profit, a.daily_sales)
+                .cmp(&profit_per_day_from_rate(b.profit, b.daily_sales)),
+        ),
+        SortMode::Volume30 => cmp_none_last(
+            stat_30(stats_30, a).map(|s| s.units_sold),
+            stat_30(stats_30, b).map(|s| s.units_sold),
+            dir,
+            u64::cmp,
+        ),
+        SortMode::Vwap30 => cmp_none_last(
+            stat_30(stats_30, a).map(|s| s.vwap).filter(|v| *v > 0),
+            stat_30(stats_30, b).map(|s| s.vwap).filter(|v| *v > 0),
+            dir,
+            i32::cmp,
         ),
     }
 }
@@ -1808,10 +2048,8 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         // Sell-world stats row matching how revenue resolves: prefer
         // the HQ row when the analyzer requires HQ, otherwise NQ, and
         // fall back to whichever quality actually traded.
-        let sell_stat = inp
-            .sell_stats
-            .get(&(recipe.item_result, inp.require_hq))
-            .or_else(|| inp.sell_stats.get(&(recipe.item_result, !inp.require_hq)));
+        let sell_stat = stat_row_either(inp.sell_stats, recipe.item_result, inp.require_hq);
+        let stat_hq = sell_stat.map(|s| s.hq).unwrap_or(inp.require_hq);
         let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
 
         results.push(RecipeProfitData {
@@ -1832,6 +2070,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             vwap_pct: vwap_pct(market_price, vwap),
             tax: line.tax,
             confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
+            stat_hq,
             cost_alt,
             rev_alt,
             revenue_fell_back,
@@ -1863,7 +2102,14 @@ fn filter_and_sort(
     world_names: &HashMap<i32, (String, String)>,
     mode: SortMode,
     dir: SortDir,
+    stats_30: Option<&StatsIndex>,
 ) -> Vec<(usize, Arc<RecipeProfitData>)> {
+    // A failed fetch stores an *empty* index (Task 8) so the cells settle to
+    // "—" rather than shimmering; for sorting that is still "not landed",
+    // because every key would compare `None` against `None`, leave the
+    // key-id tiebreak in charge, and put the table in recipe-id order.
+    let stats_30 = stats_30.filter(|i| !i.is_empty());
+    let mode = effective_sort_mode(mode, stats_30.is_some());
     let mut kept: Vec<Arc<RecipeProfitData>> = rows
         .iter()
         .filter(|d| t.min_profit.is_none_or(|min| d.profit >= min))
@@ -1887,7 +2133,8 @@ fn filter_and_sort(
         // Deterministic tiebreak: the input comes from a std HashMap, so
         // without it ties could order differently on the server and the
         // client and mismatch the SSR-rendered rows.
-        compare_recipes(mode, dir, a, b).then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
+        compare_recipes(mode, dir, a, b, stats_30)
+            .then_with(|| a.recipe.key_id.0.cmp(&b.recipe.key_id.0))
     });
     kept.into_iter().enumerate().collect()
 }
@@ -2297,7 +2544,9 @@ fn RecipeAnalyzerTable(
         };
         let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
-        filter_and_sort(&priced(), &t, &world_names_for_rows, mode, dir)
+        // `None`: the 30-day body's signal is wired in Task 8. Until then
+        // the two 30-day sorts fall back to Profit for everyone.
+        filter_and_sort(&priced(), &t, &world_names_for_rows, mode, dir, None)
     });
 
     let empty_state = Memo::new(move |_| {
@@ -3862,7 +4111,7 @@ mod test {
         );
     }
 
-    const ALL_SORT_MODES: [SortMode; 21] = [
+    const ALL_SORT_MODES: [SortMode; 24] = [
         SortMode::Roi,
         SortMode::Profit,
         SortMode::Velocity,
@@ -3884,6 +4133,9 @@ mod test {
         SortMode::CostSignal(PriceSignal::SaleAvg),
         SortMode::HopGain,
         SortMode::HopWorlds,
+        SortMode::ProfitPerDay,
+        SortMode::Volume30,
+        SortMode::Vwap30,
     ];
 
     /// Display must produce exactly the token FromStr parses back — the
@@ -3903,6 +4155,9 @@ mod test {
             "cost-sale-avg"
         );
         assert_eq!(SortMode::HopWorlds.to_string(), "hop-worlds");
+        assert_eq!(SortMode::ProfitPerDay.to_string(), "profit-per-day");
+        assert_eq!(SortMode::Volume30.to_string(), "volume-30d");
+        assert_eq!("vwap-30d".parse::<SortMode>(), Ok(SortMode::Vwap30));
     }
 
     /// `?cols=` tokens and the default set are a bookmark contract; both
@@ -3930,6 +4185,13 @@ mod test {
                 "cost-sale-avg",
                 "hop-gain",
                 "hop-worlds",
+                // Phase E2, appended so every serialized old URL stays
+                // byte-identical.
+                "profit-per-day",
+                "trend",
+                "drift",
+                "volume-30d",
+                "vwap-30d",
             ]
         );
         // The contract the page uses while the lab is off: the seven of Phase B.
@@ -4276,6 +4538,9 @@ mod test {
         sell_listings: bool,
         sell_stats: bool,
         scope: Option<BuyScope>,
+        /// Give the sell world HQ-only statistics, so the pass has to fall
+        /// back to the other quality and the row has to record that it did.
+        stats_hq: bool,
     }
 
     impl Default for RunOpts {
@@ -4286,6 +4551,7 @@ mod test {
                 sell_listings: true,
                 sell_stats: true,
                 scope: None,
+                stats_hq: false,
             }
         }
     }
@@ -4295,6 +4561,29 @@ mod test {
         let recipes = fixture_recipes();
         let (buy, sell, stats) = fixture(&recipes);
         let index = stats_index(&stats);
+        let sell_index = if o.stats_hq {
+            // The same rows, only HQ, and carrying the two figures the row
+            // copies off its stat row: exercises the pass's fallback to the
+            // other quality when the required one never traded, and lets a
+            // test tell which row the numbers came from.
+            stats
+                .stats
+                .iter()
+                .map(|s| {
+                    (
+                        (s.item_id, true),
+                        ItemSaleStats {
+                            hq: true,
+                            vwap: s.avg_price,
+                            units_sold: 3,
+                            ..*s
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            index.clone()
+        };
         let empty_index = StatsIndex::new();
         let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let raw_sales = HashMap::new();
@@ -4316,7 +4605,11 @@ mod test {
             buy_listings: &buy,
             sell_listings: o.sell_listings.then_some(&sell),
             buy_stats: Some(&index),
-            sell_stats: if o.sell_stats { &index } else { &empty_index },
+            sell_stats: if o.sell_stats {
+                &sell_index
+            } else {
+                &empty_index
+            },
             raw_sales: &raw_sales,
             formula: ProfitFormula::recipe_from_query(Some(cost), Some(revenue), o.scope),
             levels: &levels,
@@ -4627,6 +4920,7 @@ mod test {
             vwap_pct: None,
             tax: 0,
             confidence: ConfidenceBand::Unknown,
+            stat_hq: false,
             cost_alt: [None; 4],
             rev_alt: [None; 4],
             revenue_fell_back: false,
@@ -4662,7 +4956,7 @@ mod test {
             min_profit: Some(200),
             ..Default::default()
         };
-        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc, None);
         // Inclusive `>=`; ties broken by key id ascending; indexes renumbered.
         let got: Vec<(usize, i32, i32)> = out
             .iter()
@@ -4673,7 +4967,7 @@ mod test {
             vec![(0, 300, keys[1]), (1, 200, keys[2]), (2, 200, keys[3])]
         );
         // Ascending flips the order but keeps the same tiebreak direction.
-        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Asc);
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Asc, None);
         assert_eq!(out[0].1.profit, 200);
         assert_eq!(out[0].1.recipe.key_id.0, keys[2]);
         // A listing-world filter drops unknown worlds (9 has no name).
@@ -4681,7 +4975,7 @@ mod test {
             listing_world: Some("Gilgamesh".into()),
             ..Default::default()
         };
-        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc);
+        let out = filter_and_sort(&rows, &t, &names, SortMode::Profit, SortDir::Desc, None);
         assert_eq!(out.len(), 2);
     }
 
@@ -4703,10 +4997,11 @@ mod test {
         sorts.sort_unstable();
         sorts.dedup();
         assert_eq!((ids.len(), sorts.len()), (n_ids, n_sorts));
-        assert_eq!(n_ids, 17);
+        assert_eq!(n_ids, 22);
         assert_eq!(
-            n_sorts, 21,
-            "the eleven sorts at HEAD plus the ten signal and hop columns; listing world/dc do not sort"
+            n_sorts, 24,
+            "the eleven sorts at HEAD, the ten signal and hop columns, and E2's three; \
+             listing world/dc, trend and drift do not sort"
         );
         for c in RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()) {
             assert!(!c.default_on, "{} must start hidden", c.id);
@@ -4719,7 +5014,7 @@ mod test {
         }
         assert_eq!(
             RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()).count(),
-            10
+            15
         );
     }
 
@@ -4747,7 +5042,7 @@ mod test {
         ];
         let names = HashMap::new();
         let order = |mode: SortMode, dir: SortDir| -> Vec<i32> {
-            filter_and_sort(&rows, &Thresholds::default(), &names, mode, dir)
+            filter_and_sort(&rows, &Thresholds::default(), &names, mode, dir, None)
                 .into_iter()
                 .map(|(_, r)| r.recipe.key_id.0)
                 .collect()
@@ -4791,10 +5086,249 @@ mod test {
         );
     }
 
+    fn test_ctx() -> CellCtx {
+        CellCtx {
+            now_unix: 1_700_000_000,
+            preview: true,
+            capped_cost: [false; 4],
+            sparklines: None,
+            stats_30: None,
+        }
+    }
+
+    fn stats_row(item_id: i32, hq: bool, units_sold: u64, vwap: i32) -> ItemSaleStats {
+        ItemSaleStats {
+            item_id,
+            hq,
+            units_sold,
+            vwap,
+            ..Default::default()
+        }
+    }
+
+    /// Profit/day is the row's profit times the 7-day rollup rate, computed
+    /// in the cell and in the comparator from the same helper — no field,
+    /// no fetch.
     #[test]
-    fn lab_only_sort_modes_are_exactly_the_ten() {
-        assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 10);
+    fn profit_per_day_is_profit_times_the_rollup_rate() {
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(2)
+            .map(|r| r.key_id.0)
+            .collect();
+        let fast = row(keys[0], 1_000, 0, 3.0, 1);
+        let slow = row(keys[1], 1_000, 0, 0.25, 1);
+        assert_eq!(
+            cell_profit_per_day(&fast, &test_ctx()),
+            CellValue::Gil(3_000)
+        );
+        assert_eq!(cell_profit_per_day(&slow, &test_ctx()), CellValue::Gil(250));
+        let out = filter_and_sort(
+            &[slow, fast],
+            &Thresholds::default(),
+            &HashMap::new(),
+            SortMode::ProfitPerDay,
+            SortDir::Desc,
+            None,
+        );
+        assert_eq!(
+            out.iter()
+                .map(|(_, r)| r.recipe.key_id.0)
+                .collect::<Vec<_>>(),
+            vec![keys[0], keys[1]],
+            "the faster seller ranks first even at equal profit"
+        );
+    }
+
+    /// A 30-day sort reads as Profit until the client-only body lands, then
+    /// orders by the 30-day figure with the rows the body knows nothing
+    /// about last in both directions.
+    #[test]
+    fn thirty_day_sorts_fall_back_to_profit_until_the_body_lands() {
+        assert_eq!(
+            effective_sort_mode(SortMode::Volume30, false),
+            SortMode::Profit
+        );
+        assert_eq!(
+            effective_sort_mode(SortMode::Vwap30, false),
+            SortMode::Profit
+        );
+        assert_eq!(
+            effective_sort_mode(SortMode::Volume30, true),
+            SortMode::Volume30
+        );
+        assert_eq!(
+            effective_sort_mode(SortMode::Profit, false),
+            SortMode::Profit
+        );
+
+        let keys: Vec<i32> = fixture_recipes()
+            .iter()
+            .take(3)
+            .map(|r| r.key_id.0)
+            .collect();
+        let rows = vec![
+            row(keys[0], 10, 0, 1.0, 1),
+            row(keys[1], 20, 0, 1.0, 1),
+            row(keys[2], 30, 0, 1.0, 1),
+        ];
+        // Three recipes, three distinct output items: without that the two
+        // index rows below would collide and the ordering would be an
+        // accident.
+        let outputs: HashSet<i32> = rows.iter().map(|r| r.recipe.item_result).collect();
+        assert_eq!(outputs.len(), 3, "the fixture rows price distinct items");
+        let mut index: StatsIndex = StatsIndex::new();
+        index.insert(
+            (rows[0].recipe.item_result, false),
+            stats_row(rows[0].recipe.item_result, false, 500, 100),
+        );
+        index.insert(
+            (rows[1].recipe.item_result, false),
+            stats_row(rows[1].recipe.item_result, false, 900, 200),
+        );
+        // rows[2] is not in the 30-day body at all.
+        let order = |dir, index: Option<&StatsIndex>| {
+            filter_and_sort(
+                &rows,
+                &Thresholds::default(),
+                &HashMap::new(),
+                SortMode::Volume30,
+                dir,
+                index,
+            )
+            .into_iter()
+            .map(|(_, r)| r.recipe.key_id.0)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            order(SortDir::Desc, Some(&index)),
+            vec![keys[1], keys[0], keys[2]]
+        );
+        assert_eq!(
+            order(SortDir::Asc, Some(&index)),
+            vec![keys[0], keys[1], keys[2]]
+        );
+        // No body yet: profit order, not "every row equal".
+        assert_eq!(order(SortDir::Desc, None), vec![keys[2], keys[1], keys[0]]);
+        // A failed fetch stores an empty index: still profit order, never
+        // the recipe-id order an all-`None` comparison would leave behind.
+        assert_eq!(
+            order(SortDir::Desc, Some(&StatsIndex::new())),
+            vec![keys[2], keys[1], keys[0]]
+        );
+    }
+
+    /// The lazy pair is unreachable from a URL and unreachable from a
+    /// header click: no `?sort=` token, `Sortability::LazyNever`.
+    #[test]
+    fn the_lazy_columns_never_sort() {
+        for id in [COL_TREND, COL_DRIFT] {
+            let col = RECIPE_COLUMNS
+                .iter()
+                .find(|c| c.id == id)
+                .expect("column in the table");
+            assert_eq!(col.sort, Sortability::LazyNever, "{id}");
+            assert!(col.sort_id.is_empty(), "{id}");
+        }
+        assert!("trend".parse::<SortMode>().is_err());
+        assert!("drift".parse::<SortMode>().is_err());
+    }
+
+    /// A `LazyNever` column with a second header line takes the grid's
+    /// *unsortable* two-line arm, which emits two bare `<span>`s.
+    /// `SortableHeaderCell` appends `flex flex-col justify-center gap-0.5`
+    /// for its own two-line headers; that arm does not, so the column has to
+    /// stack them itself or Task 9's "7d · ‹sell world›" line lands *beside*
+    /// the label instead of under it — and `HEADER_SUB_LINE`'s `truncate` /
+    /// `max-w-full` stay inert until the span is a flex item. `md:flex`,
+    /// never `md:block`, which would override the direction at md+.
+    #[test]
+    fn the_lazy_headers_stack_their_own_two_lines() {
+        for id in [COL_TREND, COL_DRIFT] {
+            let class = RECIPE_COLUMNS
+                .iter()
+                .find(|c| c.id == id)
+                .expect("column in the table")
+                .header_class;
+            assert!(
+                class.contains("md:flex") && !class.contains("md:block"),
+                "{id}: `hidden md:flex`, never `md:block` ({class})"
+            );
+            assert!(
+                class.contains("flex-col"),
+                "{id}: the grid's unsortable arm adds no direction, so the \
+                 column must ({class})"
+            );
+        }
+    }
+
+    /// Trend and Drift sit side by side in the Market group, so they cannot
+    /// share a label. The flip finder's `analyzer_col_drift` is "Tendance"
+    /// in fr and "Trend" in de — the same word `analyzer_col_spark` uses —
+    /// which is why the recipe analyzer has a key of its own.
+    #[test]
+    fn trend_and_drift_read_differently_in_every_locale() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let i18n = leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>();
+            provide_context(i18n);
+            for locale in [
+                Locale::en,
+                Locale::fr,
+                Locale::de,
+                Locale::ja,
+                Locale::cn,
+                Locale::ko,
+                Locale::tc,
+            ] {
+                i18n.set_locale(locale);
+                let (trend, drift) = (label_trend(i18n), label_drift(i18n));
+                assert!(!trend.is_empty() && !drift.is_empty(), "{locale:?}");
+                assert_ne!(trend, drift, "{locale:?}: two columns, one word");
+            }
+        });
+    }
+
+    /// The row records which quality its 7-day statistics came from, so the
+    /// sparkline key and the 30-day lookups read the same quality the
+    /// visible 7-day numbers did.
+    #[test]
+    fn stat_hq_records_the_quality_the_row_priced_from() {
+        let nq = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+        assert!(nq.iter().all(|r| !r.stat_hq), "the fixture trades NQ");
+        let f = ProfitFormula::recipe_from_query(Some(PriceSignal::ListingMin), None, None);
+        let hq = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                stats_hq: true,
+                needs: needed_signals(&f, &SignalWants::default(), false),
+                ..RunOpts::default()
+            },
+        );
+        // `require_hq` is false, so the pass falls back to the HQ row — and
+        // says so on the row.
+        assert!(
+            hq.iter().any(|r| r.stat_hq),
+            "some rows have only an HQ row"
+        );
+        // And the row's figures came from that same lookup: the remapped
+        // fixture rows are the only ones carrying a vwap or a unit count.
+        assert!(
+            hq.iter()
+                .filter(|r| r.stat_hq)
+                .all(|r| r.vwap > 0 && r.units_sold == 3),
+            "the HQ row's figures are what the row carries"
+        );
+        assert!(hq.iter().filter(|r| !r.stat_hq).all(|r| r.vwap == 0));
+    }
+
+    #[test]
+    fn lab_only_sort_modes_are_exactly_the_thirteen() {
+        assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 13);
         assert!(!SortMode::CostPerUnit.lab_only() && !SortMode::Price.lab_only());
+        assert!(SortMode::ProfitPerDay.lab_only() && SortMode::Vwap30.lab_only());
     }
 
     /// Every picker entry is a `?cols=` token (both derive from the table).
@@ -4816,7 +5350,7 @@ mod test {
                 .iter()
                 .map(|o| o.id)
                 .collect();
-            assert_eq!(ids.len(), 17);
+            assert_eq!(ids.len(), 22);
             assert!(ids.iter().all(|id| OPTIONAL_COLUMN_ORDER.contains(id)));
             let flat: Vec<&str> = picker_options(&RECIPE_COLUMNS, i18n)
                 .iter()
