@@ -2638,7 +2638,7 @@ fn RecipeAnalyzerTable(
                         sub_label: if s == f.revenue_signal() {
                             t_string!(i18n, analyzer_equals_price_slot).to_string()
                         } else {
-                            format!("{} · {}", short_signal(i18n, s), sell_place.get())
+                            format!("{} · {}", short_signal(i18n, s), sell_now)
                         },
                         pill: Some(HeaderPill {
                             aria: t_string!(

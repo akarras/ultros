@@ -991,6 +991,14 @@ mod tests {
                 1,
                 "{two_line}"
             );
+            // The arm renders `header_class.unwrap_or(class)`, and this arm
+            // appends no direction of its own — so whatever the column
+            // carries is the whole of what stacks the two lines. The recipe
+            // analyzer's lazy columns depend on that reaching the DOM.
+            assert!(
+                two_line.contains(COLS[0].header_class),
+                "the column's own header_class must reach the rendered header: {two_line}"
+            );
         });
     }
 
