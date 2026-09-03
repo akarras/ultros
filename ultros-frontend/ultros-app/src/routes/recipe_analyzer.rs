@@ -4,14 +4,20 @@ use crate::analyzer_kit::columns::{
     default_dir_for, picker_options, sort_from_token, sort_token, sortability_for,
 };
 use crate::analyzer_kit::formula::{
-    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, per_unit_cost, profit_line,
+    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, per_unit_cost, profit_line,
 };
 use crate::analyzer_kit::grid::{AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, MarkLabels};
-use crate::analyzer_kit::needed::{BodyRole, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies};
-use crate::analyzer_kit::signals::{PriceLookup, SignalView, StatsIndex, stats_index};
+use crate::analyzer_kit::hop::{HopGain, WorldsToVisit, hop_gain, worlds_to_visit};
+use crate::analyzer_kit::needed::{
+    BodyRole, NeededSignals, RecipeNeeds, SALE_STATS_WINDOW_DAYS, needed_bodies,
+};
+use crate::analyzer_kit::signals::{
+    PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
+};
 use crate::analyzer_kit::strip::{FormulaStrip, StripLayout, StripSelect, StripTerm};
 use crate::components::crafting_cost::{
-    CraftingCostOptions, EmptyOnHand, ShardsMode, compute_cost, vendor_price_map,
+    CostBreakdown, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode, compute_cost,
+    vendor_price_map,
 };
 use crate::components::dismissable::use_dismissable;
 use crate::components::meta::{MetaDescription, MetaTitle};
@@ -98,6 +104,23 @@ struct RecipeProfitData {
     /// The market board's cut of one unit's sale at `market_price`.
     tax: i32,
     confidence: ConfidenceBand,
+    /// Per-unit cost under each cost signal that was run, by
+    /// `PriceSignal::index`; `None` = not run (not needed, capped, or a
+    /// sale signal with no buy-scope body).
+    cost_alt: [Option<i32>; 4],
+    /// The bare sell-world statistic (or listing) per revenue signal, no
+    /// fallback; `None` = no row.
+    rev_alt: [Option<i32>; 4],
+    /// `market_price` is not the selected signal on the sell world: the
+    /// stat was missing, or the listing fell back to the buy scope.
+    revenue_fell_back: bool,
+    /// Marketable ingredient lines no listing priced, under the selected
+    /// signal. They cost 0 here (row membership unchanged) and are said so.
+    unpriced: u16,
+    /// `None` when Hop gain was not wanted.
+    hop: Option<HopGain>,
+    /// `None` when Worlds to visit was not wanted, or Buy from = This world.
+    worlds: Option<WorldsToVisit>,
 }
 
 /// Current sell price vs the window VWAP, as a percent. `None` when there
@@ -1039,32 +1062,44 @@ struct PriceInputs<'a> {
     // this local stockpile. The type is in place; the async resource fetch
     // is the missing piece.
     on_hand: Option<&'a HashMap<i32, i32>>,
+    /// Which cost signals to run per recipe, and whether hop / worlds are
+    /// wanted. The selected signal is always in the set.
+    needs: &'a NeededSignals,
+    /// Whether the sell-world stats body was fetched: hop's home side
+    /// prices from it under a sale cost signal, else from the listing.
+    sell_stats_loaded: bool,
+    /// The sell world's id (0 while unresolved) — the "home" that Worlds
+    /// to visit excludes.
+    home_world_id: i32,
+    /// World id → datacenter name, for Worlds to visit.
+    dc_of: &'a dyn Fn(i32) -> Option<&'a str>,
 }
 
 /// One priced row per craftable recipe with a sell price, under the
 /// selected formula. Unprofitable rows are dropped here (the formula's
 /// drop rule); thresholds and sorting happen in [`filter_and_sort`].
-fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
+fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
     let mut results = Vec::new();
 
     // If no levels set, return empty (but we'll show a message)
     if !has_any_level(inp.levels) {
-        return results;
+        return (results, 0);
     }
 
-    // Ingredients price over the buy scope; revenue prices over the sell
-    // world with the buy scope as fallback. Same two layers the cloned
-    // `override_listings` / `overlay_sale_stats` maps used to build, now
-    // evaluated per lookup.
-    let ingredient_view = SignalView {
+    let runs_done = std::cell::Cell::new(0u32);
+    let selected = inp.formula.cost_signal();
+    let scope_is_home = inp.formula.buy_scope() == BuyScope::World;
+    // A buy-scope view under `signal`: the listing, or the stat over it.
+    // Same two layers the cloned `override_listings` / `overlay_sale_stats`
+    // maps used to build, now evaluated per lookup.
+    let scope_view = |signal: PriceSignal| SignalView {
         over: None,
         base: inp.buy_listings,
-        stats: inp
-            .formula
-            .cost_signal()
+        stats: signal
             .sale_stat()
             .and_then(|stat| inp.buy_stats.map(|idx| (idx, stat))),
     };
+    let ingredient_view = scope_view(selected);
     let revenue_view = SignalView {
         over: inp.sell_listings,
         base: inp.buy_listings,
@@ -1074,6 +1109,21 @@ fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
             .sale_stat()
             .map(|stat| (inp.sell_stats, stat)),
     };
+    // Hop's home side: the sell world alone (deliberately not layered over
+    // the buy scope, or an ingredient with no home listing would be priced
+    // at the scope price and zero the gain for exactly the ingredients
+    // that force the trip), under the selected cost signal when its
+    // sell-world body is here, else the listing pass on both sides.
+    let hop_signal = if inp.sell_stats_loaded {
+        selected
+    } else {
+        PriceSignal::ListingMin
+    };
+    let home_view = inp.sell_listings.map(|sell| SignalView {
+        over: None,
+        base: sell,
+        stats: hop_signal.sale_stat().map(|stat| (inp.sell_stats, stat)),
+    });
 
     for recipe in inp.recipes.iter().copied() {
         // Filter by job and level
@@ -1139,27 +1189,26 @@ fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
             .or(scope_summary.hq.map(|d| d.world_id))
             .unwrap_or(0);
 
-        // Fresh on-hand snapshot per recipe — compute_cost consumes
-        // from the snapshot, and reusing one across recipes would
-        // wrongly deplete the user's stockpile after the first recipe.
-        let active: Box<dyn crate::components::crafting_cost::OnHand> = match inp.on_hand {
-            Some(map) => Box::new(LocalOnHand::from_map(map.clone())),
-            None => Box::new(EmptyOnHand),
+        // One `compute_cost` under `view`, over a fresh on-hand snapshot:
+        // compute_cost consumes from the snapshot, and reusing one across
+        // recipes (or across runs of one recipe) would wrongly deplete the
+        // user's stockpile. `runs_done` feeds the debug timing log.
+        let cost_run = |view: &SignalView<'_>| -> CostBreakdown {
+            runs_done.set(runs_done.get() + 1);
+            let active: Box<dyn OnHand> = match inp.on_hand {
+                Some(map) => Box::new(LocalOnHand::from_map(map.clone())),
+                None => Box::new(EmptyOnHand),
+            };
+            let opts = CraftingCostOptions {
+                require_hq: inp.require_hq,
+                max_subcraft_depth: if inp.use_subcrafts { 2 } else { 0 },
+                shards: inp.shards,
+                on_hand: active.as_ref(),
+                vendor_prices: Some(vendor_price_map()),
+            };
+            compute_cost(recipe, view, inp.recipes_by_output, &opts, &is_shard_item)
         };
-        let opts = CraftingCostOptions {
-            require_hq: inp.require_hq,
-            max_subcraft_depth: if inp.use_subcrafts { 2 } else { 0 },
-            shards: inp.shards,
-            on_hand: active.as_ref(),
-            vendor_prices: Some(vendor_price_map()),
-        };
-        let breakdown = compute_cost(
-            recipe,
-            &ingredient_view,
-            inp.recipes_by_output,
-            &opts,
-            &is_shard_item,
-        );
+        let breakdown = cost_run(&ingredient_view);
 
         // `breakdown.cost` is the cost of one execution of the recipe, which
         // yields `amount_result` units; the market price is per unit, so
@@ -1170,6 +1219,78 @@ fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
         if dropped {
             continue;
         }
+
+        // Alternative cost runs, for kept rows only: the drop rule, ROI and
+        // the row set are the selected pair's alone. A sale signal whose
+        // buy-scope body is absent is not run — its cell shows "—" rather
+        // than a listing number under a sale heading.
+        let mut runs: [Option<CostBreakdown>; 4] = [None, None, None, None];
+        for s in &inp.needs.cost {
+            if *s == selected || (s.sale_stat().is_some() && inp.buy_stats.is_none()) {
+                continue;
+            }
+            runs[s.index()] = Some(cost_run(&scope_view(*s)));
+        }
+        let run_for = |s: PriceSignal| -> Option<&CostBreakdown> {
+            if s == selected {
+                Some(&breakdown)
+            } else {
+                runs[s.index()].as_ref()
+            }
+        };
+        let mut cost_alt = [None; 4];
+        for s in PriceSignal::ALL {
+            cost_alt[s.index()] = run_for(s).map(|b| per_unit_cost(b.cost, recipe.amount_result));
+        }
+
+        let hop = match (&home_view, inp.needs.hop) {
+            // Buy from = This world only: no trip to price.
+            (Some(_), true) if scope_is_home => Some(HopGain::Unavailable),
+            (Some(home), true) => {
+                let home_run = cost_run(home);
+                let owned;
+                let scope_run: &CostBreakdown = match run_for(hop_signal) {
+                    Some(b) => b,
+                    None => {
+                        owned = cost_run(&scope_view(hop_signal));
+                        &owned
+                    }
+                };
+                Some(hop_gain(
+                    &home_run,
+                    scope_run,
+                    recipe.amount_result,
+                    scope_is_home,
+                ))
+            }
+            _ => None,
+        };
+        // Worlds to visit reads the listing-min scope run whatever the
+        // selected signal (`needed_signals` puts ListingMin in the set).
+        let worlds = (inp.needs.worlds && !scope_is_home).then(|| {
+            let owned;
+            let listing_run: &CostBreakdown = match run_for(PriceSignal::ListingMin) {
+                Some(b) => b,
+                None => {
+                    owned = cost_run(&scope_view(PriceSignal::ListingMin));
+                    &owned
+                }
+            };
+            worlds_to_visit(listing_run, inp.home_world_id, inp.dc_of)
+        });
+
+        // The bare sell-world number per revenue signal: the listing with
+        // no buy-scope fallback, or the stat with no listing fallback.
+        let item = recipe.item_result;
+        let rev_alt = [
+            inp.sell_listings
+                .and_then(|s| s.find_matching_listings(item).lowest_gil())
+                .filter(|p| *p > 0),
+            stat_only_cheapest(inp.sell_stats, item, SaleStat::Min),
+            stat_only_cheapest(inp.sell_stats, item, SaleStat::Median),
+            stat_only_cheapest(inp.sell_stats, item, SaleStat::Avg),
+        ];
+        let revenue_fell_back = rev_alt[inp.formula.revenue_signal().index()] != Some(market_price);
 
         // Sell-world stats row matching how revenue resolves: prefer
         // the HQ row when the analyzer requires HQ, otherwise NQ, and
@@ -1198,10 +1319,16 @@ fn price_rows(inp: &PriceInputs<'_>) -> Vec<RecipeProfitData> {
             vwap_pct: vwap_pct(market_price, vwap),
             tax: line.tax,
             confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
+            cost_alt,
+            rev_alt,
+            revenue_fell_back,
+            unpriced: breakdown.unpriced_market_lines,
+            hop,
+            worlds,
         });
     }
 
-    results
+    (results, runs_done.get())
 }
 
 /// The user's row filters. `None` = not set.
@@ -1530,16 +1657,24 @@ fn RecipeAnalyzerTable(
                     ShardsMode::IncludeMarket
                 },
                 on_hand: on_hand.as_ref(),
+                needs: &NeededSignals::default(),
+                sell_stats_loaded,
+                home_world_id: 0,
+                dc_of: &|_| None,
             };
             #[cfg(all(debug_assertions, feature = "hydrate"))]
             let t0 = js_sys::Date::now();
-            let rows = price_rows(&inp);
+            let (rows, cost_runs) = price_rows(&inp);
             #[cfg(all(debug_assertions, feature = "hydrate"))]
             leptos::logging::log!(
-                "price_rows: {} recipes priced in {:.1} ms",
+                "price_rows: {} recipes priced in {:.1} ms ({} compute_cost calls, hop {})",
                 rows.len(),
-                js_sys::Date::now() - t0
+                js_sys::Date::now() - t0,
+                cost_runs,
+                inp.needs.hop
             );
+            #[cfg(not(all(debug_assertions, feature = "hydrate")))]
+            let _ = cost_runs;
             Arc::new(rows.into_iter().map(Arc::new).collect())
         })
     };
@@ -2831,6 +2966,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::analyzer_kit::needed::{SignalWants, needed_signals};
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
 
@@ -3315,33 +3451,271 @@ mod test {
         all.into_iter().take(300).collect()
     }
 
-    fn run(cost: PriceSignal, revenue: PriceSignal, outliers: bool) -> Vec<RecipeProfitData> {
+    struct RunOpts {
+        outliers: bool,
+        needs: NeededSignals,
+        sell_listings: bool,
+        sell_stats: bool,
+        scope: Option<BuyScope>,
+    }
+
+    impl Default for RunOpts {
+        fn default() -> Self {
+            Self {
+                outliers: false,
+                needs: NeededSignals::default(),
+                sell_listings: true,
+                sell_stats: true,
+                scope: None,
+            }
+        }
+    }
+
+    fn run_with(cost: PriceSignal, revenue: PriceSignal, o: &RunOpts) -> Vec<RecipeProfitData> {
         let data = xiv_gen_db::data();
         let recipes = fixture_recipes();
         let (buy, sell, stats) = fixture(&recipes);
         let index = stats_index(&stats);
+        let empty_index = StatsIndex::new();
         let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let raw_sales = HashMap::new();
         let levels = CrafterLevels::default(); // 100 in every job
+        // Fixture geography: buy NQ on world 1 (Aether), buy HQ on world 2
+        // (Primal), the sell world is 3 (Aether). A closure, not a fn item:
+        // a fn item's `Output` is fixed to `Option<&'static str>` and cannot
+        // unsize into `dyn Fn(i32) -> Option<&'a str>` while `'a` borrows
+        // the locals above.
+        let fixture_dc = |w: i32| match w {
+            1 | 3 => Some("Aether"),
+            2 => Some("Primal"),
+            _ => None,
+        };
         let inp = PriceInputs {
             recipes: &recipes,
             recipe_level_tables: &data.recipe_level_tables,
             recipes_by_output: &by_output,
             buy_listings: &buy,
-            sell_listings: Some(&sell),
+            sell_listings: o.sell_listings.then_some(&sell),
             buy_stats: Some(&index),
-            sell_stats: &index,
+            sell_stats: if o.sell_stats { &index } else { &empty_index },
             raw_sales: &raw_sales,
-            formula: ProfitFormula::recipe_from_query(Some(cost), Some(revenue), None),
+            formula: ProfitFormula::recipe_from_query(Some(cost), Some(revenue), o.scope),
             levels: &levels,
             job_filter: None,
             use_subcrafts: false,
             require_hq: false,
-            filter_outliers: outliers,
+            filter_outliers: o.outliers,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
+            needs: &o.needs,
+            sell_stats_loaded: o.sell_stats,
+            home_world_id: 3,
+            dc_of: &fixture_dc,
         };
-        price_rows(&inp)
+        price_rows(&inp).0
+    }
+
+    fn run(cost: PriceSignal, revenue: PriceSignal, outliers: bool) -> Vec<RecipeProfitData> {
+        let f = ProfitFormula::recipe_from_query(Some(cost), Some(revenue), None);
+        run_with(
+            cost,
+            revenue,
+            &RunOpts {
+                outliers,
+                needs: needed_signals(&f, &SignalWants::default(), false),
+                ..RunOpts::default()
+            },
+        )
+    }
+
+    fn everything_wanted(cost: PriceSignal) -> NeededSignals {
+        let f = ProfitFormula::recipe_from_query(Some(cost), None, None);
+        let wants = SignalWants {
+            visible_cost: PriceSignal::ALL.to_vec(),
+            sort_cost: None,
+            hop: true,
+            worlds: true,
+        };
+        needed_signals(&f, &wants, false)
+    }
+
+    /// The drop rule, ROI and the row set are the selected pair's alone;
+    /// alternative columns are informational.
+    #[test]
+    fn alt_columns_never_change_row_membership() {
+        let base = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+        let full = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: everything_wanted(PriceSignal::ListingMin),
+                ..RunOpts::default()
+            },
+        );
+        assert_eq!(base.len(), full.len());
+        for (a, b) in base.iter().zip(&full) {
+            assert_eq!(a.recipe.key_id, b.recipe.key_id);
+            assert_eq!(
+                (a.profit, a.cost, a.market_price, a.return_on_investment),
+                (b.profit, b.cost, b.market_price, b.return_on_investment)
+            );
+            assert_eq!(
+                b.cost_alt[PriceSignal::ListingMin.index()],
+                Some(b.cost),
+                "the selected run is its own alt"
+            );
+        }
+        assert!(
+            full.iter()
+                .any(|r| r.cost_alt[PriceSignal::SaleMedian.index()].is_some())
+        );
+        assert!(
+            base.iter()
+                .all(|r| r.cost_alt[PriceSignal::SaleMedian.index()].is_none()
+                    && r.hop.is_none()
+                    && r.worlds.is_none())
+        );
+    }
+
+    /// An alternative cost column equals what selecting that signal would
+    /// have priced the same row at.
+    #[test]
+    fn cost_alt_matches_a_dedicated_run() {
+        let full = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: everything_wanted(PriceSignal::ListingMin),
+                ..RunOpts::default()
+            },
+        );
+        let median = run(PriceSignal::SaleMedian, PriceSignal::ListingMin, false);
+        let by_key: HashMap<i32, i32> =
+            median.iter().map(|r| (r.recipe.key_id.0, r.cost)).collect();
+        let mut compared = 0;
+        for r in &full {
+            if let Some(cost) = by_key.get(&r.recipe.key_id.0) {
+                assert_eq!(
+                    r.cost_alt[PriceSignal::SaleMedian.index()],
+                    Some(*cost),
+                    "recipe {}",
+                    r.recipe.key_id.0
+                );
+                compared += 1;
+            }
+        }
+        assert!(compared > 20, "only {compared} rows compared");
+    }
+
+    /// Alternative revenue columns are the bare sell-world statistic (or
+    /// listing): nothing falls back, so no sell world means "-" everywhere.
+    #[test]
+    fn revenue_alt_columns_are_none_without_sell_world_data() {
+        let none = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                sell_listings: false,
+                sell_stats: false,
+                ..RunOpts::default()
+            },
+        );
+        assert!(none.len() > 20);
+        assert!(
+            none.iter()
+                .all(|r| r.rev_alt == [None; 4] && r.revenue_fell_back)
+        );
+        let some = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+        for r in &some {
+            let out = r.recipe.item_result;
+            let nq = 100 + (out % 97) * 7;
+            assert_eq!(
+                r.rev_alt[PriceSignal::ListingMin.index()],
+                Some(nq * 12 / 10),
+                "sell listing, no fallback"
+            );
+            // The fixture writes a stats row for every third item, but
+            // skips item 0 (recipe 0's degenerate output) entirely.
+            let expect_stat = out % 3 == 0 && out != 0;
+            assert_eq!(
+                r.rev_alt[PriceSignal::SaleMedian.index()],
+                expect_stat.then_some(nq + 5),
+                "recipe {} (item {out})",
+                r.recipe.key_id.0
+            );
+        }
+    }
+
+    /// The Price slot's "listing" tell: set exactly when the number shown
+    /// is not the selected signal on the sell world.
+    #[test]
+    fn price_fallback_tell_marks_buy_scope_prices() {
+        let rows = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
+        let mut fell = 0;
+        for r in &rows {
+            let nq = 100 + (r.recipe.item_result % 97) * 7;
+            let sell_price = nq * 12 / 10;
+            // The buy scope's HQ listing (nq + 50) undercuts the sell world
+            // once nq > 250: that price came from the buy scope.
+            assert_eq!(
+                r.revenue_fell_back,
+                r.market_price != sell_price,
+                "recipe {}",
+                r.recipe.key_id.0
+            );
+            fell += usize::from(r.revenue_fell_back);
+        }
+        assert!(fell > 0 && fell < rows.len(), "{fell} of {}", rows.len());
+    }
+
+    #[test]
+    fn hop_and_worlds_are_computed_only_when_needed() {
+        let full = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: everything_wanted(PriceSignal::ListingMin),
+                ..RunOpts::default()
+            },
+        );
+        assert!(full.iter().all(|r| r.hop.is_some() && r.worlds.is_some()));
+        // The sell world lists only outputs: every market ingredient is
+        // missing at home, so those rows read "needed". Depends on game
+        // data: some kept row needs a non-vendor, non-shard ingredient that
+        // is not one of the 300 fixture outputs (true for every pack so
+        // far; re-check on a game-data bump).
+        assert!(full.iter().any(|r| r.hop == Some(HopGain::Needed)));
+        // Cheapest ingredient listings sit on buy world 1 (NQ beats HQ + 50).
+        let with_trip: Vec<&RecipeProfitData> = full
+            .iter()
+            .filter(|r| !r.worlds.as_ref().unwrap().worlds.is_empty())
+            .collect();
+        assert!(!with_trip.is_empty());
+        for r in with_trip {
+            let w = r.worlds.as_ref().unwrap();
+            assert!(w.worlds.iter().all(|(id, n)| *id == 1 && *n > 0), "{w:?}");
+            assert_eq!(w.dcs, 1);
+        }
+        // Buy from = This world only: no trip to compute.
+        let home_only = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: everything_wanted(PriceSignal::ListingMin),
+                scope: Some(BuyScope::World),
+                ..RunOpts::default()
+            },
+        );
+        assert!(
+            home_only
+                .iter()
+                .all(|r| r.hop == Some(HopGain::Unavailable) && r.worlds.is_none())
+        );
+        // Unpriced under the selected signal is carried on the row.
+        assert!(
+            full.iter().all(|r| r.unpriced == 0),
+            "the fixture lists every ingredient"
+        );
     }
 
     /// Every row obeys the formula's arithmetic and the drop rule; this
@@ -3434,6 +3808,12 @@ mod test {
             vwap_pct: None,
             tax: 0,
             confidence: ConfidenceBand::Unknown,
+            cost_alt: [None; 4],
+            rev_alt: [None; 4],
+            revenue_fell_back: false,
+            unpriced: 0,
+            hop: None,
+            worlds: None,
         })
     }
 
