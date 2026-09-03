@@ -169,10 +169,12 @@ pub fn verdict<T: PartialEq>(observed: Option<T>, expected: &T) -> Verdict {
 /// cleared, generation bumped) lives here too.
 ///
 /// Call it inside a component: it creates two `Effect::new`s, whose bodies
-/// are compiled out under `leptos/ssr` (no `reactive_graph/effects`), which
-/// is what keeps `fetch` — a `post_api` caller whose SSR arm is
-/// `unreachable!` — client-only. Never `new_isomorphic` / `new_sync` here,
-/// and never a `spawn_local` or `TimeoutFuture` outside an effect body.
+/// never run under `leptos/ssr` (`Effect::new` only spawns when
+/// `reactive_graph/effects` is on — a runtime `cfg!`, so the bodies still
+/// compile on the server), which is what keeps `fetch` — a `post_api`
+/// caller whose SSR arm is `unreachable!` — client-only. Never
+/// `new_isomorphic` / `new_sync` here, and never a `spawn_local` or
+/// `TimeoutFuture` outside an effect body.
 pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
     store: RwSignal<Enrichment<K, V>>,
     rows: Signal<Vec<T>>,

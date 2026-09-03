@@ -3410,7 +3410,9 @@ pub fn Analyzer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analyzer_kit::enrichment::chunk_keys;
     use ultros_api_types::recent_sales::{SaleData, Sales};
+    use ultros_api_types::sparklines::SparklineSeries;
 
     fn sale(price: i32, days_ago: i64) -> Sales {
         let date = Utc::now()
@@ -3849,8 +3851,6 @@ mod tests {
         }
     }
 
-    use ultros_api_types::sparklines::SparklineSeries;
-
     fn quality_row(item_id: i32, hq: bool, band: ConfidenceBand, launder: f32) -> ResaleQualityRow {
         ResaleQualityRow {
             item_id,
@@ -3997,8 +3997,6 @@ mod tests {
         assert_eq!(sparkline_for(&store, &(1, false)), Some(&[3u32][..]));
     }
 
-    use crate::analyzer_kit::enrichment::chunk_keys;
-
     #[test]
     fn flip_key_is_item_and_hq() {
         let mut row = calc(0, 0, 0);
@@ -4030,11 +4028,11 @@ mod tests {
             chunk_keys(&keys, cap).len()
         };
         assert_eq!((chunks_for(ssr_rows), chunks_for(hd_rows)), (1, 1));
-        // The most rendered rows that still fit one request: the cap minus the
-        // margin either side and the overscan — 132 rows, a 5280 px usable
-        // viewport (innerHeight 5412 with the sticky bar and header). One
-        // pixel more and the window chunks; there the old single sparklines
-        // POST was rejected with a 400 instead.
+        // The most viewport-derived rows that still fit one request — 132
+        // (+ 8 overscan = 140 rendered, 200 keys with the margin), a 5280 px
+        // usable viewport (innerHeight 5412 with the sticky bar and header).
+        // One pixel more and the window chunks; there the old single
+        // sparklines POST was rejected with a 400 instead.
         let fits_rows = cap - 2 * margin - FLIP_OVERSCAN_ROWS as usize;
         assert_eq!(fits_rows, 132);
         let fits_px = fits_rows as f64 * FLIP_ROW_HEIGHT_PX;
