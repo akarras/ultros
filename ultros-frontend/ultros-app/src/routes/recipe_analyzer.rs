@@ -3097,7 +3097,14 @@ fn RecipeAnalyzerTable(
                         header_height: 64.0,
                         overscan: 8,
                     }
-                    header_class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+                    // `min-w-max` so the header's tint band spans the whole
+                    // scrolled width instead of stopping at the viewport;
+                    // `row_min_width` does the same for the rows, which are
+                    // otherwise clipped at the port width by the scroller's
+                    // row spacer. `max-content` follows the `hidden md:block`
+                    // columns across the breakpoint on its own.
+                    header_class="min-w-max flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]"
+                    row_min_width="max-content"
                     row_class=stripe
                     marks=marks
                     extras=header_extras

@@ -260,6 +260,22 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// Runs when a header pill is pressed, with the column's kind.
     #[prop(optional)]
     on_pill: Option<Callback<ColumnKind>>,
+    /// CSS `min-width` for the scroller's row spacer, for a table whose
+    /// columns are wider than the viewport.
+    ///
+    /// The scroller's row box carries `contain: layout`, so widening the rows
+    /// alone never reaches the scroller's scrollable overflow region — sizing
+    /// the spacer that holds them is what actually lets the rows paint past
+    /// the port width instead of being clipped at it while the header (a
+    /// sibling outside that box) keeps painting the full grid.
+    ///
+    /// `"max-content"` is the right value for a table of fixed-width `w-*`
+    /// columns: it tracks the real total on its own, including columns that
+    /// only exist above a breakpoint (`hidden md:block`), so no arithmetic
+    /// here has to be kept in step with the column table. Omitting it leaves
+    /// the spacer unsized, exactly as before this prop existed.
+    #[prop(optional, into)]
+    row_min_width: String,
     /// Whether lab-gated columns (`lab.is_some()`) are part of this mount.
     /// Off, they are dropped from the header at build time: a hidden
     /// optional column still writes a `<!>` marker (an `Option` child), so
@@ -305,6 +321,7 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
             overscan=layout.overscan
             header_height=layout.header_height
             variable_height=false
+            row_min_width=row_min_width
             header=header
             each=rows
             key=move |(index, row): &(usize, T)| (*index, row.key())
@@ -725,6 +742,54 @@ mod tests {
                 empty, plain,
                 "an empty extras map is the flag-off page path"
             );
+        });
+    }
+
+    /// A grid whose columns are wider than the viewport has to size the
+    /// scroller's row spacer, or the rows are clipped at the port width while
+    /// the header (outside that box) keeps painting the full grid.
+    #[test]
+    fn row_min_width_reaches_the_scrollers_spacer() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let with_min = view! {
+                <AnalyzerGrid
+                    columns=&COLS
+                    rows=Signal::derive(|| vec![(0usize, Row(7))])
+                    visible_cols=Signal::derive(HashSet::new)
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
+                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
+                    layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
+                    header_class="h"
+                    row_class=stripe
+                    row_min_width="max-content"
+                />
+            }
+            .to_html();
+            assert!(with_min.contains("min-width: max-content;"), "{with_min}");
+
+            // Omitting it forwards `String::default()`, which must not reach
+            // the spacer as an empty `min-width: ;` declaration.
+            let without = view! {
+                <AnalyzerGrid
+                    columns=&COLS
+                    rows=Signal::derive(|| vec![(0usize, Row(7))])
+                    visible_cols=Signal::derive(HashSet::new)
+                    sort_mode=Signal::derive(|| None::<Col>)
+                    sort_dir=Signal::derive(|| None::<SortDir>)
+                    ctx=Signal::derive(|| CellCtx { now_unix: 0, signal_columns: false, capped_cost: [false; 4] })
+                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
+                    layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
+                    header_class="h"
+                    row_class=stripe
+                />
+            }
+            .to_html();
+            assert!(!without.contains("min-width"), "{without}");
         });
     }
 

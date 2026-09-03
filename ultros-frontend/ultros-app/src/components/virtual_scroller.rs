@@ -148,12 +148,17 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
     /// Handle on the element that holds the rows.
     ///
-    /// That element already computes to `overflow-x: auto` (it declares
-    /// `overflow-y: hidden`, which forces the visible axis to `auto`), so it
-    /// is the list's horizontal scrollport. A caller rendering a grid wider
-    /// than the viewport needs this handle to keep its own header scrollport
-    /// in sync with it — the list itself cannot be wrapped in a scrollport
-    /// without stealing the sticky header's (see [`ScrollSource::Window`]).
+    /// In [`ScrollSource::Window`] mode that element computes to
+    /// `overflow-x: auto` (it declares `overflow-y: hidden`, which forces the
+    /// visible axis to `auto`), so it is the list's horizontal scrollport. A
+    /// caller rendering a grid wider than the viewport needs this handle to
+    /// keep its own header scrollport in sync with it — the list itself cannot
+    /// be wrapped in a scrollport without stealing the sticky header's (see
+    /// [`ScrollSource::Window`]).
+    ///
+    /// [`ScrollSource::Container`] declares no overflow on that element at
+    /// all: the container scroller is already the scrollport for both axes,
+    /// so there is nothing here to sync and this handle is not needed.
     #[prop(optional)]
     list_ref: Option<NodeRef<leptos::html::Div>>,
     /// CSS `min-width` for the column of rows, for a caller whose grid is
@@ -514,6 +519,22 @@ where
     } else {
         format!("height: {}px;", viewport_height.ceil() as u32)
     };
+    // Row-area class. The `overflow` pair exists **only** in window mode,
+    // where this box is deliberately the list's horizontal scrollport and the
+    // caller keeps its own header scrollport in sync with it via `list_ref`
+    // (`overflow-y: hidden` forces the visible x-axis to compute to `auto`).
+    //
+    // Container mode must not declare it: the scroller div above already
+    // scrolls both axes, so a second scrollport here is one nothing ever
+    // writes `scrollLeft` on. It stayed pinned at 0 and clipped every row at
+    // the port width, while the header — a sibling *outside* this box — kept
+    // painting the full grid. That was the shipped recipe-analyzer bug where
+    // the right-hand headers rendered over blank rows.
+    let list_class = if is_window {
+        "overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+    } else {
+        "will-change-[transform] relative w-full contain-layout forced-layer"
+    };
     let virtual_children = Memo::new(move |_| {
         each.with(|children| {
             let array_size = children.len();
@@ -576,20 +597,24 @@ where
                             .into_any()
                     }
                 })}
-            // Row area. `overflow-y: hidden` forces the visible x-axis to
-            // compute to `auto`, so this box is also the list's horizontal
-            // scrollport (see `list_ref` / `row_min_width`).
+            // Row area. In **window mode only** it declares `overflow-y:
+            // hidden`, which forces the visible x-axis to compute to `auto`
+            // and makes this box the list's horizontal scrollport (see
+            // `list_ref` / `row_min_width`); container mode leaves it with no
+            // overflow at all, because the scroller div above is already the
+            // scrollport for both axes (see `list_class`).
             //
-            // Note for anyone tidying a caller's header later: this box is as
-            // tall as the *whole* virtual list, so its horizontal scrollbar
-            // sits at the bottom of all of it — hundreds of thousands of px
-            // down, i.e. never on screen. It scrolls by wheel, trackpad and
-            // touch, but a scrollbar on the caller's sticky header is the only
-            // affordance a user can actually see. Removing that header
-            // scrollbar makes off-screen columns unreachable in practice.
+            // Note for anyone tidying a *window-mode* caller's header later:
+            // this box is as tall as the *whole* virtual list, so its
+            // horizontal scrollbar sits at the bottom of all of it — hundreds
+            // of thousands of px down, i.e. never on screen. It scrolls by
+            // wheel, trackpad and touch, but a scrollbar on the caller's
+            // sticky header is the only affordance a user can actually see.
+            // Removing that header scrollbar makes off-screen columns
+            // unreachable in practice.
             <div
                 node_ref=list
-                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+                class=list_class
                 style=move || {
                     format!(
                         r#"height: {}px;"#,
@@ -614,8 +639,15 @@ where
                             let val = child_start() as f64 * row_height + delta_before;
                             val.max(0.0).round() as i32
                         },
+                        // An empty value is treated exactly like `None`: a
+                        // caller that forwards this prop through a component
+                        // whose own prop is a plain `String` (the `#[component]`
+                        // macro strips the `Option`, so `AnalyzerGrid`'s is)
+                        // hands us `""` when *its* caller passed nothing, and
+                        // `min-width: ;` is an invalid declaration.
                         row_min_width
-                            .as_ref()
+                            .as_deref()
+                            .filter(|w| !w.is_empty())
                             .map(|w| format!("min-width: {w};"))
                             .unwrap_or_default(),
                     )
@@ -716,6 +748,131 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The row area is the only element in the tree carrying
+    /// `will-change-[transform]`, so it is findable without a DOM.
+    fn row_area_class(html: &str) -> &str {
+        let idx = html
+            .find("will-change-[transform]")
+            .unwrap_or_else(|| panic!("row area not rendered: {html}"));
+        let start = html[..idx].rfind("class=\"").expect("class attribute") + 7;
+        let end = start + html[start..].find('"').expect("class attribute closes");
+        &html[start..end]
+    }
+
+    fn with_ssr_owner<F: FnOnce() -> String>(f: F) -> String {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(f)
+    }
+
+    fn container_html() -> String {
+        with_ssr_owner(|| {
+            view! {
+                <VirtualScroller
+                    each=Signal::derive(|| vec![1i32, 2, 3])
+                    key=move |t: &i32| *t
+                    view=move |t: i32| view! { <span>{t}</span> }
+                    viewport_height=720.0
+                    row_height=60.0
+                />
+            }
+            .to_html()
+        })
+    }
+
+    fn container_html_with_min_width(w: &'static str) -> String {
+        with_ssr_owner(move || {
+            view! {
+                <VirtualScroller
+                    each=Signal::derive(|| vec![1i32, 2, 3])
+                    key=move |t: &i32| *t
+                    view=move |t: i32| view! { <span>{t}</span> }
+                    viewport_height=720.0
+                    row_height=60.0
+                    row_min_width=w
+                />
+            }
+            .to_html()
+        })
+    }
+
+    fn window_html() -> String {
+        with_ssr_owner(|| {
+            view! {
+                <VirtualScroller
+                    each=Signal::derive(|| vec![1i32, 2, 3])
+                    key=move |t: &i32| *t
+                    view=move |t: i32| view! { <span>{t}</span> }
+                    scroll_source=ScrollSource::Window { sticky_offset: 76.0 }
+                    viewport_height=720.0
+                    row_height=60.0
+                />
+            }
+            .to_html()
+        })
+    }
+
+    /// The shipped bug: in container mode the scroller div above already
+    /// scrolls both axes, so an `overflow` pair here made the row area a
+    /// second, never-scrolled horizontal scrollport. It clipped every row at
+    /// the viewport width while the header — a sibling *outside* it — kept
+    /// painting the full grid.
+    #[test]
+    fn container_mode_row_area_declares_no_overflow() {
+        let class = {
+            let html = container_html();
+            row_area_class(&html).to_string()
+        };
+        assert!(
+            !class.contains("overflow"),
+            "container-mode row area must not be a scrollport: {class}"
+        );
+        // Everything else about the box is unchanged.
+        assert!(
+            class.contains("relative")
+                && class.contains("w-full")
+                && class.contains("contain-layout")
+                && class.contains("forced-layer"),
+            "{class}"
+        );
+    }
+
+    /// Window mode keeps the pair verbatim: it is the list's own horizontal
+    /// scrollport there, and the caller mirrors its `scrollLeft` via
+    /// `list_ref`.
+    #[test]
+    fn window_mode_row_area_keeps_its_overflow_pair() {
+        let html = window_html();
+        let class = row_area_class(&html);
+        assert_eq!(
+            class,
+            "overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer",
+            "the flip finder's markup must stay byte-identical",
+        );
+    }
+
+    #[test]
+    fn spacer_sizes_itself_when_row_min_width_is_passed() {
+        let html = container_html_with_min_width("max-content");
+        assert!(html.contains("min-width: max-content;"), "{html}");
+    }
+
+    #[test]
+    fn spacer_emits_no_min_width_when_the_prop_is_omitted_or_empty() {
+        let omitted = container_html();
+        assert!(
+            !omitted.contains("min-width"),
+            "an omitted prop must not size the spacer: {omitted}"
+        );
+        // `AnalyzerGrid` forwards a plain `String` (the macro strips the
+        // `Option`), so a caller that passes nothing forwards `""` here.
+        let empty = container_html_with_min_width("");
+        assert!(
+            !empty.contains("min-width"),
+            "an empty prop must not emit `min-width: ;`: {empty}"
+        );
+    }
 
     #[test]
     fn container_viewport_ignores_window_height() {
