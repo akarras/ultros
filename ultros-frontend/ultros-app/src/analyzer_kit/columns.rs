@@ -82,8 +82,10 @@ pub enum PickerGroup {
     Location,
     /// The fallback group for everything the others don't name. It is not
     /// picker-invisible: a column here with a `?cols=` token renders under
-    /// an "Other" heading, which is what the recipe analyzer's market
-    /// columns still do until they move to [`PickerGroup::Market`].
+    /// an "Other" heading. The recipe analyzer's always-on columns sit here
+    /// and none of them has a token, so its grouped picker ends at
+    /// [`PickerGroup::Location`] — but the heading is live for any page that
+    /// leaves an optional column ungrouped.
     Other,
 }
 

@@ -825,37 +825,37 @@ static SPEC_AVG: ColumnSpec = ColumnSpec {
 static SPEC_CONFIDENCE: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Confidence,
     label: label_confidence,
-    group: PickerGroup::Other,
+    group: PickerGroup::Market,
 };
 static SPEC_LAST_SOLD: ColumnSpec = ColumnSpec {
     kind: ColumnKind::LastSold,
     label: label_last_sold,
-    group: PickerGroup::Other,
+    group: PickerGroup::Market,
 };
 static SPEC_VOLUME: ColumnSpec = ColumnSpec {
     kind: ColumnKind::VolumeUnits7,
     label: label_volume,
-    group: PickerGroup::Other,
+    group: PickerGroup::Market,
 };
 static SPEC_VWAP: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Vwap7,
     label: label_vwap,
-    group: PickerGroup::Other,
+    group: PickerGroup::Market,
 };
 static SPEC_TAX: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Tax,
     label: label_tax,
-    group: PickerGroup::Other,
+    group: PickerGroup::Market,
 };
 static SPEC_WORLD: ColumnSpec = ColumnSpec {
     kind: ColumnKind::ListingWorld,
     label: label_world,
-    group: PickerGroup::Other,
+    group: PickerGroup::Location,
 };
 static SPEC_DC: ColumnSpec = ColumnSpec {
     kind: ColumnKind::ListingDc,
     label: label_dc,
-    group: PickerGroup::Other,
+    group: PickerGroup::Location,
 };
 static SPEC_ACTIONS: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Actions,
@@ -947,20 +947,36 @@ fn cell_custom(_: &RecipeRow, _: &CellCtx) -> CellValue {
 fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::RoiBadge(r.return_on_investment)
 }
-/// The Price slot: under the lab it carries the always-present note
-/// sub-line so a price that fell back to a listing says so.
+/// The Price slot. Under the toggle it carries an always-present note
+/// sub-line: the listing tell when the price fell back to a listing, and
+/// the signed percent the price sits above or below the sell world's
+/// 7-day sale median — the revenue-side answer to "is this listing-min
+/// price real?" (#1202). The median is on the row already (`rev_alt`,
+/// filled from the body the page always fetches), so the tell costs no
+/// request.
 fn cell_price(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
-    if ctx.preview {
-        CellValue::GilWithNote {
-            amount: r.market_price,
-            note: if r.revenue_fell_back {
-                CellNote::ListingFallback
-            } else {
-                CellNote::None
-            },
-        }
-    } else {
-        CellValue::Gil(r.market_price)
+    if !ctx.preview {
+        return CellValue::Gil(r.market_price);
+    }
+    let listing = r.revenue_fell_back;
+    let median = r.rev_alt[PriceSignal::SaleMedian.index()];
+    // `alt` = the price, `input` = the median: this sub-line sits under
+    // Price and reads "this price is n% above/below the 7-day median" — the
+    // opposite orientation from `rev_alt_cell`, where the alternative is
+    // what the cell renders. So a price of 138 against a median of 100 is
+    // `+38%` (green) and a price of 75 against the same median is `-25%`
+    // (red): the suspiciously cheap listing is the one that reads as a
+    // warning, not as good news. `delta_pct` still yields `None` when the
+    // median is unpriced *or* equal to the price, so the median basis never
+    // shows itself "+0%".
+    let note = match median.and_then(|m| delta_pct(Some(r.market_price), m)) {
+        Some(pct) => CellNote::VsMedian { listing, pct },
+        None if listing => CellNote::ListingFallback,
+        None => CellNote::None,
+    };
+    CellValue::GilWithNote {
+        amount: r.market_price,
+        note,
     }
 }
 fn cell_avg(r: &RecipeRow, _: &CellCtx) -> CellValue {
@@ -1128,6 +1144,17 @@ const FORMULA_CELL: &str = "px-3 py-2 w-40 shrink-0 text-right";
 /// two-line header, and a later `md:block` would override it at md+.
 const HEAD_40_MD: &str = "w-40 shrink-0 px-3 py-2 leading-tight hidden md:flex";
 const CELL_40_MD: &str = "px-3 py-2 w-40 shrink-0 text-right hidden md:block";
+
+/// Daily sales and Confidence become two-line headers *only* while their
+/// header extra is in effect ([`HeaderExtra::header_class`]): baking these
+/// into the column table would move the toggle-off DOM, which has to stay
+/// byte-identical. `md:flex`, not `md:block` — `SortableHeaderCell` appends
+/// `flex flex-col justify-center` for a two-line header and a later
+/// `md:block` would override it at md+. The widths are `HEAD_MD`'s and
+/// `HEAD_28_MD`'s unchanged; only the padding tightens to make room for
+/// line 2, exactly as `FORMULA_HEAD` does for the marked columns.
+const HEAD_MD_2: &str = "w-32 shrink-0 px-4 py-2 leading-tight hidden md:flex";
+const HEAD_28_MD_2: &str = "w-28 shrink-0 px-4 py-2 leading-tight hidden md:flex";
 
 /// The two lazy columns' headers: the grid draws these itself (they are
 /// unsortable), so the class carries `flex flex-col` for the label and its
@@ -1651,6 +1678,72 @@ fn signal_help(i18n: I18nContext<Locale, I18nKeys>, s: PriceSignal) -> String {
         PriceSignal::SaleMedian => t_string!(i18n, price_basis_sale_median_help).to_string(),
         PriceSignal::SaleAvg => t_string!(i18n, price_basis_sale_avg_help).to_string(),
     }
+}
+
+/// A market column's second line: the window and where the number comes
+/// from ("7d · Gilgamesh"), the kit's rule that a sub-label carries window
+/// and source. The separator is the same one the signal columns use.
+fn window_and_place(i18n: I18nContext<Locale, I18nKeys>, place: &str) -> String {
+    format!("{} · {}", t_string!(i18n, recipe_analyzer_window_7d), place)
+}
+
+/// The header extra for a market-side column: its recipe-specific tooltip
+/// (the flip finder's `analyzer_tooltip_*` describe 30-day resale-quality
+/// numbers, which these are not), whether it carries the window line, and
+/// the two-line classes the two pre-existing columns switch to while this
+/// extra is in effect. `None` for every other kind, so Phase D's four arms
+/// keep theirs.
+///
+/// Trend and Drift pass `None` for the class: their own `HEAD_LAZY_MD`
+/// already carries `flex flex-col justify-center gap-0.5`, which the
+/// grid's *unsortable* two-line arm does not append for them.
+fn market_extra(
+    i18n: I18nContext<Locale, I18nKeys>,
+    kind: ColumnKind,
+    sell_place: &str,
+) -> Option<HeaderExtra> {
+    // Each `t_string!` here is a plain key, so the tuple holds
+    // `&'static str` and the one allocation happens at the end.
+    let (title, windowed, header_class) = match kind {
+        ColumnKind::SalesPerDay7 => (
+            t_string!(i18n, recipe_analyzer_tooltip_daily_sales),
+            true,
+            Some(HEAD_MD_2),
+        ),
+        ColumnKind::Confidence => (
+            t_string!(i18n, recipe_analyzer_tooltip_confidence),
+            true,
+            Some(HEAD_28_MD_2),
+        ),
+        ColumnKind::ProfitPerDay => (
+            t_string!(i18n, recipe_analyzer_tooltip_profit_per_day),
+            false,
+            None,
+        ),
+        ColumnKind::Trend => (t_string!(i18n, recipe_analyzer_tooltip_trend), true, None),
+        ColumnKind::DriftSpark => (t_string!(i18n, recipe_analyzer_tooltip_drift), true, None),
+        // The 30-day pair says its window in its label, so line 2 would
+        // only repeat it.
+        ColumnKind::VolumeUnits30 => (
+            t_string!(i18n, recipe_analyzer_tooltip_volume_30d),
+            false,
+            None,
+        ),
+        ColumnKind::Vwap30 => (
+            t_string!(i18n, recipe_analyzer_tooltip_vwap_30d),
+            false,
+            None,
+        ),
+        _ => return None,
+    };
+    Some(HeaderExtra {
+        title: title.to_string(),
+        line2: windowed.then(|| HeaderLine2 {
+            sub_label: window_and_place(i18n, sell_place),
+            pill: None,
+        }),
+        header_class,
+    })
 }
 
 /// One Worlds-to-visit line: (world id, (world name, datacenter) when
@@ -2534,6 +2627,9 @@ fn RecipeAnalyzerTable(
         let f = formula.get();
         let selected_cost = cost_basis().unwrap_or_default();
         let selected_revenue = revenue_metric().unwrap_or_default();
+        // Read once: the market arm below runs for every column in the
+        // table, and `sell_place.get()` clones a `String` each time.
+        let sell_now = sell_place.get();
         for col in RECIPE_COLUMNS.iter() {
             let extra = match col.spec.kind {
                 ColumnKind::RevSignal(s) => HeaderExtra {
@@ -2586,7 +2682,10 @@ fn RecipeAnalyzerTable(
                     line2: None,
                     header_class: None,
                 },
-                _ => continue,
+                kind => match market_extra(i18n, kind, &sell_now) {
+                    Some(extra) => extra,
+                    None => continue,
+                },
             };
             by_kind.insert(col.spec.kind, extra);
         }
@@ -4208,10 +4307,13 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
-    // Only the window tests read these. Imported here rather than at module
-    // level: they have no production caller on this page, and `--all-targets`
-    // also compiles the lib without `cfg(test)`, where `-D warnings` turns an
-    // unused import into a failure.
+    // Only the tests read these — the window ones, and the median tell's
+    // sign, which asserts the colour the note renders in rather than only
+    // its sign. Imported here rather than at module level: they have no
+    // production caller on this page, and `--all-targets` also compiles the
+    // lib without `cfg(test)`, where `-D warnings` turns an unused import
+    // into a failure.
+    use crate::analysis::{DELTA_DEAD_BAND_PCT, signed_delta_class};
     use crate::analyzer_kit::enrichment::{chunk_keys, visible_keys};
     use crate::components::virtual_scroller::{
         first_visible_row, rendered_range, rows_for_viewport,
@@ -5340,6 +5442,103 @@ mod test {
         );
     }
 
+    fn price_row(key: i32, price: i32, median: Option<i32>, fell_back: bool) -> RecipeRow {
+        let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
+        r.market_price = price;
+        r.rev_alt[PriceSignal::SaleMedian.index()] = median;
+        r.revenue_fell_back = fell_back;
+        Arc::new(r)
+    }
+
+    /// The Price note gains the signed percent the price sits above or
+    /// below the sell world's 7-day median, keeps the listing tell in front
+    /// of it when both apply, and is exactly the pre-Phase-C cell with the
+    /// toggle off.
+    ///
+    /// The orientation is the point of this test. `delta_pct(alt, input)` is
+    /// `(alt - input) / input`, and the two arguments are trivially
+    /// swappable, so both concrete cases are pinned here: a price ABOVE the
+    /// median reads positive (and `signed_delta_class` paints it emerald), a
+    /// price BELOW it reads negative (red). The inverted orientation —
+    /// `delta_pct(Some(median), price)` — would flip both, painting a
+    /// suspiciously cheap listing as good news.
+    #[test]
+    fn the_price_note_carries_the_median_tell_under_the_toggle() {
+        let key = fixture_recipes()[0].key_id.0;
+        let ctx = test_ctx();
+        let off = CellCtx {
+            preview: false,
+            ..test_ctx()
+        };
+        // A price of 138 against a median of 100 is 38% ABOVE it: positive,
+        // and green. (The other orientation — the median measured against
+        // the price — would paint a fake-low listing green.)
+        assert_eq!(
+            cell_price(&price_row(key, 138, Some(100), false), &ctx),
+            CellValue::GilWithNote {
+                amount: 138,
+                note: CellNote::VsMedian {
+                    listing: false,
+                    pct: 38.0
+                }
+            }
+        );
+        // Below the median, and the listing tell keeps its place in front.
+        assert_eq!(
+            cell_price(&price_row(key, 75, Some(100), true), &ctx),
+            CellValue::GilWithNote {
+                amount: 75,
+                note: CellNote::VsMedian {
+                    listing: true,
+                    pct: -25.0
+                }
+            }
+        );
+        // The two four-percent cases, spelled out with the colour each
+        // renders, because the sign is the whole decision here: a listing
+        // cheaper than the median is the warning (red), a listing dearer
+        // than it reads positive (emerald).
+        let colour = |v: CellValue| match v {
+            CellValue::GilWithNote {
+                note: CellNote::VsMedian { pct, .. },
+                ..
+            } => signed_delta_class(Some(pct), DELTA_DEAD_BAND_PCT),
+            other => panic!("expected a median tell, got {other:?}"),
+        };
+        assert_eq!(
+            colour(cell_price(&price_row(key, 960, Some(1000), false), &ctx)),
+            "text-red-300",
+            "960 against a median of 1000 is -4%: the suspiciously cheap \
+             listing is the warning, not the good news"
+        );
+        assert_eq!(
+            colour(cell_price(&price_row(key, 1040, Some(1000), false), &ctx)),
+            "text-emerald-300",
+            "1040 against a median of 1000 is +4%"
+        );
+        // No sale history on the sell world: Phase D's note, unchanged.
+        assert_eq!(
+            cell_price(&price_row(key, 100, None, true), &ctx),
+            CellValue::GilWithNote {
+                amount: 100,
+                note: CellNote::ListingFallback
+            }
+        );
+        // Price IS the median (the median basis): no "+0%" tell.
+        assert_eq!(
+            cell_price(&price_row(key, 100, Some(100), false), &ctx),
+            CellValue::GilWithNote {
+                amount: 100,
+                note: CellNote::None
+            }
+        );
+        // Toggle off: no note line at all.
+        assert_eq!(
+            cell_price(&price_row(key, 138, Some(100), false), &off),
+            CellValue::Gil(138)
+        );
+    }
+
     fn test_ctx() -> CellCtx {
         CellCtx {
             now_unix: 1_700_000_000,
@@ -5520,6 +5719,76 @@ mod test {
         }
     }
 
+    /// Every market column's header says what window it covers and where
+    /// the number comes from; the two 30-day columns carry the window in
+    /// their label instead, so they get a tooltip only.
+    #[test]
+    fn market_headers_carry_their_tooltip_and_the_window() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let daily = market_extra(i18n, ColumnKind::SalesPerDay7, "Gilgamesh").unwrap();
+            let line2 = daily.line2.clone().expect("a second line");
+            assert_eq!(line2.sub_label, "7d · Gilgamesh");
+            assert!(line2.pill.is_none(), "no formula input to write");
+            assert_eq!(daily.header_class, Some(HEAD_MD_2));
+            assert!(!daily.title.is_empty());
+            for kind in [
+                ColumnKind::Confidence,
+                ColumnKind::Trend,
+                ColumnKind::DriftSpark,
+            ] {
+                let e = market_extra(i18n, kind, "Gilgamesh").unwrap();
+                assert_eq!(e.line2.expect("a second line").sub_label, "7d · Gilgamesh");
+            }
+            assert_eq!(
+                market_extra(i18n, ColumnKind::Confidence, "Gilgamesh")
+                    .unwrap()
+                    .header_class,
+                Some(HEAD_28_MD_2)
+            );
+            // Trend and Drift take the grid's *unsortable* two-line arm,
+            // which appends nothing: they keep their own `HEAD_LAZY_MD*`,
+            // whose `flex flex-col` is what stacks the two spans. Handing
+            // them a `header_class` here would silently drop it.
+            for (kind, id) in [
+                (ColumnKind::Trend, COL_TREND),
+                (ColumnKind::DriftSpark, COL_DRIFT),
+            ] {
+                assert_eq!(
+                    market_extra(i18n, kind, "Gilgamesh").unwrap().header_class,
+                    None,
+                    "{id}: the column's own class stacks the lines"
+                );
+                let class = RECIPE_COLUMNS
+                    .iter()
+                    .find(|c| c.id == id)
+                    .expect("column in the table")
+                    .header_class;
+                assert!(
+                    class.contains("flex-col"),
+                    "{id}: a second line with no flex-col lays the two spans \
+                     side by side ({class})"
+                );
+            }
+            for kind in [
+                ColumnKind::ProfitPerDay,
+                ColumnKind::VolumeUnits30,
+                ColumnKind::Vwap30,
+            ] {
+                let e = market_extra(i18n, kind, "Gilgamesh").unwrap();
+                assert!(e.line2.is_none(), "{kind:?}: the label carries the window");
+                assert_eq!(e.header_class, None, "{kind:?}: classes do not move");
+                assert!(!e.title.is_empty());
+            }
+            // Phase D's kinds keep their own extras; a plain column has none.
+            assert!(market_extra(i18n, ColumnKind::HopGain, "Gilgamesh").is_none());
+            assert!(market_extra(i18n, ColumnKind::Item, "Gilgamesh").is_none());
+        });
+    }
+
     /// Trend and Drift sit side by side in the Market group, so they cannot
     /// share a label. The flip finder's `analyzer_col_drift` is "Tendance"
     /// in fr and "Trend" in de — the same word `analyzer_col_spark` uses —
@@ -5615,6 +5884,63 @@ mod test {
                 .map(|o| o.id)
                 .collect();
             assert_eq!(flat, BASE_COLUMN_ORDER.as_slice());
+        });
+    }
+
+    /// Every optional column is in a named group, and the two new ones hold
+    /// what the kit says they hold.
+    #[test]
+    fn the_grouped_picker_lists_market_and_location() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let ctx = PickerContext {
+                sell_place: "Gilgamesh".into(),
+                buy_place: "Aether".into(),
+                revenue: PriceSignal::ListingMin,
+                cost: PriceSignal::ListingMin,
+                capped: BTreeSet::new(),
+            };
+            let got = grouped_picker_options(&RECIPE_COLUMNS, i18n, &ctx);
+            let mut headings: Vec<String> = got
+                .iter()
+                .map(|o| o.group.as_ref().expect("a heading").label.clone())
+                .collect();
+            headings.dedup();
+            assert_eq!(
+                headings,
+                vec![
+                    "Revenue · Gilgamesh",
+                    "Cost · Aether",
+                    "Travel",
+                    "Market",
+                    "Location"
+                ]
+            );
+            let ids_in = |label: &str| -> Vec<&str> {
+                got.iter()
+                    .filter(|o| o.group.as_ref().unwrap().label == label)
+                    .map(|o| o.id)
+                    .collect()
+            };
+            assert_eq!(
+                ids_in("Market"),
+                [
+                    "confidence",
+                    "last-sold",
+                    "volume",
+                    "vwap",
+                    "tax",
+                    "profit-per-day",
+                    "trend",
+                    "drift",
+                    "volume-30d",
+                    "vwap-30d"
+                ]
+            );
+            assert_eq!(ids_in("Location"), ["listing-world", "listing-dc"]);
         });
     }
 
