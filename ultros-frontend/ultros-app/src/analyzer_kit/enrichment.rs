@@ -374,11 +374,16 @@ mod tests {
             !STYLESHEET.contains("--breakpoint-md"),
             "the stylesheet redefines Tailwind's md; MD_VIEWPORT_QUERY must follow it"
         );
-        // The one hand-written `md` in the stylesheet spells it the same way.
-        assert!(
-            STYLESHEET.contains("@media (min-width: 48rem)"),
-            "the stylesheet's hand-written md query should agree with the constant"
-        );
+        // Deliberately no assertion on the stylesheet's one hand-written
+        // `@media (min-width: 48rem)`: that rule belongs to FC crafting and
+        // has nothing to do with this constant, so deleting or reformatting
+        // it would fail this test for no real reason. The `--breakpoint-md`
+        // guard above is the one that actually protects the constant.
+        //
+        // Note `Cargo.toml`'s `tailwind-version = "v3.4.1"` is stale and
+        // inert — v3 cannot parse this stylesheet's `@import "tailwindcss"`
+        // / `@theme`, and the built CSS carries v4's rem ladder
+        // (`width >= 48rem`). The v4 reading is the correct one.
         // rem, not px: `md:` resolves against the root font size.
         assert!(!MD_VIEWPORT_QUERY.contains("px"));
     }

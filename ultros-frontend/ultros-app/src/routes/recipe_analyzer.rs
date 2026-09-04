@@ -6578,12 +6578,27 @@ mod test {
             )),
             "the page must own the viewport signal, not a constant"
         );
+        // The helper's own name contains the signal's, so strip it first —
+        // otherwise a doc comment mentioning `use_wide_viewport()` reads as
+        // a call on the signal.
+        let reads = production.replace("use_wide_viewport", "");
         assert_eq!(
-            production
-                .matches(&format!("{}.get()", "wide_viewport"))
-                .count(),
+            reads.matches("wide_viewport.get()").count(),
             2,
             "the viewport signal is read by exactly the two fetch gates"
+        );
+        // A `.get()` count alone is bypassable by the exact mistake it
+        // guards: `Signal<bool>` is callable, so `move || !wide_viewport()`
+        // inside a `view!` would leave the count at 2 and this test green
+        // while putting a `matchMedia` read into markup. Ban the other read
+        // forms outright — a fetch-path reader has no reason to need them.
+        assert!(
+            !reads.contains("wide_viewport("),
+            "call syntax on the viewport signal bypasses the `.get()` count              above; if a fetch path needs it, spell it `.get()`"
+        );
+        assert!(
+            !reads.contains("wide_viewport.with"),
+            "`.with` on the viewport signal bypasses the `.get()` count above"
         );
         // The rule that keeps SSR and the first client render identical:
         // the signal is a fetch-path input and never a rendered value. A

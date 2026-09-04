@@ -341,6 +341,7 @@ on the first client render, and a markup branch on it would tear hydration. It i
 one coupling the phones decision (#7 below) has to carry: whoever gives the recipe analyzer a
 horizontal-scroll layout and drops `hidden md:*` must drop this gate in the same change, or
 the newly visible columns will never load.
+
 Coverage caveats stated in tooltips: `sales_hourly` accretes from a 30-hour refresh with no
 backfill; `item_stats_window` covers about 7% of traded items.
 
