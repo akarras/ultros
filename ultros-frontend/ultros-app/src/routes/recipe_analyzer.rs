@@ -2499,7 +2499,19 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             last_sold_unix: sell_stat.map(|s| s.last_sold_unix).unwrap_or(0),
             units_sold: sell_stat.map(|s| s.units_sold).unwrap_or(0),
             vwap,
-            vwap_pct: vwap_pct(market_price, vwap),
+            // Suppressed at a wider sell scope for the same reason as
+            // `sell_median` above, and it is the same mismatch one line
+            // apart: the numerator is the scope's cheapest across strictly
+            // more worlds while `vwap` is one world's, so the percentage
+            // would go structurally negative page-wide from the user's own
+            // setting. The absolute `vwap` stays — it is a sell-world
+            // figure and its column says so; only the comparison against a
+            // price from somewhere else is meaningless. The decision table
+            // lists `vwap_pct` under "stays on the sell world" without
+            // noticing its numerator moved; this makes the code match that.
+            vwap_pct: sell_scope_is_world
+                .then(|| vwap_pct(market_price, vwap))
+                .flatten(),
             tax: line.tax,
             confidence: sell_stat.map(|s| s.confidence).unwrap_or_default(),
             stat_hq,
@@ -5785,7 +5797,7 @@ mod test {
     /// sell-world listing" parity case, which the default fixture cannot
     /// produce because it lists every output.
     ///
-    /// Recorded on `8395bc02` before Phase F split the sell place from the
+    /// Recorded at `c662eec0` (base `e3db0888`) before Phase F split the sell place from the
     /// sell world; regenerate ONLY if a phase moves these numbers on
     /// purpose (run with `--nocapture` and copy the printed tuples).
     #[test]
@@ -5920,7 +5932,7 @@ mod test {
         assert_eq!(without.as_slice(), WITHOUT, "no sell-world listing");
         assert!(
             without.iter().any(|(_, _, alt, ..)| alt[0].is_none()),
-            "the WITHOUT shape must contain rows whose sell-world listing is              absent, or it is not the parity case the spec asks for"
+            "the WITHOUT shape must contain rows whose sell-world listing is absent, or it is not the parity case the spec asks for"
         );
     }
 
