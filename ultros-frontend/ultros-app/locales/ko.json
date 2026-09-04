@@ -235,6 +235,7 @@
     "recipe_analyzer_col_drift": "가격 추이",
     "recipe_analyzer_window_7d": "7일",
     "analyzer_price_vs_median": "중앙값 대비 {{pct}}",
+    "analyzer_price_troll": "바가지 매물",
     "recipe_analyzer_tooltip_profit_per_day": "개당 이익 × 판매 서버의 최근 7일 일일 판매 건수.",
     "recipe_analyzer_tooltip_trend": "판매 서버의 최근 7일 시간별 가격. 화면에 보이는 행만 불러옵니다. 시간별 기록은 소급해서 채우지 않으므로 거래가 드문 아이템은 계속 비어 있을 수 있습니다.",
     "recipe_analyzer_tooltip_drift": "이 7일 추세의 시작과 끝 사이의 가격 변화. ±1% 이내는 보합으로 표시합니다.",

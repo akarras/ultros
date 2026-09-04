@@ -300,6 +300,20 @@ pub const MIN_VELOCITY_SPAN_DAYS: f32 = 1.0 / 24.0;
 /// for tiny buy prices (a 2-gil buy against a laundered sale price).
 pub const ROI_DISPLAY_CEILING: i32 = 100_000;
 
+/// Display ceiling for the Price column's "vs median" tell, in percent.
+/// Same rationale as [`ROI_DISPLAY_CEILING`]: past this the exact figure
+/// carries no decision value — "+1,000%" and "+4,000%" both say "this price
+/// is nothing like what the item trades for" — and the digit string crowds a
+/// 10px sub-line (prod rendered "+399900%" before the tell was fixed to
+/// compare like qualities).
+///
+/// One-sided by construction: `delta_pct` divides a positive price by a
+/// positive median, so the tell can never fall below -100% and needs no
+/// floor. It sits below `TROLL_MULTIPLE`'s +4,900%, so the clamp is what the
+/// reader sees for prices between roughly 11x and 50x the median — past that
+/// the troll tell takes over from the percentage entirely.
+pub const VS_MEDIAN_DISPLAY_CEILING_PCT: f32 = 999.0;
+
 /// Recent sales per day, derived from the bounded `RecentSales` buffer.
 ///
 /// `avg_sale_duration` is `(now - oldest_sale) / num_sold`, so the total

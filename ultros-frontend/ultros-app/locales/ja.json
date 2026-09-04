@@ -235,6 +235,7 @@
     "recipe_analyzer_col_drift": "価格推移",
     "recipe_analyzer_window_7d": "7日",
     "analyzer_price_vs_median": "中央値比 {{pct}}",
+    "analyzer_price_troll": "ぼったくり出品",
     "recipe_analyzer_tooltip_profit_per_day": "1個あたりの利益 × 販売ワールドでの直近7日間の1日あたり販売数。",
     "recipe_analyzer_tooltip_trend": "販売ワールドでの直近7日間の1時間ごとの価格。表示中の行だけ取得します。時間別の履歴は遡って補完されないため、取引の少ないアイテムは空欄のままになることがあります。",
     "recipe_analyzer_tooltip_drift": "この7日間の推移の始点から終点までの価格変動。±1%以内は横ばいとして表示します。",

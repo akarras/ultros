@@ -235,6 +235,7 @@
     "recipe_analyzer_col_drift": "Dérive",
     "recipe_analyzer_window_7d": "7 j",
     "analyzer_price_vs_median": "vs médiane {{pct}}",
+    "analyzer_price_troll": "annonce troll",
     "recipe_analyzer_tooltip_profit_per_day": "Bénéfice par unité multiplié par les ventes par jour des 7 derniers jours sur le monde de vente.",
     "recipe_analyzer_tooltip_trend": "Prix horaire sur le monde de vente au cours des 7 derniers jours. Chargé pour les lignes visibles ; l'historique horaire n'est pas reconstitué, un objet peu échangé peut donc rester vide.",
     "recipe_analyzer_tooltip_drift": "Variation du prix entre le début et la fin de cette tendance sur 7 jours. Dans une marge de ±1 %, elle est affichée comme stable.",

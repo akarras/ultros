@@ -277,7 +277,7 @@ recipe `w-28` = 112, `w-32` = 128, `w-40` = 160.
 | Item, Hq, Actions | always | RowLocal | no | page cells |
 | Profit, Roi | always / always, `roi` | Computed | yes | ROI clamp in C |
 | ProfitPerDay | `profit-per-day` / `profit_per_day` | recipe Computed = profit × rollup sales/day; flip = profit × buffer velocity | yes | new, zero fetch, default off |
-| RevenueSlot, CostSlot | Price, Cost / unit and each tool's names | recipe SignalView (RowLocal or Bulk); flip RowLocal | yes | marks only; Price sub-line `‹signal›[ · listing][ · vs median ±n%]` |
+| RevenueSlot, CostSlot | Price, Cost / unit and each tool's names | recipe SignalView (RowLocal or Bulk); flip RowLocal | yes | marks only; Price sub-line `‹signal›[ · listing][ · vs median ±n%]`, or `troll listing` alone when the price is over 50x its own median (`is_troll_listing`) |
 | RevSignal ×4, CostSignal ×4 | `rev-*`, `cost-*` / none | rev Bulk(SellWorldStats 7); cost Computed over Bulk(BuyScopeStats 7) for sale signals | yes | v1 Phase 2 (D) |
 | Tax | `tax` / `tax` | Computed `sale_tax_for` | yes | |
 | SalesPerDay 7d raw | always "Daily sales" | Bulk(SellWorldStats 7) | yes | wires the dead `recipe_analyzer_sales_per_day` key |
