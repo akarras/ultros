@@ -2881,31 +2881,49 @@ struct SellScopeBodies {
 
 /// Where a failed sell-scope payload actually left the revenue numbers.
 ///
-/// The two arms are **different markets**, and one string cannot describe
-/// both. With the cheapest map missing, `SignalView`'s `over` layer is
-/// empty and revenue falls through to the buy scope — a different place
-/// from the one the strip, the picker heading and the live sentence all
-/// still name. With only the statistics missing, `SignalView::quality`
-/// still has the scope's own listing, so revenue stays at the named place
-/// and it is the *signal* that degraded: the shape
-/// `recipe_analyzer_sale_stats_unavailable` already exists for one world.
-/// A failed cheapest map subsumes the other — with no `over` layer the
-/// statistics have nothing to overlay.
+/// The arms are **different markets**, and one string cannot describe them.
+/// Only `ToBuyScope` means the numbers left the place the strip, the picker
+/// heading and the live sentence all still name; the other two mean they
+/// stayed and it is the *source* that changed.
+///
+/// An earlier version of this claimed "a failed cheapest map subsumes the
+/// other — with no `over` layer the statistics have nothing to overlay".
+/// That is false, and `SignalView::quality` is where to see it: it computes
+/// `over.or(base)` and then, when a non-zero stat row exists, returns the
+/// **stat price regardless of which layer produced the listing**. The
+/// statistics never needed the `over` layer. So cheapest-down /
+/// history-up — the ordinary transient shape, since `fetch_sell_scope`
+/// joins two independent endpoints — still prices every item with a stat
+/// row at this market's own sale median, and telling the player it fell
+/// back to where ingredients are bought would be exactly the defect this
+/// enum exists to prevent, wearing the other arm's clothes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ScopeFallback {
-    /// The cheapest map missed: revenue is priced where ingredients are.
-    ToBuyScope,
-    /// Only the statistics missed: revenue is the scope's own listing.
-    ToScopeListings,
+    /// Nothing here can price revenue: the numbers are the buy scope's.
+    BuyScope,
+    /// The statistics missed: revenue is this market's own listing.
+    ScopeListings,
+    /// The cheapest map missed but a sale signal reads the statistics,
+    /// which arrived: revenue is this market's own sale history.
+    ScopeStats,
 }
 
 /// `None` when there is no payload at all — which is every flag-off page
 /// and every URL at the default sell scope — or when both halves arrived.
-fn scope_fallback(bodies: &Option<SellScopeBodies>) -> Option<ScopeFallback> {
-    match bodies.as_ref()? {
-        b if b.listings_failed => Some(ScopeFallback::ToBuyScope),
-        b if b.stats_failed => Some(ScopeFallback::ToScopeListings),
-        _ => None,
+///
+/// `revenue_is_sale_stat` is what decides the listings-failed case, because
+/// a listing revenue signal never reads the statistics and so cannot be
+/// rescued by them.
+fn scope_fallback(
+    bodies: &Option<SellScopeBodies>,
+    revenue_is_sale_stat: bool,
+) -> Option<ScopeFallback> {
+    let b = bodies.as_ref()?;
+    match (b.listings_failed, b.stats_failed) {
+        (false, false) => None,
+        (false, true) => Some(ScopeFallback::ScopeListings),
+        (true, false) if revenue_is_sale_stat => Some(ScopeFallback::ScopeStats),
+        (true, _) => Some(ScopeFallback::BuyScope),
     }
 }
 
@@ -3997,7 +4015,16 @@ fn RecipeAnalyzerTable(
             // to today's, which is what
             // `a_failed_sell_scope_body_says_so_instead_of_silently_repricing`
             // renders both shapes to prove.
-            {match scope_fallback(&sell_scope_bodies) {
+            // `get_untracked`, deliberately: this banner describes the
+            // payload the table was BUILT with, and `sell_scope_bodies` is a
+            // plain prop captured at that same moment. Reading the signal
+            // reactively here would let the sentence describe one revenue
+            // signal while the bodies beside it belong to another. A change
+            // that matters re-keys `sell_scope_source` and rebuilds anyway.
+            {match scope_fallback(
+                &sell_scope_bodies,
+                formula.get_untracked().revenue_signal().sale_stat().is_some(),
+            ) {
                 None => stats_line.into_any(),
                 // A sell-scope body was asked for and did not arrive. Name
                 // the market — this line is otherwise indistinguishable
@@ -4013,7 +4040,7 @@ fn RecipeAnalyzerTable(
                             // through to the buy scope while the strip, the
                             // picker heading and the live sentence all
                             // still name the scope.
-                            ScopeFallback::ToBuyScope => view! {
+                            ScopeFallback::BuyScope => view! {
                                 {t!(
                                     i18n,
                                     recipe_analyzer_sell_scope_unavailable,
@@ -4025,10 +4052,25 @@ fn RecipeAnalyzerTable(
                             // the scope's OWN listing, so the numbers are
                             // still the market this banner names and it is
                             // the signal that degraded.
-                            ScopeFallback::ToScopeListings => view! {
+                            ScopeFallback::ScopeListings => view! {
                                 {t!(
                                     i18n,
                                     recipe_analyzer_sell_scope_stats_unavailable,
+                                    place = move || revenue_place.get(),
+                                )}
+                            }
+                            .into_any(),
+                            // The mirror image, and the one the first cut of
+                            // this banner got wrong: the cheapest map missed
+                            // but a sale signal reads the statistics, which
+                            // arrived. `quality` applies them without needing
+                            // the `over` layer, so the numbers are still this
+                            // market's — via its sale history rather than its
+                            // listings.
+                            ScopeFallback::ScopeStats => view! {
+                                {t!(
+                                    i18n,
+                                    recipe_analyzer_sell_scope_listings_unavailable,
                                     place = move || revenue_place.get(),
                                 )}
                             }
@@ -9086,40 +9128,61 @@ mod test {
             listings_failed: false,
             stats_failed: false,
         };
-        assert_eq!(scope_fallback(&None), None);
-        assert_eq!(scope_fallback(&Some(none.clone())), None);
-        // Only the STATISTICS missed. `SignalView::quality` still holds the
-        // scope's own cheapest listing, so revenue is priced at the very
-        // place every label names and it is the *signal* that degraded, not
-        // the market. Task 7 shipped one string for both arms, saying
-        // prices "fall back to where ingredients are priced" — false here,
-        // in seven locales.
+        // The signal argument decides the listings-failed case, so every
+        // assertion below names it. `true` = a sale signal, which reads the
+        // statistics; `false` = listing-min, which cannot.
+        for sale in [false, true] {
+            assert_eq!(scope_fallback(&None, sale), None);
+            assert_eq!(scope_fallback(&Some(none.clone()), sale), None);
+            // Only the STATISTICS missed. `SignalView::quality` still holds
+            // the scope's own cheapest listing, so revenue is priced at the
+            // very place every label names and it is the *signal* that
+            // degraded, not the market. Task 7 shipped one string for both
+            // arms, saying prices "fall back to where ingredients are
+            // priced" — false here, in seven locales.
+            assert_eq!(
+                scope_fallback(
+                    &Some(SellScopeBodies {
+                        stats_failed: true,
+                        ..none.clone()
+                    }),
+                    sale
+                ),
+                Some(ScopeFallback::ScopeListings)
+            );
+            // Both gone: nothing here can price revenue, whatever the signal.
+            assert_eq!(
+                scope_fallback(
+                    &Some(SellScopeBodies {
+                        listings_failed: true,
+                        stats_failed: true,
+                        ..none.clone()
+                    }),
+                    sale
+                ),
+                Some(ScopeFallback::BuyScope)
+            );
+        }
+        // The cheapest map missed and the statistics arrived. This is the
+        // case Task 8 shipped wrong, and the one `SignalView::quality`
+        // settles: it applies a non-zero stat row REGARDLESS of which layer
+        // produced the listing, so a sale signal is still priced from this
+        // market's own history and only a listing signal leaves it.
+        let listings_only = Some(SellScopeBodies {
+            listings_failed: true,
+            ..none
+        });
         assert_eq!(
-            scope_fallback(&Some(SellScopeBodies {
-                stats_failed: true,
-                ..none.clone()
-            })),
-            Some(ScopeFallback::ToScopeListings)
+            scope_fallback(&listings_only, true),
+            Some(ScopeFallback::ScopeStats),
+            "a sale signal reads the statistics, which arrived — the numbers \
+             never left this market"
         );
         assert_eq!(
-            scope_fallback(&Some(SellScopeBodies {
-                listings_failed: true,
-                ..none.clone()
-            })),
-            Some(ScopeFallback::ToBuyScope),
-            "a failed cheapest map is the half a listing-min URL prices from"
+            scope_fallback(&listings_only, false),
+            Some(ScopeFallback::BuyScope),
+            "a listing signal cannot be rescued by statistics it never reads"
         );
-        // Both gone: with no `over` layer the statistics have nothing to
-        // overlay, so the cheapest map's arm is the one that describes it.
-        assert_eq!(
-            scope_fallback(&Some(SellScopeBodies {
-                listings_failed: true,
-                stats_failed: true,
-                ..none
-            })),
-            Some(ScopeFallback::ToBuyScope)
-        );
-        let production = production_source();
         // Scoped to the ARM, not to the file: two existence checks would be
         // satisfied by a build that swapped the two keys, which is exactly
         // the defect being fixed wearing the other arm's clothes (Task 6's
@@ -9128,7 +9191,7 @@ mod test {
         let squeezed = production_squeezed();
         assert!(
             squeezed.contains(&format!(
-                "ScopeFallback::ToBuyScope=>view!{{{{t!(i18n,{},",
+                "ScopeFallback::BuyScope=>view!{{{{t!(i18n,{},",
                 "recipe_analyzer_sell_scope_unavailable"
             )),
             "the failed-cheapest-map arm must say the numbers left the place \
@@ -9136,14 +9199,30 @@ mod test {
         );
         assert!(
             squeezed.contains(&format!(
-                "ScopeFallback::ToScopeListings=>view!{{{{t!(i18n,{},",
+                "ScopeFallback::ScopeListings=>view!{{{{t!(i18n,{},",
                 "recipe_analyzer_sell_scope_stats_unavailable"
             )),
             "…and the stats-only arm must say they stayed there"
         );
         assert!(
-            production.contains(&format!("{}(&sell_scope_bodies)", "scope_fallback")),
-            "…off the same helper this test pins"
+            squeezed.contains(&format!(
+                "ScopeFallback::ScopeStats=>view!{{{{t!(i18n,{},",
+                "recipe_analyzer_sell_scope_listings_unavailable"
+            )),
+            "…and the listings-only arm must say they stayed there too, via \
+             the sale history — the arm Task 8 first shipped as ToBuyScope"
+        );
+        // Squeezed: the call is multi-line, so a raw needle would search for
+        // text rustfmt will never emit — the failure this phase already
+        // shipped once.
+        assert!(
+            squeezed.contains(&format!(
+                "{}(&sell_scope_bodies,formula.get_untracked().revenue_signal().sale_stat().is_some(),)",
+                "scope_fallback"
+            )),
+            "…off the same helper this test pins, and told which revenue \
+             signal is in play — without that argument the listings-only arm \
+             cannot be distinguished from the both-failed one"
         );
 
         // The second line must cost the no-payload page NOTHING, and the
@@ -9199,11 +9278,17 @@ mod test {
                 );
             }
         });
+        // Two halves rather than one literal: the call grew a second
+        // argument, and pinning the whole expression here would duplicate
+        // the call-shape needle above and break on every future argument.
+        // What this assertion is FOR is the `None` arm — one child, not two.
+        let squeezed_page = production_squeezed();
         assert!(
-            production_squeezed().contains(&format!(
-                "match{}(&sell_scope_bodies){{None=>stats_line.into_any(),",
-                "scope_fallback"
-            )),
+            squeezed_page.contains(&format!("match{}(&sell_scope_bodies,", "scope_fallback")),
+            "the amber block must be one match on the fallback helper"
+        );
+        assert!(
+            squeezed_page.contains("){None=>stats_line.into_any(),"),
             "production must route both amber lines through ONE child, or \
              the flag-off DOM grows a hydration marker"
         );
