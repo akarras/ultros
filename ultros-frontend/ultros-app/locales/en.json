@@ -265,6 +265,8 @@
     "analyzer_hop_worlds_row": "• {{world}} · ingredients: {{n}}",
     "analyzer_hop_worlds_dcs": "Datacenters: {{n}}",
     "analyzer_hop_worlds_note": "buy side only · sub-craft materials not counted",
+    "analyzer_col_scope_vs_home": "Scope vs home",
+    "analyzer_scope_vs_home_help": "The revenue signal read across the sell scope, minus the same signal on your sell world. A comparison, not a place to sell: retainers only list on your own world. Negative means the wider market prices lower — more sellers undercutting each other — so under the cheapest listing it is never above zero; a sale statistic can go either way. Blank when the sell scope is your sell world, and blank for a row where one of the two markets has no figure for the signal, which is most items on a seven-day window.",
     "analyzer_price_listing_fallback": "listing",
     "analyzer_cost_unpriced": "{{n}} unpriced",
     "analyzer_cost_unpriced_title": "Unpriced ingredients: {{n}} — no listing in the buy scope and no vendor; they cost 0 here",

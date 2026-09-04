@@ -63,6 +63,10 @@ pub enum ColumnKind {
     CostSignal(PriceSignal),
     HopGain,
     HopWorlds,
+    /// The revenue signal at the sell scope minus the same signal on the
+    /// sell world's own map: the sell-side counterpart of Hop gain, and a
+    /// reference read rather than a place to go.
+    ScopeVsHome,
     Actions,
 }
 

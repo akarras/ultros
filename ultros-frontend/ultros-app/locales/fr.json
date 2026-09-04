@@ -265,6 +265,8 @@
     "analyzer_hop_worlds_row": "• {{world}} · ingrédients : {{n}}",
     "analyzer_hop_worlds_dcs": "Centres de données : {{n}}",
     "analyzer_hop_worlds_note": "côté achat uniquement · matériaux des sous-crafts non comptés",
+    "analyzer_col_scope_vs_home": "Portée vs monde",
+    "analyzer_scope_vs_home_help": "Le signal de revenu lu sur la portée de vente, moins le même signal sur votre monde de vente. Une comparaison, pas un endroit où vendre : vos servants ne mettent en vente que sur votre propre monde. Négatif signifie que le marché élargi affiche un prix plus bas — davantage de vendeurs qui se sous-cotent — donc, avec l'annonce la moins chère, jamais au-dessus de zéro ; une statistique de ventes peut aller dans les deux sens. Vide lorsque la portée de vente est votre monde de vente, et vide pour une ligne dont l'un des deux marchés n'a aucun chiffre pour ce signal, ce qui est le cas de la plupart des objets sur sept jours.",
     "analyzer_price_listing_fallback": "annonce",
     "analyzer_cost_unpriced": "{{n}} sans prix",
     "analyzer_cost_unpriced_title": "Ingrédients sans prix : {{n}} — ni annonce dans la zone d'achat ni vendeur PNJ ; ils comptent pour 0 ici",

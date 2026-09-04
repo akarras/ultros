@@ -265,6 +265,8 @@
     "analyzer_hop_worlds_row": "• {{world}} · 재료 {{n}}종",
     "analyzer_hop_worlds_dcs": "데이터센터 {{n}}개",
     "analyzer_hop_worlds_note": "구매 측만 · 하위 제작 재료 제외",
+    "analyzer_col_scope_vs_home": "범위 vs 홈 월드",
+    "analyzer_scope_vs_home_help": "판매 범위에서 읽은 수익 신호에서 판매 서버의 같은 신호를 뺀 값입니다. 팔러 갈 곳이 아니라 참고용 비교 수치입니다 — 리테이너는 자신의 서버에만 등록할 수 있습니다. 음수는 넓은 시장의 가격이 더 낮다는 뜻이며(서로 가격을 낮추는 판매자가 더 많음), 최저 판매 등록가 기준으로는 0을 넘지 않습니다. 판매 통계 기준으로는 양방향 모두 가능합니다. 판매 범위가 판매 서버와 같으면 비어 있고, 두 시장 중 한쪽에 해당 신호의 값이 없는 행도 비어 있습니다 — 7일 기준으로는 대부분의 아이템이 그렇습니다.",
     "analyzer_price_listing_fallback": "매물",
     "analyzer_cost_unpriced": "가격 없음 {{n}}",
     "analyzer_cost_unpriced_title": "{{n}}종의 재료는 구매 범위에 매물도 NPC 판매도 없어 여기서는 0으로 계산됩니다",

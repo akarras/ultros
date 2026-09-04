@@ -167,6 +167,18 @@ struct RecipeProfitData {
     /// the selected revenue signal, or `Unavailable` when either place has
     /// none. The column renders `place − home`.
     scope_vs_home: ScopeVsHome,
+    /// `market_price` was read on the sell world itself, i.e. the sell
+    /// scope is `Scope::World` — which is every URL that does not carry
+    /// `?sell-scope=`, and every URL at all with the lab off.
+    ///
+    /// The 7-day figures that must not be compared against a scoped price
+    /// are suppressed in the pass (`sell_median`, `vwap_pct`), but the
+    /// 30-day body is client-only and lands after the rows are priced, so
+    /// its cell has to make the same judgement itself. Carried on the row
+    /// rather than on `CellCtx` for the reason `scope_vs_home` is: that
+    /// struct is shared with the flip finder and has twenty exhaustive
+    /// literals, and this one has two.
+    price_is_sell_world: bool,
 }
 
 /// Current sell price vs the window VWAP, as a percent. `None` when there
@@ -618,6 +630,9 @@ const COL_TREND: &str = "trend";
 const COL_DRIFT: &str = "drift";
 const COL_VOLUME_30D: &str = "volume-30d";
 const COL_VWAP_30D: &str = "vwap-30d";
+/// Phase F, appended for the same reason: an old serialized `?cols=` must
+/// round-trip byte-identically.
+const COL_SCOPE_VS_HOME: &str = "scope-vs-home";
 
 /// The lazy feed the Trend and Drift columns share: 168 hourly points, one
 /// request per visible window. `RECIPE_TREND_FEED.hours()` is what the
@@ -844,6 +859,9 @@ fn label_volume_30d(i18n: I18nContext<Locale, I18nKeys>) -> String {
 fn label_vwap_30d(i18n: I18nContext<Locale, I18nKeys>) -> String {
     t_string!(i18n, recipe_analyzer_col_vwap_30d).to_string()
 }
+fn label_scope_vs_home(i18n: I18nContext<Locale, I18nKeys>) -> String {
+    t_string!(i18n, analyzer_col_scope_vs_home).to_string()
+}
 
 static SPEC_ITEM: ColumnSpec = ColumnSpec {
     kind: ColumnKind::Item,
@@ -996,6 +1014,13 @@ static SPEC_VWAP_30D: ColumnSpec = ColumnSpec {
     label: label_vwap_30d,
     group: PickerGroup::Market,
 };
+static SPEC_SCOPE_VS_HOME: ColumnSpec = ColumnSpec {
+    kind: ColumnKind::ScopeVsHome,
+    label: label_scope_vs_home,
+    // Travel, beside Hop gain: it answers the same question from the other
+    // side of the ledger.
+    group: PickerGroup::Travel,
+};
 
 // Cell extractors. `Custom` = the page renders it (needs context the row
 // does not carry: item names, the world link, the on-hand list button).
@@ -1137,6 +1162,49 @@ fn cell_hop_gain(r: &RecipeRow, _: &CellCtx) -> CellValue {
     }
 }
 
+/// The delta the cell renders and the comparator sorts by: one function, so
+/// a header click can never order rows by a number the cell does not show.
+fn scope_vs_home_delta(r: &RecipeProfitData) -> Option<i32> {
+    match r.scope_vs_home {
+        ScopeVsHome::Pair { place, home, .. } => Some(place - home),
+        _ => None,
+    }
+}
+
+/// The percentage under the delta, against the HOME value: "the wider
+/// market is 10% below your world".
+///
+/// `None` — which `signed_delta_class` renders as no colour at all — in the
+/// two cases where a coloured percentage would say the opposite of what it
+/// means. Under a listing signal the delta cannot be positive (a region
+/// contains the world), so the figure would be a permanent red stripe and
+/// the sign already carries the whole message. And a `place` that clears
+/// `is_troll_listing` against `home` is not a wide-market finding: it is a
+/// home figure so thin that the analyzer refuses to price against it
+/// elsewhere, and painting that emerald is exactly the defect #1266
+/// removed from the Price tell. Otherwise the same display ceiling
+/// applies, for the same reason ROI is clamped.
+fn scope_vs_home_pct(state: ScopeVsHome) -> Option<f32> {
+    match state {
+        ScopeVsHome::Pair {
+            place,
+            home,
+            two_sided: true,
+        } if !is_troll_listing(place, home) => {
+            delta_pct(Some(place), home).map(|p| p.min(VS_MEDIAN_DISPLAY_CEILING_PCT))
+        }
+        _ => None,
+    }
+}
+
+fn cell_scope_vs_home(r: &RecipeRow, _: &CellCtx) -> CellValue {
+    CellValue::SignedGil {
+        delta: scope_vs_home_delta(r),
+        pct: scope_vs_home_pct(r.scope_vs_home),
+        unavailable: r.scope_vs_home == ScopeVsHome::Unavailable,
+    }
+}
+
 fn cell_profit_per_day(r: &RecipeRow, _: &CellCtx) -> CellValue {
     CellValue::Gil(profit_per_day_from_rate(r.profit, r.daily_sales))
 }
@@ -1181,9 +1249,22 @@ fn cell_volume_30(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
     CellValue::LateCount(late_30(r, ctx, |s| s.units_sold))
 }
 
+/// The 30-day VWAP, and its percent against Price.
+///
+/// The percent is dropped at a wider sell scope, and the absolute figure is
+/// not. Same split, and same reason, as the 7-day twin in `price_rows`:
+/// `market_price` follows the sell scope while `s.vwap` comes from the
+/// 30-day sell-**world** body, so at `datacenter` / `region` the numerator
+/// is the cheapest across strictly more worlds and the percentage goes
+/// structurally negative page-wide from the user's own setting rather than
+/// from the market. The VWAP itself is a sell-world figure whose column
+/// says so; only the comparison against a price from somewhere else is
+/// meaningless.
 fn cell_vwap_30(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
-    let price = r.market_price;
-    CellValue::LateGilWithPct(late_30(r, ctx, move |s| (s.vwap, vwap_pct(price, s.vwap))))
+    let price = r.price_is_sell_world.then_some(r.market_price);
+    CellValue::LateGilWithPct(late_30(r, ctx, move |s| {
+        (s.vwap, price.and_then(|p| vwap_pct(p, s.vwap)))
+    }))
 }
 
 const CELL_R: &str = "px-4 py-2 w-32 shrink-0 text-right";
@@ -1271,7 +1352,7 @@ const RECIPE_BASE: ToolColumnMeta<RecipeRow, SortMode> = ToolColumnMeta {
 /// The recipe table, column by column, classes copied verbatim from the
 /// markup this replaced. `id` = the `?cols=` token (always-on columns
 /// have none); `sort_id` = the `?sort=` token.
-static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 30] = [
+static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 31] = [
     ToolColumnMeta {
         spec: &SPEC_ITEM,
         header_class: "w-64 md:w-80 shrink-0 p-4",
@@ -1619,6 +1700,18 @@ static RECIPE_COLUMNS: [ToolColumnMeta<RecipeRow, SortMode>; 30] = [
         ..RECIPE_BASE
     },
     ToolColumnMeta {
+        spec: &SPEC_SCOPE_VS_HOME,
+        id: COL_SCOPE_VS_HOME,
+        sort_id: COL_SCOPE_VS_HOME,
+        sort: sortability_for(Layer::Computed, Some(SortMode::ScopeVsHome)),
+        header_class: HEAD_28_MD,
+        cell_class: CELL_28_MD,
+        default_on: false,
+        cell: cell_scope_vs_home,
+        lab: Some(LAB_ANALYZER_RECIPE),
+        ..RECIPE_BASE
+    },
+    ToolColumnMeta {
         spec: &SPEC_ACTIONS,
         header_class: "w-20 shrink-0 p-4",
         ..RECIPE_BASE
@@ -1667,17 +1760,30 @@ fn signal_wants(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> Sign
         Some(SortMode::CostSignal(s)) => Some(s),
         _ => None,
     };
+    let visible_rev = RECIPE_COLUMNS
+        .iter()
+        .filter(|c| !c.id.is_empty() && visible.contains(c.id))
+        .filter_map(|c| match c.spec.kind {
+            ColumnKind::RevSignal(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    let sort_rev = match sort {
+        Some(SortMode::RevSignal(s)) => Some(s),
+        _ => None,
+    };
     SignalWants {
         visible_cost,
         sort_cost,
         hop: visible.contains(COL_HOP_GAIN) || sort == Some(SortMode::HopGain),
         worlds: visible.contains(COL_HOP_WORLDS) || sort == Some(SortMode::HopWorlds),
-        // Placeholders until Task 4 derives all three from the columns.
-        // At these values `NeededSignals::rev` is exactly {the selected
-        // revenue signal}, which is what the page computes today.
-        visible_rev: Vec::new(),
-        sort_rev: None,
-        scope_vs_home: false,
+        // Flag-off these three are still the placeholders they replaced:
+        // every `rev-*` token and `scope-vs-home` is outside
+        // `BASE_COLUMN_ORDER`, and both sort modes are `lab_only`, so
+        // `visible` cannot hold one and `sort` cannot be one.
+        visible_rev,
+        sort_rev,
+        scope_vs_home: visible.contains(COL_SCOPE_VS_HOME) || sort == Some(SortMode::ScopeVsHome),
     }
 }
 
@@ -1953,6 +2059,8 @@ enum SortMode {
     Volume30,
     /// The 30-day volume-weighted average price, from the same body.
     Vwap30,
+    /// The sell-scope revenue signal minus the sell world's own.
+    ScopeVsHome,
 }
 
 impl SortMode {
@@ -1968,6 +2076,7 @@ impl SortMode {
                 | SortMode::ProfitPerDay
                 | SortMode::Volume30
                 | SortMode::Vwap30
+                | SortMode::ScopeVsHome
         )
     }
 }
@@ -2090,6 +2199,12 @@ fn compare_recipes(
         SortMode::Vwap30 => cmp_none_last(
             stat_30(stats_30, a).map(|s| s.vwap).filter(|v| *v > 0),
             stat_30(stats_30, b).map(|s| s.vwap).filter(|v| *v > 0),
+            dir,
+            i32::cmp,
+        ),
+        SortMode::ScopeVsHome => cmp_none_last(
+            scope_vs_home_delta(a),
+            scope_vs_home_delta(b),
             dir,
             i32::cmp,
         ),
@@ -2523,6 +2638,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             hop,
             worlds,
             scope_vs_home,
+            price_is_sell_world: sell_scope_is_world,
         });
     }
 
@@ -4784,7 +4900,7 @@ mod test {
         );
     }
 
-    const ALL_SORT_MODES: [SortMode; 24] = [
+    const ALL_SORT_MODES: [SortMode; 25] = [
         SortMode::Roi,
         SortMode::Profit,
         SortMode::Velocity,
@@ -4809,6 +4925,7 @@ mod test {
         SortMode::ProfitPerDay,
         SortMode::Volume30,
         SortMode::Vwap30,
+        SortMode::ScopeVsHome,
     ];
 
     /// Display must produce exactly the token FromStr parses back — the
@@ -4831,6 +4948,11 @@ mod test {
         assert_eq!(SortMode::ProfitPerDay.to_string(), "profit-per-day");
         assert_eq!(SortMode::Volume30.to_string(), "volume-30d");
         assert_eq!("vwap-30d".parse::<SortMode>(), Ok(SortMode::Vwap30));
+        assert_eq!(SortMode::ScopeVsHome.to_string(), "scope-vs-home");
+        assert_eq!(
+            "scope-vs-home".parse::<SortMode>(),
+            Ok(SortMode::ScopeVsHome)
+        );
     }
 
     /// `?cols=` tokens and the default set are a bookmark contract; both
@@ -4865,6 +4987,8 @@ mod test {
                 "drift",
                 "volume-30d",
                 "vwap-30d",
+                // Phase F, appended for the same reason E2's five were.
+                "scope-vs-home",
             ]
         );
         // The contract the page uses while the lab is off: the seven of Phase B.
@@ -6262,6 +6386,7 @@ mod test {
             hop: None,
             worlds: None,
             scope_vs_home: ScopeVsHome::Off,
+            price_is_sell_world: true,
         })
     }
 
@@ -6332,11 +6457,11 @@ mod test {
         sorts.sort_unstable();
         sorts.dedup();
         assert_eq!((ids.len(), sorts.len()), (n_ids, n_sorts));
-        assert_eq!(n_ids, 22);
+        assert_eq!(n_ids, 23);
         assert_eq!(
-            n_sorts, 24,
-            "the eleven sorts at HEAD, the ten signal and hop columns, and E2's three; \
-             listing world/dc, trend and drift do not sort"
+            n_sorts, 25,
+            "the eleven sorts at HEAD, the ten signal and hop columns, E2's three \
+             and F's Scope vs home; listing world/dc, trend and drift do not sort"
         );
         for c in RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()) {
             assert!(!c.default_on, "{} must start hidden", c.id);
@@ -6349,8 +6474,191 @@ mod test {
         }
         assert_eq!(
             RECIPE_COLUMNS.iter().filter(|c| c.lab.is_some()).count(),
-            15
+            16
         );
+    }
+
+    /// `scope_row` returns a `RecipeRow`, i.e. `Arc<RecipeProfitData>`, the
+    /// way `hop_row` and `price_row` do: every cell fn takes `&RecipeRow`,
+    /// and `compare_recipes` takes `&RecipeProfitData`, which `&Arc<T>`
+    /// deref-coerces into.
+    fn scope_row(key: i32, state: ScopeVsHome) -> RecipeRow {
+        let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
+        r.scope_vs_home = state;
+        Arc::new(r)
+    }
+
+    fn pair(place: i32, home: i32, two_sided: bool) -> ScopeVsHome {
+        ScopeVsHome::Pair {
+            place,
+            home,
+            two_sided,
+        }
+    }
+
+    /// Scope vs home renders the delta, its percent against the home value,
+    /// and nothing at all when there is no pair. The sort key is the same
+    /// delta, and it sorts none-last in both directions like every other
+    /// optional-value column on this page.
+    #[test]
+    fn scope_vs_home_cell_and_sort_read_the_same_delta() {
+        let ctx = test_ctx();
+        let cheaper = scope_row(1, pair(900, 1_000, true));
+        let dearer = scope_row(2, pair(1_100, 1_000, true));
+        let off = scope_row(3, ScopeVsHome::Off);
+        let missing = scope_row(4, ScopeVsHome::Unavailable);
+        assert_eq!(
+            cell_scope_vs_home(&cheaper, &ctx),
+            CellValue::SignedGil {
+                delta: Some(-100),
+                pct: Some(-10.0),
+                unavailable: false,
+            }
+        );
+        assert_eq!(
+            cell_scope_vs_home(&dearer, &ctx),
+            CellValue::SignedGil {
+                delta: Some(100),
+                pct: Some(10.0),
+                unavailable: false,
+            }
+        );
+        assert_eq!(
+            cell_scope_vs_home(&off, &ctx),
+            CellValue::SignedGil {
+                delta: None,
+                pct: None,
+                unavailable: false,
+            }
+        );
+        assert_eq!(
+            cell_scope_vs_home(&missing, &ctx),
+            CellValue::SignedGil {
+                delta: None,
+                pct: None,
+                unavailable: true,
+            },
+            "a dash that could have been a figure says so"
+        );
+        assert_eq!(scope_vs_home_delta(&cheaper), Some(-100));
+        assert_eq!(scope_vs_home_delta(&off), None);
+        assert_eq!(scope_vs_home_delta(&missing), None);
+
+        for dir in [SortDir::Asc, SortDir::Desc] {
+            assert_eq!(
+                compare_recipes(SortMode::ScopeVsHome, dir, &cheaper, &missing, None),
+                Ordering::Less,
+                "a row with no pair sorts last whichever way the header points"
+            );
+            assert_eq!(
+                compare_recipes(SortMode::ScopeVsHome, dir, &missing, &dearer, None),
+                Ordering::Greater
+            );
+        }
+        assert_eq!(
+            compare_recipes(
+                SortMode::ScopeVsHome,
+                SortDir::Desc,
+                &dearer,
+                &cheaper,
+                None
+            ),
+            Ordering::Less,
+            "descending puts the biggest gain first"
+        );
+        assert_eq!(SortMode::ScopeVsHome.default_dir(), SortDir::Desc);
+    }
+
+    /// Phase E2 shipped a coloured percentage whose GREEN arm meant "do not
+    /// trust this figure", and #1266 corrected it with a display ceiling
+    /// and a troll guard. Scope vs home inherits both rather than
+    /// re-earning them:
+    ///
+    /// * under a listing signal the delta is structurally <= 0, so the
+    ///   percentage is dropped and the cell renders uncoloured — a
+    ///   permanently red stripe in the codebase's warning colour teaches
+    ///   players to ignore the colour;
+    /// * a scope figure 50x the home one is not a finding, it is a thin or
+    ///   laundered home median, and `is_troll_listing` is the same helper
+    ///   `price_note` gates on;
+    /// * anything below that is clamped to the same ceiling that exists
+    ///   because prod rendered "+399900%".
+    #[test]
+    fn scope_vs_home_never_paints_a_thin_home_median_green() {
+        let ctx = test_ctx();
+        let pct_of = |r: &RecipeRow| match cell_scope_vs_home(r, &ctx) {
+            CellValue::SignedGil { pct, .. } => pct,
+            other => panic!("{other:?}"),
+        };
+        // One-sided: the listing signal. The gil delta survives, the
+        // percentage does not.
+        let listing = scope_row(1, pair(900, 1_000, false));
+        assert_eq!(scope_vs_home_delta(&listing), Some(-100));
+        assert_eq!(pct_of(&listing), None);
+        // Troll-shaped: the only way this column renders green.
+        let thin = scope_row(2, pair(100_000, 100, true));
+        assert!(is_troll_listing(100_000, 100));
+        assert_eq!(
+            pct_of(&thin),
+            None,
+            "a home figure the analyzer would not price against must not be \
+             the baseline for an emerald percentage"
+        );
+        assert_eq!(scope_vs_home_delta(&thin), Some(99_900));
+        // Below the troll multiple, the ceiling still applies.
+        let big = scope_row(3, pair(2_000, 100, true));
+        assert!(!is_troll_listing(2_000, 100));
+        assert_eq!(pct_of(&big), Some(VS_MEDIAN_DISPLAY_CEILING_PCT));
+        // And an ordinary figure is untouched.
+        assert_eq!(pct_of(&scope_row(4, pair(1_100, 1_000, true))), Some(10.0));
+    }
+
+    /// Task 3 suppressed the 7-day VWAP percentage at a wider sell scope
+    /// because its numerator (`market_price`) follows the sell scope while
+    /// its denominator is the sell world's own figure. The 30-day twin has
+    /// the identical mismatch, one body later: `cell_vwap_30` divides the
+    /// same `market_price` by a VWAP from the 30-day sell-WORLD payload. It
+    /// cannot be suppressed in the pass — that body is client-only and
+    /// lands after the rows are priced — so the row carries the one bit the
+    /// cell needs.
+    ///
+    /// The absolute VWAP survives in both cases: it is a sell-world figure
+    /// and its column says so. Only the comparison moves.
+    #[test]
+    fn the_30_day_vwap_percentage_is_suppressed_at_a_wider_sell_scope() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let key = fixture_recipes()[0].key_id.0;
+            let mut home = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
+            home.market_price = 150;
+            let item = home.recipe.item_result;
+            let mut scoped = home.clone();
+            scoped.price_is_sell_world = false;
+            let index: StatsIndex = [((item, false), stats_row(item, false, 9, 100))]
+                .into_iter()
+                .collect();
+            let store: LateStats = RwSignal::new(Some(Arc::new(index)));
+            let ctx = CellCtx {
+                stats_30: Some(store),
+                ..test_ctx()
+            };
+            assert!(
+                home.price_is_sell_world,
+                "the default fixture row must be the un-scoped case, or this \
+                 test cannot tell suppression from an empty comparison"
+            );
+            assert_eq!(
+                cell_vwap_30(&Arc::new(home), &ctx),
+                CellValue::LateGilWithPct(Enrich::Ready((100, Some(50.0)))),
+                "on the sell world the percentage is 150 against 100"
+            );
+            assert_eq!(
+                cell_vwap_30(&Arc::new(scoped), &ctx),
+                CellValue::LateGilWithPct(Enrich::Ready((100, None))),
+                "at a wider sell scope the VWAP stays and the percentage goes"
+            );
+        });
     }
 
     fn hop_row(key: i32, hop: Option<HopGain>, alt: Option<i32>) -> Arc<RecipeProfitData> {
@@ -7085,10 +7393,11 @@ mod test {
     }
 
     #[test]
-    fn lab_only_sort_modes_are_exactly_the_thirteen() {
-        assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 13);
+    fn lab_only_sort_modes_are_exactly_the_fourteen() {
+        assert_eq!(ALL_SORT_MODES.iter().filter(|m| m.lab_only()).count(), 14);
         assert!(!SortMode::CostPerUnit.lab_only() && !SortMode::Price.lab_only());
         assert!(SortMode::ProfitPerDay.lab_only() && SortMode::Vwap30.lab_only());
+        assert!(SortMode::ScopeVsHome.lab_only());
     }
 
     /// Every picker entry is a `?cols=` token (both derive from the table).
@@ -7110,7 +7419,7 @@ mod test {
                 .iter()
                 .map(|o| o.id)
                 .collect();
-            assert_eq!(ids.len(), 22);
+            assert_eq!(ids.len(), 23);
             assert!(ids.iter().all(|id| OPTIONAL_COLUMN_ORDER.contains(id)));
             let flat: Vec<&str> = picker_options(&RECIPE_COLUMNS, i18n)
                 .iter()
@@ -7172,6 +7481,12 @@ mod test {
                     "volume-30d",
                     "vwap-30d"
                 ]
+            );
+            assert_eq!(
+                ids_in("Travel"),
+                ["hop-gain", "hop-worlds", "scope-vs-home"],
+                "the picker groups by (group, table index), so the appended \
+                 column still lists third in Travel"
             );
             assert_eq!(ids_in("Location"), ["listing-world", "listing-dc"]);
         });
@@ -7270,14 +7585,55 @@ mod test {
         );
         assert_eq!(w.sort_cost, Some(PriceSignal::SaleMin));
         assert!(!w.hop && !w.worlds);
+        // The revenue side is read the same way, from the same table: the
+        // visible `rev-*` columns and a `rev-*` sort target. Both were
+        // placeholders until Scope vs home needed them.
+        assert_eq!(w.visible_rev, vec![PriceSignal::SaleMin]);
+        assert_eq!(w.sort_rev, None);
+        assert!(!w.scope_vs_home);
+        let w = signal_wants(&visible, Some(SortMode::RevSignal(PriceSignal::SaleAvg)));
+        assert_eq!(w.sort_rev, Some(PriceSignal::SaleAvg));
+        assert_eq!(w.sort_cost, None);
         let w = signal_wants(&HashSet::new(), Some(SortMode::HopGain));
         assert!(w.hop && !w.worlds);
         let visible: HashSet<&'static str> = [COL_HOP_WORLDS].into_iter().collect();
         let w = signal_wants(&visible, None);
         assert!(w.worlds && !w.hop);
+        // Scope vs home is wanted by its column OR its sort target, and by
+        // nothing else — `hop` and `worlds` are the neighbouring flags a
+        // copy-paste would reach for.
+        assert!(!w.scope_vs_home);
+        assert!(
+            signal_wants(
+                &[COL_SCOPE_VS_HOME].into_iter().collect(),
+                Some(SortMode::Profit)
+            )
+            .scope_vs_home
+        );
+        assert!(signal_wants(&HashSet::new(), Some(SortMode::ScopeVsHome)).scope_vs_home);
         assert_eq!(
             signal_wants(&HashSet::new(), Some(SortMode::Profit)),
             SignalWants::default()
+        );
+        // Flag-off, all three new derivations are the placeholders they
+        // replaced, and that is checked rather than argued: with the lab
+        // off the `?cols=` contract is `BASE_COLUMN_ORDER`, which holds no
+        // lab token, and the page filters a `lab_only` sort to `None`
+        // before `signal_wants` is ever called (`:4054`).
+        let off = parse_visible_cols(
+            Some("scope-vs-home,rev-sale-min,hop-gain"),
+            &BASE_COLUMN_ORDER,
+            &DEFAULT_COLS,
+        );
+        assert_eq!(
+            signal_wants(&off, None),
+            SignalWants::default(),
+            "no lab token survives parsing flag-off, so the pass is asked \
+             for exactly what it was asked for before Phase F"
+        );
+        assert!(
+            SortMode::ScopeVsHome.lab_only()
+                && SortMode::RevSignal(PriceSignal::SaleMin).lab_only()
         );
     }
 

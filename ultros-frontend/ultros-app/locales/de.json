@@ -265,6 +265,8 @@
     "analyzer_hop_worlds_row": "• {{world}} · Zutaten: {{n}}",
     "analyzer_hop_worlds_dcs": "Datenzentren: {{n}}",
     "analyzer_hop_worlds_note": "nur Kaufseite · Materialien aus Unterrezepten nicht gezählt",
+    "analyzer_col_scope_vs_home": "Bereich vs. Welt",
+    "analyzer_scope_vs_home_help": "Das Erlössignal über den Verkaufsbereich, minus dasselbe Signal auf deiner Verkaufswelt. Ein Vergleichswert, kein Verkaufsort: Gehilfen bieten nur auf deiner eigenen Welt an. Negativ heißt, der weitere Markt ist günstiger — mehr Verkäufer, die sich gegenseitig unterbieten — beim günstigsten Angebot also nie über null; eine Verkaufsstatistik kann in beide Richtungen gehen. Leer, wenn der Verkaufsbereich deine Verkaufswelt ist, und leer für eine Zeile, in der einer der beiden Märkte keinen Wert für das Signal hat — das sind in sieben Tagen die meisten Gegenstände.",
     "analyzer_price_listing_fallback": "Angebot",
     "analyzer_cost_unpriced": "{{n}} ohne Preis",
     "analyzer_cost_unpriced_title": "Zutaten ohne Preis: {{n}} — weder Angebot im Kaufbereich noch Händler; sie zählen hier mit 0",

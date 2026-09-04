@@ -265,6 +265,8 @@
     "analyzer_hop_worlds_row": "• {{world}} · {{n}} 种材料",
     "analyzer_hop_worlds_dcs": "{{n}} 个数据中心",
     "analyzer_hop_worlds_note": "仅计购买侧 · 不计入子制作材料",
+    "analyzer_col_scope_vs_home": "范围对比本服",
+    "analyzer_scope_vs_home_help": "在销售范围内读取的收益信号，减去销售服务器上的同一信号。这只是参考对比，而不是可以去卖的地方——雇员只能在你自己的服务器上寄售。负值表示更大的市场价格更低（互相压价的卖家更多），因此按最低寄售价永远不会为正；按成交统计则可高可低。销售范围就是销售服务器时留空；某一行的两个市场中有一方没有该信号的数值时也留空——在七天窗口内多数物品都是如此。",
     "analyzer_price_listing_fallback": "挂单",
     "analyzer_cost_unpriced": "{{n}} 项无价格",
     "analyzer_cost_unpriced_title": "{{n}} 种材料在购买范围内没有挂单也没有 NPC 出售，此处按 0 计算",

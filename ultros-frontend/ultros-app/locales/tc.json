@@ -265,6 +265,8 @@
     "analyzer_hop_worlds_row": "• {{world}} · {{n}} 種材料",
     "analyzer_hop_worlds_dcs": "{{n}} 個資料中心",
     "analyzer_hop_worlds_note": "僅計購買側 · 不計入子製作材料",
+    "analyzer_col_scope_vs_home": "範圍對比本伺服器",
+    "analyzer_scope_vs_home_help": "在銷售範圍讀取的收益訊號，減去銷售伺服器上的同一訊號。這只是參考比較，而不是可以前往販售的地方——雇員只能在你自己的伺服器上寄售。負值表示更大的市場價格更低（互相壓價的賣家更多），因此以最低寄售價計算永遠不會為正；以成交統計計算則可能為正或負。銷售範圍即銷售伺服器時留空；某一列的兩個市場中有一方沒有該訊號的數值時也留空——在七天區間內多數物品都是如此。",
     "analyzer_price_listing_fallback": "掛單",
     "analyzer_cost_unpriced": "{{n}} 項無價格",
     "analyzer_cost_unpriced_title": "{{n}} 種材料在購買範圍內沒有掛單也沒有 NPC 販售，此處按 0 計算",
