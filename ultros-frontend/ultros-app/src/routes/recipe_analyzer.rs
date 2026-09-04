@@ -6,7 +6,7 @@ use crate::analyzer_kit::columns::{
 };
 use crate::analyzer_kit::enrichment::{
     DEBOUNCE_MS, EnrichmentConfig, PREFETCH_MARGIN, SparkKey, SparkStore, SparkValue, Verdict,
-    use_visible_enrichment, verdict,
+    use_visible_enrichment, use_wide_viewport, verdict,
 };
 use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, per_unit_cost, profit_line,
@@ -1609,14 +1609,23 @@ fn buy_stats_scope_key(
         .then_some(scope_name)
 }
 
-/// A 30-day column is visible or the sort target — the only reason to fetch
-/// that body. Not "the toggle is on": with it off neither token survives
-/// `parse_visible_cols` (the contract is `BASE_COLUMN_ORDER`) and neither
-/// mode survives `SortMode::lab_only`, so this is false by construction.
-fn stats_30_wanted(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> bool {
-    visible.contains(COL_VOLUME_30D)
+/// A 30-day column is visible or the sort target, *and* the viewport is
+/// wide enough to draw one — the only reason to fetch that body. Not "the
+/// toggle is on": with it off neither token survives `parse_visible_cols`
+/// (the contract is `BASE_COLUMN_ORDER`) and neither mode survives
+/// `SortMode::lab_only`, so this is false by construction.
+///
+/// `wide` is [`use_wide_viewport`]: both 30-day columns are `hidden md:*`
+/// in header and cell alike, so below `md` this body buys 438 KB of
+/// transfer and a 3.25 MB main-thread `serde_json` parse for zero pixels.
+/// The sort target is gated with them on purpose — its only effect is the
+/// order of a column nobody can see, and the recipe analyzer has no mobile
+/// sort control, so a `?sort=vwap-30d` on a phone can only have arrived in
+/// a link copied from a desktop.
+fn stats_30_wanted(visible: &HashSet<&'static str>, sort: Option<SortMode>, wide: bool) -> bool {
+    wide && (visible.contains(COL_VOLUME_30D)
         || visible.contains(COL_VWAP_30D)
-        || matches!(sort, Some(SortMode::Volume30 | SortMode::Vwap30))
+        || matches!(sort, Some(SortMode::Volume30 | SortMode::Vwap30)))
 }
 
 /// The 30-day body's key: the sell world's name when that body is needed,
@@ -1633,13 +1642,15 @@ fn stats_30_key(
         .flatten()
 }
 
-/// Trend or Drift is visible: the only reason to mirror the table's sorted
-/// rows to the page, and so the only reason the sparkline hook ever sees a
-/// window to fetch. Same construction as [`stats_30_wanted`] — with the
-/// toggle off neither token survives `parse_visible_cols`, so the mirror
-/// stays empty and no sparklines POST is issued.
-fn spark_rows_wanted(visible: &HashSet<&'static str>) -> bool {
-    visible.contains(COL_TREND) || visible.contains(COL_DRIFT)
+/// Trend or Drift is visible at a width that draws it: the only reason to
+/// mirror the table's sorted rows to the page, and so the only reason the
+/// sparkline hook ever sees a window to fetch. Same construction as
+/// [`stats_30_wanted`] — with the toggle off neither token survives
+/// `parse_visible_cols`, so the mirror stays empty and no sparklines POST
+/// is issued — and the same `wide` for the same reason: both columns are
+/// `hidden md:*`, and the mirror costs ~2.2 KB per scroll settle.
+fn spark_rows_wanted(visible: &HashSet<&'static str>, wide: bool) -> bool {
+    wide && (visible.contains(COL_TREND) || visible.contains(COL_DRIFT))
 }
 
 /// Which formula side a header pill writes, and the signal it writes.
@@ -2462,6 +2473,11 @@ fn RecipeAnalyzerTable(
     /// the page's hook fills, the client-only 30-day body, the scroller's
     /// rendered range and the rows mirror the hook reads.
     market: MarketHandles,
+    /// `use_wide_viewport()`, created once on the page so a table remount
+    /// does not churn the media-query listener. **Fetch path only** — it is
+    /// read by the rows-mirror gate below and by nothing that renders. See
+    /// [`use_wide_viewport`] for why that boundary is load-bearing.
+    wide_viewport: Signal<bool>,
 ) -> impl IntoView {
     let realtime = use_realtime();
     let rt_status = realtime.clone();
@@ -2795,7 +2811,10 @@ fn RecipeAnalyzerTable(
     // Publish the sorted rows for the page's lazy fetch — the hook reads
     // this mirror, so an empty mirror is no request at all. The clone is
     // one `Arc` per row and only happens while a lazy column is on.
-    let wants_lazy = Memo::new(move |_| visible_cols.with(spark_rows_wanted));
+    let wants_lazy = Memo::new(move |_| {
+        let wide = wide_viewport.get();
+        visible_cols.with(|v| spark_rows_wanted(v, wide))
+    });
     Effect::new(move |_| {
         if wants_lazy.get() {
             market.rows.set(computed_data.get());
@@ -3963,6 +3982,19 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         visible_range: RwSignal::new((0, 0)),
         rows: RwSignal::new(Vec::new()),
     };
+    // Is the viewport wide enough to *draw* a lazy market column? Every one
+    // of the four is `hidden md:*` in header and cell alike, so below `md`
+    // both bodies below are paid for and never seen: 438 KB transferred and
+    // 3.25 MB parsed on the main thread for the 30-day pair, ~2.2 KB per
+    // scroll settle for the sparkline pair.
+    //
+    // Created here, at page level, for the same reason the handles above
+    // are: the table remounts whenever one of its resources changes, and
+    // the media-query listener should not churn with it. Read on the fetch
+    // path only — see `use_wide_viewport` — never in a `view!`, so SSR and
+    // the first client render are byte-identical to what they are today.
+    let wide_viewport = use_wide_viewport();
+
     // Trend and Drift: the flip finder's visible-window fetch, scoped to the
     // sell world (the sparklines endpoint takes a world, never a datacenter).
     // The hook's own effect resets the store when that world changes. Its
@@ -3992,7 +4024,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // "an empty index means settled" convention the failed fetch uses.
     let stats_30_source = Memo::new(move |_| {
         let needs = RecipeNeeds {
-            stats_30: stats_30_wanted(&visible_cols.get(), sort_mode.get()),
+            stats_30: stats_30_wanted(&visible_cols.get(), sort_mode.get(), wide_viewport.get()),
             ..RecipeNeeds::default()
         };
         let formula = formula_page.get();
@@ -4293,6 +4325,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         home_world_id=home_world_id
                                         on_pill=on_pill
                                         market=market
+                                        wide_viewport=wide_viewport
                                     />
                                 }.into_any()
                             }
@@ -6343,23 +6376,30 @@ mod test {
         // and each 30-day column reaches it on its own.
         for token in [COL_VOLUME_30D, COL_VWAP_30D] {
             let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
-            assert!(stats_30_wanted(&on, None), "{token} visible");
+            assert!(stats_30_wanted(&on, None, true), "{token} visible");
             // Toggle off: the token is not in the contract, so it never
             // survives parsing and the body is unreachable.
             let off = parse_visible_cols(Some(token), &BASE_COLUMN_ORDER, &DEFAULT_COLS);
-            assert!(!stats_30_wanted(&off, None), "{token} with the toggle off");
+            assert!(
+                !stats_30_wanted(&off, None, true),
+                "{token} with the toggle off"
+            );
         }
         for mode in [SortMode::Volume30, SortMode::Vwap30] {
-            assert!(stats_30_wanted(&HashSet::new(), Some(mode)), "{mode}");
+            assert!(stats_30_wanted(&HashSet::new(), Some(mode), true), "{mode}");
             // ... and off, where a lab-only sort token reads as unset.
             assert!(mode.lab_only(), "{mode}");
         }
         // The off direction: neither a plain page nor another sort target
         // reaches the 438 KB body.
-        assert!(!stats_30_wanted(&HashSet::new(), None));
-        assert!(!stats_30_wanted(&HashSet::new(), Some(SortMode::Profit)));
+        assert!(!stats_30_wanted(&HashSet::new(), None, true));
+        assert!(!stats_30_wanted(
+            &HashSet::new(),
+            Some(SortMode::Profit),
+            true
+        ));
         let default_page = parse_visible_cols(None, &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
-        assert!(!stats_30_wanted(&default_page, None));
+        assert!(!stats_30_wanted(&default_page, None, true));
 
         // End to end, the way the page composes them: the visible columns
         // and the sort target are what the fetch key is built from.
@@ -6367,7 +6407,7 @@ mod test {
             stats_30_key(
                 &f,
                 &RecipeNeeds {
-                    stats_30: stats_30_wanted(visible, sort),
+                    stats_30: stats_30_wanted(visible, sort, true),
                     ..RecipeNeeds::default()
                 },
                 Some("Gilgamesh"),
@@ -6390,22 +6430,96 @@ mod test {
     fn the_sparkline_fetch_is_unreachable_with_the_toggle_off() {
         for token in [COL_TREND, COL_DRIFT] {
             let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
-            assert!(spark_rows_wanted(&on), "{token} visible");
+            assert!(spark_rows_wanted(&on, true), "{token} visible");
             let off = parse_visible_cols(Some(token), &BASE_COLUMN_ORDER, &DEFAULT_COLS);
-            assert!(!spark_rows_wanted(&off), "{token} with the toggle off");
+            assert!(
+                !spark_rows_wanted(&off, true),
+                "{token} with the toggle off"
+            );
         }
         // The default page wants neither, toggle or no toggle.
-        assert!(!spark_rows_wanted(&parse_visible_cols(
-            None,
-            &OPTIONAL_COLUMN_ORDER,
-            &DEFAULT_COLS
-        )));
+        assert!(!spark_rows_wanted(
+            &parse_visible_cols(None, &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS),
+            true
+        ));
         // An empty mirror is what the hook sees then, and it selects no
         // keys at all: its effect returns before it schedules a fetch.
         let empty: Vec<(usize, RecipeRow)> = Vec::new();
         assert!(
             visible_keys(
                 &empty,
+                rendered_range(0, 19, 0),
+                PREFETCH_MARGIN,
+                &HashSet::new(),
+                recipe_spark_key,
+            )
+            .is_empty()
+        );
+    }
+
+    /// Below `md` every one of the four lazy market columns is `hidden`, so
+    /// neither body can put a pixel on screen and neither gate may open —
+    /// however loudly `?cols=` or `?sort=` asks. Every input that opens a
+    /// gate at `md` and up is re-run narrow here, including the two sort
+    /// targets: the recipe analyzer has no mobile sort control, so a
+    /// `?sort=volume-30d` on a phone can only have come from a link copied
+    /// off a desktop, and `effective_sort_mode` already reads an unloaded
+    /// 30-day body as Profit — the order the page paints anyway.
+    #[test]
+    fn a_narrow_viewport_closes_both_gates() {
+        for token in [COL_VOLUME_30D, COL_VWAP_30D] {
+            let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            assert!(stats_30_wanted(&on, None, true), "{token} wide");
+            assert!(!stats_30_wanted(&on, None, false), "{token} narrow");
+        }
+        for mode in [SortMode::Volume30, SortMode::Vwap30] {
+            assert!(stats_30_wanted(&HashSet::new(), Some(mode), true), "{mode}");
+            assert!(
+                !stats_30_wanted(&HashSet::new(), Some(mode), false),
+                "{mode} narrow"
+            );
+            // A 30-day sort with no body behind it is Profit, which is the
+            // order the first paint uses at every width. So the narrow page
+            // keeps its painted order instead of shuffling once 438 KB has
+            // landed for a column it cannot draw.
+            assert_eq!(effective_sort_mode(mode, false), SortMode::Profit);
+        }
+        for token in [COL_TREND, COL_DRIFT] {
+            let on = parse_visible_cols(Some(token), &OPTIONAL_COLUMN_ORDER, &DEFAULT_COLS);
+            assert!(spark_rows_wanted(&on, true), "{token} wide");
+            assert!(!spark_rows_wanted(&on, false), "{token} narrow");
+        }
+        // Both columns at once, and every optional column the page offers:
+        // still nothing, because nothing is visible.
+        let everything: HashSet<&'static str> = OPTIONAL_COLUMN_ORDER.iter().copied().collect();
+        assert!(!stats_30_wanted(&everything, Some(SortMode::Vwap30), false));
+        assert!(!spark_rows_wanted(&everything, false));
+
+        // A closed 30-day gate must reach the page's "nothing asked for
+        // it" ending, not its "asked but unanswerable" one. The two differ:
+        // the second stores an empty index to settle the cells, and that
+        // index would then satisfy the effect's `is_some` guard, so a
+        // phone rotated into landscape would show a permanent "—" instead
+        // of fetching. Narrow is temporary and reverses without a world
+        // change, so it must leave the store untouched.
+        let f = ProfitFormula::recipe_from_query(None, None, None);
+        let narrow = RecipeNeeds {
+            stats_30: stats_30_wanted(&everything, Some(SortMode::Vwap30), false),
+            ..RecipeNeeds::default()
+        };
+        assert!(
+            !needed_bodies(&f, &narrow).contains(&BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS))
+        );
+        assert_eq!(stats_30_key(&f, &narrow, Some("Gilgamesh")), None);
+
+        // And the sparkline half all the way to its spawn site: a closed
+        // gate empties the rows mirror, an empty mirror selects no keys,
+        // and `use_visible_enrichment` returns at `keys.is_empty()` before
+        // it bumps `fetch_id` — so no `spawn_local`, not merely no request.
+        let mirror: Vec<(usize, RecipeRow)> = Vec::new();
+        assert!(
+            visible_keys(
+                &mirror,
                 rendered_range(0, 19, 0),
                 PREFETCH_MARGIN,
                 &HashSet::new(),
@@ -6450,8 +6564,37 @@ mod test {
             "the page's RecipeNeeds must take stats_30 from the visible columns and the sort target"
         );
         assert!(
-            production.contains(&format!("visible_cols.with({})", "spark_rows_wanted")),
+            production.contains(&format!("{}(v, {})", "spark_rows_wanted", "wide")),
             "the rows mirror must be gated on a visible Trend or Drift column"
+        );
+        // And the viewport reaches both of them. `-D warnings` proves only
+        // that *something* is passed for `wide`; a page that passed a
+        // literal `true` would compile, ship the 438 KB body to a phone,
+        // and leave every assertion above green.
+        assert!(
+            production.contains(&format!(
+                "let {} = {}();",
+                "wide_viewport", "use_wide_viewport"
+            )),
+            "the page must own the viewport signal, not a constant"
+        );
+        assert_eq!(
+            production
+                .matches(&format!("{}.get()", "wide_viewport"))
+                .count(),
+            2,
+            "the viewport signal is read by exactly the two fetch gates"
+        );
+        // The rule that keeps SSR and the first client render identical:
+        // the signal is a fetch-path input and never a rendered value. A
+        // `view!` binding is a prop, not markup, so the one occurrence
+        // there is the hand-off to the table.
+        assert_eq!(
+            production
+                .matches(&format!("{}={}", "wide_viewport", "wide_viewport"))
+                .count(),
+            1,
+            "the viewport signal is handed to the table once, as a prop"
         );
     }
 }

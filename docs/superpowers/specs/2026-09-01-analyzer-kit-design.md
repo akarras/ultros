@@ -331,6 +331,16 @@ the flip finder is Window mode, 28 rows on SSR (the 20-row fallback plus oversca
 about 32 at 1080p, so 88 to 92 keys; both under the 200-key sparkline and 250-key quality
 caps. The tests compute the window from `rows_for_viewport` rather than literals. The
 ≤100-row tools (leve, venture, FC, scrip) use the whole table as the window; vendor resale does not truncate and uses the visible window.
+
+**Viewport gate.** A lazy column that is `hidden md:*` draws nothing below `md`, so neither
+gate that feeds one may open there: `analyzer_kit::enrichment::use_wide_viewport()` (a
+`leptos-use` `use_media_query` on `(min-width: 48rem)`, Tailwind's `md` verbatim) is `&&`-ed
+into `stats_30_wanted` and `spark_rows_wanted`. **Fetch path only** — the signal reaches a
+`Memo` an `Effect` consumes and nothing that renders, because it is `false` on the server and
+on the first client render, and a markup branch on it would tear hydration. It is also the
+one coupling the phones decision (#7 below) has to carry: whoever gives the recipe analyzer a
+horizontal-scroll layout and drops `hidden md:*` must drop this gate in the same change, or
+the newly visible columns will never load.
 Coverage caveats stated in tooltips: `sales_hourly` accretes from a 30-hour refresh with no
 backfill; `item_stats_window` covers about 7% of traded items.
 
