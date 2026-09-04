@@ -180,6 +180,12 @@ pub struct NeededSignals {
 /// rather than let them tick a column that renders "—". Enforced here, not
 /// in the picker, so it holds for any bookmarked URL and identically on SSR
 /// and CSR.
+///
+/// It also produces a second, independent family for the revenue side:
+/// `rev` (the union of the effective revenue signal, the visible `rev-*`
+/// columns and the revenue sort target) and `scope_vs_home`. Those two are
+/// not capped — the cap exists because sub-crafts multiply the COST pass,
+/// and the revenue side prices one item per row.
 pub fn needed_signals(
     formula: &ProfitFormula,
     wants: &SignalWants,
@@ -581,6 +587,13 @@ mod tests {
         )
         .with_sell_scope(SellScope(Scope::Region));
         let mut aliased = needs(false, true);
+        // This tuple is UNREACHABLE in production — a region's name never
+        // equals a world's, so the page cannot produce buy=World with
+        // `sell_scope_is_buy_scope`. The case exists anyway because it is
+        // the only one that kills a plausible wrong rule: hoisting the buy
+        // side's want flag (`sell_scope_is_buy_scope && wants_sale_stats`)
+        // instead of consulting set membership. Cases A and B both pass
+        // under that mutation; this one fails on the last assertion.
         aliased.sell_scope_is_buy_scope = true;
         let got = needed_bodies(&f, &aliased);
         assert!(!got.contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS)));
