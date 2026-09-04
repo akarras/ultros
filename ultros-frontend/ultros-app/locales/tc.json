@@ -235,6 +235,7 @@
     "recipe_analyzer_col_drift": "價格走勢",
     "recipe_analyzer_window_7d": "7天",
     "analyzer_price_vs_median": "對比中位 {{pct}}",
+    "analyzer_price_troll": "天價掛單",
     "recipe_analyzer_tooltip_profit_per_day": "單件利潤 × 售出伺服器最近 7 天的日均成交筆數。",
     "recipe_analyzer_tooltip_trend": "售出伺服器最近 7 天的每小時價格。只為可見的列載入；小時級歷史不會回補，冷門物品可能一直是空的。",
     "recipe_analyzer_tooltip_drift": "該 7 天走勢從起點到終點的價格變化。±1% 以內視為持平。",

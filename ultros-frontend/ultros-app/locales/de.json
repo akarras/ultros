@@ -235,6 +235,7 @@
     "recipe_analyzer_col_drift": "Drift",
     "recipe_analyzer_window_7d": "7T",
     "analyzer_price_vs_median": "vs. Median {{pct}}",
+    "analyzer_price_troll": "Troll-Angebot",
     "recipe_analyzer_tooltip_profit_per_day": "Gewinn pro Einheit mal Verkäufe pro Tag der letzten 7 Tage auf der Verkaufswelt.",
     "recipe_analyzer_tooltip_trend": "Stündlicher Preis auf der Verkaufswelt über die letzten 7 Tage. Wird für die sichtbaren Zeilen geladen; die Stundenhistorie wird nicht nachgetragen, ein selten gehandelter Gegenstand kann daher leer bleiben.",
     "recipe_analyzer_tooltip_drift": "Preisänderung vom Anfang zum Ende dieses 7-Tage-Trends. Innerhalb von ±1 % gilt sie als unverändert.",

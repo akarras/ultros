@@ -43,7 +43,10 @@ use crate::price_basis::{BuyScope, CostBasis, RevenueMetric};
 use crate::query_defaults::{DEFAULT_MIN_DAILY_SALES, filter_query_signal, seed_query_default};
 use crate::ws::realtime::use_realtime;
 use crate::{
-    analysis::{SalesStats, analyze_sales, first_to_last_pct, profit_per_day_from_rate},
+    analysis::{
+        SalesStats, VS_MEDIAN_DISPLAY_CEILING_PCT, analyze_sales, first_to_last_pct,
+        is_troll_listing, profit_per_day_from_rate,
+    },
     api::{get_cheapest_listings, get_recent_sales_for_world, get_sale_stats, post_sparklines},
     components::{
         add_recipe_to_list::AddRecipeToList,
@@ -127,6 +130,17 @@ struct RecipeProfitData {
     /// The bare sell-world statistic (or listing) per revenue signal, no
     /// fallback; `None` = no row.
     rev_alt: [Option<i32>; 4],
+    /// The sell world's 7-day median sale for the quality this row's price
+    /// describes — the same `(item, stat_hq)` row every other 7-day figure
+    /// here came from, and the Price tell's basis.
+    ///
+    /// Deliberately NOT `rev_alt[SaleMedian]`: that one is
+    /// `stat_only_cheapest`, the cheaper of NQ and HQ, which is the right
+    /// meaning for the "Sale median (7d)" *alternative revenue* column and
+    /// the wrong one for a comparison against this row's own price. Prod
+    /// showed the cost of confusing them: an HQ price measured against an
+    /// NQ median read "vs median +399900%", in green.
+    sell_median: Option<i32>,
     /// `market_price` is not the selected signal on the sell world: the
     /// stat was missing, or the listing fell back to the buy scope.
     revenue_fell_back: bool,
@@ -951,32 +965,52 @@ fn cell_roi(r: &RecipeRow, _: &CellCtx) -> CellValue {
 /// sub-line: the listing tell when the price fell back to a listing, and
 /// the signed percent the price sits above or below the sell world's
 /// 7-day sale median — the revenue-side answer to "is this listing-min
-/// price real?" (#1202). The median is on the row already (`rev_alt`,
+/// price real?" (#1202). The median is on the row already (`sell_median`,
 /// filled from the body the page always fetches), so the tell costs no
 /// request.
 fn cell_price(r: &RecipeRow, ctx: &CellCtx) -> CellValue {
     if !ctx.preview {
         return CellValue::Gil(r.market_price);
     }
-    let listing = r.revenue_fell_back;
-    let median = r.rev_alt[PriceSignal::SaleMedian.index()];
-    // `alt` = the price, `input` = the median: this sub-line sits under
-    // Price and reads "this price is n% above/below the 7-day median" — the
-    // opposite orientation from `rev_alt_cell`, where the alternative is
-    // what the cell renders. So a price of 138 against a median of 100 is
-    // `+38%` (green) and a price of 75 against the same median is `-25%`
-    // (red): the suspiciously cheap listing is the one that reads as a
-    // warning, not as good news. `delta_pct` still yields `None` when the
-    // median is unpriced *or* equal to the price, so the median basis never
-    // shows itself "+0%".
-    let note = match median.and_then(|m| delta_pct(Some(r.market_price), m)) {
-        Some(pct) => CellNote::VsMedian { listing, pct },
-        None if listing => CellNote::ListingFallback,
-        None => CellNote::None,
-    };
     CellValue::GilWithNote {
         amount: r.market_price,
-        note,
+        note: price_note(r.market_price, r.sell_median, r.revenue_fell_back),
+    }
+}
+
+/// The Price sub-line, given the row's price and the 7-day median of the
+/// *same quality* (`RecipeProfitData::sell_median`).
+///
+/// `alt` = the price, `input` = the median: this line sits under Price and
+/// reads "this price is n% above/below the 7-day median" — the opposite
+/// orientation from `rev_alt_cell`, where the alternative is what the cell
+/// renders. So a price of 138 against a median of 100 is `+38%` (green) and
+/// a price of 75 against the same median is `-25%` (red): the suspiciously
+/// cheap listing is the one that reads as a warning, not as good news.
+/// `delta_pct` still yields `None` when the median is unpriced *or* equal to
+/// the price, so the median basis never shows itself "+0%".
+///
+/// Two guards keep "above the median" from reading as unbounded good news,
+/// which is what shipped in #1264 and what prod showed:
+///
+/// * At [`is_troll_listing`] — 50x the median, the multiple the rest of this
+///   codebase already refuses to price against — the percentage is dropped
+///   for a warning. Painting a listing emerald that `flip_estimated_sale_price`
+///   discards as unreal tells the user the opposite of what the tool believes.
+/// * Below that, the figure is clamped to
+///   [`VS_MEDIAN_DISPLAY_CEILING_PCT`], for the same reason ROI is clamped:
+///   past it the exact number carries no decision value.
+fn price_note(price: i32, median: Option<i32>, listing: bool) -> CellNote {
+    if median.is_some_and(|m| is_troll_listing(price, m)) {
+        return CellNote::Troll { listing };
+    }
+    match median.and_then(|m| delta_pct(Some(price), m)) {
+        Some(pct) => CellNote::VsMedian {
+            listing,
+            pct: pct.min(VS_MEDIAN_DISPLAY_CEILING_PCT),
+        },
+        None if listing => CellNote::ListingFallback,
+        None => CellNote::None,
     }
 }
 fn cell_avg(r: &RecipeRow, _: &CellCtx) -> CellValue {
@@ -2272,6 +2306,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         let sell_stat = stat_row_either(inp.sell_stats, recipe.item_result, inp.require_hq);
         let stat_hq = sell_stat.map(|s| s.hq).unwrap_or(inp.require_hq);
         let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
+        let sell_median = sell_stat.map(|s| s.median_price).filter(|p| *p > 0);
 
         results.push(RecipeProfitData {
             recipe,
@@ -2294,6 +2329,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             stat_hq,
             cost_alt,
             rev_alt,
+            sell_median,
             revenue_fell_back,
             unpriced: breakdown.unpriced_market_lines,
             hop,
@@ -4911,6 +4947,19 @@ mod test {
         /// Give the sell world HQ-only statistics, so the pass has to fall
         /// back to the other quality and the row has to record that it did.
         stats_hq: bool,
+        /// Give the sell world BOTH qualities, the HQ row four times
+        /// dearer on even item ids and four times cheaper on odd ones. The
+        /// NQ-only and HQ-only fixtures above cannot tell `stat_row_either`
+        /// (quality-matched) from `stat_only_cheapest` (cheaper of the two)
+        /// apart, because with one quality present they return the same
+        /// row — which is why #1264's Price tell shipped reading the wrong
+        /// one. Prod's shape is the dearer half (one item in five carries
+        /// an HQ median more than 3x its NQ one); the cheaper half is here
+        /// because it makes the two lookups disagree without `require_hq`,
+        /// which costs every ingredient HQ and leaves only a couple of rows
+        /// past the drop rule.
+        stats_both: bool,
+        require_hq: bool,
     }
 
     impl Default for RunOpts {
@@ -4922,8 +4971,15 @@ mod test {
                 sell_stats: true,
                 scope: None,
                 stats_hq: false,
+                stats_both: false,
+                require_hq: false,
             }
         }
+    }
+
+    /// The HQ figure `RunOpts::stats_both` writes for one NQ figure.
+    fn hq_scaled(item_id: i32, nq: i32) -> i32 {
+        if item_id % 2 == 0 { nq * 4 } else { nq / 4 }
     }
 
     fn run_with(cost: PriceSignal, revenue: PriceSignal, o: &RunOpts) -> Vec<RecipeProfitData> {
@@ -4951,6 +5007,22 @@ mod test {
                     )
                 })
                 .collect()
+        } else if o.stats_both {
+            let mut both = index.clone();
+            for s in &stats.stats {
+                let scale = |p: i32| hq_scaled(s.item_id, p);
+                both.insert(
+                    (s.item_id, true),
+                    ItemSaleStats {
+                        hq: true,
+                        min_price: scale(s.min_price),
+                        median_price: scale(s.median_price),
+                        avg_price: scale(s.avg_price),
+                        ..*s
+                    },
+                );
+            }
+            both
         } else {
             index.clone()
         };
@@ -4985,7 +5057,7 @@ mod test {
             levels: &levels,
             job_filter: None,
             use_subcrafts: false,
-            require_hq: false,
+            require_hq: o.require_hq,
             filter_outliers: o.outliers,
             shards: ShardsMode::ExcludeShards,
             on_hand: None,
@@ -5293,6 +5365,7 @@ mod test {
             stat_hq: false,
             cost_alt: [None; 4],
             rev_alt: [None; 4],
+            sell_median: None,
             revenue_fell_back: false,
             unpriced: 0,
             hop: None,
@@ -5459,7 +5532,7 @@ mod test {
     fn price_row(key: i32, price: i32, median: Option<i32>, fell_back: bool) -> RecipeRow {
         let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
         r.market_price = price;
-        r.rev_alt[PriceSignal::SaleMedian.index()] = median;
+        r.sell_median = median;
         r.revenue_fell_back = fell_back;
         Arc::new(r)
     }
@@ -5551,6 +5624,160 @@ mod test {
             cell_price(&price_row(key, 138, Some(100), false), &off),
             CellValue::Gil(138)
         );
+    }
+
+    /// The tell reads `sell_median` — the quality-matched 7-day median — and
+    /// nothing else. `rev_alt[SaleMedian]` is the cheaper-of-both-qualities
+    /// figure behind the "Sale median (7d)" column, and feeding it to this
+    /// comparison is exactly the #1264 defect: it is still populated here,
+    /// and it must not produce a tell.
+    #[test]
+    fn the_median_tell_ignores_the_cheapest_quality_column() {
+        let key = fixture_recipes()[0].key_id.0;
+        let ctx = test_ctx();
+        let mut r = Arc::try_unwrap(row(key, 0, 0, 1.0, 1)).ok().unwrap();
+        r.market_price = 40_000_000;
+        // The alternative-revenue column's basis: present, and wildly below
+        // the price. Under #1264 this alone rendered "+399900%" in emerald.
+        r.rev_alt[PriceSignal::SaleMedian.index()] = Some(10_000);
+        r.sell_median = None;
+        assert_eq!(
+            cell_price(&Arc::new(r), &ctx),
+            CellValue::GilWithNote {
+                amount: 40_000_000,
+                note: CellNote::None
+            },
+            "no quality-matched median means no tell, whatever rev_alt holds"
+        );
+    }
+
+    /// Above the median is not unbounded good news. At 50x — the multiple
+    /// `is_troll_listing` already refuses to price against — the percentage
+    /// gives way to the warning; below that it is clamped, for the reason
+    /// ROI is.
+    #[test]
+    fn a_price_far_above_the_median_warns_instead_of_reading_emerald() {
+        let key = fixture_recipes()[0].key_id.0;
+        let ctx = test_ctx();
+        let note =
+            |price, median| match cell_price(&price_row(key, price, Some(median), false), &ctx) {
+                CellValue::GilWithNote { note, .. } => note,
+                other => panic!("expected a note, got {other:?}"),
+            };
+        // The prod row that prompted this: Agate Ring of Slaying, priced
+        // 40,000,000 against a ~10,000 median. 4000x, so: the warning.
+        assert_eq!(note(40_000_000, 10_000), CellNote::Troll { listing: false });
+        // `is_troll_listing` is a strict `>`, so exactly 50x is still a
+        // percentage — clamped, because +4900% is not a figure anyone acts
+        // on — and 50x plus one gil is the warning.
+        assert_eq!(
+            note(50_000, 1_000),
+            CellNote::VsMedian {
+                listing: false,
+                pct: VS_MEDIAN_DISPLAY_CEILING_PCT
+            }
+        );
+        assert_eq!(note(50_001, 1_000), CellNote::Troll { listing: false });
+        assert_eq!(
+            note(11_000, 1_000),
+            CellNote::VsMedian {
+                listing: false,
+                pct: VS_MEDIAN_DISPLAY_CEILING_PCT
+            },
+            "+1000% clamps"
+        );
+        // Inside the ceiling nothing is touched. (Compared with a tolerance:
+        // `delta_pct` divides in f32, so a figure this large is not exactly
+        // representable and an equality here would pin a rounding artefact,
+        // not the behaviour.)
+        let pct_of = |price, median| match note(price, median) {
+            CellNote::VsMedian { pct, .. } => pct,
+            other => panic!("expected a percentage, got {other:?}"),
+        };
+        let under = pct_of(10_980, 1_000);
+        assert!(
+            (under - 998.0).abs() < 0.01,
+            "just under the ceiling is untouched, got {under}"
+        );
+        // The clamp really is one-sided: the low side cannot reach it,
+        // because the numerator is a positive price over a positive median.
+        assert_eq!(pct_of(1, 100), -99.0);
+        // The listing tell keeps its place in front of the warning.
+        assert_eq!(
+            cell_price(&price_row(key, 40_000_000, Some(10_000), true), &ctx),
+            CellValue::GilWithNote {
+                amount: 40_000_000,
+                note: CellNote::Troll { listing: true }
+            }
+        );
+        // And with the toggle off the troll row is the bare gil cell, the
+        // same value a row with no median at all produces.
+        let off = CellCtx {
+            preview: false,
+            ..test_ctx()
+        };
+        assert_eq!(
+            cell_price(&price_row(key, 40_000_000, Some(10_000), true), &off),
+            CellValue::Gil(40_000_000)
+        );
+        assert_eq!(
+            cell_price(&price_row(key, 40_000_000, None, false), &off),
+            CellValue::Gil(40_000_000)
+        );
+    }
+
+    /// With the Labs toggle off the Price cell is the markup it has always
+    /// been: `CellValue::Gil`, identical whatever the row carries, and
+    /// identical to what every other gil column renders. Asserted on the
+    /// HTML rather than on the enum, because an enum equality cannot see a
+    /// change to the `Gil` render arm. There is no width in it — the class
+    /// is a static prop and the arm has no responsive branch — so one
+    /// comparison covers every viewport.
+    #[test]
+    fn the_flag_off_price_cell_is_the_plain_gil_markup() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let key = fixture_recipes()[0].key_id.0;
+            let off = CellCtx {
+                preview: false,
+                ..test_ctx()
+            };
+            let html = |v| {
+                crate::analyzer_kit::cells::render_cell("w-32", v, i18n, &off)
+                    .unwrap()
+                    .to_html()
+            };
+            let baseline = html(CellValue::Gil(40_000_000));
+            for (median, fell_back) in [
+                // The prod row: 40,000,000 against a ~44k median. Troll.
+                (Some(43_995), false),
+                (Some(43_995), true),
+                // Just under the troll multiple, so a clamped percentage.
+                (Some(1_000_000), false),
+                // No sale history at all, and the degenerate equal case.
+                (None, false),
+                (None, true),
+                (Some(40_000_000), false),
+            ] {
+                assert_eq!(
+                    html(cell_price(
+                        &price_row(key, 40_000_000, median, fell_back),
+                        &off
+                    )),
+                    baseline,
+                    "median {median:?}, fell_back {fell_back}"
+                );
+            }
+            assert!(
+                !baseline.contains("vs median")
+                    && !baseline.contains("troll")
+                    && !baseline.contains("listing"),
+                "{baseline}"
+            );
+        });
     }
 
     fn test_ctx() -> CellCtx {
@@ -5863,6 +6090,86 @@ mod test {
             "the HQ row's figures are what the row carries"
         );
         assert!(hq.iter().filter(|r| !r.stat_hq).all(|r| r.vwap == 0));
+    }
+
+    /// The row's median is its own quality's; the "Sale median (7d)"
+    /// alternative-revenue column's is still the cheaper of the two. Both
+    /// are asserted off one run, because the defect was one silently
+    /// standing in for the other — and no other test in this file can see
+    /// the difference: every existing fixture gives an item ONE quality of
+    /// statistics, and with one quality present `stat_row_either` and
+    /// `stat_only_cheapest` return the same row.
+    #[test]
+    fn the_rows_median_is_quality_matched_and_the_alt_column_is_not() {
+        let f = ProfitFormula::recipe_from_query(Some(PriceSignal::ListingMin), None, None);
+        let opts = |require_hq| RunOpts {
+            stats_both: true,
+            require_hq,
+            needs: needed_signals(&f, &SignalWants::default(), false),
+            ..RunOpts::default()
+        };
+        // The fixture's NQ median, and which items get a statistics row.
+        let median_of = |out: i32| 100 + (out % 97) * 7 + 5;
+        let has_stats = |out: i32| out % 3 == 0 && out != 0;
+
+        // NQ recipes: the row reads the median of the quality it produces,
+        // whichever quality happens to be cheaper. On the odd item ids —
+        // where the fixture makes HQ a quarter of NQ — the two lookups
+        // disagree, and #1264 rendered the second of them.
+        let nq = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &opts(false),
+        );
+        let (mut checked, mut diverged) = (0, 0);
+        for r in nq.iter().filter(|r| has_stats(r.recipe.item_result)) {
+            let (out, m) = (r.recipe.item_result, median_of(r.recipe.item_result));
+            let alt = r.rev_alt[PriceSignal::SaleMedian.index()];
+            assert!(!r.stat_hq, "recipe {}", r.recipe.key_id.0);
+            assert_eq!(r.sell_median, Some(m), "recipe {}", r.recipe.key_id.0);
+            assert_eq!(
+                alt,
+                Some(m.min(hq_scaled(out, m))),
+                "the Sale median (7d) column is still the cheaper quality"
+            );
+            checked += 1;
+            diverged += usize::from(r.sell_median != alt);
+        }
+        assert!(checked > 5, "only {checked} rows carried statistics");
+        assert!(
+            diverged > 5,
+            "only {diverged} rows told the two lookups apart"
+        );
+
+        // Require HQ and the row follows: its median is the HQ one — four
+        // times dearer on the even ids, which is prod's shape and the
+        // direction that read "+399900%" in green — while the
+        // alternative-revenue column keeps meaning "the cheaper quality".
+        let hq = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &opts(true),
+        );
+        let mut split = 0;
+        for r in hq.iter().filter(|r| has_stats(r.recipe.item_result)) {
+            let (out, m) = (r.recipe.item_result, median_of(r.recipe.item_result));
+            assert!(r.stat_hq, "recipe {}", r.recipe.key_id.0);
+            assert_eq!(
+                r.sell_median,
+                Some(hq_scaled(out, m)),
+                "recipe {}",
+                r.recipe.key_id.0
+            );
+            assert_eq!(
+                r.rev_alt[PriceSignal::SaleMedian.index()],
+                Some(m.min(hq_scaled(out, m)))
+            );
+            split += 1;
+        }
+        // Only a couple of rows: `require_hq` costs every ingredient HQ and
+        // the drop rule takes the rest. The 20-row pass above carries the
+        // weight; this one covers the HQ *preference* reaching the row.
+        assert!(split > 0, "no HQ-required row survived the drop rule");
     }
 
     #[test]

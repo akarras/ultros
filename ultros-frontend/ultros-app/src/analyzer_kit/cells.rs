@@ -112,6 +112,13 @@ pub enum CellNote {
         listing: bool,
         pct: f32,
     },
+    /// The price clears [`crate::analysis::is_troll_listing`] against that
+    /// same median: the rest of the analyzer calls this a troll listing and
+    /// refuses to price against it, so the tell says so in the warning
+    /// colour instead of painting a four-digit percentage emerald.
+    Troll {
+        listing: bool,
+    },
 }
 
 /// "13.5k", "632", "1.5M": the gil/day figure in a hop title.
@@ -140,6 +147,12 @@ const SUB_LINE: &str = "text-[10px] leading-3 text-[color:var(--color-text-muted
 /// `SUB_LINE` character for character, which is what keeps the Price note
 /// identical for the states that predate the median tell.
 const SUB_LINE_GEOM: &str = "text-[10px] leading-3";
+
+/// The Price note's warning colour. The same class `signed_delta_class`
+/// returns below its dead band — named here only because the troll tell has
+/// no percentage to hand it — and pinned equal to it in
+/// `the_price_note_adds_the_median_tell_without_moving_phase_d`.
+const SUB_LINE_WARN: &str = "text-red-300";
 
 /// The bar a lazy or late cell shows while its fetch is in flight. Inline
 /// rather than `SingleLineSkeleton`: one shape needs the element present in
@@ -274,6 +287,19 @@ pub fn render_cell(
                             signed_delta_class(Some(pct), DELTA_DEAD_BAND_PCT)
                         ),
                     )
+                }
+                CellNote::Troll { listing } => {
+                    let tell = t_string!(i18n, analyzer_price_troll).to_string();
+                    let text = if listing {
+                        format!(
+                            "{} · {}",
+                            t_string!(i18n, analyzer_price_listing_fallback),
+                            tell
+                        )
+                    } else {
+                        tell
+                    };
+                    (text, format!("{SUB_LINE_GEOM} {SUB_LINE_WARN}"))
                 }
             };
             view! {
@@ -760,7 +786,9 @@ mod tests {
                 listing: false,
                 pct: 0.4,
             });
-            for h in [&listing, &up, &both, &flat] {
+            let troll = render(CellNote::Troll { listing: false });
+            let troll_listing = render(CellNote::Troll { listing: true });
+            for h in [&listing, &up, &both, &flat, &troll, &troll_listing] {
                 assert_eq!(count(&plain, "<div"), count(h, "<div"), "{plain}\n{h}");
             }
             // Phase D's two notes are byte-for-byte what they were.
@@ -786,6 +814,29 @@ mod tests {
                     crate::analysis::signed_delta_class(None, crate::analysis::DELTA_DEAD_BAND_PCT)
                 ),
                 SUB_LINE
+            );
+            // The troll tell is the warning, in the warning colour — no
+            // percentage, and above all no emerald.
+            assert!(
+                troll.contains("troll listing") && troll.contains(SUB_LINE_WARN),
+                "{troll}"
+            );
+            assert!(
+                !troll.contains("emerald") && !troll.contains('%'),
+                "{troll}"
+            );
+            assert!(
+                troll_listing.contains("listing · troll listing"),
+                "{troll_listing}"
+            );
+            // And that colour is not a new one: it is exactly the class
+            // `signed_delta_class` gives a price below its median.
+            assert_eq!(
+                SUB_LINE_WARN,
+                crate::analysis::signed_delta_class(
+                    Some(-2.0),
+                    crate::analysis::DELTA_DEAD_BAND_PCT
+                )
             );
         });
     }

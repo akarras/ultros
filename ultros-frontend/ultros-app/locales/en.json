@@ -235,6 +235,7 @@
     "recipe_analyzer_col_drift": "Drift",
     "recipe_analyzer_window_7d": "7d",
     "analyzer_price_vs_median": "vs median {{pct}}",
+    "analyzer_price_troll": "troll listing",
     "recipe_analyzer_tooltip_profit_per_day": "Profit per unit times sales per day over the last 7 days on the sell world.",
     "recipe_analyzer_tooltip_trend": "Hourly price on the sell world over the last 7 days. Loaded for the rows in view; the hourly history is not backfilled, so a quiet item can stay blank.",
     "recipe_analyzer_tooltip_drift": "Price change from the start to the end of that 7-day trend. Inside ±1% it reads flat.",
