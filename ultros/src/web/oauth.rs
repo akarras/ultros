@@ -339,29 +339,38 @@ pub async fn logout(
         .ok_or(WebError::NotAuthenticated)?;
 
     let token_value = cookie.value().to_string();
-    cache.remove_token(&token_value).await;
-
-    let token = AccessToken::new(token_value.clone());
-    // now try to revoke it async style
-    if let Ok(revocable_token) = config
-        .inner
-        .client
-        .revoke_token(StandardRevocableToken::AccessToken(token))
-    {
-        if let Err(e) = revocable_token
-            .request_async(&config.inner.http_client)
-            .await
+    invalidate_session_on_logout(&cache, &token_value, async {
+        let token = AccessToken::new(token_value.clone());
+        if let Ok(revocable_token) = config
+            .inner
+            .client
+            .revoke_token(StandardRevocableToken::AccessToken(token))
         {
-            tracing::warn!("Failed to revoke discord token on logout: {}", e);
+            if let Err(e) = revocable_token
+                .request_async(&config.inner.http_client)
+                .await
+            {
+                tracing::warn!("Failed to revoke discord token on logout: {}", e);
+            }
         }
-    }
+    })
+    .await;
 
+    let cookie_jar = cookie_jar.remove(discord_auth_removal_cookie());
+    Ok((cookie_jar, Redirect::to("/")))
+}
+
+async fn invalidate_session_on_logout(
+    cache: &AuthUserCache,
+    token: &str,
+    revoke: impl std::future::Future<Output = ()>,
+) {
+    cache.remove_token(token).await;
+    revoke.await;
     // A validation may have started after the first invalidation but before
     // Discord processed the revocation. Evict its result and invalidate its
     // generation too, including when revocation failed or timed out.
-    cache.remove_token(&token_value).await;
-    let cookie_jar = cookie_jar.remove(discord_auth_removal_cookie());
-    Ok((cookie_jar, Redirect::to("/")))
+    cache.remove_token(token).await;
 }
 
 /// Positive authentication results are valid for at most five minutes. Reads
@@ -688,41 +697,22 @@ mod tests {
 
     #[tokio::test]
     async fn logout_invalidates_validations_started_during_revocation() {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Semaphore::new(0));
         let request_entered = entered.clone();
         let release_request = release.clone();
-        let app = axum::Router::new().fallback(move || {
-            let entered = request_entered.clone();
-            let release = release_request.clone();
-            async move {
-                entered.notify_one();
-                release.acquire().await.unwrap().forget();
-                axum::http::StatusCode::OK
-            }
-        });
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let mut config = DiscordAuthConfig::new(
-            "client".into(),
-            "secret".into(),
-            "https://example.com/redirect".into(),
-            HashSet::new(),
-        );
-        let inner = Arc::get_mut(&mut config.inner).unwrap();
-        inner.client = inner
-            .client
-            .clone()
-            .set_revocation_url(RevocationUrl::new(format!("http://{address}/revoke")).unwrap());
         let cache = AuthUserCache::new();
         cache.store_user("token", cached_user(1)).await;
-        let cookies =
-            PrivateCookieJar::new(Key::generate()).add(discord_auth_cookie("token".into()));
         let logout_cache = cache.clone();
-        let logout =
-            tokio::spawn(async move { logout(cookies, State(config), State(logout_cache)).await });
+        // OAuth2 deliberately refuses HTTP revocation endpoints. Inject the
+        // awaited operation instead of relying on an insecure local mock URL.
+        let logout = tokio::spawn(async move {
+            invalidate_session_on_logout(&logout_cache, "token", async move {
+                request_entered.notify_one();
+                release_request.acquire().await.unwrap().forget();
+            })
+            .await;
+        });
         tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
             .await
             .unwrap();
@@ -734,12 +724,10 @@ mod tests {
             .await;
         assert!(cache.get_user("token").await.is_some());
         release.add_permits(1);
-        let (_cookies, _redirect) = tokio::time::timeout(std::time::Duration::from_secs(2), logout)
+        tokio::time::timeout(std::time::Duration::from_secs(2), logout)
             .await
             .unwrap()
-            .unwrap()
             .unwrap();
-        server.abort();
         assert!(
             cache.get_user("token").await.is_none(),
             "logout must evict validation completed during revocation"
