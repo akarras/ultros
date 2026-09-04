@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Recipe Analyzer: check your sale price against the whole datacenter or region",
+        blurb: "With \"Recipe Analyzer: the market model\" on under Settings › Labs, the price the analyzer expects you to sell at can now be read across a whole datacenter or region, next to the scope your ingredients already had. You still sell on your own world — this only changes which market the expected price is read from, so you can see what you are actually competing with. Price, Profit and the alternative revenue columns follow it, and a new Scope vs home column in the Columns picker says how far the wider market sits from your own. Under the cheapest-listing signal it is never above zero, because a bigger market has more sellers undercutting each other; the sale-history signals are where the two can differ in either direction. Sales per day, Confidence, Trend and the rest keep describing your own world, so the numbers you judge speed by never move.",
+        link: Some("/recipe-analyzer"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Flip Finder opens reliably from world links",
         blurb: "Opening a Flip Finder world link directly now finishes loading its controls and live updates, instead of leaving the page stuck after its first results appear.",
         link: Some("/flip-finder"),

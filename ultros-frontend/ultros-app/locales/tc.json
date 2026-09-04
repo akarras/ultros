@@ -228,7 +228,7 @@
     "signal_short_sale_median": "7天中位",
     "signal_short_sale_avg": "7天均價",
     "labs_analyzer_recipe_title": "配方分析器：市場模型",
-    "labs_analyzer_recipe_desc": "整個工具只用這一個開關：表格上方的利潤公式操作面板、每個價格訊號一個可排序欄位（含「使用」按鈕）、跳服收益 / 單位與需前往的伺服器，以及市場欄位——日利潤、走勢、價格走勢、成交量（30天）與 VWAP（30天）。",
+    "labs_analyzer_recipe_desc": "整個工具只用這一個開關：表格上方的利潤公式操作面板、每個價格訊號一個可排序欄位（含「使用」按鈕）、跳服收益 / 單位與需前往的伺服器，以及市場欄位——日利潤、走勢、價格走勢、成交量（30天）與 VWAP（30天）。另外新增銷售端範圍，可依大區或區域讀取預期售價——你仍然只在自己的伺服器上出售。",
     "analyzer_picker_group_market": "市場",
     "analyzer_picker_group_location": "位置",
     "recipe_analyzer_col_volume_30d": "成交量（30天）",

@@ -5303,10 +5303,11 @@ mod test {
     /// route context, so the call site is read back from source instead.
     #[test]
     fn the_grid_call_opts_into_a_sized_row_spacer() {
-        const SRC: &str = include_str!("recipe_analyzer.rs");
-        // Assembled at run time: `include_str!` pulls in this test's own
-        // source too, so a literal needle would satisfy itself.
-        let passes = |prop: &str, konst: &str| SRC.contains(&format!("{prop}={konst}"));
+        // Reads the production half only, so this test's own source cannot
+        // satisfy the needle. The names are still assembled at run time:
+        // the helper strips the test module, not this doc comment.
+        let src = production_source();
+        let passes = |prop: &str, konst: &str| src.contains(&format!("{prop}={konst}"));
 
         assert_eq!(RECIPE_ROW_MIN_WIDTH, "max-content");
         assert!(
@@ -5822,6 +5823,51 @@ mod test {
             ]
         );
         assert_eq!(DEFAULT_COLS.as_slice(), &["confidence"]);
+    }
+
+    /// Phase F's complete URL surface, in one assertion, so a reviewer can
+    /// read what a bookmark is promised without reconstructing it from six
+    /// tests. Each half is also pinned where it lives; this is the index.
+    #[test]
+    fn phase_f_adds_exactly_one_key_and_one_column_token() {
+        // One selection key, and it is NOT a row filter.
+        assert_eq!(FILTER_SELL_SCOPE, "sell-scope");
+        assert_eq!(ADDABLE_FILTERS.len(), 9);
+        assert!(!ADDABLE_FILTERS.contains(&FILTER_SELL_SCOPE));
+        // Its three values are the buy scope's three, and `world` is the
+        // default the setter strips.
+        assert_eq!(SellScope::default().to_string(), "world");
+
+        // One column token, appended, lab-gated.
+        assert_eq!(OPTIONAL_COLUMN_ORDER.len(), 23);
+        assert_eq!(*OPTIONAL_COLUMN_ORDER.last().unwrap(), COL_SCOPE_VS_HOME);
+        assert_eq!(BASE_COLUMN_ORDER.len(), 7);
+        assert!(!BASE_COLUMN_ORDER.contains(&COL_SCOPE_VS_HOME));
+        assert_eq!(DEFAULT_COLS.as_slice(), &["confidence"]);
+        assert_eq!(RECIPE_COLUMNS.len(), 31);
+        let col = RECIPE_COLUMNS
+            .iter()
+            .find(|c| c.id == COL_SCOPE_VS_HOME)
+            .expect("catalogued");
+        assert_eq!(col.lab, Some(LAB_ANALYZER_RECIPE));
+        assert!(!col.default_on);
+
+        // One sort token, lab-only.
+        assert_eq!(ALL_SORT_MODES.len(), 25);
+        assert_eq!(SortMode::ScopeVsHome.to_string(), COL_SCOPE_VS_HOME);
+        assert!(SortMode::ScopeVsHome.lab_only());
+
+        // And nothing was migrated, renamed or removed.
+        assert_eq!(
+            migrate_legacy_params(&[("sell-scope".into(), "region".into())]),
+            None,
+            "a Phase F URL is already modern"
+        );
+
+        // Global Constraint 6, re-asserted deliberately rather than by
+        // accident: Phase F added no viewport-gated fetch.
+        let reads = production_source().replace("use_wide_viewport", "");
+        assert_eq!(reads.matches("wide_viewport.get()").count(), 2);
     }
 
     /// Every sort mode must be catalogued by exactly one column: two
@@ -9405,7 +9451,11 @@ mod test {
             vec![("routes/recipe_analyzer.rs".to_string(), 1)],
             "`with_sell_scope` is called from exactly one place in the whole \
              crate — `seat_sell_scope` — and from nowhere else, or the page \
-             and the table can seat the scope differently again"
+             and the table can seat the scope differently again. Note the \
+             split rule in `crate_production_halves`: a file whose first \
+             `#[cfg(test)]` is not a trailing test module counts WHOLE, so a \
+             call added inside such a file's tests is reported here as a \
+             production caller"
         );
 
         let production = production_source();
@@ -9989,23 +10039,9 @@ mod test {
     /// constant `true` ships a 438 KB body to the default page.
     #[test]
     fn the_page_wires_both_gates_to_what_it_fetches() {
-        const SRC: &str = include_str!("recipe_analyzer.rs");
-        // Assembled at run time: `include_str!` pulls in this test module
-        // too, so a literal needle would satisfy itself. Splitting on the
-        // module header keeps the search to the production half.
-        // Anchored on the attribute too: a bare `mod test {` could appear
-        // in a doc comment or a string above and silently truncate the
-        // region being searched, failing this test with nothing wrong.
-        // Split on the two anchors rather than one needle holding a
-        // real newline: a CRLF checkout would make that needle miss and
-        // panic here with nothing actually wrong.
-        let (production, rest) = SRC
-            .split_once(&format!("#[cfg({})]", "test"))
-            .expect("the production half ends at the test module attribute");
-        assert!(
-            rest.trim_start().starts_with(&format!("mod {} {{", "test")),
-            "the attribute ending the production half must be the test module's"
-        );
+        // `production_source()` carries the split and the two anchors it is
+        // built on; this test used to inline its own copy of both.
+        let production = production_source();
         assert!(
             production.contains(&format!("{}: {}(", "stats_30", "stats_30_wanted")),
             "the page's RecipeNeeds must take stats_30 from the visible columns and the sort target"

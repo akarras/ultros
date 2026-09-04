@@ -228,7 +228,7 @@
     "signal_short_sale_median": "7d median",
     "signal_short_sale_avg": "7d avg",
     "labs_analyzer_recipe_title": "Recipe Analyzer: the market model",
-    "labs_analyzer_recipe_desc": "One toggle for the whole tool: the profit formula as a control above the table, a sortable column for every price signal with a “use” pill, Hop gain / unit and Worlds to visit, and the market columns — Profit/day, Trend, Drift, Volume (30d) and VWAP (30d).",
+    "labs_analyzer_recipe_desc": "One toggle for the whole tool: the profit formula as a control above the table, a sortable column for every price signal with a “use” pill, Hop gain / unit and Worlds to visit, and the market columns — Profit/day, Trend, Drift, Volume (30d) and VWAP (30d). Plus a sell-side scope that reads the expected sale price across your datacenter or region — you still sell on your own world.",
     "analyzer_picker_group_market": "Market",
     "analyzer_picker_group_location": "Location",
     "recipe_analyzer_col_volume_30d": "Volume (30d)",

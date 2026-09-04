@@ -228,7 +228,7 @@
     "signal_short_sale_median": "7일 중앙값",
     "signal_short_sale_avg": "7일 평균",
     "labs_analyzer_recipe_title": "제작 레시피 분석기: 시장 모델",
-    "labs_analyzer_recipe_desc": "이 하나의 설정으로 도구 전체를 켭니다: 표 위의 이익 공식 조작 패널, 가격 신호마다 정렬 가능한 열과 “사용” 버튼, 이동 이득 / 개와 방문할 서버, 그리고 시장 열(일일 수익, 추세, 가격 추이, 거래량 (30일), VWAP (30일)).",
+    "labs_analyzer_recipe_desc": "이 하나의 설정으로 도구 전체를 켭니다: 표 위의 이익 공식 조작 패널, 가격 신호마다 정렬 가능한 열과 “사용” 버튼, 이동 이득 / 개와 방문할 서버, 그리고 시장 열(일일 수익, 추세, 가격 추이, 거래량 (30일), VWAP (30일)). 여기에 예상 판매가를 데이터 센터나 지역 전체에서 읽는 판매 범위가 더해집니다 — 판매는 여전히 자신의 서버에서 합니다.",
     "analyzer_picker_group_market": "시장",
     "analyzer_picker_group_location": "위치",
     "recipe_analyzer_col_volume_30d": "거래량 (30일)",

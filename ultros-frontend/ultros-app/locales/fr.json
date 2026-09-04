@@ -228,7 +228,7 @@
     "signal_short_sale_median": "médiane 7 j",
     "signal_short_sale_avg": "moy. 7 j",
     "labs_analyzer_recipe_title": "Analyseur de recettes : le modèle de marché",
-    "labs_analyzer_recipe_desc": "Un seul réglage pour tout l'outil : la formule de profit comme contrôle au-dessus du tableau, une colonne triable par signal de prix avec sa pastille « utiliser », le gain par saut / unité et les mondes à visiter, et les colonnes de marché — bénéfice/jour, tendance, dérive, volume (30 j) et VWAP (30 j).",
+    "labs_analyzer_recipe_desc": "Un seul réglage pour tout l'outil : la formule de profit comme contrôle au-dessus du tableau, une colonne triable par signal de prix avec sa pastille « utiliser », le gain par saut / unité et les mondes à visiter, et les colonnes de marché — bénéfice/jour, tendance, dérive, volume (30 j) et VWAP (30 j). S'y ajoute une portée côté vente qui lit le prix de vente attendu sur votre centre serveur ou votre région — vous vendez toujours sur votre propre monde.",
     "analyzer_picker_group_market": "Marché",
     "analyzer_picker_group_location": "Emplacement",
     "recipe_analyzer_col_volume_30d": "Volume (30 j)",
