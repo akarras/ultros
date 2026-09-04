@@ -226,6 +226,9 @@ pub fn picker_options<T, M>(
 /// unpriced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PickerContext {
+    /// Where revenue is priced — the sell world, or the wider sell scope
+    /// when a page has one. Never the place a market column's 7-day
+    /// figures came from.
     pub sell_place: String,
     pub buy_place: String,
     pub revenue: PriceSignal,

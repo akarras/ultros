@@ -601,6 +601,31 @@ fn seat_sell_scope(f: ProfitFormula, preview: bool, param: Option<SellScope>) ->
     }
 }
 
+/// The name revenue is priced at: the sell world under the default sell
+/// scope, its datacenter or the region otherwise. `sell_place` stays the
+/// sell **world**, and the difference is load-bearing — the market columns'
+/// "7d · ‹place›" sub-labels, the sparkline feed, the 30-day body and Hop
+/// gain's home run all read the sell world's own data at every sell scope
+/// (spec §4), so naming the scope there would be a lie.
+fn revenue_place_for(
+    preview: bool,
+    param: Option<SellScope>,
+    sell_world: &str,
+    datacenter: Option<&str>,
+    region: &str,
+) -> String {
+    match sell_scope_for(preview, param)
+        .map(SellScope::scope)
+        .unwrap_or(Scope::World)
+    {
+        Scope::World => sell_world.to_string(),
+        // No datacenter resolved yet: the region is the honest wider name,
+        // and it is what the fetch key would use too.
+        Scope::Datacenter => datacenter.unwrap_or(region).to_string(),
+        Scope::Region => region.to_string(),
+    }
+}
+
 // --- Optional columns ------------------------------------------------------
 // `?cols=` namespace, distinct from the filter registry above. Order here is
 // the columns-picker + serialization order.
@@ -2775,9 +2800,17 @@ fn RecipeAnalyzerTable(
     /// page's strip chips and info-panel sentence, so all three describe
     /// the same fallback the rows were priced with.
     stats_loaded: RwSignal<(bool, bool)>,
-    /// The sell world's name, for the Price/Profit marks.
+    /// The sell world's name, for the market columns' "7d · ‹place›"
+    /// sub-labels. Never the sell scope: those figures come from the sell
+    /// world's own data whatever the scope is.
     #[prop(into)]
     sell_place: Signal<String>,
+    /// The sell PLACE's name: the sell world under the default sell scope,
+    /// its datacenter or region otherwise. Everything that names where
+    /// revenue came from reads this; everything that names where the 7-day
+    /// figures came from reads `sell_place`.
+    #[prop(into)]
+    revenue_place: Signal<String>,
     /// The buy scope's name, for the Cost mark.
     #[prop(into)]
     buy_place: Signal<String>,
@@ -2951,7 +2984,7 @@ fn RecipeAnalyzerTable(
     let marks = Memo::new(move |_| {
         preview.then(|| {
             let f = formula.get();
-            let m = f.marks(sell_place.get(), buy_place.get());
+            let m = f.marks(revenue_place.get(), buy_place.get());
             mark_labels(
                 &m,
                 &short_signal(i18n, m.cost),
@@ -2975,7 +3008,14 @@ fn RecipeAnalyzerTable(
         let selected_revenue = revenue_metric().unwrap_or_default();
         // Read once: the market arm below runs for every column in the
         // table, and `sell_place.get()` clones a `String` each time.
+        //
+        // Two names, one character apart, and the split is the point:
+        // `sell_now` is the sell WORLD — the market columns' 7-day figures
+        // come from its own data at every sell scope — while `revenue_now`
+        // is the sell PLACE the revenue signal was actually read across.
+        // They are the same string unless a lab-on URL widened the scope.
         let sell_now = sell_place.get();
+        let revenue_now = revenue_place.get();
         for col in RECIPE_COLUMNS.iter() {
             let extra = match col.spec.kind {
                 ColumnKind::RevSignal(s) => HeaderExtra {
@@ -2984,7 +3024,7 @@ fn RecipeAnalyzerTable(
                         sub_label: if s == f.revenue_signal() {
                             t_string!(i18n, analyzer_equals_price_slot).to_string()
                         } else {
-                            format!("{} · {}", short_signal(i18n, s), sell_now)
+                            format!("{} · {}", short_signal(i18n, s), revenue_now)
                         },
                         pill: Some(HeaderPill {
                             aria: t_string!(
@@ -3025,6 +3065,18 @@ fn RecipeAnalyzerTable(
                 },
                 ColumnKind::HopWorlds => HeaderExtra {
                     title: t_string!(i18n, analyzer_hop_worlds_help).to_string(),
+                    line2: None,
+                    header_class: None,
+                },
+                // The sign convention — "negative means the wider market
+                // prices lower, and under the cheapest listing it never
+                // goes above zero" — exists only in this string, and the
+                // catch-all below would drop the column's tooltip
+                // entirely. No second line: `HEAD_28_MD` is a one-line
+                // class, and the place a `7d · ‹place›` sub-label would
+                // name is exactly the thing this column compares two of.
+                ColumnKind::ScopeVsHome => HeaderExtra {
+                    title: t_string!(i18n, analyzer_scope_vs_home_help).to_string(),
                     line2: None,
                     header_class: None,
                 },
@@ -3290,7 +3342,9 @@ fn RecipeAnalyzerTable(
                 &RECIPE_COLUMNS,
                 i18n,
                 &PickerContext {
-                    sell_place: sell_place.get(),
+                    // The Revenue group's heading names where the revenue
+                    // signals are read, so it follows the sell scope.
+                    sell_place: revenue_place.get(),
                     buy_place: buy_place.get(),
                     revenue: f.revenue_signal(),
                     cost: f.cost_signal(),
@@ -4026,6 +4080,9 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
+    // Phase F's fourth pricing param. Read only through `sell_scope_for`,
+    // never raw; the setter strips the default (Task 6).
+    let (sell_scope, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (filter_outliers, _) = filter_query_signal::<bool>(FILTER_OUTLIERS);
 
     let preview = use_lab(LAB_ANALYZER_RECIPE);
@@ -4155,6 +4212,19 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             .get()
             .map(|w| w.name)
             .unwrap_or_else(|| "…".to_string())
+    });
+    // The second name, and the whole of Task 5: everything that says where
+    // *revenue* came from reads this, everything that says where the 7-day
+    // figures came from reads `sell_place`. Equal at every scope with the
+    // lab off, and equal at the default scope with it on.
+    let revenue_place = Memo::new(move |_| {
+        revenue_place_for(
+            preview.get(),
+            sell_scope(),
+            &sell_place.get(),
+            datacenter().as_deref(),
+            &region.get(),
+        )
     });
     let buy_place = Memo::new(move |_| buy_scope_name.get());
 
@@ -4515,18 +4585,38 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         .map(|(_, l)| l)
                                         .unwrap_or_default()
                                 };
+                                let scoped = sell_scope_for(preview.get(), sell_scope())
+                                    .is_some_and(|s| s.scope() != Scope::World);
                                 // The connectives are translated: this is a
                                 // template, never a `format!` in Rust.
-                                t_string!(
-                                    i18n,
-                                    recipe_analyzer_calc_formula_live,
-                                    revenue = label_of(f.revenue_signal()),
-                                    sell = sell_place.get(),
-                                    tax = t_string!(i18n, formula_term_tax).to_string(),
-                                    cost = label_of(f.cost_signal()),
-                                    buy = buy_place.get()
-                                )
-                                .to_string()
+                                //
+                                // Two keys, not one edited key: "on {{sell}}"
+                                // is right for a world and wrong for a
+                                // datacenter, and rewording the shared string
+                                // would move the default page's sentence.
+                                if scoped {
+                                    t_string!(
+                                        i18n,
+                                        recipe_analyzer_calc_formula_live_scoped,
+                                        revenue = label_of(f.revenue_signal()),
+                                        sell = revenue_place.get(),
+                                        tax = t_string!(i18n, formula_term_tax).to_string(),
+                                        cost = label_of(f.cost_signal()),
+                                        buy = buy_place.get()
+                                    )
+                                    .to_string()
+                                } else {
+                                    t_string!(
+                                        i18n,
+                                        recipe_analyzer_calc_formula_live,
+                                        revenue = label_of(f.revenue_signal()),
+                                        sell = revenue_place.get(),
+                                        tax = t_string!(i18n, formula_term_tax).to_string(),
+                                        cost = label_of(f.cost_signal()),
+                                        buy = buy_place.get()
+                                    )
+                                    .to_string()
+                                }
                             } else {
                                 t_string!(i18n, recipe_analyzer_calc_formula).to_string()
                             }
@@ -4659,6 +4749,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         sort_dir=sort_dir
                                         stats_loaded=stats_loaded
                                         sell_place=sell_place
+                                        revenue_place=revenue_place
                                         buy_place=buy_place
                                         strip_terms=Callback::new(move |()| strip_terms())
                                         preview=preview.get()
@@ -4714,6 +4805,37 @@ mod test {
     use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
+
+    /// This module's production half. `include_str!` pulls in the test
+    /// module's own source, so a literal needle would satisfy itself;
+    /// splitting on the test attribute keeps every search below to the code
+    /// that actually ships. Split on two anchors rather than one needle
+    /// holding a real newline: a CRLF checkout would make that needle miss.
+    fn production_source() -> &'static str {
+        const SRC: &str = include_str!("recipe_analyzer.rs");
+        let (production, rest) = SRC
+            .split_once(&format!("#[cfg({})]", "test"))
+            .expect("the production half ends at the test module attribute");
+        assert!(
+            rest.trim_start().starts_with(&format!("mod {} {{", "test")),
+            "the attribute ending the production half must be the test module's"
+        );
+        production
+    }
+
+    /// `production_source()` with all whitespace removed, so a needle
+    /// cannot be broken by rustfmt's line wrapping (or by a CRLF
+    /// checkout). Assert against this whenever the thing being pinned is a
+    /// multi-argument call: rustfmt breaks any call it cannot fit in 100
+    /// columns onto one line per argument, and a needle written as one
+    /// line then pins text the formatter will never emit — a test that can
+    /// only fail.
+    fn production_squeezed() -> String {
+        production_source()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
 
     /// `analyzer_kit::grid`'s own test pins the *plumbing* — that a
     /// `row_min_width` reaches the scroller's row spacer. Nothing pinned the
@@ -7228,6 +7350,273 @@ mod test {
             assert!(market_extra(i18n, ColumnKind::HopGain, "Gilgamesh").is_none());
             assert!(market_extra(i18n, ColumnKind::Item, "Gilgamesh").is_none());
         });
+    }
+
+    /// `market_extra` puts the place it is GIVEN on line 2 — it has no
+    /// other source for one, so this pins the composition (`7d · ‹place›`)
+    /// and nothing more. Which place actually reaches the call is a
+    /// different question and a different test
+    /// (`the_two_places_reach_the_labels_they_belong_to`), because the two
+    /// variables are one character apart in `header_extras`.
+    #[test]
+    fn market_extras_put_the_place_they_are_given_on_the_second_line() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            for kind in [
+                ColumnKind::SalesPerDay7,
+                ColumnKind::Confidence,
+                ColumnKind::Trend,
+                ColumnKind::DriftSpark,
+            ] {
+                let one = market_extra(i18n, kind, "Gilgamesh").expect("a market extra");
+                let two = market_extra(i18n, kind, "Aether").expect("a market extra");
+                let (l1, l2) = (
+                    one.line2.expect("a second line").sub_label,
+                    two.line2.expect("a second line").sub_label,
+                );
+                assert!(l1.ends_with("Gilgamesh"), "{kind:?}: {l1}");
+                assert!(l2.ends_with("Aether"), "{kind:?}: {l2}");
+                assert_ne!(l1, l2, "{kind:?}: the place is interpolated, not baked in");
+            }
+        });
+    }
+
+    /// `market_extra` takes the sell WORLD; the marks, the alternative
+    /// revenue headers, the picker heading and the live sentence take the
+    /// sell PLACE. Reading the production half back out of the source is
+    /// the only way to see which variable reached which call — the same
+    /// technique `the_page_wires_both_gates_to_what_it_fetches` uses.
+    ///
+    /// Every needle aimed at a multi-argument call goes through
+    /// `production_squeezed()`: rustfmt breaks any call it cannot fit in
+    /// 100 columns onto one line per argument, and this phase has already
+    /// shipped one pin that could never match because of it.
+    #[test]
+    fn the_two_places_reach_the_labels_they_belong_to() {
+        let production = production_source();
+        let squeezed = production_squeezed();
+        assert!(
+            squeezed.contains(&format!("{}(i18n,kind,&{})", "market_extra", "sell_now")),
+            "market_extra takes the sell WORLD's name"
+        );
+        assert!(
+            production.contains(&format!("let {} = {}.get();", "sell_now", "sell_place")),
+            "and `sell_now` is the sell world"
+        );
+        assert!(
+            squeezed.contains(&format!(
+                "f.{}({}.get(),buy_place.get())",
+                "marks", "revenue_place"
+            )),
+            "the header marks name the sell PLACE"
+        );
+        assert!(
+            production.contains(&format!(
+                "let {} = {}.get();",
+                "revenue_now", "revenue_place"
+            )),
+            "and `revenue_now` is the sell place"
+        );
+        // The alternative-revenue headers read "‹signal› · ‹place›", and
+        // that place is where the signal would be READ, not where the
+        // 7-day figures live. Reverting this one to `sell_now` leaves
+        // `revenue_now` merely unused — a warning, and only at Task 9's
+        // `-D warnings` — so pin the argument itself.
+        assert!(
+            squeezed.contains(&format!("short_signal(i18n,s),{})", "revenue_now")),
+            "the alternative revenue sub-labels name the sell PLACE"
+        );
+        assert!(
+            production.contains(&format!("{}: {}.get(),", "sell_place", "revenue_place")),
+            "the picker's Revenue heading names the sell PLACE"
+        );
+        assert!(
+            production.contains(&format!("{} = {}.get(),", "sell", "revenue_place")),
+            "the live formula sentence names the sell PLACE"
+        );
+        // …and the place memo itself goes through the pure resolver, whose
+        // own body holds the lab gate — or a flag-off page with
+        // `?sell-scope=region` would rename every revenue label it shows.
+        //
+        // Aimed at `revenue_place_for`, NOT at a bare
+        // `sell_scope_for(preview.get(), sell_scope())`: that string is
+        // also written by the live-sentence branch added in this same
+        // task, and by Task 6's strip select and table prop, so it would
+        // pass without `revenue_place` consulting anything. The gate's own
+        // behaviour is what `the_two_places_agree_until_the_scope_moves`
+        // proves; this pins that the memo actually calls the function that
+        // has it.
+        assert!(
+            squeezed.contains(&format!(
+                "{}(preview.get(),{}(),",
+                "revenue_place_for", "sell_scope"
+            )),
+            "`revenue_place` must resolve through `revenue_place_for`, which \
+             is where the lab gate lives"
+        );
+    }
+
+    /// The two names are the same string until a lab-on URL asks for a
+    /// wider scope. This is the flag-off byte-identity proof for every
+    /// label this task moved: with the toggle off, or at the default scope,
+    /// `revenue_place` and `sell_place` are indistinguishable, so the marks,
+    /// the picker heading, the alternative revenue sub-labels and the live
+    /// sentence render exactly what they render today.
+    #[test]
+    fn the_two_places_agree_until_the_scope_moves() {
+        for preview in [false, true] {
+            for param in [None, Some(SellScope::default())] {
+                assert_eq!(
+                    revenue_place_for(preview, param, "Gilgamesh", Some("Aether"), "North-America"),
+                    "Gilgamesh",
+                    "preview={preview} param={param:?}"
+                );
+            }
+        }
+        // Lab off, EVERY param the URL can carry: still the sell world, so
+        // no label this task moved can differ from today's on a flag-off
+        // page, whatever `?sell-scope=` a bookmark holds.
+        for scope in [Scope::World, Scope::Datacenter, Scope::Region] {
+            assert_eq!(
+                revenue_place_for(
+                    false,
+                    Some(SellScope(scope)),
+                    "Gilgamesh",
+                    Some("Aether"),
+                    "North-America"
+                ),
+                "Gilgamesh",
+                "flag-off ?sell-scope={scope:?}"
+            );
+        }
+        // Lab on, wider param: the wider name, and the region when no
+        // datacenter has resolved yet.
+        assert_eq!(
+            revenue_place_for(
+                true,
+                Some(SellScope(Scope::Datacenter)),
+                "Gilgamesh",
+                Some("Aether"),
+                "North-America"
+            ),
+            "Aether"
+        );
+        assert_eq!(
+            revenue_place_for(
+                true,
+                Some(SellScope(Scope::Datacenter)),
+                "Gilgamesh",
+                None,
+                "North-America"
+            ),
+            "North-America"
+        );
+        assert_eq!(
+            revenue_place_for(
+                true,
+                Some(SellScope(Scope::Region)),
+                "Gilgamesh",
+                Some("Aether"),
+                "North-America"
+            ),
+            "North-America"
+        );
+    }
+
+    /// `header_extras` ends in a catch-all that delegates to
+    /// `market_extra`, which returns `None` for a non-market kind and makes
+    /// the whole column `continue`. A column with no arm of its own
+    /// therefore ships a header with no tooltip and the key it was written
+    /// for ships dead in seven locales. Two arms already exist for exactly
+    /// this reason (`HopGain`, `HopWorlds`); Scope vs home needs the third,
+    /// because the sign convention only exists in that string.
+    #[test]
+    fn the_scope_vs_home_header_has_its_own_extras_arm() {
+        let production = production_source();
+        assert!(
+            production.contains("ColumnKind::ScopeVsHome => HeaderExtra {"),
+            "no `header_extras` arm: the catch-all's `market_extra` returns \
+             None for this kind and the tooltip never renders"
+        );
+        assert_eq!(
+            production.matches("analyzer_scope_vs_home_help").count(),
+            1,
+            "the tooltip key is read exactly once, by that arm"
+        );
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            assert!(
+                market_extra(use_i18n(), ColumnKind::ScopeVsHome, "Aether").is_none(),
+                "if this ever returns Some, delete the arm instead of keeping both"
+            );
+        });
+    }
+
+    /// `recipe_analyzer_calc_formula_live` reads "‹revenue› **on** {{sell}}"
+    /// against "‹cost› **across** {{buy}}" deliberately: `on` is a world,
+    /// `across` is a scope. Feeding a datacenter into the `on` slot would
+    /// read "Sale median on Aether" two rows under "Sell on: Gilgamesh" and
+    /// assert the one thing retainers cannot do. A scoped variant is
+    /// selected when the sell scope is wider, and the default sentence is
+    /// untouched — which is also what keeps the flag-off and default-scope
+    /// rendering byte-identical.
+    #[test]
+    fn the_live_formula_sentence_scopes_the_sell_slot() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let plain = t_string!(
+                i18n,
+                recipe_analyzer_calc_formula_live,
+                revenue = "Sale median".to_string(),
+                sell = "Gilgamesh".to_string(),
+                tax = "5% tax".to_string(),
+                cost = "Cheapest listing".to_string(),
+                buy = "Aether".to_string()
+            )
+            .to_string();
+            let scoped = t_string!(
+                i18n,
+                recipe_analyzer_calc_formula_live_scoped,
+                revenue = "Sale median".to_string(),
+                sell = "Aether".to_string(),
+                tax = "5% tax".to_string(),
+                cost = "Cheapest listing".to_string(),
+                buy = "Aether".to_string()
+            )
+            .to_string();
+            assert!(plain.contains("on Gilgamesh"), "{plain}");
+            // The world preposition must be gone from the sell slot — the
+            // cost half's own "across {{buy}}" is what the scoped sentence
+            // reuses, so a copy-paste that left `on` in place would still
+            // contain "across Aether" and pass the assertion below.
+            assert!(!scoped.contains("on Aether"), "{scoped}");
+            assert!(scoped.contains("across Aether"), "{scoped}");
+        });
+        let production = production_source();
+        assert!(
+            production.contains("recipe_analyzer_calc_formula_live_scoped"),
+            "the scoped variant must actually be selected somewhere"
+        );
+        // And selected on the LAB-GATED scope, widened past the sell
+        // world. `sell_scope().is_some()` would compile, read the same at
+        // a glance, and hand a flag-off `?sell-scope=world` page the
+        // scoped sentence — the one rendered string on this page that a
+        // bookmarked URL could move with the toggle off.
+        assert!(
+            production_squeezed().contains(
+                "sell_scope_for(preview.get(),sell_scope()).is_some_and(|s|s.scope()!=Scope::World)"
+            ),
+            "the sentence must switch on the lab gate and on a scope wider \
+             than the sell world"
+        );
     }
 
     /// Trend and Drift sit side by side in the Market group, so they cannot
