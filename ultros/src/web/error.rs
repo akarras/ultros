@@ -147,6 +147,8 @@ define_error_enum!(ApiError {
     DiscordTokenInvalid(PrivateCookieJar<Key>),
     #[error("{0}")]
     Forbidden(&'static str),
+    #[error("{0}")]
+    BadRequest(&'static str),
 });
 
 impl ApiError {
@@ -165,6 +167,7 @@ impl ApiError {
             // failure at error level (the GlitchTip 2218/2210 lineage).
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             // A character id that the Lodestone doesn't know is a bad request
             // parameter, not a server fault - answering 500 both lied to the
             // caller and reported the typo to GlitchTip.
@@ -188,6 +191,9 @@ impl ApiError {
         match self {
             ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
+            ApiError::BadRequest(message) => {
+                ultros_api_types::result::ApiError::BadRequest((*message).into())
+            }
             ApiError::CharacterClaimError(ClaimError::Lodestone(
                 ProfileError::CharacterNotFound(_),
             )) => ultros_api_types::result::ApiError::NotFound,
@@ -381,6 +387,16 @@ impl IntoResponse for WebError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bad_request_preserves_client_error_message() {
+        let error = ApiError::BadRequest("unsupported push provider");
+        assert_eq!(
+            error.as_api_error(),
+            ultros_api_types::result::ApiError::BadRequest("unsupported push provider".into())
+        );
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
 
     /// An unauthenticated request must answer `401`, not `200`.
     ///

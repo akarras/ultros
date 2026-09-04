@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-04",
+        title: "Clearer browser notification setup",
+        blurb: "Browser notification setup now explains when a push service is unsupported, so you can tell why a subscription could not be saved.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
         date: "2026-09-03",
         title: "Recipe Analyzer: one Labs toggle, plus Profit/day, a price trend, its drift, and 30-day volume and VWAP",
         blurb: "The Recipe Analyzer's two Labs toggles are now one, \"Recipe Analyzer: the market model\" under Settings › Labs — turn it back on there if you had either of the old ones. It carries everything they did, plus five new columns in the Columns picker: Profit/day (profit times how fast the item sells), Trend (the last 7 days of prices as a sparkline), Drift (how far that trend moved), and Volume (30d) and VWAP (30d) for a longer view than the 7-day pair. Trend and Drift load only for the rows you can see; the 30-day columns load their own data the first time you show one. Price now says how it compares with the sell world's 7-day median, and the Columns picker groups everything under Market and Location.",

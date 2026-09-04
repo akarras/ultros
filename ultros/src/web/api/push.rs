@@ -19,7 +19,7 @@ use ultros_api_types::alert::{
 };
 use ultros_db::UltrosDb;
 
-use crate::alerts::delivery::get_web_push_config;
+use crate::alerts::delivery::{get_web_push_config, validate_web_push_endpoint};
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 
@@ -57,15 +57,16 @@ pub(crate) async fn create_push_subscription(
     // Basic sanity: the browser MUST give us non-empty endpoint + keys, or the
     // push service will refuse later anyway. Fail fast with a clear message.
     if req.endpoint.is_empty() || req.p256dh.is_empty() || req.auth.is_empty() {
-        return Err(ApiError::AnyhowError(anyhow::anyhow!(
-            "push subscription missing required fields"
-        )));
+        return Err(ApiError::BadRequest(
+            "push subscription missing required fields",
+        ));
     }
+    let endpoint = validate_web_push_endpoint(&req.endpoint).map_err(ApiError::BadRequest)?;
 
     let subscription_id = db
         .create_push_subscription(
             user.id as i64,
-            &req.endpoint,
+            endpoint.as_str(),
             &req.p256dh,
             &req.auth,
             req.user_agent.as_deref(),
