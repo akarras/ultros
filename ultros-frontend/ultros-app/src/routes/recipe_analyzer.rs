@@ -321,6 +321,18 @@ fn buy_scope_options(i18n: I18nContext<Locale, I18nKeys>) -> Vec<(&'static str, 
     ]
 }
 
+/// Which market the sale price is READ from. The same three tokens the buy
+/// side uses, with their own "this world" label: the buy side's reads "This
+/// world only" in a buying sentence, and this one sits in a chip about
+/// where a price comes from. Datacenter and Region reuse the shared nouns.
+fn sell_scope_options(i18n: I18nContext<Locale, I18nKeys>) -> Vec<(&'static str, String)> {
+    vec![
+        ("world", t_string!(i18n, sell_scope_this_world).to_string()),
+        ("datacenter", t_string!(i18n, datacenter).to_string()),
+        ("region", t_string!(i18n, region).to_string()),
+    ]
+}
+
 /// The header sub-labels for one set of marks: each priced side names the
 /// signal *and* the place it was read from, and the result column carries
 /// the tool's own sub-line. Built key by key and never iterated, so no
@@ -2811,6 +2823,13 @@ fn RecipeAnalyzerTable(
     /// figures came from reads `sell_place`.
     #[prop(into)]
     revenue_place: Signal<String>,
+    /// The sell scope the page resolved through `sell_scope_for` — `None`
+    /// with the lab off and at the default scope. A plain value, not a
+    /// signal: the page reads it inside the Suspense closure, so a scope
+    /// change rebuilds the table, which is what makes the pricing path
+    /// re-resolve (Task 8). Never `#[prop(optional)]` — that strips the
+    /// `Option` from the builder setter (Global Constraint 3).
+    sell_scope: Option<SellScope>,
     /// The buy scope's name, for the Cost mark.
     #[prop(into)]
     buy_place: Signal<String>,
@@ -2906,6 +2925,10 @@ fn RecipeAnalyzerTable(
     let (cost_basis, set_cost_basis) = filter_query_signal::<CostBasis>(FILTER_COST_BASIS);
     let (revenue_metric, set_revenue_metric) = filter_query_signal::<RevenueMetric>(FILTER_REVENUE);
     let (buy_scope, set_buy_scope) = filter_query_signal::<BuyScope>(FILTER_BUY_SCOPE);
+    // Only the setter: `Clear all` writes it, and everything that READS the
+    // scope inside this component reads the `sell_scope` prop, which the
+    // page already put through the lab gate.
+    let (_, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
     let (listing_world_filter, set_listing_world_filter) =
         filter_query_signal::<String>(FILTER_LISTING_WORLD);
     let (listing_dc_filter, set_listing_dc_filter) =
@@ -3267,6 +3290,12 @@ fn RecipeAnalyzerTable(
         if buy_scope().is_some() {
             active.push(FILTER_BUY_SCOPE);
         }
+        // Lab-gated at the source, unlike the three above: those are
+        // pre-lab params, and a bookmarked `?sell-scope=` must not change
+        // the flag-off page's "no active filters" hint.
+        if sell_scope.is_some() {
+            active.push(FILTER_SELL_SCOPE);
+        }
         if listing_world_filter().is_some() {
             active.push(FILTER_LISTING_WORLD);
         }
@@ -3409,6 +3438,10 @@ fn RecipeAnalyzerTable(
         set_cost_basis(None);
         set_revenue_metric(None);
         set_buy_scope(None);
+        // Deliberately not lab-gated: clearing an absent param is a no-op,
+        // and a user who turns the lab off after setting a scope must
+        // still be able to clear it.
+        set_sell_scope(None);
         set_listing_world_filter(None);
         set_listing_dc_filter(None);
         set_use_subcrafts(None);
@@ -4241,7 +4274,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             StripTerm {
                 role: TermRole::Revenue,
                 label: Signal::derive(String::new),
-                place: Some(sell_place.into()),
+                // The sell PLACE, not the sell world: the header mark
+                // beside this chip, the picker's Revenue heading and the
+                // live sentence all moved to it in Task 5, and a chip
+                // reading `· Gilgamesh` under a mark reading `Aether`
+                // describes two markets at once.
+                place: Some(revenue_place.into()),
                 select: Some(StripSelect {
                     value: Signal::derive(move || revenue_metric().unwrap_or_default().to_string()),
                     options: cost_basis_options(i18n),
@@ -4251,7 +4289,26 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     }),
                     aria: t_string!(i18n, formula_change_revenue_aria).to_string(),
                 }),
-                place_select: None,
+                // The spec's "fourth Market select". Reads through the lab
+                // gate like every other consumer of the param, so a
+                // flag-off page that somehow rendered this chip would show
+                // `world` rather than a bookmarked `?sell-scope=region`.
+                place_select: Some(StripSelect {
+                    value: Signal::derive(move || {
+                        sell_scope_for(preview.get(), sell_scope())
+                            .unwrap_or_default()
+                            .to_string()
+                    }),
+                    options: sell_scope_options(i18n),
+                    on_change: Callback::new(move |v: String| {
+                        let parsed = v.parse::<SellScope>().ok();
+                        // `SellScope::default()` is the WORLD, not
+                        // `Scope::default()`'s datacenter: stripping the
+                        // wrong one here would rewrite every URL.
+                        set_sell_scope(parsed.filter(|s| *s != SellScope::default()));
+                    }),
+                    aria: t_string!(i18n, formula_change_sell_scope_aria).to_string(),
+                }),
                 // Lit only when *this* term fell back: the effective
                 // revenue signal differs from the selected one.
                 degraded: Signal::derive(move || {
@@ -4750,6 +4807,7 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                                         stats_loaded=stats_loaded
                                         sell_place=sell_place
                                         revenue_place=revenue_place
+                                        sell_scope=sell_scope_for(preview.get(), sell_scope())
                                         buy_place=buy_place
                                         strip_terms=Callback::new(move |()| strip_terms())
                                         preview=preview.get()
@@ -4957,6 +5015,228 @@ mod test {
         assert_eq!(
             seat_sell_scope(base, true, Some(SellScope(Scope::Region))).sell_scope(),
             Scope::Region
+        );
+        // The one combination the loop above cannot reach: a hand-typed
+        // `?sell-scope=world` with the lab ON. The gate passes it through,
+        // so `with_sell_scope` runs and the slot becomes
+        // `Term::Select(World)` — which is NOT `PartialEq`-equal to the
+        // untouched `Term::Fixed(World)`, so the whole `ProfitFormula`
+        // compares unequal and a `Memo<ProfitFormula>` would notify.
+        //
+        // It prices identically: `sell_scope()` collapses both terms to
+        // `Scope::World`, so every lookup reads the same market and Global
+        // Constraint 8 is untouched. Inert only while nothing renders on
+        // the discriminant; asserted here, in the task that owns the
+        // setter, so the day something does render on it this is where it
+        // is noticed rather than in a screenshot.
+        assert_eq!(
+            sell_scope_for(true, Some(SellScope::default())),
+            Some(SellScope::default())
+        );
+        let on_world = seat_sell_scope(base, true, Some(SellScope::default()));
+        assert_eq!(on_world.sell_scope, Term::Select(Scope::World));
+        assert_ne!(
+            on_world, base,
+            "lab-on `?sell-scope=world` moves the term's discriminant"
+        );
+        assert_eq!(
+            on_world.sell_scope(),
+            base.sell_scope(),
+            "…and prices identically to the untouched ledger"
+        );
+        assert_eq!(on_world.sell_scope(), Scope::World);
+    }
+
+    /// One strip term can carry BOTH selects — the signal and the place —
+    /// and still show the resolved place name between them. That is the
+    /// mechanism behind the spec's "fourth Market select": the cost chip
+    /// already has two, and Phase F gives the revenue chip its second.
+    ///
+    /// This renders a hand-built term, so it pins the COMPONENT, not the
+    /// page's `strip_terms` (a closure over the page's signals, which no
+    /// unit test can call). The production half is pinned by the
+    /// source-read assertions below it.
+    #[test]
+    fn a_strip_term_carries_both_a_signal_select_and_a_place_select() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let terms = vec![
+                StripTerm::fixed(TermRole::Result, Signal::derive(|| "Profit / unit".into())),
+                StripTerm {
+                    role: TermRole::Revenue,
+                    label: Signal::derive(String::new),
+                    place: Some(Signal::derive(|| "Aether".to_string())),
+                    select: Some(StripSelect {
+                        value: Signal::derive(|| "listing-min".to_string()),
+                        options: cost_basis_options(i18n),
+                        on_change: Callback::new(|_: String| {}),
+                        aria: "signal".into(),
+                    }),
+                    place_select: Some(StripSelect {
+                        value: Signal::derive(|| "datacenter".to_string()),
+                        options: sell_scope_options(i18n),
+                        on_change: Callback::new(|_: String| {}),
+                        aria: t_string!(i18n, formula_change_sell_scope_aria).to_string(),
+                    }),
+                    degraded: Signal::derive(|| false),
+                },
+            ];
+            let html = view! { <FormulaStrip terms=terms layout=StripLayout::Stacked /> }.to_html();
+            assert_eq!(
+                html.matches("<select").count(),
+                2,
+                "one revenue term, two selects: {html}"
+            );
+            assert!(
+                html.contains("Aether"),
+                "the resolved place stays visible: {html}"
+            );
+            assert!(html.contains("value=\"region\""), "{html}");
+            // The aria-label is the sell scope's own, not the buy side's:
+            // handing `formula_change_scope_aria` to this select would
+            // render "Change where ingredients are bought" over a control
+            // that moves the sale price, and every assertion above would
+            // still pass.
+            assert!(
+                html.contains(&format!(
+                    "aria-label=\"{}\"",
+                    t_string!(i18n, formula_change_sell_scope_aria)
+                )),
+                "{html}"
+            );
+        });
+
+        // The production strip: the revenue term really does grow the
+        // second select, and the page really does end up with four.
+        let production = production_source();
+        assert_eq!(
+            production
+                .matches("place_select: Some(StripSelect {")
+                .count(),
+            2,
+            "the cost chip's and the revenue chip's — four selects on the strip"
+        );
+        assert!(
+            production.contains(&format!("options: {}(i18n),", "sell_scope_options")),
+            "…and the revenue one offers the sell-scope tokens"
+        );
+        // …under its own aria-label. The rendered assertion above cannot
+        // see this: the term it renders is built in this test. Writing
+        // this select by copying the cost chip's — which is how it would
+        // be written — leaves `formula_change_scope_aria` behind, and
+        // "Change where ingredients are bought" then narrates a control
+        // that moves the sale price. An unused i18n key raises no warning,
+        // so nothing else in the build would notice.
+        assert!(
+            production.contains(&format!(
+                "aria: t_string!(i18n, {}).to_string(),",
+                "formula_change_sell_scope_aria"
+            )),
+            "…and names itself with the sell side's aria-label"
+        );
+        // The chip's own place name follows the sell PLACE, not the sell
+        // world: it was the last revenue-side label still naming the
+        // world, and leaving it would put `· Gilgamesh` on the chip beside
+        // a header mark reading `Aether` on the same screen. Asserted in
+        // both directions — the positive alone would survive a chip that
+        // grew a second `place`, and the negative alone would survive the
+        // whole `place` field being deleted.
+        let squeezed = production_squeezed();
+        assert!(
+            squeezed.contains(&format!("place:Some({}.into()),", "revenue_place")),
+            "the revenue chip names the sell PLACE"
+        );
+        assert!(
+            !squeezed.contains(&format!("place:Some({}.into())", "sell_place")),
+            "…and no strip chip names the sell WORLD any more"
+        );
+    }
+
+    /// The three sell-scope tokens are the buy-scope tokens, and every one
+    /// of them has a label in every locale — a select whose option renders
+    /// blank is how a bookmarked value becomes unreachable. The `world`
+    /// label is its own key, not the buy side's: "This world only" belongs
+    /// to a buying sentence, and this one is where a price is READ.
+    #[test]
+    fn every_sell_scope_token_has_a_picker_label() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = use_i18n();
+            let options = sell_scope_options(i18n);
+            let tokens: Vec<&str> = options.iter().map(|(t, _)| *t).collect();
+            assert_eq!(tokens, ["world", "datacenter", "region"]);
+            for (token, label) in &options {
+                assert!(!label.is_empty(), "{token} has no label");
+                assert_eq!(token.parse::<SellScope>().unwrap().to_string(), *token);
+            }
+            assert_ne!(
+                options[0].1,
+                t_string!(i18n, buy_scope_home_world),
+                "the sell side's `world` label is its own string"
+            );
+        });
+    }
+
+    /// The sell scope is counted like the three pricing params it sits
+    /// beside, and Clear all resets it — but the count is driven by the
+    /// prop the page already gated, so a bookmarked `?sell-scope=` cannot
+    /// change the flag-off page's "no active filters" hint.
+    #[test]
+    fn the_sell_scope_is_counted_and_cleared_like_the_other_market_params() {
+        let production = production_source();
+        assert!(
+            production.contains(&format!("if {}.is_some() {{", "sell_scope")),
+            "active_filters counts the lab-gated prop, not a raw query read"
+        );
+        assert!(
+            production.contains(&format!("{}(FILTER_SELL_SCOPE)", "active.push")),
+            "…and pushes the same key the URL uses"
+        );
+        assert!(
+            production.contains(&format!("{}(None);", "set_sell_scope")),
+            "Clear all must reset it"
+        );
+        assert!(
+            !production.contains(&format!("{}.get_untracked()", "sell_scope")),
+            "the table never reads the scope untracked: the page resolves it \
+             inside the Suspense closure and hands it down"
+        );
+        // The positive half of that rule, and the thing the plan's own
+        // self-review called out as unpinned: the scope has to be READ
+        // inside the Suspense closure, because that read is what makes a
+        // scope change rebuild the table and re-run the pricing memo. The
+        // negative assertion above only bans the wrong way of doing it.
+        // Squeezed (rustfmt does not touch `view!` bodies, but a needle
+        // that survives reformatting either way costs nothing), and
+        // anchored on the `sell_scope=` prop prefix: the identical call is
+        // written twice more in this module — the strip select's `value`
+        // and the live sentence's `scoped` — and only this one is the
+        // hand-off that forces the rebuild. (The brief said three; the
+        // third, `revenue_place`, goes through `revenue_place_for`, which
+        // holds the gate itself.)
+        assert!(
+            production_squeezed().contains("sell_scope=sell_scope_for(preview.get(),sell_scope())"),
+            "the page must resolve the scope INSIDE the Suspense closure and \
+             pass it as a prop; nothing else rebuilds the table when it moves"
+        );
+        // The setter strips the SELL side's default. `SellScope::default()`
+        // is the world; `Scope::default()` is the datacenter, and the
+        // page's other three selects all spell the second form — so a
+        // copy-pasted `!= Scope::default()` here would leave
+        // `?sell-scope=world` in every URL, strip `?sell-scope=datacenter`
+        // out of the ones that meant it, and re-price them on the world.
+        // (It would not even compile against `Option<SellScope>`; this pins
+        // the shape anyway, because the fix that does compile is
+        // `SellScope(Scope::default())`.)
+        assert!(
+            production_squeezed()
+                .contains("set_sell_scope(parsed.filter(|s|*s!=SellScope::default()));"),
+            "the sell-scope setter strips the sell side's default, not the buy side's"
         );
     }
 
