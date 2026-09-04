@@ -1441,6 +1441,7 @@
     "recipe_analyzer_cost_basis_label": "비용 기준",
     "recipe_analyzer_revenue_label": "수익",
     "recipe_analyzer_sale_stats_unavailable": "판매 기록을 불러올 수 없습니다 — 현재 판매 등록 가격을 사용합니다.",
+    "recipe_analyzer_sell_scope_unavailable": "{{place}} 시장에 접근하지 못했습니다 — 예상 판매가는 재료를 구매하는 범위의 가격으로 되돌아갑니다.",
     "price_basis_listing_min": "최저가 판매 등록",
     "price_basis_sale_median": "판매 중앙값 (7일)",
     "price_basis_sale_min": "판매 최저가 (7일)",

@@ -1441,6 +1441,7 @@
     "recipe_analyzer_cost_basis_label": "成本基準",
     "recipe_analyzer_revenue_label": "收入",
     "recipe_analyzer_sale_stats_unavailable": "暫時無法取得銷售歷史 — 價格以目前出售品為準。",
+    "recipe_analyzer_sell_scope_unavailable": "無法讀取 {{place}} 的市場資料——預期售價回退到採購材料的範圍價格。",
     "price_basis_listing_min": "最便宜出售品",
     "price_basis_sale_median": "銷售中位數（7天）",
     "price_basis_sale_min": "銷售最低價（7天）",

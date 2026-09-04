@@ -1441,6 +1441,7 @@
     "recipe_analyzer_cost_basis_label": "コスト基準",
     "recipe_analyzer_revenue_label": "売上見積もり",
     "recipe_analyzer_sale_stats_unavailable": "売買履歴を取得できません — 現在の出品価格を使用しています。",
+    "recipe_analyzer_sell_scope_unavailable": "{{place}} の市場に接続できませんでした。想定売却価格は素材の購入範囲の価格に戻ります。",
     "price_basis_listing_min": "最安出品",
     "price_basis_sale_median": "売買中央値（7日）",
     "price_basis_sale_min": "売買最安値（7日）",
