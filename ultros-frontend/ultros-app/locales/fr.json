@@ -1441,6 +1441,7 @@
     "recipe_analyzer_cost_basis_label": "Base de coût",
     "recipe_analyzer_revenue_label": "Revenu",
     "recipe_analyzer_sale_stats_unavailable": "L'historique des ventes est indisponible pour le moment — les prix sont basés sur les annonces actuelles.",
+    "recipe_analyzer_sell_scope_stats_unavailable": "L'historique des ventes de {{place}} est indisponible pour le moment — le prix de vente attendu est basé sur les annonces actuelles de cette zone.",
     "recipe_analyzer_sell_scope_unavailable": "Impossible d'atteindre le marché de {{place}} — le prix de vente attendu revient à la portée d'achat des ingrédients.",
     "price_basis_listing_min": "Annonce la moins chère",
     "price_basis_sale_median": "Médiane des ventes (7 j)",

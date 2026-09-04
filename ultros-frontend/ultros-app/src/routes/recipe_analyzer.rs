@@ -2821,6 +2821,44 @@ fn sell_scope_key(
     (want_listings || want_stats).then(|| (place.to_string(), want_listings, want_stats))
 }
 
+/// Where the table reads one half of the revenue side from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum RevenueSource {
+    /// The sell world's own body: every pre-Phase-F page, and every page at
+    /// the default sell scope.
+    SellWorld,
+    /// The buy-scope body stands in — the sell scope resolved to the same
+    /// place name, which is why `needed_bodies` skipped the fetch.
+    BuyScope,
+    /// The sell scope's own body.
+    Scope,
+    /// A wider scope whose body did not arrive. Listings fall through
+    /// `SignalView`'s base layer to the buy scope and `rev-sale-*` cells
+    /// render "—"; the amber banner names the place.
+    Missing,
+}
+
+fn revenue_source(scope: Scope, is_buy_scope: bool, have_body: bool) -> RevenueSource {
+    match scope {
+        Scope::World => RevenueSource::SellWorld,
+        _ if have_body => RevenueSource::Scope,
+        _ if is_buy_scope => RevenueSource::BuyScope,
+        _ => RevenueSource::Missing,
+    }
+}
+
+/// The cheapest map revenue's `over` layer reads.
+fn revenue_listings_source(scope: Scope, is_buy_scope: bool, have_body: bool) -> RevenueSource {
+    revenue_source(scope, is_buy_scope, have_body)
+}
+
+/// The statistics index a sale revenue signal reads. Same rule, named
+/// separately because the dedupe can cover one half and not the other:
+/// `CheapestBuyScope` is unconditional while `BuyScopeStats(7)` is not.
+fn revenue_stats_source(scope: Scope, is_buy_scope: bool, have_body: bool) -> RevenueSource {
+    revenue_source(scope, is_buy_scope, have_body)
+}
+
 /// One sell-scope payload. Two bodies behind one resource so the Suspense
 /// join stays one tuple and the "which half did we get" logic lives in
 /// one place, the way [`SellHistory`] already folds the rollup and its
@@ -2841,13 +2879,34 @@ struct SellScopeBodies {
     stats_failed: bool,
 }
 
-/// Either half of the sell-scope payload was asked for and missed. `false`
-/// when there is no payload at all, which is every flag-off page and every
-/// URL at the default sell scope.
-fn scope_bodies_failed(bodies: &Option<SellScopeBodies>) -> bool {
-    bodies
-        .as_ref()
-        .is_some_and(|b| b.listings_failed || b.stats_failed)
+/// Where a failed sell-scope payload actually left the revenue numbers.
+///
+/// The two arms are **different markets**, and one string cannot describe
+/// both. With the cheapest map missing, `SignalView`'s `over` layer is
+/// empty and revenue falls through to the buy scope — a different place
+/// from the one the strip, the picker heading and the live sentence all
+/// still name. With only the statistics missing, `SignalView::quality`
+/// still has the scope's own listing, so revenue stays at the named place
+/// and it is the *signal* that degraded: the shape
+/// `recipe_analyzer_sale_stats_unavailable` already exists for one world.
+/// A failed cheapest map subsumes the other — with no `over` layer the
+/// statistics have nothing to overlay.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ScopeFallback {
+    /// The cheapest map missed: revenue is priced where ingredients are.
+    ToBuyScope,
+    /// Only the statistics missed: revenue is the scope's own listing.
+    ToScopeListings,
+}
+
+/// `None` when there is no payload at all — which is every flag-off page
+/// and every URL at the default sell scope — or when both halves arrived.
+fn scope_fallback(bodies: &Option<SellScopeBodies>) -> Option<ScopeFallback> {
+    match bodies.as_ref()? {
+        b if b.listings_failed => Some(ScopeFallback::ToBuyScope),
+        b if b.stats_failed => Some(ScopeFallback::ToScopeListings),
+        _ => None,
+    }
 }
 
 async fn fetch_sell_scope(name: String, want_listings: bool, want_stats: bool) -> SellScopeBodies {
@@ -2998,11 +3057,6 @@ fn RecipeAnalyzerTable(
     let recipe_level_tables = &data.recipe_level_tables;
     let i18n = use_i18n();
 
-    // The table is the only place that knows how each stats body actually
-    // resolved; publish the loaded pair once so the page's strip and info
-    // panel derive the fallback from the same two booleans the rows did.
-    Effect::new(move |_| stats_loaded.set((buy_stats_loaded, sell_stats_loaded)));
-
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
         let mut map: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
@@ -3095,9 +3149,68 @@ fn RecipeAnalyzerTable(
     });
     let all_recipes: Arc<Vec<&'static Recipe>> = Arc::new(recipes.values().collect());
 
+    // Where revenue is priced. Resolved once, from the scope the PAGE
+    // gated and handed down — never from a `get_untracked()` read of the
+    // query signal. The page passes this prop from inside the Suspense
+    // closure, so a scope change rebuilds the table and re-runs this;
+    // `the_sell_scope_is_counted_and_cleared_like_the_other_market_params`
+    // pins both halves of that (the prop read inside the closure, and no
+    // untracked read anywhere), because it is otherwise an accidental
+    // invariant.
+    let sell_scope_value = sell_scope.map(SellScope::scope).unwrap_or(Scope::World);
+    let scope_prices = sell_scope_bodies
+        .as_ref()
+        .and_then(|b| b.listings.clone())
+        .map(|l| Arc::new(CheapestListingsMap::from(l)));
+    let scope_stats_index: Option<Arc<StatsIndex>> = sell_scope_bodies
+        .as_ref()
+        .and_then(|b| b.stats.as_ref())
+        .map(|s| Arc::new(stats_index(s)));
+    let revenue_prices: Option<Arc<CheapestListingsMap>> = match revenue_listings_source(
+        sell_scope_value,
+        sell_scope_is_buy_scope,
+        scope_prices.is_some(),
+    ) {
+        RevenueSource::SellWorld => sell_world_prices.clone(),
+        RevenueSource::BuyScope => Some(prices.clone()),
+        RevenueSource::Scope => scope_prices,
+        RevenueSource::Missing => None,
+    };
+    // `revenue_stats_loaded` is what `effective()` downgrades on, so it
+    // must say "the body REVENUE reads arrived", never "the sell world's
+    // did". `sell_stats_loaded` keeps its own meaning for `hop_signal`.
+    let (revenue_stats_index, revenue_stats_loaded): (Option<Arc<StatsIndex>>, bool) =
+        match revenue_stats_source(
+            sell_scope_value,
+            sell_scope_is_buy_scope,
+            scope_stats_index.is_some(),
+        ) {
+            RevenueSource::SellWorld => (Some(sell_stats_index.clone()), sell_stats_loaded),
+            RevenueSource::BuyScope => (buy_stats_index.clone(), buy_stats_loaded),
+            RevenueSource::Scope => (scope_stats_index, true),
+            RevenueSource::Missing => (None, false),
+        };
+
+    // The table is the only place that knows how each stats body actually
+    // resolved; publish the loaded pair once so the page's strip and info
+    // panel derive the fallback from the same two booleans the rows did.
+    // The second half is the REVENUE side's body, not the sell world's —
+    // `effective()`'s second argument — or a failed sell-scope fetch would
+    // leave the strip's dot dark while the headers say the signal fell
+    // back. It sits here, below the resolution, for that one reason.
+    Effect::new(move |_| stats_loaded.set((buy_stats_loaded, revenue_stats_loaded)));
+
     let formula = Memo::new(move |_| {
-        let mut f = ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope())
-            .effective(buy_stats_loaded, sell_stats_loaded);
+        // Through the SAME function the page and the pricing harness use.
+        // The page's `formula_page` answers fetch keys; THIS one prices
+        // every row, and a scope seated only on the first is a column of
+        // dashes that no unit test can see (Phase E2's median tell).
+        let mut f = seat_sell_scope(
+            ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope()),
+            preview,
+            sell_scope,
+        )
+        .effective(buy_stats_loaded, revenue_stats_loaded);
         // The phase's one number change, and it only happens under the
         // lab: a 363,884% ROI off a single fake listing reads as noise, so
         // the clamped policy caps it at the display ceiling.
@@ -3232,6 +3345,11 @@ fn RecipeAnalyzerTable(
         let sell_world_prices = sell_world_prices.clone();
         let sell_stats_index = sell_stats_index.clone();
         let buy_stats_index = buy_stats_index.clone();
+        // Resolved above, once per payload. The closure is `move`, so the
+        // two revenue handles need their own clones here exactly as the
+        // four above do.
+        let revenue_prices = revenue_prices.clone();
+        let revenue_stats_index = revenue_stats_index.clone();
         let all_recipes = all_recipes.clone();
         Memo::new(move |_| {
             let raw_sales: HashMap<i32, Vec<&SaleData>> = recent_sales
@@ -3259,12 +3377,13 @@ fn RecipeAnalyzerTable(
                 sell_listings: sell_world_prices.as_deref(),
                 buy_stats: buy_stats_index.as_deref(),
                 sell_stats: &sell_stats_index,
-                // Today's values, spelled out: at the default sell scope
-                // the sell place IS the sell world. Task 8 replaces both
-                // with the resolved sources; until then this is
-                // byte-identical to the single "sell" input it replaces.
-                revenue_listings: sell_world_prices.as_deref(),
-                revenue_stats: Some(&sell_stats_index),
+                // The resolved revenue side. At the default sell scope both
+                // resolve to `RevenueSource::SellWorld`, i.e. exactly
+                // `sell_world_prices` and `Some(&sell_stats_index)` — the
+                // values spelled out here before this task, so no
+                // pre-Phase-F URL moves.
+                revenue_listings: revenue_prices.as_deref(),
+                revenue_stats: revenue_stats_index.as_deref(),
                 raw_sales: &raw_sales,
                 formula: formula(),
                 levels: &levels,
@@ -3878,21 +3997,43 @@ fn RecipeAnalyzerTable(
             // to today's, which is what
             // `a_failed_sell_scope_body_says_so_instead_of_silently_repricing`
             // renders both shapes to prove.
-            {match scope_bodies_failed(&sell_scope_bodies) {
-                false => stats_line.into_any(),
-                // A sell-scope body was asked for and did not arrive, so
-                // revenue fell through `SignalView`'s base layer to the buy
-                // scope while the strip, the picker heading and the live
-                // sentence all still name the scope. Say which market, or
-                // this line cannot be told from the one above it.
-                true => view! {
+            {match scope_fallback(&sell_scope_bodies) {
+                None => stats_line.into_any(),
+                // A sell-scope body was asked for and did not arrive. Name
+                // the market — this line is otherwise indistinguishable
+                // from the one above it — and name the RIGHT one: the two
+                // arms leave the numbers in two different places, and a
+                // banner that describes the other one is worse than none.
+                Some(fallback) => view! {
                     {stats_line}
                     <div class="text-amber-400 text-sm">
-                        {t!(
-                            i18n,
-                            recipe_analyzer_sell_scope_unavailable,
-                            place = move || revenue_place.get(),
-                        )}
+                        {match fallback {
+                            // The cheapest map missed, so `SignalView`'s
+                            // `over` layer is empty and revenue fell
+                            // through to the buy scope while the strip, the
+                            // picker heading and the live sentence all
+                            // still name the scope.
+                            ScopeFallback::ToBuyScope => view! {
+                                {t!(
+                                    i18n,
+                                    recipe_analyzer_sell_scope_unavailable,
+                                    place = move || revenue_place.get(),
+                                )}
+                            }
+                            .into_any(),
+                            // Only the statistics missed: `quality` returns
+                            // the scope's OWN listing, so the numbers are
+                            // still the market this banner names and it is
+                            // the signal that degraded.
+                            ScopeFallback::ToScopeListings => view! {
+                                {t!(
+                                    i18n,
+                                    recipe_analyzer_sell_scope_stats_unavailable,
+                                    place = move || revenue_place.get(),
+                                )}
+                            }
+                            .into_any(),
+                        }}
                     </div>
                 }
                 .into_any(),
@@ -6203,6 +6344,12 @@ mod test {
         let (scope_listings, scope_stats) = scope_fixture(&recipes, &buy, &sell, &sell_index);
         let wider = o.sell_scope.is_some_and(|s| s != Scope::World);
         let use_scope = wider && o.scope_bodies;
+        // The SAME resolver the table runs, so the harness cannot pick a
+        // map by a rule production does not use. `is_buy_scope` is `false`
+        // here — the fixture's buy maps are a different place — and that
+        // arm is covered directly by
+        // `the_table_resolves_the_revenue_side_from_the_pages_scope`.
+        let revenue_at = revenue_source(o.sell_scope.unwrap_or(Scope::World), false, use_scope);
         // Seated through the SAME function production uses. Two
         // constructions of one ledger is exactly how Phase E2's median tell
         // shipped past a green suite; `seat_sell_scope(f, true, None)`
@@ -6225,19 +6372,17 @@ mod test {
                 &empty_index
             },
             raw_sales: &raw_sales,
-            revenue_listings: if use_scope {
-                Some(&scope_listings)
-            } else if wider {
-                None
-            } else {
-                o.sell_listings.then_some(&sell)
+            revenue_listings: match revenue_at {
+                RevenueSource::SellWorld => o.sell_listings.then_some(&sell),
+                RevenueSource::BuyScope => Some(&buy),
+                RevenueSource::Scope => Some(&scope_listings),
+                RevenueSource::Missing => None,
             },
-            revenue_stats: if use_scope {
-                Some(&scope_stats)
-            } else if wider {
-                None
-            } else {
-                o.sell_stats.then_some(&sell_index)
+            revenue_stats: match revenue_at {
+                RevenueSource::SellWorld => o.sell_stats.then_some(&sell_index),
+                RevenueSource::BuyScope => Some(&index),
+                RevenueSource::Scope => Some(&scope_stats),
+                RevenueSource::Missing => None,
             },
             formula,
             levels: &levels,
@@ -7077,6 +7222,55 @@ mod test {
             } => place > 0 && home > 0 && !two_sided,
             _ => true,
         }));
+
+        // The two-sided half. Every `Pair` above is `ListingMin`, so
+        // `two_sided` is `false` on all of them and `scope_vs_home_pct`
+        // returns `None` every time: before this block BOTH coloured arms
+        // of the percentage — the red one and, far more importantly, the
+        // emerald one #1266's troll guard exists to police — were reached
+        // only by hand-set rows. A sale signal is what makes the delta go
+        // either way, and the fixture's parity split is what makes both
+        // directions appear in one pass.
+        let sale = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            &RunOpts {
+                needs: NeededSignals {
+                    scope_vs_home: true,
+                    ..NeededSignals::default()
+                },
+                sell_scope: Some(Scope::Region),
+                scope_bodies: true,
+                ..RunOpts::default()
+            },
+        );
+        let pairs: Vec<ScopeVsHome> = sale
+            .iter()
+            .map(|r| r.scope_vs_home)
+            .filter(|s| {
+                matches!(
+                    s,
+                    ScopeVsHome::Pair {
+                        two_sided: true,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert!(
+            !pairs.is_empty(),
+            "a sale revenue signal must produce two-sided pairs"
+        );
+        let pcts: Vec<f32> = pairs.iter().filter_map(|s| scope_vs_home_pct(*s)).collect();
+        assert!(
+            pcts.iter().any(|p| *p > 0.0),
+            "no row reaches the EMERALD arm of the percentage — the one the \
+             troll guard polices, and the one Phase E2 shipped inverted"
+        );
+        assert!(
+            pcts.iter().any(|p| *p < 0.0),
+            "no row reaches the red arm of the percentage"
+        );
     }
 
     fn row(key: i32, profit: i32, roi: i32, daily: f32, world: i32) -> Arc<RecipeProfitData> {
@@ -8892,26 +9086,63 @@ mod test {
             listings_failed: false,
             stats_failed: false,
         };
-        assert!(!scope_bodies_failed(&None));
-        assert!(!scope_bodies_failed(&Some(none.clone())));
-        assert!(scope_bodies_failed(&Some(SellScopeBodies {
-            stats_failed: true,
-            ..none.clone()
-        })));
-        assert!(
-            scope_bodies_failed(&Some(SellScopeBodies {
-                listings_failed: true,
-                ..none
+        assert_eq!(scope_fallback(&None), None);
+        assert_eq!(scope_fallback(&Some(none.clone())), None);
+        // Only the STATISTICS missed. `SignalView::quality` still holds the
+        // scope's own cheapest listing, so revenue is priced at the very
+        // place every label names and it is the *signal* that degraded, not
+        // the market. Task 7 shipped one string for both arms, saying
+        // prices "fall back to where ingredients are priced" — false here,
+        // in seven locales.
+        assert_eq!(
+            scope_fallback(&Some(SellScopeBodies {
+                stats_failed: true,
+                ..none.clone()
             })),
+            Some(ScopeFallback::ToScopeListings)
+        );
+        assert_eq!(
+            scope_fallback(&Some(SellScopeBodies {
+                listings_failed: true,
+                ..none.clone()
+            })),
+            Some(ScopeFallback::ToBuyScope),
             "a failed cheapest map is the half a listing-min URL prices from"
         );
+        // Both gone: with no `over` layer the statistics have nothing to
+        // overlay, so the cheapest map's arm is the one that describes it.
+        assert_eq!(
+            scope_fallback(&Some(SellScopeBodies {
+                listings_failed: true,
+                stats_failed: true,
+                ..none
+            })),
+            Some(ScopeFallback::ToBuyScope)
+        );
         let production = production_source();
+        // Scoped to the ARM, not to the file: two existence checks would be
+        // satisfied by a build that swapped the two keys, which is exactly
+        // the defect being fixed wearing the other arm's clothes (Task 6's
+        // review, minor 3). `view!` bodies are untouched by rustfmt, so the
+        // squeezed text is stable.
+        let squeezed = production_squeezed();
         assert!(
-            production.contains("recipe_analyzer_sell_scope_unavailable"),
-            "the banner key must be rendered somewhere"
+            squeezed.contains(&format!(
+                "ScopeFallback::ToBuyScope=>view!{{{{t!(i18n,{},",
+                "recipe_analyzer_sell_scope_unavailable"
+            )),
+            "the failed-cheapest-map arm must say the numbers left the place \
+             the labels name"
         );
         assert!(
-            production.contains(&format!("{}(&sell_scope_bodies)", "scope_bodies_failed")),
+            squeezed.contains(&format!(
+                "ScopeFallback::ToScopeListings=>view!{{{{t!(i18n,{},",
+                "recipe_analyzer_sell_scope_stats_unavailable"
+            )),
+            "…and the stats-only arm must say they stayed there"
+        );
+        assert!(
+            production.contains(&format!("{}(&sell_scope_bodies)", "scope_fallback")),
             "…off the same helper this test pins"
         );
 
@@ -8970,11 +9201,306 @@ mod test {
         });
         assert!(
             production_squeezed().contains(&format!(
-                "match{}(&sell_scope_bodies){{false=>stats_line.into_any(),",
-                "scope_bodies_failed"
+                "match{}(&sell_scope_bodies){{None=>stats_line.into_any(),",
+                "scope_fallback"
             )),
             "production must route both amber lines through ONE child, or \
              the flag-off DOM grows a hydration marker"
+        );
+    }
+
+    /// Every `.rs` under `src/`, paired with its production half, read off
+    /// disk so a file added later is covered without anyone remembering to
+    /// list it.
+    ///
+    /// The single-seam invariant this feeds is a **crate** property, not a
+    /// file property. `with_sell_scope` is `pub` and `analyzer_kit` is
+    /// reachable from everywhere, so a second production caller added in
+    /// (say) `analyzer_kit/signals.rs` would satisfy `dead_code` — the
+    /// method is live by now — and be completely invisible to a needle
+    /// that reads only this file. `pub(in ...)` cannot close it either:
+    /// `formula.rs` is not an ancestor of `routes::recipe_analyzer`.
+    ///
+    /// A file is split at its first `#[cfg(test)]` **only** when what
+    /// follows really is a trailing test module; otherwise the whole file
+    /// counts as production. Two files in this crate put a `#[cfg(test)]`
+    /// helper ahead of real code (`components/data_table.rs`,
+    /// `components/crafting_cost.rs`), and a blind split would hide
+    /// everything after it. Over-counting is the safe direction for a test
+    /// whose job is to find a caller nobody declared.
+    fn crate_production_halves() -> Vec<(String, String)> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+                .expect("the crate's src tree is readable")
+                .map(|e| e.expect("a readable directory entry").path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    walk(&path, out);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&path).expect("a readable source file");
+                // Normalised so the assertion below reads the same on
+                // Windows as it does in CI.
+                let full = path.to_string_lossy().replace('\\', "/");
+                let name = match full.rsplit_once("/src/") {
+                    Some((_, rel)) => rel.to_string(),
+                    None => full,
+                };
+                let production = match src.split_once(&format!("#[cfg({})]", "test")) {
+                    Some((head, rest))
+                        if rest.trim_start().starts_with(&format!("mod {}", "test")) =>
+                    {
+                        head.to_string()
+                    }
+                    _ => src,
+                };
+                out.push((name, production));
+            }
+        }
+        let mut out = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut out,
+        );
+        assert!(
+            out.len() > 100,
+            "the walk must reach the whole crate, not one directory"
+        );
+        out
+    }
+
+    /// **The Phase F pin.** The page's ledger and the table's ledger are two
+    /// different constructions and only the table's prices rows, so a scope
+    /// seated on the page alone yields a column of dashes behind a green
+    /// suite — which is exactly how Phase E2's median tell shipped. Four
+    /// assertions, in order of how hard they are to fool:
+    ///
+    /// 1. `with_sell_scope` has ONE caller in the crate's production half,
+    ///    and it is in this file. A second one means somebody re-inlined
+    ///    the seating and the two paths can drift again.
+    /// 2. `seat_sell_scope` has exactly three call sites here: its own
+    ///    definition, the page's `formula_page`, and the TABLE's
+    ///    `formula`. Unwire the table and this drops to two.
+    /// 3. The two seatings are TOLD APART, so the count cannot be
+    ///    satisfied by a wrapper. `fn table_formula(..) { seat_sell_scope(..) }`
+    ///    keeps the count at three while the table stops calling it, so
+    ///    the counts only bite when something also pins the two call
+    ///    *shapes*.
+    /// 4. A pricing pass whose formula came out of that function — the same
+    ///    call `run_with` makes — actually fills the column. This is the
+    ///    behavioural half: the counts could all hold while the seating
+    ///    did nothing.
+    ///
+    /// Assertion 3's needles are matched against `production_squeezed()`,
+    /// not `production_source()`. Both seatings are calls rustfmt is
+    /// obliged to break one-argument-per-line: the first argument alone,
+    /// `ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(),
+    /// buy_scope()),`, is 76 characters at indent 12, so the call cannot
+    /// fit in 100 columns and a single-line needle would pin text the
+    /// formatter will never emit.
+    #[test]
+    fn the_tables_own_formula_is_what_fills_the_scope_column() {
+        // The needle carries the leading dot so it counts CALLS: a bare
+        // `with_sell_scope(` also matches the method's own definition in
+        // `formula.rs`, which would make the "nowhere else" half of this
+        // assertion unwritable.
+        let call = format!(".{}(", "with_sell_scope");
+        let callers: Vec<(String, usize)> = crate_production_halves()
+            .into_iter()
+            .map(|(name, production)| (name, production.matches(&call).count()))
+            .filter(|(_, n)| *n > 0)
+            .collect();
+        assert_eq!(
+            callers,
+            vec![("routes/recipe_analyzer.rs".to_string(), 1)],
+            "`with_sell_scope` is called from exactly one place in the whole \
+             crate — `seat_sell_scope` — and from nowhere else, or the page \
+             and the table can seat the scope differently again"
+        );
+
+        let production = production_source();
+        assert_eq!(
+            production
+                .matches(&format!("{}(", "with_sell_scope"))
+                .count(),
+            1,
+            "`with_sell_scope` is called in exactly one place: `seat_sell_scope`"
+        );
+        assert_eq!(
+            production
+                .matches(&format!("{}(", "seat_sell_scope"))
+                .count(),
+            3,
+            "its definition, the page's `formula_page`, and the TABLE's \
+             `formula` memo — if this reads 2, the table is unwired and the \
+             column ships as dashes"
+        );
+        // The two call SHAPES, which is what makes the count above bite.
+        // They are distinguishable on purpose: the page seats from signals
+        // (`preview.get()`, `sell_scope()`), the table from its two props
+        // (`preview`, `sell_scope`), so neither needle can stand in for the
+        // other and a wrapper that keeps the count at three fails here.
+        //
+        // Both needles are anchored on `seat_sell_scope(` itself, which the
+        // brief's text was not: without the name, a three-argument
+        // `table_formula(ProfitFormula::recipe_from_query(..), preview,
+        // sell_scope)` wrapper matches the needle character for character,
+        // so the "a wrapper fails here" claim in the doc above would have
+        // been false. Verified by mutation both ways.
+        let squeezed = production_squeezed();
+        assert!(
+            squeezed.contains(
+                "seat_sell_scope(ProfitFormula::recipe_from_query(cost_basis(),\
+                 revenue_metric(),buy_scope()),preview,sell_scope,)"
+            ),
+            "the TABLE's formula memo must seat the scope from its own props"
+        );
+        assert!(
+            squeezed.contains(
+                "seat_sell_scope(ProfitFormula::recipe_from_query(cost_basis(),\
+                 revenue_metric(),buy_scope()),preview.get(),sell_scope(),)"
+            ),
+            "…and the page's `formula_page` from its own signals"
+        );
+
+        // The behavioural half. `run_with` builds its formula with the same
+        // function, so this exercises the production seating rather than a
+        // hand-written `with_sell_scope`.
+        let wanted = NeededSignals {
+            scope_vs_home: true,
+            ..NeededSignals::default()
+        };
+        let rows = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: wanted.clone(),
+                sell_scope: Some(Scope::Region),
+                scope_bodies: true,
+                ..RunOpts::default()
+            },
+        );
+        assert!(
+            rows.iter()
+                .any(|r| matches!(r.scope_vs_home, ScopeVsHome::Pair { .. })),
+            "a pass seated through `seat_sell_scope` must fill the column"
+        );
+        // …and the flag-off arm of the same function leaves it empty.
+        let off = seat_sell_scope(
+            ProfitFormula::recipe_from_query(None, None, None),
+            false,
+            Some(SellScope(Scope::Region)),
+        );
+        assert_eq!(off.sell_scope(), Scope::World);
+    }
+
+    /// Which body the table prices revenue from. The middle case — the
+    /// scope resolved to the buy scope's place, so the buy-side body stands
+    /// in — is a silent re-price if it is wrong, and it is unreachable from
+    /// a unit test while it lives inside the component, so it does not.
+    #[test]
+    fn the_table_resolves_the_revenue_side_from_the_pages_scope() {
+        // NO `use RevenueSource::*;` here. Its `Scope` and `BuyScope`
+        // variants land in the TYPE namespace and shadow the `Scope` alias
+        // and the `BuyScope` enum this module imports from
+        // `analyzer_kit::formula`, and `Scope::World` then fails to resolve
+        // with `E0433: Scope is a variant, not a module`. Spell the
+        // variants out.
+        use RevenueSource::{BuyScope as FromBuyScope, Missing, Scope as FromScope, SellWorld};
+        // Default scope: the sell world's own bodies, whatever else is true.
+        for is_buy in [false, true] {
+            for have in [false, true] {
+                assert_eq!(
+                    revenue_listings_source(Scope::World, is_buy, have),
+                    SellWorld
+                );
+                assert_eq!(revenue_stats_source(Scope::World, is_buy, have), SellWorld);
+            }
+        }
+        // Wider, body present: the scope's own, even if it also happens to
+        // be the buy scope's place.
+        assert_eq!(
+            revenue_listings_source(Scope::Region, false, true),
+            FromScope
+        );
+        assert_eq!(
+            revenue_listings_source(Scope::Region, true, true),
+            FromScope
+        );
+        // Wider, no body, but the place IS the buy scope: reuse it. That is
+        // the dedupe `needed_bodies` counted on when it skipped the fetch.
+        assert_eq!(
+            revenue_listings_source(Scope::Datacenter, true, false),
+            FromBuyScope
+        );
+        assert_eq!(
+            revenue_stats_source(Scope::Datacenter, true, false),
+            FromBuyScope
+        );
+        // Wider, no body, not the buy scope: nothing. `SignalView` falls to
+        // its base layer for listings and `rev-sale-*` cells go "—" — and
+        // Task 7's banner is what tells the player.
+        assert_eq!(
+            revenue_listings_source(Scope::Region, false, false),
+            Missing
+        );
+        assert_eq!(revenue_stats_source(Scope::Region, false, false), Missing);
+
+        // Squeezed, per `production_squeezed()`'s doc: both are three-argument
+        // calls rustfmt breaks onto one line per argument, so `…_source(`
+        // and `sell_scope_value` never share a source line.
+        let squeezed = production_squeezed();
+        assert!(
+            squeezed.contains(&format!("{}(sell_scope_value,", "revenue_listings_source"))
+                && squeezed.contains(&format!("{}(sell_scope_value,", "revenue_stats_source")),
+            "the table must resolve through both helpers, not an inline match"
+        );
+        // …and the four arms each reach the value they name. The rule above
+        // is a pure function with a truth table; the arm -> value mapping
+        // lives inside the component and no unit test can render it, so a
+        // swapped arm — `Scope => sell_world_prices`, the silent re-price
+        // this whole task exists to prevent — is invisible to everything
+        // else in this suite. A source read is worth exactly this much, and
+        // it is more than nothing.
+        assert!(
+            squeezed.contains(
+                "RevenueSource::SellWorld=>sell_world_prices.clone(),\
+                 RevenueSource::BuyScope=>Some(prices.clone()),\
+                 RevenueSource::Scope=>scope_prices,\
+                 RevenueSource::Missing=>None,"
+            ),
+            "the cheapest-map arms must each read the body they name"
+        );
+        assert!(
+            squeezed.contains(
+                "RevenueSource::SellWorld=>(Some(sell_stats_index.clone()),sell_stats_loaded),\
+                 RevenueSource::BuyScope=>(buy_stats_index.clone(),buy_stats_loaded),\
+                 RevenueSource::Scope=>(scope_stats_index,true),\
+                 RevenueSource::Missing=>(None,false),"
+            ),
+            "…and the statistics arms must publish the loaded flag that goes \
+             with the body they read, or a failed scope fetch leaves the \
+             strip's dot lit over fallen-back numbers"
+        );
+        // The two consumers of that flag. Substituting `sell_stats_loaded`
+        // back into either is a one-token edit that nothing else in this
+        // suite can see — both were live survivors of the mutation campaign
+        // until these two needles existed — and each is a real defect: the
+        // first lets the header marks name a sale signal the rows fell back
+        // from, the second lets the strip's amber dot stay dark while they
+        // did.
+        assert!(
+            squeezed.contains(".effective(buy_stats_loaded,revenue_stats_loaded)"),
+            "the table's formula must downgrade on the body REVENUE reads"
+        );
+        assert!(
+            squeezed.contains("stats_loaded.set((buy_stats_loaded,revenue_stats_loaded))"),
+            "…and the pair it publishes to the strip must say the same thing"
         );
     }
 

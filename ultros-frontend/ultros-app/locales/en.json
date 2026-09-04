@@ -1444,6 +1444,7 @@
     "recipe_analyzer_cost_basis_label": "Cost basis",
     "recipe_analyzer_revenue_label": "Revenue",
     "recipe_analyzer_sale_stats_unavailable": "Sale history is unavailable right now — prices are based on current listings.",
+    "recipe_analyzer_sell_scope_stats_unavailable": "Sale history for {{place}} is unavailable right now — the expected sale price is based on current listings there.",
     "recipe_analyzer_sell_scope_unavailable": "Couldn't reach the {{place}} market — the expected sale price falls back to where ingredients are priced.",
     "price_basis_listing_min": "Cheapest listing",
     "price_basis_sale_median": "Sale median (7d)",
