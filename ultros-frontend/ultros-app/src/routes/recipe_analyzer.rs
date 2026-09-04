@@ -5119,8 +5119,23 @@ mod test {
             2,
             "the cost chip's and the revenue chip's — four selects on the strip"
         );
+        // Both of the next two are scoped to the text BEFORE the second
+        // `place_select`, i.e. the revenue chip alone. Whole-file existence
+        // checks would stay green if the two chips' aria keys were simply
+        // swapped — which re-introduces exactly the defect the second
+        // assertion exists to catch, one chip over. Squeezed, so rustfmt's
+        // wrapping cannot decide whether a needle matches.
+        let second_select = production
+            .match_indices("place_select: Some(StripSelect {")
+            .nth(1)
+            .expect("two place_selects on the strip")
+            .0;
+        let revenue_chip: String = production[..second_select]
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         assert!(
-            production.contains(&format!("options: {}(i18n),", "sell_scope_options")),
+            revenue_chip.contains(&format!("options:{}(i18n),", "sell_scope_options")),
             "…and the revenue one offers the sell-scope tokens"
         );
         // …under its own aria-label. The rendered assertion above cannot
@@ -5131,8 +5146,8 @@ mod test {
         // that moves the sale price. An unused i18n key raises no warning,
         // so nothing else in the build would notice.
         assert!(
-            production.contains(&format!(
-                "aria: t_string!(i18n, {}).to_string(),",
+            revenue_chip.contains(&format!(
+                "aria:t_string!(i18n,{}).to_string(),",
                 "formula_change_sell_scope_aria"
             )),
             "…and names itself with the sell side's aria-label"
