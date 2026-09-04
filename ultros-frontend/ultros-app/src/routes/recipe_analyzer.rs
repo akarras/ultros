@@ -9,8 +9,7 @@ use crate::analyzer_kit::enrichment::{
     use_visible_enrichment, use_wide_viewport, verdict,
 };
 use crate::analyzer_kit::formula::{
-    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, SellScope, per_unit_cost,
-    profit_line,
+    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, Scope, SellScope, per_unit_cost, profit_line,
 };
 use crate::analyzer_kit::grid::{
     AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, HeaderExtra, HeaderExtras, HeaderLine2,
@@ -163,6 +162,11 @@ struct RecipeProfitData {
     hop: Option<HopGain>,
     /// `None` when Worlds to visit was not wanted, or Buy from = This world.
     worlds: Option<WorldsToVisit>,
+    /// Scope vs home's state for this row: `Off` unless the column was
+    /// asked for at a wider sell scope, then the two places' figures under
+    /// the selected revenue signal, or `Unavailable` when either place has
+    /// none. The column renders `place − home`.
+    scope_vs_home: ScopeVsHome,
 }
 
 /// Current sell price vs the window VWAP, as a percent. `None` when there
@@ -2100,12 +2104,28 @@ struct PriceInputs<'a> {
     recipes_by_output: &'a HashMap<ItemId, Vec<&'static Recipe>>,
     /// Buy-scope listings.
     buy_listings: &'a CheapestListingsMap,
-    /// Sell-world listings (absent before a world resolves).
+    /// Sell-**world** listings (absent before a world resolves). Hop gain's
+    /// home run and Scope vs home's home side price against these, and only
+    /// these.
     sell_listings: Option<&'a CheapestListingsMap>,
     /// Buy-scope sale stats, indexed. `None` when not fetched.
     buy_stats: Option<&'a StatsIndex>,
-    /// Sell-world sale stats, indexed. Empty when not fetched.
+    /// Sell-**world** sale stats, indexed. Empty when not fetched. Velocity,
+    /// avg price, confidence, last sold, volume, VWAP and the statistics
+    /// quality every lazy column keys on all read this, at every sell scope
+    /// (spec §4).
     sell_stats: &'a StatsIndex,
+    /// Sell-**place** listings: the sell world's map under the default sell
+    /// scope, the scope's own map otherwise. The `SignalView` `over` layer
+    /// revenue is priced from.
+    revenue_listings: Option<&'a CheapestListingsMap>,
+    /// Sell-**place** sale stats. `Some(sell_stats)` under the default sell
+    /// scope; `None` when a wider scope's body was not fetched, which makes
+    /// every `rev-sale-*` cell "—" rather than a sell-world number under a
+    /// scope heading. This is also what `ProfitFormula::effective`'s second
+    /// argument was computed from at the call site, so a sale revenue
+    /// signal with no body has already been downgraded before it gets here.
+    revenue_stats: Option<&'a StatsIndex>,
     /// Raw recent sales by item (both qualities merged), for the outlier
     /// filter and the rollup failover.
     raw_sales: &'a HashMap<i32, Vec<&'a SaleData>>,
@@ -2135,6 +2155,60 @@ struct PriceInputs<'a> {
     dc_of: &'a dyn Fn(i32) -> Option<&'a str>,
 }
 
+/// Scope vs home's three states. Not an `Option`, because a bare `None`
+/// would make the dash mean four things at once and the header tooltip can
+/// only name one of them.
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
+enum ScopeVsHome {
+    /// The column was not asked for, or the sell scope IS the sell world.
+    /// The whole column is dashes and the header tooltip's last sentence is
+    /// what explains it, so the cell adds no title of its own.
+    #[default]
+    Off,
+    /// Asked for at a wider scope, but one of the two markets has no figure
+    /// for the selected revenue signal — the dominant case under a sale
+    /// signal, where the 7-day window covers a small minority of items. The
+    /// cell titles its dash, the way `CellValue::LazyPct`'s empty state
+    /// does.
+    Unavailable,
+    /// Both markets answered. `two_sided` is "the revenue signal is a sale
+    /// statistic", i.e. the delta can genuinely go either way and a
+    /// percentage against `home` answers a real question; under a listing
+    /// signal a wider market can only undercut, the sign is the whole
+    /// message, and Task 4 drops the percentage rather than painting a
+    /// permanent red stripe. Page-wide rather than per-row, and carried on
+    /// the row anyway because `CellCtx` is shared with the flip finder and
+    /// has twenty exhaustive literals.
+    Pair {
+        place: i32,
+        home: i32,
+        two_sided: bool,
+    },
+}
+
+/// The bare number one revenue signal reads at one place: the cheapest
+/// listing with **no** statistics overlay and no cross-place fallback, or
+/// the statistic with no listing fallback. `None` means "this place has no
+/// such number", never 0.
+///
+/// One function for both places on purpose. `rev_alt` reads it at the sell
+/// place; Scope vs home's home side reads it at the sell world with the
+/// same signal, and a fixture that swaps the maps under it can therefore
+/// tell the two apart.
+fn rev_signal_at(
+    listings: Option<&CheapestListingsMap>,
+    stats: Option<&StatsIndex>,
+    item: i32,
+    signal: PriceSignal,
+) -> Option<i32> {
+    match signal.sale_stat() {
+        None => listings
+            .and_then(|l| l.find_matching_listings(item).lowest_gil())
+            .filter(|p| *p > 0),
+        Some(stat) => stats.and_then(|s| stat_only_cheapest(s, item, stat)),
+    }
+}
+
 /// One priced row per craftable recipe with a sell price, under the
 /// selected formula. Unprofitable rows are dropped here (the formula's
 /// drop rule); thresholds and sorting happen in [`filter_and_sort`].
@@ -2160,14 +2234,15 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             .and_then(|stat| inp.buy_stats.map(|idx| (idx, stat))),
     };
     let ingredient_view = scope_view(selected);
+    let sell_scope_is_world = inp.formula.sell_scope() == Scope::World;
     let revenue_view = SignalView {
-        over: inp.sell_listings,
+        over: inp.revenue_listings,
         base: inp.buy_listings,
         stats: inp
             .formula
             .revenue_signal()
             .sale_stat()
-            .map(|stat| (inp.sell_stats, stat)),
+            .and_then(|stat| inp.revenue_stats.map(|idx| (idx, stat))),
     };
     // Hop's home side: the sell world alone (deliberately not layered over
     // the buy scope, or an ingredient with no home listing would be priced
@@ -2344,18 +2419,53 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             worlds_to_visit(listing_run, inp.home_world_id, inp.dc_of)
         });
 
-        // The bare sell-world number per revenue signal: the listing with
-        // no buy-scope fallback, or the stat with no listing fallback.
         let item = recipe.item_result;
+        // The bare sell-PLACE number per revenue signal, no fallback.
         let rev_alt = [
-            inp.sell_listings
-                .and_then(|s| s.find_matching_listings(item).lowest_gil())
-                .filter(|p| *p > 0),
-            stat_only_cheapest(inp.sell_stats, item, SaleStat::Min),
-            stat_only_cheapest(inp.sell_stats, item, SaleStat::Median),
-            stat_only_cheapest(inp.sell_stats, item, SaleStat::Avg),
+            rev_signal_at(
+                inp.revenue_listings,
+                inp.revenue_stats,
+                item,
+                PriceSignal::ListingMin,
+            ),
+            rev_signal_at(
+                inp.revenue_listings,
+                inp.revenue_stats,
+                item,
+                PriceSignal::SaleMin,
+            ),
+            rev_signal_at(
+                inp.revenue_listings,
+                inp.revenue_stats,
+                item,
+                PriceSignal::SaleMedian,
+            ),
+            rev_signal_at(
+                inp.revenue_listings,
+                inp.revenue_stats,
+                item,
+                PriceSignal::SaleAvg,
+            ),
         ];
         let revenue_fell_back = rev_alt[inp.formula.revenue_signal().index()] != Some(market_price);
+
+        // Scope vs home: the selected revenue signal at the sell place and
+        // on the sell world's own map.
+        let scope_vs_home = if !inp.needs.scope_vs_home || sell_scope_is_world {
+            ScopeVsHome::Off
+        } else {
+            let signal = inp.formula.revenue_signal();
+            let place = rev_alt[signal.index()];
+            let home = rev_signal_at(inp.sell_listings, Some(inp.sell_stats), item, signal);
+            match (place, home) {
+                (Some(place), Some(home)) => ScopeVsHome::Pair {
+                    place,
+                    home,
+                    two_sided: signal.sale_stat().is_some(),
+                },
+                _ => ScopeVsHome::Unavailable,
+            }
+        };
 
         // Sell-world stats row matching how revenue resolves: prefer
         // the HQ row when the analyzer requires HQ, otherwise NQ, and
@@ -2363,7 +2473,16 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         let sell_stat = stat_row_either(inp.sell_stats, recipe.item_result, inp.require_hq);
         let stat_hq = sell_stat.map(|s| s.hq).unwrap_or(inp.require_hq);
         let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
-        let sell_median = sell_stat.map(|s| s.median_price).filter(|p| *p > 0);
+        // The Price median tell's operand, and only that. Left empty at a
+        // wider sell scope: `market_price` then comes from a whole
+        // datacenter or region while this median is one world's, so the
+        // tell would compare two different markets and read red on nearly
+        // every row — the user's own setting wearing the colour #1266 set
+        // aside for a suspicious listing. `price_note` degrades to
+        // `ListingFallback` / `None` and the sub-line keeps its shape.
+        let sell_median = sell_scope_is_world
+            .then(|| sell_stat.map(|s| s.median_price).filter(|p| *p > 0))
+            .flatten();
 
         results.push(RecipeProfitData {
             recipe,
@@ -2391,6 +2510,7 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             unpriced: breakdown.unpriced_market_lines,
             hop,
             worlds,
+            scope_vs_home,
         });
     }
 
@@ -2827,6 +2947,12 @@ fn RecipeAnalyzerTable(
                 sell_listings: sell_world_prices.as_deref(),
                 buy_stats: buy_stats_index.as_deref(),
                 sell_stats: &sell_stats_index,
+                // Today's values, spelled out: at the default sell scope
+                // the sell place IS the sell world. Task 8 replaces both
+                // with the resolved sources; until then this is
+                // byte-identical to the single "sell" input it replaces.
+                revenue_listings: sell_world_prices.as_deref(),
+                revenue_stats: Some(&sell_stats_index),
                 raw_sales: &raw_sales,
                 formula: formula(),
                 levels: &levels,
@@ -4444,14 +4570,16 @@ mod test {
     use super::*;
     // Only the tests read these — the window ones, the median tell's sign,
     // which asserts the colour the note renders in rather than only its
-    // sign, and the Phase F scope types. Imported here rather than at
+    // sign, and `Term`, the ledger slot's discriminant. (`Scope` was here
+    // too until Task 3 gave it a production reader on this page; it is
+    // imported at module level now.) Imported here rather than at
     // module level: they have no
     // production caller on this page, and `--all-targets` also compiles the
     // lib without `cfg(test)`, where `-D warnings` turns an unused import
     // into a failure.
     use crate::analysis::{DELTA_DEAD_BAND_PCT, signed_delta_class};
     use crate::analyzer_kit::enrichment::{chunk_keys, visible_keys};
-    use crate::analyzer_kit::formula::{Scope, Term};
+    use crate::analyzer_kit::formula::Term;
     use crate::components::virtual_scroller::{
         first_visible_row, rendered_range, rows_for_viewport,
     };
@@ -5092,6 +5220,13 @@ mod test {
         /// rows needs the direction guaranteed, not drawn.
         hq_dearer_only: bool,
         require_hq: bool,
+        /// The sell scope. `None` = `Scope::World`, i.e. today's behaviour
+        /// and `Term::Fixed`.
+        sell_scope: Option<Scope>,
+        /// Hand the pass the scope maps from `scope_fixture`. Off with a
+        /// non-`World` scope models "the body was asked for and failed",
+        /// where revenue falls through to the buy-scope layer.
+        scope_bodies: bool,
     }
 
     impl Default for RunOpts {
@@ -5106,6 +5241,8 @@ mod test {
                 stats_both: false,
                 hq_dearer_only: false,
                 require_hq: false,
+                sell_scope: None,
+                scope_bodies: false,
             }
         }
     }
@@ -5119,6 +5256,120 @@ mod test {
         } else {
             nq / 4
         }
+    }
+
+    /// The sell-scope fixture: the HOME price view, scaled.
+    ///
+    /// Derived through a `SignalView` with the same layering the pass uses,
+    /// so every quality the home run can resolve is present here too and
+    /// scaled the same way. NQ-only would leave HQ falling through to the
+    /// buy scope and pin `min(lq, hq)` at the unscaled number for most ids.
+    ///   * even output ids  -> HALF the home price (a wider market
+    ///     undercuts: the realistic direction),
+    ///   * odd output ids   -> DOUBLE it (impossible in production, and
+    ///     exactly why it is here: a lookup that read the home map, or took
+    ///     `min(scope, home)`, would still pass on the even half alone),
+    ///   * every third recipe -> absent from the scope map entirely, so the
+    ///     `SignalView` `over` layer falls through to the buy-scope `base`.
+    ///
+    /// Statistics move the same three ways, and every figure of theirs that
+    /// is NOT a price is stamped with a value the sell world's own row does
+    /// not carry - see the comment on the `ItemSaleStats` literal below.
+    ///
+    /// Ingredients that are not themselves a fixture output are scaled in
+    /// too, for the reason given at the second loop.
+    fn scope_fixture(
+        recipes: &[&'static Recipe],
+        buy: &CheapestListingsMap,
+        sell: &CheapestListingsMap,
+        sell_stats: &StatsIndex,
+    ) -> (CheapestListingsMap, StatsIndex) {
+        let home = SignalView {
+            over: Some(sell),
+            base: buy,
+            stats: None,
+        };
+        // Keyed on the ITEM's own parity, so an item scales the same way
+        // whether it is reached as an output or as an ingredient.
+        let scale_at = |id: i32, p: i32| if id % 2 == 0 { p / 2 } else { p * 2 };
+        let scoped_rows = |item: i32| -> Vec<CheapestListingItem> {
+            let pair = home.find_matching_listings(item);
+            [(false, pair.lq), (true, pair.hq)]
+                .into_iter()
+                .filter_map(|(hq, found)| {
+                    found.map(|l| CheapestListingItem {
+                        item_id: item,
+                        hq,
+                        cheapest_price: scale_at(item, l.price),
+                        world_id: 9,
+                    })
+                })
+                .collect()
+        };
+        let outputs: BTreeSet<i32> = recipes.iter().map(|r| r.item_result).collect();
+        let mut listings = Vec::new();
+        let mut stats = StatsIndex::new();
+        for (i, r) in recipes.iter().enumerate() {
+            if i % 3 == 2 {
+                continue; // absent from the scope entirely
+            }
+            let out = r.item_result;
+            let scale = |p: i32| scale_at(out, p);
+            listings.extend(scoped_rows(out));
+            for hq in [false, true] {
+                if let Some(row) = sell_stats.get(&(out, hq)) {
+                    stats.insert(
+                        (out, hq),
+                        ItemSaleStats {
+                            min_price: scale(row.min_price),
+                            median_price: scale(row.median_price),
+                            avg_price: scale(row.avg_price),
+                            // Velocity, volume, VWAP, last sold and the
+                            // confidence band are sell-WORLD figures at
+                            // every sell scope. Scaling the three prices
+                            // alone leaves them equal to the sell world's
+                            // by construction (`..*row`), so a pass that
+                            // read THIS map for them would agree with one
+                            // that read the world's - verified by mutation:
+                            // with these five left at `..*row`,
+                            // `stat_row_either(revenue_stats, ..)` passes
+                            // `the_sell_worlds_own_figures_ignore_the_sell_scope`.
+                            // A fixture that does not vary the
+                            // discriminator cannot tell two lookups apart.
+                            num_sold: row.num_sold + 1,
+                            units_sold: row.units_sold + 5,
+                            vwap: row.vwap + 7,
+                            last_sold_unix: row.last_sold_unix + 3_600,
+                            confidence: ConfidenceBand::High,
+                            ..*row
+                        },
+                    );
+                }
+            }
+        }
+        // A real sell-scope cheapest-listings body carries the INGREDIENTS
+        // too, not only the outputs, and leaving them out is not neutral:
+        // with an output-only map, Hop gain's home run (`home_view`, whose
+        // `over` layer must stay `None`) reads nothing but ingredients, so
+        // pointing it at the scope map changes no number and
+        // `assert_eq!(r.hop, h.hop)` cannot fail. Verified by mutation.
+        // Items that are some fixture recipe's OUTPUT are skipped, so the
+        // "absent from the scope" class stays absent.
+        let mut seen = BTreeSet::new();
+        for r in recipes.iter() {
+            for id in r.ingredient.iter() {
+                if *id == 0 || outputs.contains(id) || !seen.insert(*id) {
+                    continue;
+                }
+                listings.extend(scoped_rows(*id));
+            }
+        }
+        (
+            CheapestListingsMap::from(CheapestListings {
+                cheapest_listings: listings,
+            }),
+            stats,
+        )
     }
 
     fn run_with(cost: PriceSignal, revenue: PriceSignal, o: &RunOpts) -> Vec<RecipeProfitData> {
@@ -5179,6 +5430,18 @@ mod test {
             2 => Some("Primal"),
             _ => None,
         };
+        let (scope_listings, scope_stats) = scope_fixture(&recipes, &buy, &sell, &sell_index);
+        let wider = o.sell_scope.is_some_and(|s| s != Scope::World);
+        let use_scope = wider && o.scope_bodies;
+        // Seated through the SAME function production uses. Two
+        // constructions of one ledger is exactly how Phase E2's median tell
+        // shipped past a green suite; `seat_sell_scope(f, true, None)`
+        // returns `f`, so every existing run is byte-identical.
+        let formula = seat_sell_scope(
+            ProfitFormula::recipe_from_query(Some(cost), Some(revenue), o.scope),
+            true,
+            o.sell_scope.map(SellScope),
+        );
         let inp = PriceInputs {
             recipes: &recipes,
             recipe_level_tables: &data.recipe_level_tables,
@@ -5192,7 +5455,21 @@ mod test {
                 &empty_index
             },
             raw_sales: &raw_sales,
-            formula: ProfitFormula::recipe_from_query(Some(cost), Some(revenue), o.scope),
+            revenue_listings: if use_scope {
+                Some(&scope_listings)
+            } else if wider {
+                None
+            } else {
+                o.sell_listings.then_some(&sell)
+            },
+            revenue_stats: if use_scope {
+                Some(&scope_stats)
+            } else if wider {
+                None
+            } else {
+                o.sell_stats.then_some(&sell_index)
+            },
+            formula,
             levels: &levels,
             job_filter: None,
             use_subcrafts: false,
@@ -5647,6 +5924,300 @@ mod test {
         );
     }
 
+    /// Revenue follows the sell scope, and the fixture proves each surviving
+    /// row actually discriminates. The classes are read off
+    /// `rev_alt[ListingMin]` rather than off `market_price`: that entry is
+    /// the bare scope-map lookup with no HQ clamp and no base fallback, so
+    /// `None` means "absent from the scope map" and nothing else, while a
+    /// price comparison cannot tell a fall-through from an undercut (the
+    /// buy-scope NQ price is below the home price too).
+    #[test]
+    fn revenue_reads_the_sell_scope_and_every_class_of_row_says_so() {
+        let li = PriceSignal::ListingMin.index();
+        for signal in [PriceSignal::ListingMin, PriceSignal::SaleMedian] {
+            let f =
+                ProfitFormula::recipe_from_query(Some(PriceSignal::ListingMin), Some(signal), None);
+            let needs = needed_signals(&f, &SignalWants::default(), false);
+            let home = run_with(
+                PriceSignal::ListingMin,
+                signal,
+                &RunOpts {
+                    needs: needs.clone(),
+                    ..RunOpts::default()
+                },
+            );
+            let scoped = run_with(
+                PriceSignal::ListingMin,
+                signal,
+                &RunOpts {
+                    needs,
+                    sell_scope: Some(Scope::Region),
+                    scope_bodies: true,
+                    ..RunOpts::default()
+                },
+            );
+            let home_by_key: HashMap<i32, &RecipeProfitData> =
+                home.iter().map(|r| (r.recipe.key_id.0, r)).collect();
+
+            let (mut cheaper, mut dearer, mut fell_through) = (0, 0, 0);
+            let (mut price_down, mut price_up) = (0, 0);
+            for r in &scoped {
+                let Some(h) = home_by_key.get(&r.recipe.key_id.0) else {
+                    continue;
+                };
+                match (r.rev_alt[li], h.rev_alt[li]) {
+                    (None, Some(_)) => {
+                        fell_through += 1;
+                        assert!(
+                            r.market_price > 0,
+                            "the base layer must keep a scope-missing row priceable"
+                        );
+                    }
+                    (Some(s), Some(hh)) if s < hh => cheaper += 1,
+                    (Some(s), Some(hh)) if s > hh => dearer += 1,
+                    pair => panic!("{signal:?}: undiscriminating row {pair:?}"),
+                }
+                match r.market_price.cmp(&h.market_price) {
+                    Ordering::Less => price_down += 1,
+                    Ordering::Greater => price_up += 1,
+                    Ordering::Equal => {}
+                }
+            }
+            assert!(
+                cheaper > 0 && dearer > 0,
+                "{signal:?}: the fixture must move the scope lookup BOTH ways \
+                 (cheaper {cheaper}, dearer {dearer}); a one-directional \
+                 fixture cannot tell a scope lookup from a clamp"
+            );
+            assert!(
+                fell_through > 0,
+                "{signal:?}: no row was absent from the scope map"
+            );
+            assert!(
+                price_down > 0 && price_up > 0,
+                "{signal:?}: the headline price must move both ways too \
+                 (down {price_down}, up {price_up})"
+            );
+
+            // `over` and `stats` are two separate fields of one
+            // `SignalView`, and every count above moves with the listing
+            // layer alone: verified by mutation, a build whose revenue
+            // STATISTICS kept reading the sell world passes all of them.
+            // Under a sale signal the sell place's own statistic is what
+            // `quality()` returns for whichever quality carries it, so the
+            // headline price can never sit above it - and reading the
+            // world's unscaled statistic instead puts it there on the
+            // halved (even-id) rows.
+            if signal.sale_stat().is_some() {
+                let mut priced_at_the_sell_places_statistic = 0;
+                for r in &scoped {
+                    let Some(stat) = r.rev_alt[signal.index()] else {
+                        continue;
+                    };
+                    assert!(
+                        r.market_price <= stat,
+                        "row {} priced at {} above its own sell-place {signal:?} of {stat}",
+                        r.recipe.key_id.0,
+                        r.market_price
+                    );
+                    priced_at_the_sell_places_statistic += usize::from(r.market_price == stat);
+                }
+                assert!(
+                    priced_at_the_sell_places_statistic > 0,
+                    "{signal:?}: no row priced AT the sell place's statistic, so the \
+                     assertion above cannot see the statistics layer"
+                );
+            }
+        }
+    }
+
+    /// The sell world's own figures do NOT follow the sell scope: velocity,
+    /// avg price, confidence, last sold, volume, VWAP, the statistics
+    /// quality (the sparkline and 30-day key) and Hop gain's home run all
+    /// stay where the spec puts them.
+    #[test]
+    fn the_sell_worlds_own_figures_ignore_the_sell_scope() {
+        let needs = everything_wanted(PriceSignal::ListingMin);
+        let home = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            &RunOpts {
+                needs: needs.clone(),
+                scope: Some(BuyScope::Region),
+                ..RunOpts::default()
+            },
+        );
+        let scoped = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            &RunOpts {
+                needs,
+                scope: Some(BuyScope::Region),
+                sell_scope: Some(Scope::Region),
+                scope_bodies: true,
+                ..RunOpts::default()
+            },
+        );
+        let by_key: HashMap<i32, &RecipeProfitData> =
+            home.iter().map(|r| (r.recipe.key_id.0, r)).collect();
+        let mut compared = 0;
+        for r in &scoped {
+            let Some(h) = by_key.get(&r.recipe.key_id.0) else {
+                continue;
+            };
+            compared += 1;
+            assert_eq!(r.daily_sales, h.daily_sales, "{}", r.recipe.key_id.0);
+            assert_eq!(r.avg_price, h.avg_price);
+            assert_eq!(r.units_sold, h.units_sold);
+            assert_eq!(r.vwap, h.vwap);
+            assert_eq!(r.last_sold_unix, h.last_sold_unix);
+            assert_eq!(r.confidence, h.confidence);
+            assert_eq!(r.stat_hq, h.stat_hq);
+            assert_eq!(
+                r.hop, h.hop,
+                "Hop gain is buy-side and prices home at the world"
+            );
+            assert_eq!(r.worlds, h.worlds);
+        }
+        assert!(compared > 20, "only {compared} rows compared");
+    }
+
+    /// The Price median tell is SUPPRESSED at a wider sell scope, not
+    /// re-based. `price_note` compares the row's price against
+    /// `sell_median`; move the price to a region and the two operands stop
+    /// describing the same market, so the tell would read negative and red
+    /// on nearly every row - caused by the user's own setting rather than
+    /// by a suspicious listing. #1266 was merged to make that tell
+    /// trustworthy; a page-wide false alarm is how a colour stops being
+    /// read. The sub-line keeps its shape: `price_note` falls to
+    /// `ListingFallback` or `None`.
+    #[test]
+    fn the_price_median_tell_is_suppressed_at_a_wider_sell_scope() {
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::ListingMin),
+            Some(PriceSignal::SaleMedian),
+            None,
+        );
+        let needs = needed_signals(&f, &SignalWants::default(), false);
+        let home = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            &RunOpts {
+                needs: needs.clone(),
+                ..RunOpts::default()
+            },
+        );
+        assert!(
+            home.iter().any(|r| r.sell_median.is_some()),
+            "the fixture must carry medians at the default scope, or this \
+             test cannot tell suppression from an empty fixture"
+        );
+        let scoped = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            &RunOpts {
+                needs,
+                sell_scope: Some(Scope::Region),
+                scope_bodies: true,
+                ..RunOpts::default()
+            },
+        );
+        assert!(
+            scoped.iter().all(|r| r.sell_median.is_none()),
+            "a wider sell scope must leave the median tell's operand empty"
+        );
+        // ...and the note therefore never carries a percentage.
+        for r in &scoped {
+            assert!(
+                !matches!(
+                    price_note(r.market_price, r.sell_median, r.revenue_fell_back),
+                    CellNote::VsMedian { .. } | CellNote::Troll { .. }
+                ),
+                "row {} still renders a median tell",
+                r.recipe.key_id.0
+            );
+        }
+    }
+
+    /// Scope vs home: both places under one signal, both directions of
+    /// sign, and every non-`Pair` state the design names.
+    #[test]
+    fn scope_vs_home_records_both_places_and_only_when_asked() {
+        let wanted = NeededSignals {
+            scope_vs_home: true,
+            ..NeededSignals::default()
+        };
+        // Not asked for: never computed, whatever the scope.
+        let quiet = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                sell_scope: Some(Scope::Region),
+                scope_bodies: true,
+                ..RunOpts::default()
+            },
+        );
+        assert!(quiet.iter().all(|r| r.scope_vs_home == ScopeVsHome::Off));
+
+        // Asked for, but the sell scope IS the world: nothing to compare,
+        // and the whole column is `Off` (the header tooltip says why).
+        let flat = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: wanted.clone(),
+                ..RunOpts::default()
+            },
+        );
+        assert!(flat.iter().all(|r| r.scope_vs_home == ScopeVsHome::Off));
+
+        // Asked for at a wider scope: both directions appear, and a row the
+        // scope map does not hold is `Unavailable`, never `Off`.
+        let scoped = run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::ListingMin,
+            &RunOpts {
+                needs: wanted,
+                sell_scope: Some(Scope::Region),
+                scope_bodies: true,
+                ..RunOpts::default()
+            },
+        );
+        assert!(scoped.iter().all(|r| r.scope_vs_home != ScopeVsHome::Off));
+        let deltas: Vec<i32> = scoped
+            .iter()
+            .filter_map(|r| match r.scope_vs_home {
+                ScopeVsHome::Pair { place, home, .. } => Some(place - home),
+                _ => None,
+            })
+            .collect();
+        assert!(!deltas.is_empty());
+        assert!(
+            deltas.iter().any(|d| *d < 0),
+            "no row where the scope undercuts"
+        );
+        assert!(
+            deltas.iter().any(|d| *d > 0),
+            "no row where the scope is dearer"
+        );
+        assert!(
+            scoped
+                .iter()
+                .any(|r| r.scope_vs_home == ScopeVsHome::Unavailable),
+            "the fixture's third class must reach the Unavailable state"
+        );
+        // Every recorded pair has a real value on BOTH sides, and a listing
+        // signal is one-sided so the percentage will be dropped in Task 4.
+        assert!(scoped.iter().all(|r| match r.scope_vs_home {
+            ScopeVsHome::Pair {
+                place,
+                home,
+                two_sided,
+            } => place > 0 && home > 0 && !two_sided,
+            _ => true,
+        }));
+    }
+
     fn row(key: i32, profit: i32, roi: i32, daily: f32, world: i32) -> Arc<RecipeProfitData> {
         let recipe = fixture_recipes()
             .into_iter()
@@ -5678,6 +6249,7 @@ mod test {
             unpriced: 0,
             hop: None,
             worlds: None,
+            scope_vs_home: ScopeVsHome::Off,
         })
     }
 
