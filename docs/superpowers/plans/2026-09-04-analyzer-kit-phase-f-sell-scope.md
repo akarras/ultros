@@ -108,7 +108,7 @@ Re-count with `grep -c '#\[test\]'` before trusting any of them if the base has 
 
 | Module | Base | After Phase F |
 |---|---|---|
-| `routes::recipe_analyzer` | **65** | **86** |
+| `routes::recipe_analyzer` | **65** | **87** |
 | `analyzer_kit::cells` | **7** | **8** |
 | `analyzer_kit::columns` | **6** | 6 |
 | `analyzer_kit::enrichment` | **15** | 15 |
@@ -119,7 +119,7 @@ Re-count with `grep -c '#\[test\]'` before trusting any of them if the base has 
 | `analyzer_kit::signals` | **6** | 6 |
 | `analyzer_kit::strip` | **1** | 1 |
 
-Per-task `recipe_analyzer::test` running totals: T1 **66**, T2 66, T3 **71**, T4 **73**, T5 **77**, T6 **80**, T7 **83**, T8 **85**, T9 **86**.
+Per-task `recipe_analyzer::test` running totals: T1 **66**, T2 66, T3 **71**, T4 **73**, T5 **78**, T6 **81**, T7 **84**, T8 **86**, T9 **87**. Per-task deltas, so a task that lands the wrong number is caught where it happens rather than at the end: **+1 / +0 / +5 / +2 / +5 / +3 / +3 / +2 / +1**. (Task 5 adds **five** tests, not four — `market_extras_put_the_place_they_are_given_on_the_second_line`, `the_two_places_reach_the_labels_they_belong_to`, `the_two_places_agree_until_the_scope_moves`, `the_scope_vs_home_header_has_its_own_extras_arm` and `the_live_formula_sentence_scopes_the_sell_slot`; the first passes on arrival and is kept as the regression net for the two steps after it, but it is still a `#[test]` and still counts.)
 
 Per-locale i18n key totals: base **1794**; after T4 **1796**, T5 **1797**, T6 **1799**, T7 **1800**, T9 **1800** (T9 edits a value and adds none).
 
@@ -733,6 +733,7 @@ This is the task that can silently change numbers, so it opens with two characte
 **Files:**
 - Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs:96-165` (`RecipeProfitData` gains one field), `:2061-2104` (`PriceInputs`), `:2105-2360` (`price_rows`), and `mod test`'s fixture harness at `:4920-5152` and its oracle at `:5361-5395`
 - Modify (compile-fix, same task): `recipe_analyzer.rs:5402` — the `row()` test helper's `RecipeProfitData` literal is exhaustive, so the new field must be filled there or the module does not compile. Fill: `scope_vs_home: ScopeVsHome::Off,`. It is the **only** `RecipeProfitData` literal besides `price_rows`' own (`:2332`).
+- Modify (compile-fix, same task): `recipe_analyzer.rs:2786` — **the table's `priced` memo builds the other exhaustive `PriceInputs` literal.** There are exactly two on the branch: this one and `run_with`'s (`:5098`). Adding `revenue_listings` / `revenue_stats` to the struct is a `missing fields` compile error at both, so Step 5 fills both with today's values (Task 8 is what replaces them with the resolved ones).
 
 **Interfaces:**
 - Consumes: `SignalView` (`signals.rs:130`), `stat_only_cheapest` (`signals.rs:92`), `NeededSignals.scope_vs_home` (Task 2), `Scope` / `SellScope` / `seat_sell_scope` (Task 1).
@@ -1198,6 +1199,19 @@ Replace the sell-side fields of `PriceInputs` (`:2068-2082`) with:
 
 `sell_stats_loaded` (`:2098-2100`) keeps its name and its meaning — "the sell **world's** body arrived" — because that is what `hop_signal` (`:2141-2150`) reads. Leave that use **exactly as it is**.
 
+Then fill the two new fields at **both** exhaustive literals, or the module does not compile. The table's `priced` memo (`:2786-2800`), immediately after `sell_stats: &sell_stats_index,`:
+
+```rust
+                // Today's values, spelled out: at the default sell scope
+                // the sell place IS the sell world. Task 8 replaces both
+                // with the resolved sources; until then this is
+                // byte-identical to the single "sell" input it replaces.
+                revenue_listings: sell_world_prices.as_deref(),
+                revenue_stats: Some(&sell_stats_index),
+```
+
+Both types line up with the fields directly above them: `sell_world_prices` is `Option<Arc<CheapestListingsMap>>`, so `.as_deref()` is already the `Option<&CheapestListingsMap>` `sell_listings` takes, and `sell_stats_index` is an `Arc<StatsIndex>` whose `&` deref-coerces to `&StatsIndex` inside `Some(..)` exactly as it does at `sell_stats: &sell_stats_index` one line up. `run_with`'s literal (`:5098`) is filled in Step 7.
+
 - [ ] **Step 6: Add the row state, the shared lookup, and use them**
 
 Above `price_rows` (`:2104`):
@@ -1383,6 +1397,8 @@ then, in the `PriceInputs` literal:
 ```
 
 Add `use std::cmp::Ordering;` to `mod test`'s imports if it is not already there, and make sure `SignalView`, `CheapestListingItem`, `CheapestListings` and `ItemSaleStats` are in scope for `scope_fixture`.
+
+The two `if use_scope { … } else if wider { … } else { … }` chains above are **temporary**: Task 8 introduces `revenue_source`, the function the shipped table resolves through, and replaces both chains with a `match` on it so the harness picks its maps by production's rule rather than a parallel one. They are written out here because `revenue_source` does not exist for another five tasks, and the three arms are value-for-value identical, so nothing recorded in this task moves when they are swapped.
 
 - [ ] **Step 8: Run every pricing test**
 
@@ -1967,6 +1983,20 @@ Add to `recipe_analyzer.rs`'s `mod test`:
         production
     }
 
+    /// `production_source()` with all whitespace removed, so a needle
+    /// cannot be broken by rustfmt's line wrapping (or by a CRLF
+    /// checkout). Assert against this whenever the thing being pinned is a
+    /// multi-argument call: rustfmt breaks any call it cannot fit in 100
+    /// columns onto one line per argument, and a needle written as one
+    /// line then pins text the formatter will never emit — a test that can
+    /// only fail.
+    fn production_squeezed() -> String {
+        production_source()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
     /// `market_extra` puts the place it is GIVEN on line 2 — it has no
     /// other source for one, so this pins the composition (`7d · ‹place›`)
     /// and nothing more. Which place actually reaches the call is a
@@ -2027,15 +2057,25 @@ Add to `recipe_analyzer.rs`'s `mod test`:
             production.contains(&format!("{} = {}.get(),", "sell", "revenue_place")),
             "the live formula sentence names the sell PLACE"
         );
-        // …and the place memo itself goes through the lab gate, not the raw
-        // param, or a flag-off page with `?sell-scope=region` would rename
-        // every revenue label it shows.
+        // …and the place memo itself goes through the pure resolver, whose
+        // own body holds the lab gate — or a flag-off page with
+        // `?sell-scope=region` would rename every revenue label it shows.
+        //
+        // Aimed at `revenue_place_for`, NOT at a bare
+        // `sell_scope_for(preview.get(), sell_scope())`: that string is
+        // also written by the live-sentence branch added in Step 4 of this
+        // same task, and by Task 6's strip select and table prop, so it
+        // would pass without `revenue_place` consulting anything. The
+        // gate's own behaviour is what
+        // `the_two_places_agree_until_the_scope_moves` proves; this pins
+        // that the memo actually calls the function that has it.
         assert!(
-            production.contains(&format!(
-                "{}(preview.get(), {}())",
-                "sell_scope_for", "sell_scope"
+            production_squeezed().contains(&format!(
+                "{}(preview.get(),{}(),",
+                "revenue_place_for", "sell_scope"
             )),
-            "`revenue_place` must resolve through the lab gate"
+            "`revenue_place` must resolve through `revenue_place_for`, which \
+             is where the lab gate lives"
         );
     }
 
@@ -2170,6 +2210,8 @@ In `RecipeAnalyzer`, beside the three pricing signals (`:3736-3739`):
     let (sell_scope, set_sell_scope) = filter_query_signal::<SellScope>(FILTER_SELL_SCOPE);
 ```
 
+**Expected inter-task warning:** `set_sell_scope` has no reader until Task 6 hangs the strip select off it, so this task ends with `unused variable: set_sell_scope` on that line. That is Global Constraint 4's tolerated dead code, not a mistake — do **not** silence it with `_set_sell_scope` (Task 6 would have to rename it back) and do **not** `#[allow]` it. `cargo test` reports it and passes; `check_ci.sh` does not run until Task 9, by which point it is gone.
+
 Add the pure resolver beside `sell_scope_for` (so the memo has nothing in it a test cannot reach):
 
 ```rust
@@ -2302,7 +2344,7 @@ Verify: every locale is now **1797** keys.
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p ultros-app --lib -- recipe_analyzer::test`
-Expected: PASS, **77 passed** (73 after Task 4 + 4). `formula_marks_labels_name_signal_and_place` and `market_headers_carry_their_tooltip_and_the_window` must be green **unchanged** — they are what proves the swap did not cross the two names.
+Expected: PASS, **78 passed** (73 after Task 4 + 5 — Step 1 adds five `#[test]`s, one of which passed on arrival). `formula_marks_labels_name_signal_and_place` and `market_headers_carry_their_tooltip_and_the_window` must be green **unchanged** — they are what proves the swap did not cross the two names.
 
 - [ ] **Step 7: Commit**
 
@@ -2445,6 +2487,23 @@ git commit -m "feat(recipe-analyzer): name the sell place on the revenue side, t
             "the table never reads the scope untracked: the page resolves it \
              inside the Suspense closure and hands it down"
         );
+        // The positive half of that rule, and the thing the plan's own
+        // self-review called out as unpinned: the scope has to be READ
+        // inside the Suspense closure, because that read is what makes a
+        // scope change rebuild the table and re-run the pricing memo. The
+        // negative assertion above only bans the wrong way of doing it.
+        // Squeezed (rustfmt does not touch `view!` bodies, but a needle
+        // that survives reformatting either way costs nothing), and
+        // anchored on the `sell_scope=` prop prefix: the same call appears
+        // three more times in this module — the `revenue_place` memo, the
+        // strip select's `value`, and the live sentence's `scoped` — and
+        // only this one is the hand-off that forces the rebuild.
+        assert!(
+            production_squeezed()
+                .contains("sell_scope=sell_scope_for(preview.get(),sell_scope())"),
+            "the page must resolve the scope INSIDE the Suspense closure and \
+             pass it as a prop; nothing else rebuilds the table when it moves"
+        );
     }
 ```
 
@@ -2551,7 +2610,7 @@ Finally, pass the prop from the Suspense closure (`:4355-4375`), beside `preview
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p ultros-app --lib -- recipe_analyzer::test analyzer_kit::strip`
-Expected: PASS, `recipe_analyzer::test` **80** (77 after Task 5 + 3). `fixed_terms_render_static_chips_and_select_terms_render_selects` (strip.rs, **1 passed**) must be green unchanged — the strip component itself did not move.
+Expected: PASS, `recipe_analyzer::test` **81** (78 after Task 5 + 3). `fixed_terms_render_static_chips_and_select_terms_render_selects` (strip.rs, **1 passed**) must be green unchanged — the strip component itself did not move.
 
 - [ ] **Step 7: Commit**
 
@@ -2671,6 +2730,29 @@ git commit -m "feat(recipe-analyzer): the sell-scope select, counted in filters 
                 "buy_scope_is_sell_world", "buy_scope_is_sell_world"
             )),
             "…over the page's real alias gate, not RecipeNeeds::default()"
+        );
+        // The two places must be ONE place. `revenue_place`'s datacenter
+        // arm falls back to the region when no datacenter has resolved
+        // yet; `sell_scope_key` sends a name to the API and
+        // `sell_scope_is_buy_scope` compares a name against the buy
+        // scope's. If either of those reads anything but `revenue_place`,
+        // the page fetches one market, dedupes against a second and labels
+        // a third — with no test able to see it, because each half is
+        // internally consistent. Squeezed, because both are multi-argument
+        // lines rustfmt is free to wrap.
+        let squeezed = production_squeezed();
+        assert!(
+            squeezed.contains(&format!("let{}={}.get();", "place", "revenue_place")),
+            "the name `sell_scope_key` sends is `revenue_place`, fallback arm \
+             included — not `sell_place`, and not a second resolution"
+        );
+        assert!(
+            squeezed.contains(&format!(
+                "{}.get()=={}.get()",
+                "revenue_place", "buy_scope_name"
+            )),
+            "…and the dedupe gate compares that same name against the buy \
+             scope's, or `needed_bodies` skips a body nobody fetched"
         );
         // Global Constraint 6: Phase F adds no lazy fetch, so the viewport
         // signal is still read by exactly the two E2 gates.
@@ -2903,7 +2985,7 @@ Verify: every locale is now **1800** keys.
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p ultros-app --lib`
-Expected: PASS across the crate; `recipe_analyzer::test` **83** (80 after Task 6 + 3).
+Expected: PASS across the crate; `recipe_analyzer::test` **84** (81 after Task 6 + 3).
 
 - [ ] **Step 7: Check the client build**
 
@@ -2927,12 +3009,12 @@ git commit -m "feat(recipe-analyzer): fetch the sell-scope bodies, and name the 
 This task exists on its own because it is where the phase's headline defect lived. The page and the table build the ledger in two different places, and only the table's reaches `price_rows`. A draft that seated the sell scope on `formula_page` alone left the table's `formula` memo (`:2648-2658`) at `Term::Fixed(World)` on **every production render**, so `scope_vs_home` was `Off` for every row, Price never moved, and the whole suite stayed green because `run_with` seated the scope on its own formula. That is Phase E2's median-tell escape verbatim. The fix is structural, not a new assertion: one seating function (Task 1), used by the page, the table **and** the harness, plus a source-read test that counts its callers.
 
 **Files:**
-- Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs:2640-2660` (the index resolution and the table's `formula` memo), `:2760-2800` (the `PriceInputs` literal), `:2762-2766` (the `priced` memo's captured clones)
+- Modify: `ultros-frontend/ultros-app/src/routes/recipe_analyzer.rs:2640-2660` (the index resolution and the table's `formula` memo), `:2760-2800` (the `PriceInputs` literal), `:2762-2766` (the `priced` memo's captured clones), and `mod test`'s `run_with` at `:5098` (its revenue inputs move onto the production resolver)
 
 **Interfaces:**
 - Consumes: `SellScopeBodies`, `sell_scope_is_buy_scope` (Task 7); the `sell_scope: Option<SellScope>` prop (Task 6); `seat_sell_scope` (Task 1); `PriceInputs.{revenue_listings, revenue_stats}` (Task 3).
 - Produces:
-  - `enum RevenueSource { SellWorld, BuyScope, Scope, Missing }` and two pure resolvers, `revenue_listings_source` / `revenue_stats_source`. The three-way choice is the silent-re-price hazard, so it is a function with a test rather than a `match` buried in a component.
+  - `enum RevenueSource { SellWorld, BuyScope, Scope, Missing }` and two pure resolvers, `revenue_listings_source` / `revenue_stats_source`. The three-way choice is the silent-re-price hazard, so it is a function with a test rather than a `match` buried in a component — and `run_with` calls the same function, so the harness's inputs are the production inputs the way its formula is already the production formula.
   - The table's `formula` memo, rewritten to go through `seat_sell_scope`.
 - **Flag-off:** `sell_scope` is `None` (the page gated it), so both resolvers return `RevenueSource::SellWorld` and the table feeds `PriceInputs` exactly `sell_world_prices` and `Some(sell_stats_index)` — the same two values `revenue_listings` / `revenue_stats` defaulted to in Task 3. `seat_sell_scope(f, preview, None)` returns `f`, so the memo's value is `PartialEq`-identical to today's and cannot fire. Asserted end-to-end by `the_tables_own_formula_is_what_fills_the_scope_column`'s flag-off arm and by the two oracles from Task 3, which are re-run here.
 
@@ -2951,10 +3033,22 @@ This task exists on its own because it is where the phase's headline defect live
     /// 2. `seat_sell_scope` has exactly three: its own definition, the
     ///    page's `formula_page`, and the TABLE's `formula`. Unwire the
     ///    table and this drops to two.
-    /// 3. A pricing pass whose formula came out of that function — the same
+    /// 3. The two seatings are TOLD APART, so the count cannot be satisfied
+    ///    by a wrapper. `fn table_formula(..) { seat_sell_scope(..) }`
+    ///    keeps the count at three while the table stops calling it, so the
+    ///    counts only bite when something also pins the two call *shapes*.
+    /// 4. A pricing pass whose formula came out of that function — the same
     ///    call `run_with` makes — actually fills the column. This is the
-    ///    behavioural half: the counts could both hold while the seating
+    ///    behavioural half: the counts could all hold while the seating
     ///    did nothing.
+    ///
+    /// Assertion 3's needles are matched against `production_squeezed()`,
+    /// not `production_source()`. Both seatings are calls rustfmt is
+    /// obliged to break one-argument-per-line: the first argument alone,
+    /// `ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(),
+    /// buy_scope()),`, is 76 characters at indent 12, so the call cannot
+    /// fit in 100 columns and a single-line needle would pin text the
+    /// formatter will never emit.
     #[test]
     fn the_tables_own_formula_is_what_fills_the_scope_column() {
         let production = production_source();
@@ -2970,16 +3064,21 @@ This task exists on its own because it is where the phase's headline defect live
              `formula` memo — if this reads 2, the table is unwired and the \
              column ships as dashes"
         );
+        // The two call SHAPES, which is what makes the count above bite.
+        // They are distinguishable on purpose: the page seats from signals
+        // (`preview.get()`, `sell_scope()`), the table from its two props
+        // (`preview`, `sell_scope`), so neither needle can stand in for the
+        // other and a wrapper that keeps the count at three fails here.
+        let squeezed = production_squeezed();
         assert!(
-            production.contains(&format!(
-                "{}(\n            ProfitFormula::recipe_from_query(cost_basis(), revenue_metric(), buy_scope()),",
-                "seat_sell_scope"
-            )) || production.contains(&format!("{}(", "seat_sell_scope")),
-            "the page memo goes through it"
+            squeezed.contains(
+                "recipe_from_query(cost_basis(),revenue_metric(),buy_scope()),preview,sell_scope,)"
+            ),
+            "the TABLE's formula memo must seat the scope from its own props"
         );
         assert!(
-            production.contains(&format!("preview, {}", "sell_scope")),
-            "the table memo passes its own `preview` and `sell_scope` prop"
+            squeezed.contains(",preview.get(),sell_scope(),)"),
+            "…and the page's `formula_page` from its own signals"
         );
 
         // The behavioural half. `run_with` builds its formula with the same
@@ -3019,7 +3118,13 @@ This task exists on its own because it is where the phase's headline defect live
     /// a unit test while it lives inside the component, so it does not.
     #[test]
     fn the_table_resolves_the_revenue_side_from_the_pages_scope() {
-        use RevenueSource::*;
+        // NO `use RevenueSource::*;` here. Its `Scope` and `BuyScope`
+        // variants land in the TYPE namespace and shadow the `Scope` alias
+        // and the `BuyScope` enum this module imports from
+        // `analyzer_kit::formula`, and `Scope::World` then fails to resolve
+        // with `E0433: Scope is a variant, not a module`. Spell the
+        // variants out.
+        use RevenueSource::{BuyScope as FromBuyScope, Missing, Scope as FromScope, SellWorld};
         // Default scope: the sell world's own bodies, whatever else is true.
         for is_buy in [false, true] {
             for have in [false, true] {
@@ -3029,22 +3134,31 @@ This task exists on its own because it is where the phase's headline defect live
         }
         // Wider, body present: the scope's own, even if it also happens to
         // be the buy scope's place.
-        assert_eq!(revenue_listings_source(Scope::Region, false, true), Scope);
-        assert_eq!(revenue_listings_source(Scope::Region, true, true), Scope);
+        assert_eq!(revenue_listings_source(Scope::Region, false, true), FromScope);
+        assert_eq!(revenue_listings_source(Scope::Region, true, true), FromScope);
         // Wider, no body, but the place IS the buy scope: reuse it. That is
         // the dedupe `needed_bodies` counted on when it skipped the fetch.
-        assert_eq!(revenue_listings_source(Scope::Datacenter, true, false), BuyScope);
-        assert_eq!(revenue_stats_source(Scope::Datacenter, true, false), BuyScope);
+        assert_eq!(
+            revenue_listings_source(Scope::Datacenter, true, false),
+            FromBuyScope
+        );
+        assert_eq!(
+            revenue_stats_source(Scope::Datacenter, true, false),
+            FromBuyScope
+        );
         // Wider, no body, not the buy scope: nothing. `SignalView` falls to
         // its base layer for listings and `rev-sale-*` cells go "—" — and
         // Task 7's banner is what tells the player.
         assert_eq!(revenue_listings_source(Scope::Region, false, false), Missing);
         assert_eq!(revenue_stats_source(Scope::Region, false, false), Missing);
 
-        let production = production_source();
+        // Squeezed, per `production_squeezed()`'s doc: both are three-argument
+        // calls rustfmt breaks onto one line per argument, so `…_source(`
+        // and `sell_scope_value` never share a source line.
+        let squeezed = production_squeezed();
         assert!(
-            production.contains(&format!("{}(sell_scope_value", "revenue_listings_source"))
-                && production.contains(&format!("{}(sell_scope_value", "revenue_stats_source")),
+            squeezed.contains(&format!("{}(sell_scope_value,", "revenue_listings_source"))
+                && squeezed.contains(&format!("{}(sell_scope_value,", "revenue_stats_source")),
             "the table must resolve through both helpers, not an inline match"
         );
     }
@@ -3099,6 +3213,38 @@ fn revenue_stats_source(scope: Scope, is_buy_scope: bool, have_body: bool) -> Re
 }
 ```
 
+Then **make the harness resolve through it too**, which is the same structural move as Task 1's `seat_sell_scope`: without it, "the tested path is the production path" is true of the *formula* and false of the *inputs*, and the component's arm → value mapping has no test at all. A mis-wire there ships `Pair { place: x, home: x }` — a whole column of `+0` — or silently re-prices under a scope label, and every existing test stays green because the harness picked its own maps by a rule the component does not use.
+
+In `run_with` (`:5098`), replace Task 3 Step 7's two hand-written chains with the production function. Add one local immediately after `let use_scope = wider && o.scope_bodies;` (`wider` keeps its reader, so nothing above changes):
+
+```rust
+        // The SAME resolver the table runs, so the harness cannot pick a
+        // map by a rule production does not use. `is_buy_scope` is `false`
+        // here — the fixture's buy maps are a different place — and that
+        // arm is covered directly by
+        // `the_table_resolves_the_revenue_side_from_the_pages_scope`.
+        let revenue_at = revenue_source(o.sell_scope.unwrap_or(Scope::World), false, use_scope);
+```
+
+and, in the `PriceInputs` literal:
+
+```rust
+            revenue_listings: match revenue_at {
+                RevenueSource::SellWorld => o.sell_listings.then_some(&sell),
+                RevenueSource::BuyScope => Some(&buy),
+                RevenueSource::Scope => Some(&scope_listings),
+                RevenueSource::Missing => None,
+            },
+            revenue_stats: match revenue_at {
+                RevenueSource::SellWorld => o.sell_stats.then_some(&sell_index),
+                RevenueSource::BuyScope => Some(&index),
+                RevenueSource::Scope => Some(&scope_stats),
+                RevenueSource::Missing => None,
+            },
+```
+
+The three reachable arms are value-for-value what the chain they replace produced, so **no Task 3 test changes and neither oracle moves**: `World` → the sell world's maps gated on `o.sell_listings` / `o.sell_stats`, wider-with-bodies → the scope maps, wider-without → `None`.
+
 - [ ] **Step 4: Seat the scope on the table's formula and resolve the two inputs**
 
 Replace the table's `formula` memo (`:2648-2658`) with:
@@ -3132,8 +3278,10 @@ and insert, **before** that memo and after the existing index construction (`:26
     // gated and handed down — never from a `get_untracked()` read of the
     // query signal. The page passes this prop from inside the Suspense
     // closure, so a scope change rebuilds the table and re-runs this;
-    // relying on some other signal in that closure to force the rebuild is
-    // an accidental invariant no test can hold down.
+    // `the_sell_scope_is_counted_and_cleared_like_the_other_market_params`
+    // pins both halves of that (the prop read inside the closure, and no
+    // untracked read anywhere), because it is otherwise an accidental
+    // invariant.
     let sell_scope_value = sell_scope.map(SellScope::scope).unwrap_or(Scope::World);
     let scope_prices = sell_scope_bodies
         .as_ref()
@@ -3188,7 +3336,7 @@ Then:
 - [ ] **Step 5: Run the whole suite and the client build**
 
 Run: `cargo test -p ultros-app --lib`
-Expected: PASS, `recipe_analyzer::test` **85** (83 after Task 7 + 2). Both Task 3 oracles must still be green — this is the step that could move a default-scope number, because it is where `revenue_listings` / `revenue_stats` stop being defaults.
+Expected: PASS, `recipe_analyzer::test` **86** (84 after Task 7 + 2). Both Task 3 oracles must still be green — this is the step that could move a default-scope number, because it is where `revenue_listings` / `revenue_stats` stop being defaults **and** where the harness stops choosing its maps by hand. Every Task 3 pricing test must also still be green unchanged; if one moved, the `revenue_source` mapping in Step 3 does not match the chain it replaced.
 
 Run: `cargo check -p ultros-app --no-default-features --features hydrate --target wasm32-unknown-unknown`
 Expected: exit 0.
@@ -3306,7 +3454,15 @@ Verify all seven are still **1800** keys (this is an edit, not an addition).
 
 `&sell-scope=datacenter` is the point: without it every `scope-vs-home` cell is `ScopeVsHome::Off` and the harness screenshots a column of dashes, which pins nothing the flag-off run does not already pin.
 
-Update the comment above `:94` in the same edit: "eighteen columns" becomes **nineteen**, and the "six that are not `hidden md:`" figure is unchanged (`scope-vs-home` uses `HEAD_28_MD` / `CELL_28_MD`, both `hidden md:`, so the mobile pass still renders six).
+Update the comment above `:94` in the same edit — it carries **three** counts and two of them move:
+
+| `:87-90` today | after |
+|---|---|
+| "`cols=` names **ten of the twenty-two** optional columns" | "**eleven of the twenty-three**" — `OPTIONAL_COLUMN_ORDER` grew to 23 (the URL-contract table above) and the route now names one more of them |
+| "the desktop pass renders **eighteen** columns at once" | "**nineteen**" |
+| "only the **six** that are not `hidden md:`" | **unchanged** — `scope-vs-home` uses `HEAD_28_MD` / `CELL_28_MD`, both `hidden md:`, so the mobile pass still renders six |
+
+Leave the rest of the comment (the Trend / Drift "no enrichment locally" paragraph) exactly as it is.
 
 - [ ] **Step 6: Sweep the dead code, then run every gate**
 
@@ -3324,7 +3480,7 @@ cargo test -p ultros-app --lib
 cargo check -p ultros-app --no-default-features --features hydrate --target wasm32-unknown-unknown
 ./check_ci.sh > /tmp/ci.log 2>&1; echo "REAL_EXIT=$?"; tail -30 /tmp/ci.log
 ```
-Expected: all green, `REAL_EXIT=0`, `recipe_analyzer::test` **86**. If clippy is OOM-killed (exit `137`), re-run as `cargo clippy --all-targets -j 2 -- -D warnings` — that is not a lint failure.
+Expected: all green, `REAL_EXIT=0`, `recipe_analyzer::test` **87**. If clippy is OOM-killed (exit `137`), re-run as `cargo clippy --all-targets -j 2 -- -D warnings` — that is not a lint failure.
 
 - [ ] **Step 7: Commit and open the PR**
 
@@ -3379,10 +3535,12 @@ Two spec sentences are deliberately **not** implemented, each with a stated reas
 
 **2. Placeholder scan.** No "TBD", no "add error handling", no "similar to Task N", no test described without its code. The one intentional blank is `revenue_projection_is_unchanged_at_the_default_sell_scope`'s two `ORACLE` constants, which cannot be written in advance because they are a recording of the current build — Task 3 Steps 1–2 spell out the record-and-paste loop, the exact command, and what to do with the output, which is the same mechanism `price_rows_matches_recorded_oracle_on_fixture` already documents in-tree.
 
-**3. Compile-breaking edits, listed where they happen.** Adding a field to a struct with exhaustive literals is a compile error, and Global Constraint 4 tolerates only warnings between tasks. Task 2 fixes six literals (`needed.rs:189`, `:263`, `:339`; `recipe_analyzer.rs:1636`, `:3962`, `:5142`); Task 3 fixes one (`recipe_analyzer.rs:5402`, the `row()` helper — the only `RecipeProfitData` literal outside `price_rows`). Every other literal of those three structs on the branch already ends in `..Default::default()`.
+**3. Compile-breaking edits, listed where they happen.** Adding a field to a struct with exhaustive literals is a compile error, and Global Constraint 4 tolerates only warnings between tasks. Task 2 fixes six literals (`needed.rs:189`, `:263`, `:339`; `recipe_analyzer.rs:1636`, `:3962`, `:5142`). Task 3 adds a field to **two** structs and so fixes three literals: `RecipeProfitData`'s one literal outside `price_rows` (`recipe_analyzer.rs:5402`, the `row()` helper) and **both** of `PriceInputs`' — the table's `priced` memo (`:2786`, Step 5) and the harness's `run_with` (`:5098`, Step 7). Missing the first of those pair is a `missing fields` compile error at Step 8, not a warning; the plan's earlier draft patched only the harness. Every other literal of those four structs on the branch already ends in `..Default::default()`.
 
 **4. Type consistency.** Checked every name that crosses a task boundary:
-`SellScope` / `Scope` / `with_sell_scope` / `sell_scope()` (Task 1 → 2, 3, 5, 6, 7, 8); `sell_scope_for` and `seat_sell_scope` (1 → 3, 5, 6, 7, 8); `BodyRole::{CheapestSellScope, SellScopeStats}` (2 → 7); `RecipeNeeds.{sell_scope_is_buy_scope, rev_signals}` (2 → 7); `NeededSignals.{rev, scope_vs_home}` and `SignalWants.{visible_rev, sort_rev, scope_vs_home}` (2 → 3, 4, 7); `rev_signal_at` (3, used twice in 3); `PriceInputs.{revenue_listings, revenue_stats}` (3 → 8); `ScopeVsHome` the row enum (3 → 4); `scope_vs_home_delta` / `scope_vs_home_pct` (4, used by the cell and the comparator); `CellValue::SignedGil { delta, pct, unavailable }` (4); `COL_SCOPE_VS_HOME` / `SortMode::ScopeVsHome` (4 → 9); `revenue_place` / `revenue_place_for` (5 → 6, 7); `production_source()` (5, reused by 6, 7, 8 and 9); `sell_scope_key` / `SellScopeBodies` / `scope_bodies_failed` / `fetch_sell_scope` (7 → 8); `RevenueSource` and its two resolvers (8).
+`SellScope` / `Scope` / `with_sell_scope` / `sell_scope()` (Task 1 → 2, 3, 5, 6, 7, 8); `sell_scope_for` and `seat_sell_scope` (1 → 3, 5, 6, 7, 8); `BodyRole::{CheapestSellScope, SellScopeStats}` (2 → 7); `RecipeNeeds.{sell_scope_is_buy_scope, rev_signals}` (2 → 7); `NeededSignals.{rev, scope_vs_home}` and `SignalWants.{visible_rev, sort_rev, scope_vs_home}` (2 → 3, 4, 7); `rev_signal_at` (3, used twice in 3); `PriceInputs.{revenue_listings, revenue_stats}` (3 → 8); `ScopeVsHome` the row enum (3 → 4); `scope_vs_home_delta` / `scope_vs_home_pct` (4, used by the cell and the comparator); `CellValue::SignedGil { delta, pct, unavailable }` (4); `COL_SCOPE_VS_HOME` / `SortMode::ScopeVsHome` (4 → 9); `revenue_place` / `revenue_place_for` (5 → 6, 7); `production_source()` and `production_squeezed()` (5, both reused by 6, 7, 8 and 9); `sell_scope_key` / `SellScopeBodies` / `scope_bodies_failed` / `fetch_sell_scope` (7 → 8); `RevenueSource`, `revenue_source` and its two named wrappers (8, and `run_with` moves onto `revenue_source` in the same task).
+
+One name collision worth stating, because it is a hard compile error rather than a warning: `RevenueSource`'s `Scope` and `BuyScope` variants share their names with the `Scope` alias and the `BuyScope` enum this module imports from `analyzer_kit::formula`, and **enum variants live in the type namespace**, so a `use RevenueSource::*;` in a test makes `Scope::World` fail with `E0433: Scope is a variant, not a module`. Task 8's resolver test imports the two colliding variants under `FromScope` / `FromBuyScope` instead. Renaming the variants was the alternative and was rejected: `RevenueSource::Scope` is the right name at the four match arms that ship.
 
 Return types checked against the code they must slot into: `scope_row` returns `RecipeRow` = `Arc<RecipeProfitData>` (`recipe_analyzer.rs:631`), matching `hop_row` (`:5519`) and `price_row`, because every cell fn takes `&RecipeRow` (`cell_hop_gain`, `:1099`) while `compare_recipes` takes `&RecipeProfitData` (`:2000-2001`) — which `&Arc<T>` deref-coerces into, so one helper serves both. `SortMode::default_dir` reads `RECIPE_BASE.default_dir` through `default_dir_for` (`:1960`), so the new column needs no `default_dir` field and `SortMode` needs no impl change.
 
@@ -3391,5 +3549,11 @@ Return types checked against the code they must slot into: `scope_row` returns `
 - The table's revenue resolution was folded into the fetch task, where its divergence from the page's formula was invisible. It is now Task 8, with the call-count pin.
 - Task 5 forward-referenced `sell_scope_for` "for Task 7 to replace"; with the helper in Task 1 there is no forward reference left, and `revenue_place` is computed by a pure `revenue_place_for` a unit test can call.
 
-**6. What a second review should attack.** Three things this plan asserts but cannot prove until the code exists: (a) that reading the `sell_scope` prop inside the Suspense closure really does rebuild the table on a scope change in every case — it is the same mechanism `preview.get()` and `buy_scope_is_sell_world.get()` already rely on there, but nothing pins the *rebuild*, only the resolution; (b) that `revenue_place`'s datacenter arm falling back to the region when no datacenter has resolved matches what `sell_scope_key` sends as the place name, which the plan asserts by construction (both read `revenue_place`) but no test compares; (c) that the two amber lines stacking is acceptable visually when a page manages to fail both the sale-history body and the sell-scope body at once.
+**6. What a second review should attack.** Two review passes have run; (a) and (b) below were their findings and are now closed in-plan, leaving one.
+
+- ~~(a) Nothing pins the *rebuild* — only the resolution — so a `sell_scope` prop read outside the Suspense closure would leave the table stale on a scope change.~~ **Closed:** Task 6's `the_sell_scope_is_counted_and_cleared_like_the_other_market_params` now carries the positive needle `sell_scope=sell_scope_for(preview.get(),sell_scope())` beside the negative `get_untracked` ban. The `sell_scope=` prop prefix is what disambiguates it from the three other identical calls (the `revenue_place` memo, the strip select's `value`, the live sentence's `scoped`).
+- ~~(b) `revenue_place`'s "no datacenter resolved yet → region" arm is asserted by construction to match what `sell_scope_key` sends, but no test compares them.~~ **Closed:** Task 7's `the_page_wires_the_sell_scope_to_what_it_fetches` now pins `let place = revenue_place.get();` and `revenue_place.get() == buy_scope_name.get()` (squeezed), so the name fetched, the name deduped against and the name displayed are the same expression.
+- (c) Still open, and deliberately: whether the two amber lines stacking is acceptable visually when a page manages to fail both the sale-history body and the sell-scope body at once. Nothing in a unit test can answer it; it is a look-at-it item for the PR's screenshots.
+
+**7. Needle hygiene, learned the hard way in this plan.** Every source-read needle that targets a **multi-argument call** goes through `production_squeezed()` (Task 5), never `production_source()`. rustfmt breaks any call it cannot fit in 100 columns onto one line per argument, so a needle written as one line pins text the formatter will never emit — a test that can only fail. The first review pass shipped three such needles (`preview, sell_scope`, `revenue_listings_source(sell_scope_value`, `revenue_stats_source(sell_scope_value`); all three are now squeezed, as are the ones added since. A needle targeting a single identifier, a key name or a `view!` attribute may stay unsqueezed. And no needle may embed a real `\n` — `production_source()`'s own doc says why: a CRLF checkout makes it miss.
 
