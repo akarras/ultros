@@ -9,7 +9,8 @@ use crate::analyzer_kit::enrichment::{
     use_visible_enrichment, use_wide_viewport, verdict,
 };
 use crate::analyzer_kit::formula::{
-    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, per_unit_cost, profit_line,
+    FormulaMarks, PriceSignal, ProfitFormula, RoiMath, SaleStat, SellScope, per_unit_cost,
+    profit_line,
 };
 use crate::analyzer_kit::grid::{
     AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, HeaderExtra, HeaderExtras, HeaderLine2,
@@ -523,6 +524,10 @@ const FILTER_JOB: &str = "job";
 const FILTER_COST_BASIS: &str = "cost-basis";
 const FILTER_REVENUE: &str = "revenue";
 const FILTER_BUY_SCOPE: &str = "buy-scope";
+/// Phase F: which market the sale price is read from. Default `world`,
+/// stripped from the URL at the default, read only under the
+/// `analyzer-recipe` lab.
+const FILTER_SELL_SCOPE: &str = "sell-scope";
 // Set by clicking a world/DC name in the cheapest-listing columns (same
 // `QueryButton` flow as the flip finder), not from the `+ Filter` menu —
 // hence not in `ADDABLE_FILTERS`. `world`/`datacenter` are taken by the
@@ -554,6 +559,31 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_EXCLUDE_SHARDS,
     FILTER_USE_ON_HAND,
 ];
+
+/// The sell scope the page acts on: `None` — i.e. `Term::Fixed(World)`,
+/// today's ledger exactly — whenever the `analyzer-recipe` lab is off, so a
+/// bookmarked `?sell-scope=region` is inert on the flag-off page down to
+/// the "no active filters" hint.
+fn sell_scope_for(preview: bool, param: Option<SellScope>) -> Option<SellScope> {
+    preview.then_some(param).flatten()
+}
+
+/// Seat the sell scope on a formula, through the lab gate.
+///
+/// **The only caller of [`ProfitFormula::with_sell_scope`] in the crate**,
+/// and deliberately so. The page builds a `formula_page` for its fetch
+/// keys and the table builds its own `formula` for the pricing pass; only
+/// the second one reaches `price_rows`, so a scope seated on the first
+/// alone yields a column of dashes that every unit test passes — which is
+/// how Phase E2's median tell shipped broken. One function, three callers
+/// (the page memo, the table memo, the pricing harness), and a source-read
+/// test in Task 8 that counts them.
+fn seat_sell_scope(f: ProfitFormula, preview: bool, param: Option<SellScope>) -> ProfitFormula {
+    match sell_scope_for(preview, param) {
+        Some(s) => f.with_sell_scope(s),
+        None => f,
+    }
+}
 
 // --- Optional columns ------------------------------------------------------
 // `?cols=` namespace, distinct from the filter registry above. Order here is
@@ -4408,6 +4438,7 @@ mod test {
     // into a failure.
     use crate::analysis::{DELTA_DEAD_BAND_PCT, signed_delta_class};
     use crate::analyzer_kit::enrichment::{chunk_keys, visible_keys};
+    use crate::analyzer_kit::formula::{Scope, Term};
     use crate::components::virtual_scroller::{
         first_visible_row, rendered_range, rows_for_viewport,
     };
@@ -4493,9 +4524,49 @@ mod test {
         assert_eq!(FILTER_COST_BASIS, "cost-basis");
         assert_eq!(FILTER_REVENUE, "revenue");
         assert_eq!(FILTER_BUY_SCOPE, "buy-scope");
+        // Phase F. Not addable from `+ Filter` (it is a Market control, like
+        // the three above), but it IS a bookmark contract and IS counted in
+        // the active-filter list, so its key is pinned here with them.
+        assert_eq!(FILTER_SELL_SCOPE, "sell-scope");
+        assert!(
+            !ADDABLE_FILTERS.contains(&FILTER_SELL_SCOPE),
+            "sell-scope is a Market control, not a row filter"
+        );
         // Set by clicking a cheapest-listing world/DC cell, not the menu.
         assert_eq!(FILTER_LISTING_WORLD, "listing-world");
         assert_eq!(FILTER_LISTING_DC, "listing-dc");
+    }
+
+    /// Both Phase F gates, together, because they are two halves of one
+    /// rule: with the lab off the param is dropped, and a formula that
+    /// never reaches `with_sell_scope` is `Term::Fixed(World)` — the exact
+    /// value `recipe_from_query` has produced since Phase A, so the
+    /// flag-off ledger is `PartialEq`-identical to today's.
+    #[test]
+    fn the_sell_scope_gate_and_its_seating_are_inert_with_the_toggle_off() {
+        let base = ProfitFormula::recipe_from_query(None, None, None);
+        for param in [
+            None,
+            Some(SellScope(Scope::Region)),
+            Some(SellScope(Scope::Datacenter)),
+            Some(SellScope::default()),
+        ] {
+            assert_eq!(sell_scope_for(false, param), None, "{param:?}");
+            let off = seat_sell_scope(base, false, param);
+            assert_eq!(off.sell_scope, Term::Fixed(Scope::World), "{param:?}");
+            assert_eq!(off, base, "the flag-off ledger must be the same value");
+        }
+        // Lab on: the param passes through, and `None` still seats nothing.
+        assert_eq!(sell_scope_for(true, None), None);
+        assert_eq!(seat_sell_scope(base, true, None), base);
+        assert_eq!(
+            sell_scope_for(true, Some(SellScope(Scope::Datacenter))),
+            Some(SellScope(Scope::Datacenter))
+        );
+        assert_eq!(
+            seat_sell_scope(base, true, Some(SellScope(Scope::Region))).sell_scope(),
+            Scope::Region
+        );
     }
 
     #[test]
