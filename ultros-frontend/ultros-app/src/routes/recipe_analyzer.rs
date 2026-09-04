@@ -1668,6 +1668,12 @@ fn signal_wants(visible: &HashSet<&'static str>, sort: Option<SortMode>) -> Sign
         sort_cost,
         hop: visible.contains(COL_HOP_GAIN) || sort == Some(SortMode::HopGain),
         worlds: visible.contains(COL_HOP_WORLDS) || sort == Some(SortMode::HopWorlds),
+        // Placeholders until Task 4 derives all three from the columns.
+        // At these values `NeededSignals::rev` is exactly {the selected
+        // revenue signal}, which is what the page computes today.
+        visible_rev: Vec::new(),
+        sort_rev: None,
+        scope_vs_home: false,
     }
 }
 
@@ -3993,6 +3999,12 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             outliers: false,
             buy_scope_is_sell_world: buy_scope_is_sell_world.get(),
             cost_signals: needs_page.get().cost,
+            // Honest constants, not placeholders: this key answers the
+            // BUY-scope body alone, and `needed_bodies`' sell-scope rules
+            // are reached only from `sell_scope_key`, which builds its own
+            // `RecipeNeeds` from the page's real gates.
+            sell_scope_is_buy_scope: false,
+            rev_signals: BTreeSet::new(),
             stats_30: false,
         };
         buy_stats_scope_key(&formula, &needs, buy_scope_name.get())
@@ -5216,6 +5228,9 @@ mod test {
             sort_cost: None,
             hop: true,
             worlds: true,
+            visible_rev: PriceSignal::ALL.to_vec(),
+            sort_rev: None,
+            scope_vs_home: true,
         };
         needed_signals(&f, &wants, false)
     }
