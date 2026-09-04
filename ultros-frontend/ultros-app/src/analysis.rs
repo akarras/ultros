@@ -316,13 +316,22 @@ pub fn velocity_per_day(summary: &SaleSummary) -> Option<f32> {
     Some(summary.num_sold as f32 / span_days.max(MIN_VELOCITY_SPAN_DAYS))
 }
 
+/// Expected gil per day from repeating one trade: per-trade profit times a
+/// sales-per-day rate. Truncates (a float→int cast, which saturates rather
+/// than wrapping). The rate's provenance is the caller's: the flip finder
+/// passes [`velocity_per_day`] off its six-sale buffer, the recipe analyzer
+/// passes the 7-day rollup's `num_sold / 7`.
+pub fn profit_per_day_from_rate(profit: i32, rate: f32) -> i32 {
+    (profit as f64 * rate as f64) as i32
+}
+
 /// Expected gil per day from flipping one item repeatedly: per-flip profit
 /// times [`velocity_per_day`]. Items that sell faster than daily earn more
 /// than one flip's profit per day; slow movers earn a fraction of it.
 /// Returns 0 when there is no sale history to rate the item with.
 pub fn profit_per_day(profit: i32, summary: &SaleSummary) -> i32 {
     velocity_per_day(summary)
-        .map(|v| (profit as f64 * v as f64) as i32)
+        .map(|v| profit_per_day_from_rate(profit, v))
         .unwrap_or(0)
 }
 
@@ -347,6 +356,34 @@ pub fn price_drift_pct(prices: &[i32]) -> Option<f32> {
         return None;
     }
     Some(((newest - oldest) as f32 / oldest as f32) * 100.0)
+}
+
+/// The noise floor a signed percent must clear before it is coloured.
+/// Origin: the flip finder's Drift cell, where ±1% inside a six-sale window
+/// is noise wearing a percentage sign. Reused by the recipe analyzer's
+/// Drift column and its Price "vs median" tell, which read the same kind of
+/// small, sample-limited percentage.
+pub const DELTA_DEAD_BAND_PCT: f32 = 1.0;
+
+/// The colour class for a signed percentage: green above `+dead_band`, red
+/// below `-dead_band`, muted inside the band and when there is no figure.
+/// `dead_band` is the caller's noise floor (0.0 colours every non-zero
+/// sign). A NaN falls through both comparisons and reads neutral.
+pub fn signed_delta_class(pct: Option<f32>, dead_band: f32) -> &'static str {
+    match pct {
+        Some(p) if p > dead_band => "text-emerald-300",
+        Some(p) if p < -dead_band => "text-red-300",
+        _ => "text-[color:var(--color-text-muted)]",
+    }
+}
+
+/// Percent change across a sparkline window, from its first traded price to
+/// its last. The server sends the first and last *non-zero* points
+/// (`arrayFilter(x -> x > 0, points)`, `ultros-clickhouse/src/queries.rs:158-167`),
+/// so `first == 0` means nothing traded anywhere in the window: no baseline
+/// exists, and 0 is not a price.
+pub fn first_to_last_pct(first: u32, last: u32) -> Option<f32> {
+    (first > 0).then(|| (last as f32 - first as f32) / first as f32 * 100.0)
 }
 
 /// Return on investment as a percentage, computed in f64 and clamped to
@@ -830,6 +867,77 @@ mod tests {
         let mut s = summary_with(0, 0);
         s.avg_sale_duration = None;
         assert_eq!(profit_per_day(100, &s), 0);
+    }
+
+    #[test]
+    fn profit_per_day_from_rate_is_the_shared_form() {
+        // The flip finder's buffer velocity and the recipe's rollup rate
+        // feed the same arithmetic.
+        assert_eq!(profit_per_day_from_rate(1_000, 2.5), 2_500);
+        assert_eq!(profit_per_day_from_rate(1_000, 0.25), 250);
+        assert_eq!(profit_per_day_from_rate(-300, 3.0), -900);
+        assert_eq!(profit_per_day_from_rate(1_000, 0.0), 0);
+        // Truncation, not rounding: 999 * 1.5 = 1498.5.
+        assert_eq!(profit_per_day_from_rate(999, 1.5), 1_498);
+        // A float -> int cast saturates rather than wrapping.
+        assert_eq!(profit_per_day_from_rate(i32::MAX, 1_000.0), i32::MAX);
+    }
+
+    #[test]
+    fn signed_delta_class_has_a_dead_band() {
+        assert_eq!(signed_delta_class(Some(4.0), 1.0), "text-emerald-300");
+        assert_eq!(signed_delta_class(Some(-4.0), 1.0), "text-red-300");
+        // Inside the band, and exactly on it, read neutral.
+        let muted = "text-[color:var(--color-text-muted)]";
+        assert_eq!(signed_delta_class(Some(0.4), 1.0), muted);
+        assert_eq!(signed_delta_class(Some(1.0), 1.0), muted);
+        assert_eq!(signed_delta_class(Some(-1.0), 1.0), muted);
+        assert_eq!(signed_delta_class(None, 1.0), muted);
+        // A zero dead band colours any non-zero sign (the movers' rule).
+        assert_eq!(signed_delta_class(Some(0.2), 0.0), "text-emerald-300");
+        // NaN is neither above nor below: neutral, never a panic.
+        assert_eq!(signed_delta_class(Some(f32::NAN), 1.0), muted);
+    }
+
+    /// `analyzer.rs`'s three Drift arms cut at ±1.0 with `text-emerald-300`
+    /// / `text-red-300` / muted; the new const and fn must reproduce exactly
+    /// those thresholds (`signed_delta_class_has_a_dead_band` passes `1.0`
+    /// by hand and so cannot pin the const). The cell's *text* is unchanged
+    /// by construction — the fold touches only the class, and `+{d:.0}%`
+    /// and `{d:.0}%` are `{d:+.0}%` over the ranges the old arms guarded, a
+    /// property of the `+` flag rather than of this code — so the byte
+    /// identity of `/flip-finder` rides on `routes::analyzer`'s 69 existing
+    /// tests plus manual check 9 in the PR body.
+    #[test]
+    fn signed_delta_class_reproduces_the_flip_finders_drift_arms() {
+        for d in [1.4f32, 4.6, 12.5, 99.5, 100.4] {
+            assert_eq!(
+                signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
+                "text-emerald-300"
+            );
+        }
+        for d in [-1.4f32, -3.6, -50.0] {
+            assert_eq!(
+                signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
+                "text-red-300"
+            );
+        }
+        for d in [0.0f32, 0.9, -0.9] {
+            assert_eq!(
+                signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
+                "text-[color:var(--color-text-muted)]"
+            );
+        }
+    }
+
+    #[test]
+    fn first_to_last_pct_needs_a_first_trade() {
+        assert_eq!(first_to_last_pct(100, 150), Some(50.0));
+        assert_eq!(first_to_last_pct(100, 50), Some(-50.0));
+        assert_eq!(first_to_last_pct(100, 100), Some(0.0));
+        // No trade in the window's first bucket: no percentage exists.
+        assert_eq!(first_to_last_pct(0, 150), None);
+        assert_eq!(first_to_last_pct(0, 0), None);
     }
 
     #[test]

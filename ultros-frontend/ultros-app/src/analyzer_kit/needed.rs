@@ -10,6 +10,42 @@ use super::formula::{BuyScope, PriceSignal, ProfitFormula};
 /// server serves 1 | 7 | 30 | 90; the labels in seven locales say "(7d)".
 pub const SALE_STATS_WINDOW_DAYS: u16 = 7;
 
+/// The second window, read only by the opt-in 30-day columns. Its body is
+/// client-only: it never joins the Suspense gate, so a page that wants it
+/// still renders its table first and fills those two cells in after
+/// (`LateStats`).
+pub const STATS_30_WINDOW_DAYS: u16 = 30;
+
+/// The windows `/api/v1/sale_stats` accepts (`SUPPORTED_WINDOWS` in
+/// `ultros/src/web/api/sale_stats.rs`); anything else is a 400.
+///
+/// Both window constants above are checked against this at compile time.
+/// Without that, editing either one to an unsupported value — 14, say —
+/// compiles, passes every test in this file, and fails only as a runtime
+/// 400 on a deployed page, because nothing on the client side validates
+/// the window it asks for.
+const SERVER_SUPPORTED_WINDOWS: [u16; 4] = [1, 7, 30, 90];
+
+const fn is_supported_window(days: u16) -> bool {
+    let mut i = 0;
+    while i < SERVER_SUPPORTED_WINDOWS.len() {
+        if SERVER_SUPPORTED_WINDOWS[i] == days {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+const _: () = assert!(
+    is_supported_window(SALE_STATS_WINDOW_DAYS),
+    "SALE_STATS_WINDOW_DAYS is not a window the server accepts"
+);
+const _: () = assert!(
+    is_supported_window(STATS_30_WINDOW_DAYS),
+    "STATS_30_WINDOW_DAYS is not a window the server accepts"
+);
+
 /// A whole-scope body the page fetches. Symbolic: the page resolves each
 /// role to a world / datacenter / region name.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -34,6 +70,10 @@ pub struct RecipeNeeds {
     /// visible or sorted sale-cost column needs the buy-scope body even
     /// when the selected signal is the listing.
     pub cost_signals: BTreeSet<PriceSignal>,
+    /// A 30-day column (Volume 30d, VWAP 30d) is visible or the sort
+    /// target. Not "the lab is on": the body costs 438 KB on the wire, so
+    /// only actually asking for one of those columns fetches it.
+    pub stats_30: bool,
 }
 
 /// The bodies the recipe analyzer needs for `formula`. The default URL
@@ -54,6 +94,9 @@ pub fn needed_bodies(formula: &ProfitFormula, needs: &RecipeNeeds) -> BTreeSet<B
     }
     if needs.outliers {
         set.insert(BodyRole::RecentSalesSellWorld);
+    }
+    if needs.stats_30 {
+        set.insert(BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS));
     }
     set
 }
@@ -147,6 +190,7 @@ mod tests {
             outliers,
             buy_scope_is_sell_world: same,
             cost_signals: BTreeSet::new(),
+            stats_30: false,
         }
     }
 
@@ -195,6 +239,22 @@ mod tests {
         let f = ProfitFormula::recipe_from_query(None, None, None);
         assert!(needed_bodies(&f, &needs(true, false)).contains(&BodyRole::RecentSalesSellWorld));
         assert!(!needed_bodies(&f, &needs(false, false)).contains(&BodyRole::RecentSalesSellWorld));
+    }
+
+    #[test]
+    fn thirty_day_columns_need_a_second_sell_world_body() {
+        let f = ProfitFormula::recipe_from_query(None, None, None);
+        let base = needed_bodies(&f, &needs(false, false));
+        assert!(!base.contains(&BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS)));
+        let wants = RecipeNeeds {
+            stats_30: true,
+            ..needs(false, false)
+        };
+        let got = needed_bodies(&f, &wants);
+        assert!(got.contains(&BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS)));
+        // Two windows are two bodies: the 7-day one is still needed.
+        assert!(got.contains(&BodyRole::SellWorldStats(SALE_STATS_WINDOW_DAYS)));
+        assert_eq!(got.len(), base.len() + 1);
     }
 
     #[test]

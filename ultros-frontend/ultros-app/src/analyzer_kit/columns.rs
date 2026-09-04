@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use leptos::prelude::RwSignal;
 use leptos_i18n::I18nContext;
 
 use crate::components::control_bar::{ColumnOption, PickerHeading};
@@ -14,7 +15,9 @@ use crate::components::term_badge::TermRole;
 use crate::i18n::*;
 
 use super::cells::CellValue;
+use super::enrichment::SparkStore;
 use super::formula::PriceSignal;
+use super::signals::LateStats;
 
 /// A label resolver. A plain `fn` so a column table can be a `static`;
 /// the page resolves it inside a reactive closure so headers follow the
@@ -29,6 +32,8 @@ pub enum ColumnKind {
     Item,
     Profit,
     Roi,
+    /// Profit times a sales-per-day rate. Computed, never fetched.
+    ProfitPerDay,
     CostSlot,
     RevenueSlot,
     SalesPerDay7,
@@ -37,6 +42,18 @@ pub enum ColumnKind {
     LastSold,
     VolumeUnits7,
     Vwap7,
+    /// Units sold in a 30-day window (a different kind from the 7-day one:
+    /// kinds name definitions, not labels).
+    VolumeUnits30,
+    /// Volume-weighted average price over a 30-day window.
+    Vwap30,
+    /// The hourly price series over a lazily fetched window.
+    Trend,
+    /// The first-to-last percent of that same series. Named for its
+    /// definition: the spec's `DriftBuffer` is the recent-sales-buffer
+    /// drift the flip finder shows, a different number from a different
+    /// body.
+    DriftSpark,
     Tax,
     ListingWorld,
     ListingDc,
@@ -58,6 +75,17 @@ pub enum PickerGroup {
     /// "Cost · ‹buy scope›".
     Cost,
     Travel,
+    /// Sale-history columns: confidence, last sold, volume, VWAP, tax,
+    /// profit/day, trend, drift and the 30-day pair.
+    Market,
+    /// Where the cheapest listing is: world, datacenter.
+    Location,
+    /// The fallback group for everything the others don't name. It is not
+    /// picker-invisible: a column here with a `?cols=` token renders under
+    /// an "Other" heading. The recipe analyzer's always-on columns sit here
+    /// and none of them has a token, so its grouped picker ends at
+    /// [`PickerGroup::Location`] — but the heading is live for any page that
+    /// leaves an optional column ungrouped.
     Other,
 }
 
@@ -67,6 +95,27 @@ pub struct ColumnSpec {
     pub kind: ColumnKind,
     pub label: LabelFn,
     pub group: PickerGroup,
+}
+
+/// A lazily fetched, visible-window feed. The window is part of the feed:
+/// kinds name definitions, so a 168-hour sparkline and a 24-hour one are
+/// the same feed with different windows, and a column declares which.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LazyFeed {
+    /// `POST /api/v1/sparklines/{world}`: `hours` hourly VWAP points,
+    /// oldest first, zeros for hours with no trade. The server clamps
+    /// `hours` to [6, 168] and rejects more than 200 keys per request.
+    Sparklines { hours: u16 },
+}
+
+impl LazyFeed {
+    /// The feed's window, for the request the page builds — the reader
+    /// that keeps `hours` from being a write-only field.
+    pub fn hours(self) -> u16 {
+        match self {
+            LazyFeed::Sparklines { hours } => hours,
+        }
+    }
 }
 
 /// Where a column's value comes from. Sortability is derived from it:
@@ -79,31 +128,47 @@ pub enum Layer {
     Computed,
     /// From one whole-scope body fetched before the table renders.
     Bulk,
+    /// Fetched per visible window after the table renders, so most rows
+    /// have no value when the sorted memo runs.
+    Lazy(LazyFeed),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Sortability<M> {
     No,
     By(M),
+    /// A lazy column: never sortable, whatever the page asks for.
+    LazyNever,
 }
 
 pub const fn sortability_for<M: Copy>(layer: Layer, wanted: Option<M>) -> Sortability<M> {
     match (layer, wanted) {
+        (Layer::Lazy(_), _) => Sortability::LazyNever,
         (Layer::RowLocal | Layer::Computed | Layer::Bulk, Some(m)) => Sortability::By(m),
         (_, None) => Sortability::No,
     }
 }
 
-/// Per-render context a cell extractor may read.
+/// Per-render context a cell extractor may read. The two signal handles let
+/// a `fn`-pointer extractor reach page-level lazy data without the table
+/// giving up its `static` column list; they are read inside the row's
+/// reactive closure, so a merge re-renders the mounted rows.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CellCtx {
     pub now_unix: i64,
-    /// The `analyzer-signal-columns` lab: the Price slot renders its
-    /// listing-fallback tell only under it.
-    pub signal_columns: bool,
+    /// The page's Labs toggle (`analyzer-recipe` on the recipe analyzer):
+    /// the Price slot renders its note sub-line only under it.
+    pub preview: bool,
     /// Cost signals the sub-craft cap left unpriced, by
     /// `PriceSignal::index`; their cells render "—" with the cap title.
     pub capped_cost: [bool; 4],
+    /// The page's visible-window sparkline store. `None` on a page without
+    /// one (and in tests): the cell then renders its loading shape, which
+    /// is what the server renders too.
+    pub sparklines: Option<RwSignal<SparkStore>>,
+    /// The page's client-only 30-day statistics body. `None` on a page
+    /// without one; `Some(signal holding None)` while it is in flight.
+    pub stats_30: Option<LateStats>,
 }
 
 /// One page's binding of a [`ColumnSpec`]: its `?cols=` token (`""` for
@@ -201,6 +266,14 @@ fn heading(
             label: t_string!(i18n, analyzer_picker_group_travel).to_string(),
             title: None,
         },
+        PickerGroup::Market => PickerHeading {
+            label: t_string!(i18n, analyzer_picker_group_market).to_string(),
+            title: None,
+        },
+        PickerGroup::Location => PickerHeading {
+            label: t_string!(i18n, analyzer_picker_group_location).to_string(),
+            title: None,
+        },
         PickerGroup::Other => PickerHeading {
             label: t_string!(i18n, analyzer_picker_group_other).to_string(),
             title: None,
@@ -275,7 +348,7 @@ pub fn sort_from_token<T, M: SortColumn>(
         .find(|c| !c.sort_id.is_empty() && c.sort_id == s)
         .and_then(|c| match c.sort {
             Sortability::By(m) => Some(m),
-            Sortability::No => None,
+            Sortability::No | Sortability::LazyNever => None,
         })
 }
 
@@ -431,14 +504,40 @@ mod tests {
             sortability_for(Layer::Computed, None::<Col>),
             Sortability::No
         );
+        // A lazy column never sorts, even when the page names a mode: the
+        // visible window holds a fraction of the rows.
+        let feed = Layer::Lazy(LazyFeed::Sparklines { hours: 168 });
+        assert_eq!(sortability_for(feed, None::<Col>), Sortability::LazyNever);
+        assert_eq!(
+            sortability_for(feed, Some(Col::Profit)),
+            Sortability::LazyNever
+        );
+        assert_eq!(LazyFeed::Sparklines { hours: 168 }.hours(), 168);
+    }
+
+    /// A `?sort=` token pointing at a lazy column resolves to nothing, so a
+    /// bookmarked URL cannot sort by data most rows do not have.
+    #[test]
+    fn a_lazy_column_is_unreachable_from_a_sort_token() {
+        // `P_TREND` deliberately carries `sort_id: "trend"`, so this reaches
+        // the new `Sortability::No | Sortability::LazyNever => None` arm
+        // rather than the "no column has that token" path.
+        assert_eq!(sort_from_token(&PICKER, "trend"), None);
+        assert!(
+            PICKER
+                .iter()
+                .all(|c| !matches!(c.sort, Sortability::By(_)) || c.sort_id != "trend")
+        );
     }
 
     #[test]
     fn cell_extractors_are_plain_fn_pointers() {
         let ctx = CellCtx {
             now_unix: 0,
-            signal_columns: false,
+            preview: false,
             capped_cost: [false; 4],
+            sparklines: None,
+            stats_30: None,
         };
         assert_eq!((COLS[1].cell)(&42, &ctx), CellValue::Gil(42));
         assert_eq!((COLS[0].cell)(&42, &ctx), CellValue::Custom);
@@ -463,10 +562,19 @@ mod tests {
     fn lbl_hop(_: I18nContext<Locale, I18nKeys>) -> String {
         "Hop gain / unit".into()
     }
+    fn lbl_trend(_: I18nContext<Locale, I18nKeys>) -> String {
+        "Trend".into()
+    }
+    fn lbl_world(_: I18nContext<Locale, I18nKeys>) -> String {
+        "Listing world".into()
+    }
+    fn lbl_other(_: I18nContext<Locale, I18nKeys>) -> String {
+        "Tax".into()
+    }
     static P_CONF: ColumnSpec = ColumnSpec {
         kind: ColumnKind::Confidence,
         label: lbl_conf,
-        group: PickerGroup::Other,
+        group: PickerGroup::Market,
     };
     static P_REV: ColumnSpec = ColumnSpec {
         kind: ColumnKind::RevSignal(PriceSignal::SaleMedian),
@@ -488,6 +596,21 @@ mod tests {
         label: lbl_hop,
         group: PickerGroup::Travel,
     };
+    static P_TREND: ColumnSpec = ColumnSpec {
+        kind: ColumnKind::Trend,
+        label: lbl_trend,
+        group: PickerGroup::Market,
+    };
+    static P_WORLD: ColumnSpec = ColumnSpec {
+        kind: ColumnKind::ListingWorld,
+        label: lbl_world,
+        group: PickerGroup::Location,
+    };
+    static P_OTHER: ColumnSpec = ColumnSpec {
+        kind: ColumnKind::Tax,
+        label: lbl_other,
+        group: PickerGroup::Other,
+    };
     fn any_cell(_: &(), _: &CellCtx) -> CellValue {
         CellValue::Custom
     }
@@ -506,7 +629,7 @@ mod tests {
         formula_cell_class: "",
         lab: None,
     };
-    static PICKER: [ToolColumnMeta<(), Col>; 5] = [
+    static PICKER: [ToolColumnMeta<(), Col>; 8] = [
         ToolColumnMeta {
             spec: &P_CONF,
             id: "confidence",
@@ -515,25 +638,49 @@ mod tests {
         ToolColumnMeta {
             spec: &P_REV,
             id: "rev-sale-median",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
         ToolColumnMeta {
             spec: &P_COST,
             id: "cost-listing-min",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
         ToolColumnMeta {
             spec: &P_COST2,
             id: "cost-sale-avg",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
         ToolColumnMeta {
             spec: &P_HOP,
             id: "hop-gain",
-            lab: Some("analyzer-signal-columns"),
+            lab: Some("analyzer-recipe"),
+            ..PBASE
+        },
+        ToolColumnMeta {
+            spec: &P_TREND,
+            id: "trend",
+            // A token on an unsortable column: `sort_from_token` must still
+            // refuse it (`a_lazy_column_is_unreachable_from_a_sort_token`).
+            sort_id: "trend",
+            sort: sortability_for(Layer::Lazy(LazyFeed::Sparklines { hours: 168 }), None),
+            lab: Some("analyzer-recipe"),
+            ..PBASE
+        },
+        ToolColumnMeta {
+            spec: &P_WORLD,
+            id: "listing-world",
+            ..PBASE
+        },
+        // `Other` is still a live picker heading until the market columns
+        // move, so one fixture column has to keep covering it. Lab-gated so
+        // the flat-picker assertion below stays unchanged.
+        ToolColumnMeta {
+            spec: &P_OTHER,
+            id: "tax",
+            lab: Some("analyzer-recipe"),
             ..PBASE
         },
     ];
@@ -565,7 +712,10 @@ mod tests {
                     "cost-listing-min",
                     "cost-sale-avg",
                     "hop-gain",
-                    "confidence"
+                    "confidence",
+                    "trend",
+                    "listing-world",
+                    "tax"
                 ]
             );
             assert_eq!(got[0].label, "Sale median (7d) (= Price)");
@@ -580,12 +730,15 @@ mod tests {
             assert!(got[2].disabled && got[2].hint.is_some(), "{:?}", got[2]);
             assert!(!got[1].disabled && got[1].hint.is_none());
             assert_eq!(got[3].group.as_ref().unwrap().label, "Travel");
-            assert_eq!(got[4].group.as_ref().unwrap().label, "Other");
+            assert_eq!(got[4].group.as_ref().unwrap().label, "Market");
+            assert_eq!(got[5].group.as_ref().unwrap().label, "Market");
+            assert_eq!(got[6].group.as_ref().unwrap().label, "Location");
+            assert_eq!(got[7].group.as_ref().unwrap().label, "Other");
             // The flat picker never lists a lab-gated column.
             let flat = picker_options(&PICKER, i18n);
             assert_eq!(
                 flat.iter().map(|o| o.id).collect::<Vec<_>>(),
-                ["confidence"]
+                ["confidence", "listing-world"]
             );
             assert_eq!(
                 flat[0],

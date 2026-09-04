@@ -77,18 +77,23 @@ const ROUTE_ASSERTS = {
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
   "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
-  // With the lab on, the Profit header carries an "after 5% tax" sub-label
-  // at every width. The strip row itself is md+ only, and the mobile pass
-  // reads innerText, which drops display:none content.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger": {
+  // One Labs toggle for the whole tool. With it on, the Profit header
+  // carries an "after 5% tax" sub-label at every width; the strip row
+  // itself is md+ only, and the mobile pass reads innerText, which drops
+  // display:none content. The lab columns are md+ only too, so the only
+  // cross-device assertions are the title and that sub-label; the sweep
+  // still checks console errors and horizontal overflow.
+  //
+  // `cols=` names ten of the twenty-two optional columns — one of each
+  // distinct cell kind Phases C–E2 added, including all five market
+  // columns — so the desktop pass renders eighteen columns at once and
+  // the mobile pass renders only the six that are not `hidden md:`. Trend,
+  // Drift and the two 30-day columns are *listed* here, but a local run
+  // fires no enrichment at all: this route pins their markup and their
+  // console cleanliness, never their data. Settling is a prod-only check.
+  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d": {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],
-  },
-  // Both labs on with the four Phase D columns requested. The new columns
-  // are md+ only, so the only cross-device assertion is the title; the
-  // sweep still checks console errors and horizontal overflow.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger,analyzer-signal-columns&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds": {
-    titleIncludes: "Recipe Analyzer",
   },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
@@ -136,8 +141,7 @@ function getRoutes() {
     "/retainers",
     "/currency-exchange",
     "/recipe-analyzer?world=Gilgamesh",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-ledger,analyzer-signal-columns&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds",
+    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d",
     "/history",
     "/settings",
     "/groups",
