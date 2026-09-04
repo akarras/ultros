@@ -367,12 +367,12 @@ impl AuthUserCache {
         }
     }
 
-    async fn store_user(&self, token: &str, user: AuthDiscordUser) {
+    pub(crate) async fn store_user(&self, token: &str, user: AuthDiscordUser) {
         let mut users = self.users.write().await;
         users.insert(token.to_string(), user);
     }
 
-    async fn get_user(&self, token: &str) -> Option<AuthDiscordUser> {
+    pub(crate) async fn get_user(&self, token: &str) -> Option<AuthDiscordUser> {
         let users = self.users.read().await;
         users.get(token).cloned()
     }
