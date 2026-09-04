@@ -130,9 +130,19 @@ struct RecipeProfitData {
     /// The bare sell-world statistic (or listing) per revenue signal, no
     /// fallback; `None` = no row.
     rev_alt: [Option<i32>; 4],
-    /// The sell world's 7-day median sale for the quality this row's price
-    /// describes — the same `(item, stat_hq)` row every other 7-day figure
-    /// here came from, and the Price tell's basis.
+    /// The sell world's 7-day median sale for the quality this row's
+    /// *statistics* came from (`stat_hq`) — the same `(item, stat_hq)` row
+    /// every other 7-day figure here uses, and the Price tell's basis.
+    ///
+    /// Not necessarily the quality the *price* is: `market_price` comes from
+    /// `lowest_gil()`, which mins across both qualities and never consults
+    /// `require_hq`, so an item with an NQ stat row but no NQ listing prices
+    /// from HQ against an NQ median. That residual is strictly smaller than
+    /// what it replaced (`min(nq, hq)` is further from the price's quality by
+    /// construction) and matches the approximation `vwap_pct` already makes
+    /// one line above. Closing it properly means recording which side of
+    /// `PriceSummary` won `lowest_gil()` and reading `stat_only(index, item,
+    /// price_hq, SaleStat::Median)` with this as the fallback.
     ///
     /// Deliberately NOT `rev_alt[SaleMedian]`: that one is
     /// `stat_only_cheapest`, the cheaper of NQ and HQ, which is the right
@@ -4959,6 +4969,11 @@ mod test {
         /// which costs every ingredient HQ and leaves only a couple of rows
         /// past the drop rule.
         stats_both: bool,
+        /// With `stats_both`, write HQ dearer for EVERY item rather than
+        /// only the even ids. The alternating split gives the NQ run
+        /// divergence in both directions; a run that keeps only a couple of
+        /// rows needs the direction guaranteed, not drawn.
+        hq_dearer_only: bool,
         require_hq: bool,
     }
 
@@ -4972,14 +4987,21 @@ mod test {
                 scope: None,
                 stats_hq: false,
                 stats_both: false,
+                hq_dearer_only: false,
                 require_hq: false,
             }
         }
     }
 
     /// The HQ figure `RunOpts::stats_both` writes for one NQ figure.
-    fn hq_scaled(item_id: i32, nq: i32) -> i32 {
-        if item_id % 2 == 0 { nq * 4 } else { nq / 4 }
+    /// Dearer on the even ids, cheaper on the odd ones — unless
+    /// `hq_dearer_only`, which makes every item dearer.
+    fn hq_scaled(item_id: i32, nq: i32, dearer_only: bool) -> i32 {
+        if dearer_only || item_id % 2 == 0 {
+            nq * 4
+        } else {
+            nq / 4
+        }
     }
 
     fn run_with(cost: PriceSignal, revenue: PriceSignal, o: &RunOpts) -> Vec<RecipeProfitData> {
@@ -5010,7 +5032,7 @@ mod test {
         } else if o.stats_both {
             let mut both = index.clone();
             for s in &stats.stats {
-                let scale = |p: i32| hq_scaled(s.item_id, p);
+                let scale = |p: i32| hq_scaled(s.item_id, p, o.hq_dearer_only);
                 both.insert(
                     (s.item_id, true),
                     ItemSaleStats {
@@ -6104,6 +6126,9 @@ mod test {
         let f = ProfitFormula::recipe_from_query(Some(PriceSignal::ListingMin), None, None);
         let opts = |require_hq| RunOpts {
             stats_both: true,
+            // The require_hq run overrides this; the NQ run wants the
+            // alternating split so both directions are covered.
+            hq_dearer_only: require_hq,
             require_hq,
             needs: needed_signals(&f, &SignalWants::default(), false),
             ..RunOpts::default()
@@ -6129,7 +6154,7 @@ mod test {
             assert_eq!(r.sell_median, Some(m), "recipe {}", r.recipe.key_id.0);
             assert_eq!(
                 alt,
-                Some(m.min(hq_scaled(out, m))),
+                Some(m.min(hq_scaled(out, m, false))),
                 "the Sale median (7d) column is still the cheaper quality"
             );
             checked += 1;
@@ -6151,25 +6176,42 @@ mod test {
             &opts(true),
         );
         let mut split = 0;
+        // `hq_dearer_only` above is why this run is worth anything. With the
+        // alternating split, every row that survived `require_hq` had an ODD
+        // id, where `hq_scaled` is `m / 4` and both assertions below expect
+        // the same number — the old basis satisfied them and the loop passed
+        // while proving nothing about the HQ-dearer direction, the one that
+        // read "+399900%" in green on prod. Forcing HQ dearer for every item
+        // makes every surviving row discriminate, and the assert_ne! in the
+        // loop proves that rather than counting on the draw.
         for r in hq.iter().filter(|r| has_stats(r.recipe.item_result)) {
             let (out, m) = (r.recipe.item_result, median_of(r.recipe.item_result));
             assert!(r.stat_hq, "recipe {}", r.recipe.key_id.0);
             assert_eq!(
                 r.sell_median,
-                Some(hq_scaled(out, m)),
+                Some(hq_scaled(out, m, true)),
                 "recipe {}",
                 r.recipe.key_id.0
             );
             assert_eq!(
                 r.rev_alt[PriceSignal::SaleMedian.index()],
-                Some(m.min(hq_scaled(out, m)))
+                Some(m.min(hq_scaled(out, m, true)))
             );
             split += 1;
+            assert_ne!(
+                hq_scaled(out, m, true),
+                m.min(hq_scaled(out, m, true)),
+                "recipe {} does not tell the two lookups apart",
+                r.recipe.key_id.0
+            );
         }
         // Only a couple of rows: `require_hq` costs every ingredient HQ and
         // the drop rule takes the rest. The 20-row pass above carries the
         // weight; this one covers the HQ *preference* reaching the row.
-        assert!(split > 0, "no HQ-required row survived the drop rule");
+        assert!(
+            split > 0,
+            "the require_hq run dropped every row with statistics"
+        );
     }
 
     #[test]

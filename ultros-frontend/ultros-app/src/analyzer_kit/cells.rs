@@ -288,19 +288,20 @@ pub fn render_cell(
                         ),
                     )
                 }
-                CellNote::Troll { listing } => {
-                    let tell = t_string!(i18n, analyzer_price_troll).to_string();
-                    let text = if listing {
-                        format!(
-                            "{} · {}",
-                            t_string!(i18n, analyzer_price_listing_fallback),
-                            tell
-                        )
-                    } else {
-                        tell
-                    };
-                    (text, format!("{SUB_LINE_GEOM} {SUB_LINE_WARN}"))
-                }
+                // No `listing ·` prefix here, unlike `VsMedian`. Every
+                // locale's fallback word is the same noun this tell already
+                // carries, so composing them stutters: "listing · troll
+                // listing", "出品 · ぼったくり出品", "Angebot · Troll-Angebot".
+                // The warning also already implies the price is not the
+                // selected signal, so the prefix earns nothing. Dropping it
+                // additionally sidesteps a wording bug: under a `SaleAvg`
+                // revenue signal `market_price` is a statistic rather than a
+                // listing, and an unclamped mean past 50x its own t-digest
+                // median is reachable on a thin week.
+                CellNote::Troll { .. } => (
+                    t_string!(i18n, analyzer_price_troll).to_string(),
+                    format!("{SUB_LINE_GEOM} {SUB_LINE_WARN}"),
+                ),
             };
             view! {
                 <div role="cell" class=class>
@@ -826,7 +827,8 @@ mod tests {
                 "{troll}"
             );
             assert!(
-                troll_listing.contains("listing · troll listing"),
+                troll_listing.contains("troll listing")
+                    && !troll_listing.contains("listing · troll"),
                 "{troll_listing}"
             );
             // And that colour is not a new one: it is exactly the class
