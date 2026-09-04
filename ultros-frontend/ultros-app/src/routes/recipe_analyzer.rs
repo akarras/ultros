@@ -2851,14 +2851,25 @@ fn scope_bodies_failed(bodies: &Option<SellScopeBodies>) -> bool {
 }
 
 async fn fetch_sell_scope(name: String, want_listings: bool, want_stats: bool) -> SellScopeBodies {
-    let listings = match want_listings {
-        true => get_cheapest_listings(&name).await.ok(),
-        false => None,
-    };
-    let stats = match want_stats {
-        true => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS).await.ok(),
-        false => None,
-    };
+    // Joined, not sequential. Both are wanted together under a sale revenue
+    // signal at a wider scope, both are heavy (the plan budgets ~578 KB for
+    // a region), and both sit on the Suspense gate — so awaiting them in
+    // turn is table latency the user watches. `routes/analyzer.rs` joins its
+    // two independent feeds for the same reason.
+    let (listings, stats) = futures::join!(
+        async {
+            match want_listings {
+                true => get_cheapest_listings(&name).await.ok(),
+                false => None,
+            }
+        },
+        async {
+            match want_stats {
+                true => get_sale_stats(&name, SALE_STATS_WINDOW_DAYS).await.ok(),
+                false => None,
+            }
+        }
+    );
     SellScopeBodies {
         listings_failed: want_listings && listings.is_none(),
         stats_failed: want_stats && stats.is_none(),
@@ -4739,18 +4750,6 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         let place = revenue_place.get();
         sell_scope_key(&formula, &needs, &place)
     });
-    let sell_scope_bodies = ArcResource::new(
-        sell_scope_source,
-        move |key: Option<(String, bool, bool)>| async move {
-            match key {
-                Some((name, listings, stats)) => {
-                    Some(fetch_sell_scope(name, listings, stats).await)
-                }
-                None => None,
-            }
-        },
-    );
-
     let sell_world_listings =
         ArcResource::new(sell_world_name, move |world: Option<String>| async move {
             match world {
@@ -4787,6 +4786,24 @@ pub fn RecipeAnalyzer() -> impl IntoView {
             match key {
                 Some((world, true)) => Some(get_recent_sales_for_world(&world).await),
                 _ => None,
+            }
+        },
+    );
+
+    // Constructed LAST of the page's resources, deliberately. Every
+    // `ArcResource` takes a hydration id at construction and serialises one
+    // entry into the SSR payload whether or not it ever resolves, so a new
+    // one is an unavoidable flag-off byte delta — but built here it APPENDS
+    // an id instead of renumbering the three resources that would otherwise
+    // follow it. One extra entry rather than one extra plus three shifted.
+    let sell_scope_bodies = ArcResource::new(
+        sell_scope_source,
+        move |key: Option<(String, bool, bool)>| async move {
+            match key {
+                Some((name, listings, stats)) => {
+                    Some(fetch_sell_scope(name, listings, stats).await)
+                }
+                None => None,
             }
         },
     );
