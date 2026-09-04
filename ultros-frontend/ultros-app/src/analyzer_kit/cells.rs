@@ -449,10 +449,17 @@ pub fn render_cell(
             // closes the shape for a future caller that separates the two,
             // and a mutation that drops it therefore survives the test
             // below — deliberately, and recorded rather than trusted.
+            //
+            // Spelled as the call rather than the literal it returns, so
+            // the equivalence that makes that survivor deliberate holds by
+            // construction. Written out, the two would have to stay
+            // character-identical to `signed_delta_class`'s muted arm, and
+            // the day they drifted the survivor would quietly become a real
+            // divergence instead of a recorded one.
             let value_class = if has {
                 signed_delta_class(pct, DELTA_DEAD_BAND_PCT)
             } else {
-                "text-[color:var(--color-text-muted)]"
+                signed_delta_class(None, DELTA_DEAD_BAND_PCT)
             };
             // Only the "could have had a figure and did not" dash is
             // titled. The "sell scope is your sell world" dash is the whole
