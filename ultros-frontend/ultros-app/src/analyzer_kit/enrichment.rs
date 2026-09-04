@@ -193,6 +193,44 @@ pub fn verdict<T: PartialEq>(observed: Option<T>, expected: &T) -> Verdict {
     }
 }
 
+/// Tailwind's `md` breakpoint, spelled the way the stylesheet spells it.
+///
+/// `rem`, not `768px`: `md:` compiles to `@media (min-width: 48rem)`, which
+/// resolves against the root font size. A reader who has raised theirs sees
+/// the columns appear at a wider CSS pixel width than 768, and a `px` query
+/// would disagree with the very rule it is meant to track.
+pub const MD_VIEWPORT_QUERY: &str = "(min-width: 48rem)";
+
+/// Is the viewport at or above Tailwind's `md`? — the fetch-side twin of a
+/// column's `hidden md:block`.
+///
+/// **Read this only on a fetch path.** A lazy column that is `hidden` below
+/// `md` paints nothing there, so the body behind it is pure cost: the phone
+/// pays the transfer and the main-thread parse for zero pixels. Gating the
+/// *fetch* on the viewport fixes that. Gating anything that decides *markup*
+/// on it would not: SSR has no viewport, so the server and the first client
+/// render would disagree and hydration would tear. Hence the rule the
+/// analyzer routes follow — this signal may reach a `Memo` an `Effect`
+/// consumes, and must never reach a `view!`, a class string, or a branch
+/// over what is rendered.
+///
+/// Both ends of that are safe by construction:
+///
+/// * On the server `leptos-use`'s `ssr` feature compiles `use_media_query`
+///   down to a signal that is always `false` — no `matchMedia` read exists.
+/// * On the client it starts `false` too and an `Effect` flips it, so the
+///   first client render matches the server's and nothing is fetched in the
+///   window before the listener attaches.
+///
+/// Resize-aware: `use_media_query` subscribes to the `MediaQueryList`'s
+/// `change` event, so a rotation or a dragged window edge crossing 48rem
+/// re-runs whatever reads this. The listener is removed by the `on_cleanup`
+/// the hook registers with the calling owner, so call it from the component
+/// that owns the fetch — not from one that remounts.
+pub fn use_wide_viewport() -> Signal<bool> {
+    leptos_use::use_media_query(MD_VIEWPORT_QUERY)
+}
+
 /// Fill `store` for the rows the scroller shows, `cfg.prefetch_margin` rows
 /// either side, as the window moves — accumulating, never wholesale-replaced
 /// except on a scope change.
@@ -319,6 +357,53 @@ mod tests {
         fn absorb(&mut self, newer: Self) {
             *self = newer;
         }
+    }
+
+    /// The fetch gate has to open at exactly the width the `hidden md:*`
+    /// columns appear at. Tailwind v4's default `md` is 48rem and this
+    /// project takes the default, so the constant is that verbatim — but
+    /// nothing in Rust can see the compiled stylesheet, so pin the two
+    /// facts the constant rests on instead.
+    #[test]
+    fn the_md_query_tracks_the_stylesheet_breakpoint() {
+        const STYLESHEET: &str = include_str!("../../../../style/tailwind.css");
+        assert_eq!(MD_VIEWPORT_QUERY, "(min-width: 48rem)");
+        // A `--breakpoint-md` in `@theme` would move `md:` without moving
+        // this constant, and the gate would open at the wrong width.
+        assert!(
+            !STYLESHEET.contains("--breakpoint-md"),
+            "the stylesheet redefines Tailwind's md; MD_VIEWPORT_QUERY must follow it"
+        );
+        // Deliberately no assertion on the stylesheet's one hand-written
+        // `@media (min-width: 48rem)`: that rule belongs to FC crafting and
+        // has nothing to do with this constant, so deleting or reformatting
+        // it would fail this test for no real reason. The `--breakpoint-md`
+        // guard above is the one that actually protects the constant.
+        //
+        // Note `Cargo.toml`'s `tailwind-version = "v3.4.1"` is stale and
+        // inert — v3 cannot parse this stylesheet's `@import "tailwindcss"`
+        // / `@theme`, and the built CSS carries v4's rem ladder
+        // (`width >= 48rem`). The v4 reading is the correct one.
+        // rem, not px: `md:` resolves against the root font size.
+        assert!(!MD_VIEWPORT_QUERY.contains("px"));
+    }
+
+    /// The half of the hydration invariant a unit test can actually reach:
+    /// on the server the gate is closed, so no `matchMedia` read can reach
+    /// SSR markup and the first client render (which starts from the same
+    /// `false`) cannot disagree with it. The client half — the `Effect` that
+    /// flips it and the `change` listener that keeps it honest through a
+    /// resize — needs a DOM and is not covered here.
+    #[cfg(feature = "ssr")]
+    #[test]
+    fn the_viewport_gate_is_closed_on_the_server() {
+        let owner = Owner::new();
+        owner.with(|| {
+            assert!(
+                !use_wide_viewport().get(),
+                "a server-side viewport read must never report wide"
+            );
+        });
     }
 
     #[test]
