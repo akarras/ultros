@@ -123,7 +123,7 @@ impl Display for BuyScope {
 /// The same three places, named for what they are when they are not the
 /// buy side's: the sell world, its datacenter, or the whole region. The
 /// spec calls the shared enum `Scope`; `BuyScope` keeps its name at the
-/// hundreds of sites that already spell it.
+/// ~60 sites that already spell it.
 pub type Scope = BuyScope;
 
 /// Where the *product's price is read* — [`ProfitFormula::sell_scope`]'s

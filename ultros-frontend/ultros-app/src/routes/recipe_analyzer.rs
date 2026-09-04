@@ -4430,9 +4430,10 @@ pub fn RecipeAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
-    // Only the tests read these — the window ones, and the median tell's
-    // sign, which asserts the colour the note renders in rather than only
-    // its sign. Imported here rather than at module level: they have no
+    // Only the tests read these — the window ones, the median tell's sign,
+    // which asserts the colour the note renders in rather than only its
+    // sign, and the Phase F scope types. Imported here rather than at
+    // module level: they have no
     // production caller on this page, and `--all-targets` also compiles the
     // lib without `cfg(test)`, where `-D warnings` turns an unused import
     // into a failure.
