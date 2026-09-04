@@ -69,12 +69,18 @@ pub(crate) fn setup_metrics_recorder() -> PrometheusHandle {
         .unwrap()
 }
 
-pub(crate) async fn start_metrics_server(recorder_handle: PrometheusHandle) {
+pub(crate) async fn start_metrics_server(
+    recorder_handle: PrometheusHandle,
+    token: tokio_util::sync::CancellationToken,
+) {
     let app = metrics_app(recorder_handle);
 
     // NOTE: expose metrics enpoint on a different port
     let addr = SocketAddr::from(([0, 0, 0, 0], 9091));
     tracing::debug!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap()
+    axum::serve(listener, app)
+        .with_graceful_shutdown(token.cancelled_owned())
+        .await
+        .unwrap()
 }

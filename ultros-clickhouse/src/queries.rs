@@ -751,10 +751,10 @@ fn window_predicate(
 /// `world_to_group` maps every world in scope to its series key at `group`;
 /// for `SeriesGroup::World` the mapped value is ignored.
 ///
-/// Deliberately no `FINAL`. `sales` is a `ReplacingMergeTree` whose duplicates
-/// are exact repeats of the same sale, and at aggregate scale an unmerged
-/// duplicate shifts a bucket's VWAP imperceptibly — whereas `FINAL` over a
-/// full-history scan is expensive. This is an accuracy-for-cost trade.
+/// `FINAL` deduplicates retries before aggregation. A temporarily ambiguous
+/// insert response can repeat an entire batch, so waiting for background
+/// merges would inflate counts, quantities, and gil. The item and time-window
+/// predicates keep this read scoped to the requested market.
 ///
 /// Deliberately no join: `item_id` is filtered first so the read stays on the
 /// table's `(item_id, hq, world_id, sold_date, pg_id)` prefix. See the comment
@@ -805,7 +805,7 @@ pub async fn price_series(
             toUInt32(quantileExact(0.25)(price_per_item)) AS p25,
             toUInt32(quantileExact(0.50)(price_per_item)) AS p50,
             toUInt32(quantileExact(0.75)(price_per_item)) AS p75
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         GROUP BY series_id, bucket
         ORDER BY series_id, bucket
@@ -848,9 +848,8 @@ pub struct RawSaleRow {
 /// `world_ids` is a plain list, not a `(world, group)` map: raw sales are
 /// never grouped, so there is no `transform()` here.
 ///
-/// Same conventions as `price_series`: deliberately no `FINAL` (an
-/// accuracy-for-cost trade against unmerged `ReplacingMergeTree`
-/// duplicates), no join, and only numeric interpolation into the SQL string
+/// Same conventions as `price_series`: `FINAL` deduplicates writer retries,
+/// no join, and only numeric interpolation into the SQL string
 /// (never string/user data) — see the doc comment on `price_series` for why.
 pub async fn raw_sales(
     ch: &ClickHouseClient,
@@ -879,7 +878,7 @@ pub async fn raw_sales(
             hq,
             sold_date,
             world_id
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         ORDER BY sold_date
         LIMIT {limit}
@@ -910,7 +909,7 @@ struct MinMaxRow {
 /// window holds no sales (ClickHouse `min`/`max` over zero rows return 0,
 /// which must not be mistaken for a real price of 0).
 ///
-/// Same conventions as [`price_series`]: no `FINAL`, no join, and only
+/// Same conventions as [`price_series`]: `FINAL`, no join, and only
 /// numeric interpolation into the SQL string via [`window_predicate`].
 pub async fn price_min_max(
     ch: &ClickHouseClient,
@@ -935,7 +934,7 @@ pub async fn price_min_max(
             toUInt64(count())             AS count,
             toUInt32(min(price_per_item)) AS lo,
             toUInt32(max(price_per_item)) AS hi
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         "#
     );
@@ -982,7 +981,7 @@ pub async fn price_density(
             toStartOfInterval(sold_date, INTERVAL {bucket_seconds} SECOND) AS bucket,
             toUInt16(least(greatest(floor((toFloat64(price_per_item) - {lo}) / {bin_width}), 0), {max_bin})) AS price_bin,
             toUInt64(count())                                              AS n
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         GROUP BY bucket, price_bin
         ORDER BY bucket, price_bin
