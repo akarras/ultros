@@ -5481,6 +5481,172 @@ mod test {
         assert_eq!(got, ORACLE);
     }
 
+    /// One row of the revenue projection: everything the sell-stat lookup
+    /// produces that `price_rows_matches_recorded_oracle_on_fixture` cannot
+    /// see.
+    type RevProjection = (i32, i32, [Option<i32>; 4], bool, Option<i32>, bool);
+
+    fn revenue_projection(rows: &[RecipeProfitData]) -> Vec<RevProjection> {
+        rows.iter()
+            .take(12)
+            .map(|r| {
+                (
+                    r.recipe.key_id.0,
+                    r.market_price,
+                    r.rev_alt,
+                    r.revenue_fell_back,
+                    r.sell_median,
+                    r.stat_hq,
+                )
+            })
+            .collect()
+    }
+
+    /// The revenue-side characterization oracle, in the two fixture shapes
+    /// that matter: every output has a sell-world listing (`WITH`), and no
+    /// output has one (`WITHOUT`) — the spec's "includes items with no
+    /// sell-world listing" parity case, which the default fixture cannot
+    /// produce because it lists every output.
+    ///
+    /// Recorded on `8395bc02` before Phase F split the sell place from the
+    /// sell world; regenerate ONLY if a phase moves these numbers on
+    /// purpose (run with `--nocapture` and copy the printed tuples).
+    #[test]
+    fn revenue_projection_is_unchanged_at_the_default_sell_scope() {
+        let with = revenue_projection(&run(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            false,
+        ));
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::ListingMin),
+            Some(PriceSignal::SaleMedian),
+            None,
+        );
+        let without = revenue_projection(&run_with(
+            PriceSignal::ListingMin,
+            PriceSignal::SaleMedian,
+            &RunOpts {
+                needs: needed_signals(&f, &SignalWants::default(), false),
+                sell_listings: false,
+                ..RunOpts::default()
+            },
+        ));
+        println!("REVENUE_ORACLE_WITH = {with:?}");
+        println!("REVENUE_ORACLE_WITHOUT = {without:?}");
+        const WITH: &[RevProjection] = &[
+            (0, 120, [Some(120), None, None, None], true, None, false),
+            (1, 220, [Some(220), None, None, None], true, None, false),
+            (2, 318, [Some(321), None, None, None], true, None, false),
+            (
+                3,
+                455,
+                [Some(540), Some(440), Some(455), Some(459)],
+                false,
+                Some(455),
+                false,
+            ),
+            (
+                4,
+                294,
+                [Some(346), Some(279), Some(294), Some(298)],
+                false,
+                Some(294),
+                false,
+            ),
+            (
+                5,
+                434,
+                [Some(514), Some(419), Some(434), Some(438)],
+                false,
+                Some(434),
+                false,
+            ),
+            (7, 514, [Some(556), None, None, None], true, None, false),
+            (9, 738, [Some(825), None, None, None], true, None, false),
+            (
+                12,
+                378,
+                [Some(447), Some(363), Some(378), Some(382)],
+                false,
+                Some(378),
+                false,
+            ),
+            (13, 724, [Some(808), None, None, None], true, None, false),
+            (
+                14,
+                497,
+                [Some(590), Some(482), Some(497), Some(501)],
+                false,
+                Some(497),
+                false,
+            ),
+            (15, 507, [Some(548), None, None, None], true, None, false),
+        ];
+        const WITHOUT: &[RevProjection] = &[
+            (1, 184, [None, None, None, None], true, None, false),
+            (
+                3,
+                455,
+                [None, Some(440), Some(455), Some(459)],
+                false,
+                Some(455),
+                false,
+            ),
+            (
+                4,
+                294,
+                [None, Some(279), Some(294), Some(298)],
+                false,
+                Some(294),
+                false,
+            ),
+            (
+                5,
+                434,
+                [None, Some(419), Some(434), Some(438)],
+                false,
+                Some(434),
+                false,
+            ),
+            (7, 464, [None, None, None, None], true, None, false),
+            (9, 688, [None, None, None, None], true, None, false),
+            (
+                12,
+                378,
+                [None, Some(363), Some(378), Some(382)],
+                false,
+                Some(378),
+                false,
+            ),
+            (13, 674, [None, None, None, None], true, None, false),
+            (
+                14,
+                497,
+                [None, Some(482), Some(497), Some(501)],
+                false,
+                Some(497),
+                false,
+            ),
+            (15, 457, [None, None, None, None], true, None, false),
+            (16, 548, [None, None, None, None], true, None, false),
+            (
+                18,
+                770,
+                [None, Some(755), Some(770), Some(774)],
+                false,
+                Some(770),
+                false,
+            ),
+        ];
+        assert_eq!(with.as_slice(), WITH);
+        assert_eq!(without.as_slice(), WITHOUT, "no sell-world listing");
+        assert!(
+            without.iter().any(|(_, _, alt, ..)| alt[0].is_none()),
+            "the WITHOUT shape must contain rows whose sell-world listing is              absent, or it is not the parity case the spec asks for"
+        );
+    }
+
     fn row(key: i32, profit: i32, roi: i32, daily: f32, world: i32) -> Arc<RecipeProfitData> {
         let recipe = fixture_recipes()
             .into_iter()
