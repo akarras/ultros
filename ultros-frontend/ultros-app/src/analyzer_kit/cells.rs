@@ -997,6 +997,13 @@ mod tests {
                 "the Unavailable title must not name a cause only three of \
                  the four revenue signals have: {missing}"
             );
+            // Banning the wrong key is not the same as requiring the right
+            // one: without this, a swap to some third key passes both
+            // assertions above — the `title=` check only catches deletion.
+            assert!(
+                missing.contains(&*t_string!(i18n, analyzer_scope_vs_home_unavailable)),
+                "the Unavailable dash must carry its own reason: {missing}"
+            );
             for html in [&down, &up, &one_sided, &off, &missing] {
                 assert_eq!(count(html, "<div"), count(&down, "<div"), "{down}\n{html}");
                 assert_eq!(count(html, "<span"), count(&down, "<span"));
