@@ -21,8 +21,7 @@ use crate::analyzer_kit::needed::{
     SignalWants, needed_bodies, needed_signals,
 };
 use crate::analyzer_kit::signals::{
-    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stat_row_either,
-    stats_index,
+    LateStats, PriceLookup, SignalView, StatsIndex, stat_only_cheapest, stats_index,
 };
 use crate::analyzer_kit::strip::{FormulaStrip, StripLayout, StripSelect, StripTerm};
 use crate::components::crafting_cost::{
@@ -118,10 +117,9 @@ struct RecipeProfitData {
     /// The market board's cut of one unit's sale at `market_price`.
     tax: i32,
     confidence: ConfidenceBand,
-    /// Which quality the sell-world statistics above came from: the
-    /// required one, or the other when only that one traded. The lazy
-    /// sparkline feed and the 30-day columns key on it, so every figure in
-    /// a row describes the same quality.
+    /// Quality of the selected revenue price. All quality-specific market
+    /// context, including the lazy feeds, uses this exact quality. Requiring
+    /// HQ ingredients does not change which output price wins.
     stat_hq: bool,
     /// Per-unit cost under each cost signal that was run, by
     /// `PriceSignal::index`; `None` = not run (not needed, capped, or a
@@ -130,19 +128,9 @@ struct RecipeProfitData {
     /// The bare sell-world statistic (or listing) per revenue signal, no
     /// fallback; `None` = no row.
     rev_alt: [Option<i32>; 4],
-    /// The sell world's 7-day median sale for the quality this row's
-    /// *statistics* came from (`stat_hq`) — the same `(item, stat_hq)` row
-    /// every other 7-day figure here uses, and the Price tell's basis.
-    ///
-    /// Not necessarily the quality the *price* is: `market_price` comes from
-    /// `lowest_gil()`, which mins across both qualities and never consults
-    /// `require_hq`, so an item with an NQ stat row but no NQ listing prices
-    /// from HQ against an NQ median. That residual is strictly smaller than
-    /// what it replaced (`min(nq, hq)` is further from the price's quality by
-    /// construction) and matches the approximation `vwap_pct` already makes
-    /// one line above. Closing it properly means recording which side of
-    /// `PriceSummary` won `lowest_gil()` and reading `stat_only(index, item,
-    /// price_hq, SaleStat::Median)` with this as the fallback.
+    /// The sell world's 7-day median for the revenue price's quality.
+    /// Missing same-quality history means no comparison; the other quality
+    /// can trade at a very different price and is not a substitute.
     ///
     /// Deliberately NOT `rev_alt[SaleMedian]`: that one is
     /// `stat_only_cheapest`, the cheaper of NQ and HQ, which is the right
@@ -1136,7 +1124,7 @@ fn late_30<V>(r: &RecipeRow, ctx: &CellCtx, f: impl Fn(&ItemSaleStats) -> V) -> 
     };
     stats.with(|index| match index {
         None => Enrich::Loading,
-        Some(index) => match stat_row_either(index, r.recipe.item_result, r.stat_hq) {
+        Some(index) => match index.get(&(r.recipe.item_result, r.stat_hq)) {
             Some(row) => Enrich::Ready(f(row)),
             None => Enrich::Missing,
         },
@@ -1972,7 +1960,7 @@ fn hop_sort_key(hop: Option<HopGain>) -> Option<i32> {
 /// A row's 30-day statistics, when that body has landed. Keyed on the same
 /// quality the row's 7-day figures came from.
 fn stat_30<'a>(index: Option<&'a StatsIndex>, r: &RecipeProfitData) -> Option<&'a ItemSaleStats> {
-    stat_row_either(index?, r.recipe.item_result, r.stat_hq)
+    index?.get(&(r.recipe.item_result, r.stat_hq))
 }
 
 /// The mode the rows are actually sorted by. The 30-day body is client-only
@@ -2193,10 +2181,15 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
             total_sales: 0,
         });
 
-        let market_price = revenue_view
-            .find_matching_listings(recipe.item_result)
-            .lowest_gil()
-            .unwrap_or(0);
+        let revenue_summary = revenue_view.find_matching_listings(recipe.item_result);
+        // Preserve the cheapest-quality revenue policy, including NQ on a
+        // tie, but retain its quality for comparisons and market history.
+        let price_hq = match (revenue_summary.lq, revenue_summary.hq) {
+            (None, Some(_)) => true,
+            (Some(nq), Some(hq)) => hq.price < nq.price,
+            _ => false,
+        };
+        let market_price = revenue_summary.lowest_gil().unwrap_or(0);
 
         if market_price == 0 {
             continue;
@@ -2321,11 +2314,10 @@ fn price_rows(inp: &PriceInputs<'_>) -> (Vec<RecipeProfitData>, u32) {
         ];
         let revenue_fell_back = rev_alt[inp.formula.revenue_signal().index()] != Some(market_price);
 
-        // Sell-world stats row matching how revenue resolves: prefer
-        // the HQ row when the analyzer requires HQ, otherwise NQ, and
-        // fall back to whichever quality actually traded.
-        let sell_stat = stat_row_either(inp.sell_stats, recipe.item_result, inp.require_hq);
-        let stat_hq = sell_stat.map(|s| s.hq).unwrap_or(inp.require_hq);
+        // Ingredient quality is independent of output revenue. Never fill
+        // missing history with a different quality's market context.
+        let sell_stat = inp.sell_stats.get(&(recipe.item_result, price_hq));
+        let stat_hq = price_hq;
         let vwap = sell_stat.map(|s| s.vwap).unwrap_or(0);
         let sell_median = sell_stat.map(|s| s.median_price).filter(|p| *p > 0);
 
@@ -4987,26 +4979,6 @@ mod test {
         sell_listings: bool,
         sell_stats: bool,
         scope: Option<BuyScope>,
-        /// Give the sell world HQ-only statistics, so the pass has to fall
-        /// back to the other quality and the row has to record that it did.
-        stats_hq: bool,
-        /// Give the sell world BOTH qualities, the HQ row four times
-        /// dearer on even item ids and four times cheaper on odd ones. The
-        /// NQ-only and HQ-only fixtures above cannot tell `stat_row_either`
-        /// (quality-matched) from `stat_only_cheapest` (cheaper of the two)
-        /// apart, because with one quality present they return the same
-        /// row — which is why #1264's Price tell shipped reading the wrong
-        /// one. Prod's shape is the dearer half (one item in five carries
-        /// an HQ median more than 3x its NQ one); the cheaper half is here
-        /// because it makes the two lookups disagree without `require_hq`,
-        /// which costs every ingredient HQ and leaves only a couple of rows
-        /// past the drop rule.
-        stats_both: bool,
-        /// With `stats_both`, write HQ dearer for EVERY item rather than
-        /// only the even ids. The alternating split gives the NQ run
-        /// divergence in both directions; a run that keeps only a couple of
-        /// rows needs the direction guaranteed, not drawn.
-        hq_dearer_only: bool,
         require_hq: bool,
     }
 
@@ -5018,22 +4990,8 @@ mod test {
                 sell_listings: true,
                 sell_stats: true,
                 scope: None,
-                stats_hq: false,
-                stats_both: false,
-                hq_dearer_only: false,
                 require_hq: false,
             }
-        }
-    }
-
-    /// The HQ figure `RunOpts::stats_both` writes for one NQ figure.
-    /// Dearer on the even ids, cheaper on the odd ones — unless
-    /// `hq_dearer_only`, which makes every item dearer.
-    fn hq_scaled(item_id: i32, nq: i32, dearer_only: bool) -> i32 {
-        if dearer_only || item_id % 2 == 0 {
-            nq * 4
-        } else {
-            nq / 4
         }
     }
 
@@ -5042,45 +5000,7 @@ mod test {
         let recipes = fixture_recipes();
         let (buy, sell, stats) = fixture(&recipes);
         let index = stats_index(&stats);
-        let sell_index = if o.stats_hq {
-            // The same rows, only HQ, and carrying the two figures the row
-            // copies off its stat row: exercises the pass's fallback to the
-            // other quality when the required one never traded, and lets a
-            // test tell which row the numbers came from.
-            stats
-                .stats
-                .iter()
-                .map(|s| {
-                    (
-                        (s.item_id, true),
-                        ItemSaleStats {
-                            hq: true,
-                            vwap: s.avg_price,
-                            units_sold: 3,
-                            ..*s
-                        },
-                    )
-                })
-                .collect()
-        } else if o.stats_both {
-            let mut both = index.clone();
-            for s in &stats.stats {
-                let scale = |p: i32| hq_scaled(s.item_id, p, o.hq_dearer_only);
-                both.insert(
-                    (s.item_id, true),
-                    ItemSaleStats {
-                        hq: true,
-                        min_price: scale(s.min_price),
-                        median_price: scale(s.median_price),
-                        avg_price: scale(s.avg_price),
-                        ..*s
-                    },
-                );
-            }
-            both
-        } else {
-            index.clone()
-        };
+        let sell_index = index.clone();
         let empty_index = StatsIndex::new();
         let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
         let raw_sales = HashMap::new();
@@ -6113,138 +6033,176 @@ mod test {
         });
     }
 
-    /// The row records which quality its 7-day statistics came from, so the
-    /// sparkline key and the 30-day lookups read the same quality the
-    /// visible 7-day numbers did.
-    #[test]
-    fn stat_hq_records_the_quality_the_row_priced_from() {
-        let nq = run(PriceSignal::ListingMin, PriceSignal::ListingMin, false);
-        assert!(nq.iter().all(|r| !r.stat_hq), "the fixture trades NQ");
-        let f = ProfitFormula::recipe_from_query(Some(PriceSignal::ListingMin), None, None);
-        let hq = run_with(
-            PriceSignal::ListingMin,
-            PriceSignal::ListingMin,
-            &RunOpts {
-                stats_hq: true,
-                needs: needed_signals(&f, &SignalWants::default(), false),
-                ..RunOpts::default()
-            },
-        );
-        // `require_hq` is false, so the pass falls back to the HQ row — and
-        // says so on the row.
-        assert!(
-            hq.iter().any(|r| r.stat_hq),
-            "some rows have only an HQ row"
-        );
-        // And the row's figures came from that same lookup: the remapped
-        // fixture rows are the only ones carrying a vwap or a unit count.
-        assert!(
-            hq.iter()
-                .filter(|r| r.stat_hq)
-                .all(|r| r.vwap > 0 && r.units_sold == 3),
-            "the HQ row's figures are what the row carries"
-        );
-        assert!(hq.iter().filter(|r| !r.stat_hq).all(|r| r.vwap == 0));
+    /// One deterministic recipe with independent ingredient and output prices.
+    /// Its synthetic IDs deliberately have no vendor or shard special cases.
+    fn quality_fixture(
+        nq_listing: Option<i32>,
+        hq_listing: Option<i32>,
+        history: &[(bool, i32)],
+        require_hq: bool,
+        revenue: PriceSignal,
+    ) -> RecipeProfitData {
+        static RECIPE: Recipe = Recipe {
+            key_id: xiv_gen::RecipeId(9999000),
+            item_result: 9999001,
+            amount_result: 1,
+            ingredient: [9999002, 0, 0, 0, 0, 0, 0, 0],
+            amount_ingredient: [1, 0, 0, 0, 0, 0, 0, 0],
+            craft_type: 0,
+            recipe_level_table: 0,
+        };
+        let mut listings = Vec::new();
+        for (item_id, hq, price) in [
+            (RECIPE.item_result, false, nq_listing),
+            (RECIPE.item_result, true, hq_listing),
+            (9999002, false, Some(10)),
+            (9999002, true, Some(20)),
+        ] {
+            if let Some(cheapest_price) = price {
+                listings.push(CheapestListingItem {
+                    item_id,
+                    hq,
+                    cheapest_price,
+                    world_id: 1,
+                });
+            }
+        }
+        let prices = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: listings,
+        });
+        let stats: StatsIndex = history
+            .iter()
+            .map(|&(hq, price)| {
+                (
+                    (RECIPE.item_result, hq),
+                    ItemSaleStats {
+                        item_id: RECIPE.item_result,
+                        hq,
+                        min_price: price,
+                        median_price: price,
+                        avg_price: price,
+                        vwap: price,
+                        units_sold: if hq { 140 } else { 70 },
+                        num_sold: 7,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let formula = ProfitFormula::recipe_from_query(None, Some(revenue), None);
+        let (rows, _) = price_rows(&PriceInputs {
+            recipes: &[&RECIPE],
+            recipe_level_tables: &xiv_gen_db::data().recipe_level_tables,
+            recipes_by_output: &HashMap::new(),
+            buy_listings: &prices,
+            sell_listings: Some(&prices),
+            buy_stats: None,
+            sell_stats: &stats,
+            raw_sales: &HashMap::new(),
+            formula,
+            levels: &CrafterLevels::default(),
+            job_filter: None,
+            use_subcrafts: false,
+            require_hq,
+            filter_outliers: false,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: None,
+            needs: &needed_signals(&formula, &SignalWants::default(), false),
+            sell_stats_loaded: true,
+            home_world_id: 1,
+            dc_of: &|_| None,
+        });
+        rows.into_iter().next().expect("the fixture is profitable")
     }
 
-    /// The row's median is its own quality's; the "Sale median (7d)"
-    /// alternative-revenue column's is still the cheaper of the two. Both
-    /// are asserted off one run, because the defect was one silently
-    /// standing in for the other — and no other test in this file can see
-    /// the difference: every existing fixture gives an item ONE quality of
-    /// statistics, and with one quality present `stat_row_either` and
-    /// `stat_only_cheapest` return the same row.
     #[test]
-    fn the_rows_median_is_quality_matched_and_the_alt_column_is_not() {
-        let f = ProfitFormula::recipe_from_query(Some(PriceSignal::ListingMin), None, None);
-        let opts = |require_hq| RunOpts {
-            stats_both: true,
-            // The require_hq run overrides this; the NQ run wants the
-            // alternating split so both directions are covered.
-            hq_dearer_only: require_hq,
-            require_hq,
-            needs: needed_signals(&f, &SignalWants::default(), false),
-            ..RunOpts::default()
-        };
-        // The fixture's NQ median, and which items get a statistics row.
-        let median_of = |out: i32| 100 + (out % 97) * 7 + 5;
-        let has_stats = |out: i32| out % 3 == 0 && out != 0;
-
-        // NQ recipes: the row reads the median of the quality it produces,
-        // whichever quality happens to be cheaper. On the odd item ids —
-        // where the fixture makes HQ a quarter of NQ — the two lookups
-        // disagree, and #1264 rendered the second of them.
-        let nq = run_with(
-            PriceSignal::ListingMin,
-            PriceSignal::ListingMin,
-            &opts(false),
-        );
-        let (mut checked, mut diverged) = (0, 0);
-        for r in nq.iter().filter(|r| has_stats(r.recipe.item_result)) {
-            let (out, m) = (r.recipe.item_result, median_of(r.recipe.item_result));
-            let alt = r.rev_alt[PriceSignal::SaleMedian.index()];
-            assert!(!r.stat_hq, "recipe {}", r.recipe.key_id.0);
-            assert_eq!(r.sell_median, Some(m), "recipe {}", r.recipe.key_id.0);
-            assert_eq!(
-                alt,
-                Some(m.min(hq_scaled(out, m, false))),
-                "the Sale median (7d) column is still the cheaper quality"
-            );
-            checked += 1;
-            diverged += usize::from(r.sell_median != alt);
+    fn market_context_follows_revenue_quality_not_ingredient_quality() {
+        for require_hq in [false, true] {
+            for (nq, hq, expected_hq, price) in [
+                (None, Some(40_000), true, 40_000),
+                (Some(100), None, false, 100),
+                (Some(100), Some(40_000), false, 100),
+                (Some(50_000), Some(40_000), true, 40_000),
+                (Some(100), Some(100), false, 100),
+            ] {
+                let r = quality_fixture(
+                    nq,
+                    hq,
+                    &[(false, 100), (true, 45_000)],
+                    require_hq,
+                    PriceSignal::ListingMin,
+                );
+                let median = if expected_hq { 45_000 } else { 100 };
+                assert_eq!(r.market_price, price);
+                assert_eq!(r.cost, if require_hq { 20 } else { 10 });
+                assert_eq!(r.profit, price * 95 / 100 - r.cost);
+                assert_eq!(r.stat_hq, expected_hq);
+                assert_eq!(r.sell_median, Some(median));
+                assert_eq!(r.vwap, median);
+                assert_eq!(r.units_sold, if expected_hq { 140 } else { 70 });
+                assert_eq!(r.daily_sales, 2.0, "the item-wide velocity stays unchanged");
+                assert_eq!(r.rev_alt[PriceSignal::SaleMedian.index()], Some(100));
+                assert_eq!(recipe_spark_key(&(0, Arc::new(r))), (9999001, expected_hq));
+            }
         }
-        assert!(checked > 5, "only {checked} rows carried statistics");
-        assert!(
-            diverged > 5,
-            "only {diverged} rows told the two lookups apart"
-        );
+    }
 
-        // Require HQ and the row follows: its median is the HQ one — four
-        // times dearer on the even ids, which is prod's shape and the
-        // direction that read "+399900%" in green — while the
-        // alternative-revenue column keeps meaning "the cheaper quality".
-        let hq = run_with(
-            PriceSignal::ListingMin,
-            PriceSignal::ListingMin,
-            &opts(true),
-        );
-        let mut split = 0;
-        // `hq_dearer_only` above is why this run is worth anything. With the
-        // alternating split, every row that survived `require_hq` had an ODD
-        // id, where `hq_scaled` is `m / 4` and both assertions below expect
-        // the same number — the old basis satisfied them and the loop passed
-        // while proving nothing about the HQ-dearer direction, the one that
-        // read "+399900%" in green on prod. Forcing HQ dearer for every item
-        // makes every surviving row discriminate, and the assert_ne! in the
-        // loop proves that rather than counting on the draw.
-        for r in hq.iter().filter(|r| has_stats(r.recipe.item_result)) {
-            let (out, m) = (r.recipe.item_result, median_of(r.recipe.item_result));
-            assert!(r.stat_hq, "recipe {}", r.recipe.key_id.0);
-            assert_eq!(
-                r.sell_median,
-                Some(hq_scaled(out, m, true)),
-                "recipe {}",
-                r.recipe.key_id.0
-            );
-            assert_eq!(
-                r.rev_alt[PriceSignal::SaleMedian.index()],
-                Some(m.min(hq_scaled(out, m, true)))
-            );
-            split += 1;
-            assert_ne!(
-                hq_scaled(out, m, true),
-                m.min(hq_scaled(out, m, true)),
-                "recipe {} does not tell the two lookups apart",
-                r.recipe.key_id.0
-            );
+    #[test]
+    fn missing_same_quality_history_never_borrows_the_other_quality() {
+        for (nq, hq, history, expected_hq) in [
+            (None, Some(40_000), vec![(false, 100)], true),
+            (Some(100), None, vec![(true, 45_000)], false),
+        ] {
+            let r = quality_fixture(nq, hq, &history, false, PriceSignal::ListingMin);
+            assert_eq!(r.stat_hq, expected_hq);
+            assert_eq!(r.sell_median, None);
+            assert_eq!(r.vwap, 0);
+            assert_eq!(r.vwap_pct, None);
+            assert_eq!(r.confidence, ConfidenceBand::Unknown);
+            let other_quality: StatsIndex = [(
+                (r.recipe.item_result, !expected_hq),
+                stats_row(r.recipe.item_result, !expected_hq, 999, 999),
+            )]
+            .into_iter()
+            .collect();
+            assert!(stat_30(Some(&other_quality), &r).is_none());
+            let owner = Owner::new();
+            owner.with(|| {
+                let mut ctx = test_ctx();
+                ctx.stats_30 = Some(RwSignal::new(Some(Arc::new(other_quality))));
+                let r = Arc::new(r);
+                assert_eq!(late_30(&r, &ctx, |s| s.vwap), Enrich::Missing);
+            });
         }
-        // Only a couple of rows: `require_hq` costs every ingredient HQ and
-        // the drop rule takes the rest. The 20-row pass above carries the
-        // weight; this one covers the HQ *preference* reaching the row.
-        assert!(
-            split > 0,
-            "the require_hq run dropped every row with statistics"
+    }
+
+    #[test]
+    fn sale_basis_and_listing_fallback_retain_the_selected_quality() {
+        let r = quality_fixture(
+            Some(100),
+            Some(40_000),
+            &[(false, 500), (true, 200)],
+            false,
+            PriceSignal::SaleMedian,
         );
+        assert_eq!(
+            (r.market_price, r.stat_hq, r.sell_median),
+            (200, true, Some(200))
+        );
+        assert!(!r.revenue_fell_back);
+        let r = quality_fixture(
+            Some(100),
+            Some(40_000),
+            &[(true, 45_000)],
+            true,
+            PriceSignal::SaleMedian,
+        );
+        assert_eq!(
+            (r.market_price, r.stat_hq, r.sell_median),
+            (100, false, None)
+        );
+        assert_eq!(r.vwap_pct, None);
+        assert!(r.revenue_fell_back);
     }
 
     #[test]

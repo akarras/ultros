@@ -231,6 +231,62 @@ pub fn use_wide_viewport() -> Signal<bool> {
     leptos_use::use_media_query(MD_VIEWPORT_QUERY)
 }
 
+/// Scope epochs outlive individual scroll windows. A completed request may
+/// enrich an older window, but must never enrich a previous visit to a scope
+/// (including A -> B -> A). Pending debounces additionally need their window
+/// generation to match, even when the newest window has no keys to fetch.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct FetchGeneration {
+    scope: u64,
+    window: u64,
+}
+
+struct RequestTracker<S, K> {
+    scope: Option<S>,
+    generation: FetchGeneration,
+    requested: HashSet<K>,
+}
+
+impl<S, K> Default for RequestTracker<S, K> {
+    fn default() -> Self {
+        Self {
+            scope: None,
+            generation: FetchGeneration {
+                scope: 0,
+                window: 0,
+            },
+            requested: HashSet::new(),
+        }
+    }
+}
+
+impl<S: Clone + PartialEq, K: Copy + Eq + Hash> RequestTracker<S, K> {
+    /// Start a new window and report whether its scope needs a fresh store.
+    /// Called even for an empty window, which cancels any pending debounce.
+    fn advance(&mut self, scope: &S) -> bool {
+        let changed = self.scope.as_ref() != Some(scope);
+        if changed {
+            self.scope = Some(scope.clone());
+            self.generation.scope += 1;
+            self.requested.clear();
+        }
+        self.generation.window += 1;
+        changed
+    }
+
+    fn claim(&mut self, generation: FetchGeneration, keys: &[K]) -> bool {
+        if self.generation != generation {
+            return false;
+        }
+        self.requested.extend(keys.iter().copied());
+        true
+    }
+
+    fn accepts_result(&self, generation: FetchGeneration) -> bool {
+        self.generation.scope == generation.scope
+    }
+}
+
 /// Fill `store` for the rows the scroller shows, `cfg.prefetch_margin` rows
 /// either side, as the window moves — accumulating, never wholesale-replaced
 /// except on a scope change.
@@ -242,12 +298,12 @@ pub fn use_wide_viewport() -> Signal<bool> {
 /// changed while the requests were in flight; merge; settle every requested
 /// key on success or error.
 ///
-/// `requested` is a `StoredValue` — non-reactive on purpose: the page's
+/// The request tracker is a `StoredValue` — non-reactive on purpose: the page's
 /// filter memo reads `store`, so a reactive claim set would loop
 /// recompute -> refetch. The scope-change reset (store cleared, claims
 /// cleared, generation bumped) lives here too.
 ///
-/// Call it inside a component: it creates two `Effect::new`s, whose bodies
+/// Call it inside a component: it creates an `Effect::new`, whose body
 /// never run under `leptos/ssr` (`Effect::new` only spawns when
 /// `reactive_graph/effects` is on — a runtime `cfg!`, so the bodies still
 /// compile on the server), which is what keeps `fetch` — a `post_api`
@@ -270,53 +326,41 @@ pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
     F: Fn(S, Vec<K>) -> Fut + Clone + 'static,
     Fut: Future<Output = Vec<(K, V)>> + 'static,
 {
-    // Dedupe / loop-breaker: keys a fetch has been scheduled for.
-    let requested = StoredValue::new(HashSet::<K>::new());
-    // Generation counter for debounce-with-cancellation (`gen` is a reserved
-    // keyword in edition 2024).
-    let fetch_id = RwSignal::new(0u64);
+    let tracker = StoredValue::new(RequestTracker::<S, K>::default());
 
-    // Scope change: drop everything and invalidate any in-flight fetch.
-    // Bumping the generation makes it bail at the guard below before it
-    // claims keys, so a stale batch can neither repopulate `requested`
-    // (which would strand those rows on the skeleton) nor merge another
-    // scope's data. Runs once on mount too, so the first generation is >= 1.
+    // Scope reset and window selection share one effect: changing scope
+    // must refetch even when the rows and scroll range remain identical.
     Effect::new(move |_| {
-        let _ = scope.get(); // subscribe: re-run on scope change
-        store.set(Enrichment::default());
-        requested.update_value(|s| s.clear());
-        fetch_id.update(|n| *n += 1);
-    });
-
-    // Select the window's keys (honouring the page's sort/filter through
-    // `rows`), debounce, fetch, merge.
-    Effect::new(move |_| {
+        let scope_now = scope.get();
         let range = visible_range.get(); // reactive: scroll
+        let mut reset = false;
+        tracker.update_value(|t| reset = t.advance(&scope_now));
+        if reset {
+            store.set(Enrichment::default());
+        }
+        let generation = tracker.with_value(|t| t.generation);
         let keys = rows.with(|data| {
-            requested
-                .with_value(|seen| visible_keys(data, range, cfg.prefetch_margin, seen, key_of))
+            tracker.with_value(|t| {
+                visible_keys(data, range, cfg.prefetch_margin, &t.requested, key_of)
+            })
         });
         if keys.is_empty() {
             return;
         }
-        fetch_id.update(|n| *n += 1);
-        let current_id = fetch_id.get_untracked();
-        let scope_now = scope.get_untracked();
         let fetch = fetch.clone();
         leptos::task::spawn_local(async move {
             TimeoutFuture::new(cfg.debounce_ms).await; // debounce
             // Past this await the component can be disposed (navigated away,
             // scope remounted), which disposes these signals: every access
             // below is a `try_*` read through `verdict`.
-            if verdict(fetch_id.try_get_untracked(), &current_id) != Verdict::Proceed {
-                return; // superseded by a newer window, or disposed
+            if verdict(scope.try_get_untracked(), &scope_now) != Verdict::Proceed {
+                return;
             }
             // Claim post-debounce so superseded generations never claim.
-            if requested
-                .try_update_value(|s| s.extend(keys.iter().copied()))
-                .is_none()
-            {
-                return; // disposed
+            let mut claimed = false;
+            let _ = tracker.try_update_value(|t| claimed = t.claim(generation, &keys));
+            if !claimed {
+                return; // superseded by another window/scope, or disposed
             }
             let results: Vec<(K, V)> = futures::future::join_all(
                 chunk_keys(&keys, cfg.max_keys_per_request)
@@ -334,6 +378,9 @@ pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
             if verdict(scope.try_get_untracked(), &scope_now) != Verdict::Proceed {
                 return;
             }
+            if tracker.try_with_value(|t| t.accepts_result(generation)) != Some(true) {
+                return; // the scope changed and returned, or was disposed
+            }
             // Merge whatever came back and settle every requested key —
             // success or error — so cells switch loading -> value / "—". No
             // retry loop: a scope change resets everything.
@@ -345,6 +392,75 @@ pub fn use_visible_enrichment<T, K, V, S, F, Fut>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_the_fetch_gate_cancels_a_pending_debounce_without_claiming_keys() {
+        let mut tracker = RequestTracker::<&str, i32>::default();
+        tracker.advance(&"A");
+        let pending = tracker.generation;
+        // The next effect sees an empty row mirror after a column toggle or
+        // viewport change. It advances before returning at keys.is_empty().
+        assert!(!tracker.advance(&"A"));
+        assert!(!tracker.claim(pending, &[1, 2]));
+        assert!(tracker.requested.is_empty());
+        // Reopening fetches those keys normally; cancellation never claimed
+        // them and therefore cannot strand their cells in Loading.
+        tracker.advance(&"A");
+        assert!(tracker.claim(tracker.generation, &[1, 2]));
+    }
+
+    #[test]
+    fn changing_scope_refetches_identical_rows_and_rejects_the_old_debounce() {
+        let mut tracker = RequestTracker::<&str, i32>::default();
+        assert!(tracker.advance(&"A"));
+        assert!(tracker.claim(tracker.generation, &[1]));
+        tracker.advance(&"A");
+        let pending = tracker.generation;
+        assert!(tracker.advance(&"B"));
+        assert!(!tracker.claim(pending, &[2]));
+        // No row or range change is necessary to make A's keys fetchable
+        // for B: the scope-triggered advance already cleared its claims.
+        let keys = visible_keys(&[1, 2], (0, 2), 0, &tracker.requested, |k| *k);
+        assert_eq!(keys, vec![1, 2]);
+        assert!(tracker.claim(tracker.generation, &keys));
+    }
+
+    #[test]
+    fn returning_to_a_scope_rejects_its_previous_in_flight_results() {
+        let mut tracker = RequestTracker::<&str, i32>::default();
+        tracker.advance(&"A");
+        let first_a = tracker.generation;
+        assert!(tracker.claim(first_a, &[1]));
+        tracker.advance(&"B");
+        tracker.advance(&"A");
+        let second_a = tracker.generation;
+        assert!(tracker.claim(second_a, &[1]));
+
+        let mut store = Enrichment::<i32, u8>::default();
+        assert!(tracker.accepts_result(second_a));
+        store.merge(&[1], vec![(1, 20)]);
+        // The slow response from the first visit must not overwrite the
+        // fresh response, even though both requests name the same world.
+        assert!(!tracker.accepts_result(first_a));
+        assert_eq!(store.get(&1), Some(&20));
+    }
+
+    #[test]
+    fn scrolling_or_hiding_preserves_in_flight_results_and_cached_claims() {
+        let mut tracker = RequestTracker::<&str, i32>::default();
+        tracker.advance(&"A");
+        let first_window = tracker.generation;
+        assert!(tracker.claim(first_window, &[1, 2]));
+        assert!(!tracker.advance(&"A"));
+        // An already started request still contributes to the cache after
+        // scrolling away or hiding its columns. Only debounces are cancelled.
+        assert!(tracker.accepts_result(first_window));
+        let keys = visible_keys(&[1, 2, 3], (0, 3), 0, &tracker.requested, |k| *k);
+        assert_eq!(keys, vec![3]);
+        assert!(tracker.claim(tracker.generation, &keys));
+        tracker.advance(&"A");
+        assert!(visible_keys(&[1, 2, 3], (0, 3), 0, &tracker.requested, |k| *k).is_empty());
+    }
 
     // Test values are indivisible: absorbing replaces.
     impl Absorb for &'static str {
