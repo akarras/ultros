@@ -55,6 +55,29 @@
         );
         --line: color-mix(in srgb, var(--color-brand-300) 13%, transparent);
         --surface: rgba(255, 255, 255, 0.025);
+
+        /* === Scrollbar tokens ===
+         * Consumed by the themed-scrollbar rules below, which apply to every
+         * scrollport in the app, so every scrollbar picks up the active
+         * palette and theme.
+         *
+         * `--scrollbar-ink` is the solid color the thumb is mixed out of.
+         * On dark it is just the brand ring, which every palette defines as
+         * a rung bright enough to read against the page. Light mode
+         * re-points it (see the `[data-theme="light"]` block) because the
+         * same rung would wash out on a near-white surface.
+         */
+        --scrollbar-ink: var(--brand-ring);
+        --scrollbar-thumb: color-mix(
+            in srgb,
+            var(--scrollbar-ink) 42%,
+            transparent
+        );
+        --scrollbar-thumb-hover: color-mix(
+            in srgb,
+            var(--scrollbar-ink) 78%,
+            transparent
+        );
     }
 
     /* Fonts (kept as-is for wide support) */
@@ -113,6 +136,78 @@
            clipped off the right edge of every page. `100%` resolves against
            the real content box, so the two agree. */
         width: 100%;
+    }
+
+    /* ----- Themed scrollbars: Firefox -----
+       `scrollbar-width` and `scrollbar-color` are the standard way to size
+       and tint a scrollbar, and both inherit, so these two declarations
+       reach every scrollport on every page.
+
+       They are fenced behind `@supports not selector(::-webkit-scrollbar)`
+       because Chromium and Safari treat either of them as "this element
+       opts out of custom scrollbars": `scrollbar-color` drops *all*
+       `::-webkit-scrollbar` styling on that element, and a non-`auto`
+       `scrollbar-width` pins the track to the engine's own thin metric and
+       ignores the pseudo-element's `width`/`height`. Declaring them
+       unconditionally therefore disables the block below — which is what
+       had been quietly happening to `.scroll-panel`'s scrollbar rules — and
+       hands those engines the platform scrollbar with a repainted thumb,
+       stepper arrows and all. Firefox has no `::-webkit-scrollbar`, so the
+       query splits the two engines exactly along the line that matters.
+
+       Corollary for anyone styling a scrollport later: reach for
+       `::-webkit-scrollbar` rules, not `scrollbar-width`/`scrollbar-color`,
+       unless the intent is `scrollbar-width: none` (hiding the bar, which
+       both engines honour — see `.filter-chip-row`). */
+    @supports not selector(::-webkit-scrollbar) {
+        html {
+            scrollbar-width: thin;
+            scrollbar-color: var(--scrollbar-thumb) transparent;
+        }
+    }
+
+    /* ----- Themed scrollbars: WebKit -----
+       Chromium and Safari style scrollbars through pseudo-elements, which do
+       not inherit, so the theme has to be painted onto every element rather
+       than just the root. The thumb is drawn inside a transparent border so
+       it reads as a slim pill floating in the gutter instead of a bar wedged
+       against the content edge; hover thickens it by shrinking that border.
+
+       These live in `@layer base`, which every unlayered rule in this file
+       outranks regardless of specificity — that is what keeps
+       `.filter-chip-row::-webkit-scrollbar { display: none }` and friends
+       hiding their scrollbars.
+
+       Guarded on `pointer: fine` because styling `::-webkit-scrollbar` at
+       all opts the element out of the platform's overlay scrollbars and into
+       classic ones, which occupy layout width. On a phone that would carve a
+       permanent gutter out of already-narrow scrollports to theme a bar that
+       is only visible while the finger is moving, so touch keeps the native
+       transient scrollbar. */
+    @media (pointer: fine) {
+        *::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        *::-webkit-scrollbar-track,
+        *::-webkit-scrollbar-corner {
+            background: transparent;
+        }
+        /* Chromium on Windows draws stepper arrows at both ends of a styled
+           scrollbar unless they are explicitly removed. */
+        *::-webkit-scrollbar-button {
+            display: none;
+        }
+        *::-webkit-scrollbar-thumb {
+            background-color: var(--scrollbar-thumb);
+            background-clip: padding-box;
+            border: 3px solid transparent;
+            border-radius: 9999px;
+        }
+        *::-webkit-scrollbar-thumb:hover {
+            background-color: var(--scrollbar-thumb-hover);
+            border-width: 2px;
+        }
     }
 
     body {
@@ -185,6 +280,23 @@
 
     /* Decorative spot for gradients in light */
     --decor-spot: rgba(0, 0, 0, 0.06);
+
+    /* Scrollbar ink is mixed toward the page's ink color before the alpha
+     * band is applied. Which rung `--brand-ring` lands on differs between
+     * the default light scale (inverted) and an explicitly picked palette
+     * (not inverted), so keying off a rung directly would give a thumb that
+     * is legible under some palettes and invisible under others. Blending
+     * toward `--color-text` keeps the palette's hue while guaranteeing the
+     * thumb stays darker than the near-white surface it sits on. */
+    --scrollbar-ink: color-mix(in srgb, var(--brand-ring) 65%, var(--color-text));
+    /* A tinted thumb carries less contrast against near-white than against
+       the dark page, so light mode leans on the alpha bands harder. */
+    --scrollbar-thumb: color-mix(in srgb, var(--scrollbar-ink) 55%, transparent);
+    --scrollbar-thumb-hover: color-mix(
+        in srgb,
+        var(--scrollbar-ink) 85%,
+        transparent
+    );
 
     /* Flip brand scale (violet) for better contrast on light backgrounds) */
     --color-brand-50: #2e1065;
@@ -931,8 +1043,18 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }
 
-[data-item-section-nav] {
-    scrollbar-color: color-mix(in srgb, var(--brand-ring) 45%, transparent) transparent;
+/* The item view's section strip is a compact sticky bar, so its horizontal
+   scrollbar gets a slimmer track than the app-wide 10px. At 4px there is no
+   room for the transparent inset the global thumb is drawn inside — the pill
+   would clip away to nothing — so this one is painted edge to edge, at the
+   hover alpha so a 4px line still reads. Firefox has no per-element track
+   size to give it and keeps the inherited `thin`. */
+[data-item-section-nav]::-webkit-scrollbar {
+    height: 4px;
+}
+[data-item-section-nav]::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-hover);
+    border: 0;
 }
 
 /* Source accents need darker shades on the light page surface. */
@@ -1467,35 +1589,16 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     --tw-ring-color: color-mix(in srgb, var(--brand-ring) 20%, transparent);
 }
 
+/* No scrollbar declarations here: a slim, themed scrollbar is what every
+   scrollport gets by default now (see `@layer base`), and asking for
+   `scrollbar-width: thin` on the element would opt Chromium out of that
+   styling rather than reinforce it. */
 @utility scroll-panel {
     @apply max-h-[500px] overflow-y-auto overflow-x-hidden rounded-lg border;
-    /* Firefox */
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--color-brand-600) 50%, transparent)
-        transparent;
 }
 
 [data-theme="dark"] .scroll-panel {
     @apply border-white/10 bg-gradient-to-br from-brand-950/90 to-brand-900/85 backdrop-blur-md shadow-lg shadow-black/50;
-}
-/* WebKit */
-.scroll-panel::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-.scroll-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-.scroll-panel::-webkit-scrollbar-thumb {
-    background-color: color-mix(
-        in srgb,
-        var(--color-brand-600) 50%,
-        transparent
-    );
-    border-radius: 9999px;
-}
-.scroll-panel::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-brand-600);
 }
 
 /* Performance utilities for virtualization and large lists */
@@ -2547,7 +2650,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     /* Rows scroll underneath the sticky header, so it cannot be
        semi-transparent. */
     background-color: var(--color-background-panel);
-    scrollbar-width: thin;
 }
 /* One width for the header row, every data row, and the spacer that holds the
    rows, so the two scrollports scroll through the same range and the row
