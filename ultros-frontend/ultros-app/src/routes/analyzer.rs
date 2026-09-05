@@ -18,9 +18,7 @@ use crate::{
         add_to_list::AddToList,
         clipboard::*,
         confidence_badge::ConfidenceBadge,
-        control_bar::{
-            ColumnOption, ControlBar, ControlBarPopovers, FilterOption, STICKY_BAR_HEIGHT,
-        },
+        control_bar::{ColumnOption, ControlBar, ControlBarPopovers, FilterOption},
         filter_chip::FilterChip,
         gil::*,
         icon::Icon,
@@ -36,7 +34,7 @@ use crate::{
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
         tooltip::*,
-        virtual_scroller::*,
+        virtual_grid::{GridChange, GridColumn, VirtualGrid},
         world_picker::*,
     },
     error::{AppError, AppResult},
@@ -149,23 +147,16 @@ async fn fetch_flip_enrichment(
     zip_flip_enrichment(quality, sparklines)
 }
 
-/// Both endpoints cap a batch — sparklines at 200 keys, resale quality at
-/// 250 — and the smaller wins. The window is 88–92 keys, so this never
-/// chunks below a 5280 px usable viewport
-/// (`flip_window_is_one_request_below_the_derived_threshold` derives that);
-/// above it the old single sparklines POST was rejected (400, `movers.rs:134`)
-/// and Trend showed the empty series, so the chunked path only adds data.
+/// Both endpoints cap a batch; use the smaller cap and chunk unusually
+/// large visible ranges. Horizontal column layout does not change row keys.
 const FLIP_ENRICHMENT: EnrichmentConfig = EnrichmentConfig {
     prefetch_margin: PREFETCH_MARGIN,
     debounce_ms: DEBOUNCE_MS,
     max_keys_per_request: 200,
 };
 
-/// The `VirtualScroller` geometry the table passes in `view!`, named so the
-/// window test binds to the same values instead of copied literals.
+/// Fixed row geometry shared with the grid enrichment-window test.
 const FLIP_ROW_HEIGHT_PX: f64 = 40.0;
-const FLIP_OVERSCAN_ROWS: u32 = 8;
-const FLIP_HEADER_HEIGHT_PX: f64 = 56.0;
 
 /// Stable URL IDs for optional columns. Required columns (HQ, Item,
 /// Profit, Buy Price) are not in this list — they always render.
@@ -1297,7 +1288,13 @@ fn AnalyzerTable(
     let (max_purchase_price, set_max_purchase_price) = filter_query_signal::<i32>("max-price");
     let (min_buy_price, set_min_buy_price) = filter_query_signal::<i32>("min-buy");
     let (show_suspicious, set_show_suspicious) = filter_query_signal::<bool>("show-suspicious");
-    let (cols_param, set_cols_param) = query_signal::<String>("cols");
+    let (cols_param, set_cols_param) = leptos_router::hooks::query_signal_with_options::<String>(
+        "cols",
+        NavigateOptions {
+            scroll: false,
+            ..Default::default()
+        },
+    );
     // The five column filters use `filter_query_signal` (replace: true,
     // scroll: false) — editing a filter must not push a history entry per
     // keystroke or yank the window back to the top.
@@ -1422,6 +1419,10 @@ fn AnalyzerTable(
 
     let col_label = move |col: &str| -> String {
         match col {
+            "hq" => t_string!(i18n, analyzer_col_hq).to_string(),
+            "item" => t_string!(i18n, analyzer_col_item).to_string(),
+            "profit" => t_string!(i18n, analyzer_col_profit).to_string(),
+            "buy_price" => t_string!(i18n, analyzer_col_buy_price).to_string(),
             c if c == COL_PROFIT_PER_DAY => {
                 t_string!(i18n, analyzer_col_profit_per_day).to_string()
             }
@@ -1439,6 +1440,99 @@ fn AnalyzerTable(
         }
     };
 
+    let grid_layout = query_signal::<String>("layout").0;
+    let grid_query = use_query_map();
+    let grid_location = use_location();
+    let grid_nav = use_navigate();
+    let on_grid_change = Callback::new(move |change: GridChange| {
+        let mut query = grid_query.get_untracked();
+        query.remove("layout");
+        if let Some(layout) = change.layout {
+            query.insert("layout", layout);
+        }
+        if change.reset {
+            query.remove("cols");
+        }
+        if let Some((id, visible)) = change.visibility {
+            let mut cols = visible_cols.get_untracked();
+            if visible {
+                cols.insert(id);
+            } else {
+                cols.remove(id);
+            }
+            query.insert("cols", serialize_visible_cols(&cols));
+        }
+        grid_nav(
+            &format!(
+                "{}{}",
+                grid_location.pathname.get_untracked(),
+                query.to_query_string()
+            ),
+            NavigateOptions {
+                scroll: false,
+                ..Default::default()
+            },
+        );
+    });
+    let grid_reset = Memo::new(move |_| {
+        let mut q = grid_query.get();
+        q.remove("layout");
+        q.remove("cols");
+        q.to_query_string()
+    });
+    let grid_columns = Memo::new(move |_| {
+        let visible = visible_cols.get();
+        [
+            ("hq", 70.0),
+            ("item", 330.0),
+            ("profit", 150.0),
+            (COL_PROFIT_PER_DAY, 150.0),
+            (COL_TAX, 150.0),
+            (COL_DRIFT, 130.0),
+            (COL_CONFIDENCE, 150.0),
+            (COL_ROI, 120.0),
+            ("buy_price", 150.0),
+            (COL_WORLD, 150.0),
+            (COL_DATACENTER, 160.0),
+            (COL_TREND, 140.0),
+            (COL_SALES_PER_DAY, 180.0),
+            (COL_VOLUME_30D, 130.0),
+            (COL_LAST_SOLD, 150.0),
+        ]
+        .into_iter()
+        .map(|(id, width)| {
+            let optional = ALL_OPTIONAL_COLS.contains(&id);
+            let mut col = GridColumn::new(
+                id,
+                col_label(id),
+                width,
+                optional,
+                !optional || visible.contains(id),
+            );
+            let mode = match id {
+                "profit" => Some(SortMode::Profit),
+                "buy_price" => Some(SortMode::BuyPrice),
+                COL_PROFIT_PER_DAY => Some(SortMode::ProfitPerDay),
+                COL_TAX => Some(SortMode::Tax),
+                COL_DRIFT => Some(SortMode::Drift),
+                COL_ROI => Some(SortMode::Roi),
+                COL_LAST_SOLD => Some(SortMode::LastSold),
+                _ => None,
+            };
+            if let Some(mode) = mode
+                && sort_mode.get().unwrap_or_else(SortMode::fallback) == mode
+            {
+                col.aria_sort =
+                    if sort_dir.get().unwrap_or_else(|| mode.default_dir()) == SortDir::Asc {
+                        "ascending"
+                    } else {
+                        "descending"
+                    };
+            }
+            col
+        })
+        .collect::<Vec<_>>()
+    });
     // Columns the picker offers, in table order.
     let column_options = Memo::new(move |_| {
         ALL_OPTIONAL_COLS
@@ -1485,67 +1579,6 @@ fn AnalyzerTable(
             _ => {}
         }
     };
-
-    // --- Horizontal scroll sync ---------------------------------------------
-    // Two sibling scrollports: one on the sticky header, one on the row area
-    // (the list's own row container, which already computes to
-    // `overflow-x: auto`). A single scrollport wrapping the list is not an
-    // option — it would become the nearest scrollport for the sticky header
-    // and stop it sticking to the viewport — and no scrollport at all leaves
-    // the right-hand columns clipped by `html { overflow-x: hidden }` with no
-    // way to reach them.
-    let header_scroll = NodeRef::<leptos::html::Div>::new();
-    let list_scroll = NodeRef::<leptos::html::Div>::new();
-    // Client-only: gated out of the SSR build entirely. A `LocalStorage`
-    // StoredValue created during SSR is a `SendWrapper` living on one tokio
-    // worker thread, but the Suspense rendering this component re-runs (and
-    // eventually disposes) across `.await` points, so the `on_cleanup` below
-    // can fire on a *different* worker thread — a guaranteed SendWrapper
-    // panic that aborts the response stream mid-body and leaves the client
-    // hydrating a truncated document (no `__INCOMPLETE_CHUNKS` bootstrap).
-    #[cfg(feature = "hydrate")]
-    {
-        // Parked here rather than `Closure::forget`-ed: a forgotten listener keeps
-        // firing after the component is disposed.
-        let hscroll_listeners =
-            StoredValue::new_local(Vec::<(web_sys::HtmlDivElement, Closure<dyn FnMut()>)>::new());
-        on_cleanup(move || {
-            hscroll_listeners.update_value(|listeners| {
-                for (el, cb) in listeners.drain(..) {
-                    let _ = el
-                        .remove_event_listener_with_callback("scroll", cb.as_ref().unchecked_ref());
-                }
-            });
-        });
-        Effect::new(move |_| {
-            // Re-runs when the refs are populated; the guard keeps a second run
-            // from double-registering.
-            let (Some(head), Some(body)) = (header_scroll.get(), list_scroll.get()) else {
-                return;
-            };
-            if hscroll_listeners.with_value(|l| !l.is_empty()) {
-                return;
-            }
-            // Mirroring writes `scrollLeft` on the other element, which fires its
-            // scroll event in turn; the equality check is what keeps that from
-            // ping-ponging.
-            let mirror = |from: web_sys::HtmlDivElement, to: web_sys::HtmlDivElement| {
-                Closure::wrap(Box::new(move || {
-                    let x = from.scroll_left();
-                    if to.scroll_left() != x {
-                        to.set_scroll_left(x);
-                    }
-                }) as Box<dyn FnMut()>)
-            };
-            let head_cb = mirror(head.clone(), body.clone());
-            let body_cb = mirror(body.clone(), head.clone());
-            let _ =
-                head.add_event_listener_with_callback("scroll", head_cb.as_ref().unchecked_ref());
-            let _ =
-                body.add_event_listener_with_callback("scroll", body_cb.as_ref().unchecked_ref());
-            hscroll_listeners.set_value(vec![(head, head_cb), (body, body_cb)]);
-        });
-    }
 
     // --- Filter chip strip: edge fades ---------------------------------------
     // The strip scrolls but shows no scrollbar (the bar is height-locked, so a
@@ -1671,7 +1704,7 @@ fn AnalyzerTable(
         // was an allocation per row. `None` when the filter is off, blank,
         // or the hydration gate is still down.
         let name_query: Option<String> = name_filter().and_then(|raw| {
-            // SSR renders SSR_FALLBACK_ROWS rows with *English* item names;
+            // SSR renders an initial grid window with *English* item names;
             // the client hydrates localized ones. Localized-name matching
             // therefore must not run until after hydration or an active
             // ?name= produces different row sets and trips the tachys
@@ -1993,6 +2026,7 @@ fn AnalyzerTable(
         FLIP_ENRICHMENT,
     );
 
+    let worlds_for_measure = worlds.clone();
     view! {
         <div class="flex flex-col gap-4" data-testid="flip-finder-table">
             <ControlBar
@@ -2506,57 +2540,34 @@ fn AnalyzerTable(
                         }}
             </ControlBar>
 
-            // Results table. Deliberately no `overflow` on this wrapper: in
-            // window mode an overflow on any ancestor of the sticky table
-            // header re-parents its scrollport away from the viewport, which
-            // silently defeats `sticky_offset`.
-            <div
-                class="tool-table border border-[color:var(--color-outline)]"
-                style=move || {
-                    format!(
-                        "--tool-optional-cols: {}px;",
-                        optional_column_width_px(&visible_cols()),
-                    )
-                }
-            >
-                <VirtualScroller
-                        scroll_source=ScrollSource::Window { sticky_offset: STICKY_BAR_HEIGHT }
-                        viewport_height=720.0
-                        row_height=FLIP_ROW_HEIGHT_PX
-                        overscan=FLIP_OVERSCAN_ROWS
-                        // The header row's own height. The rendered element is
-                        // up to ~15px taller, because `.tool-hscroll`
-                        // reserves a horizontal scrollbar, but that height
-                        // depends on the platform's scrollbar and on whether
-                        // the grid currently overflows — neither of which is
-                        // knowable here. The row math only uses this to offset
-                        // the scroll position, and `overscan=8` (320px) covers
-                        // the error many times over, so the content height is
-                        // deliberately the value passed.
-                        header_height=FLIP_HEADER_HEIGHT_PX
-                        variable_height=false
-                        visible_range=visible_range
-                        list_ref=list_scroll
-                        row_min_width="var(--tool-row-min-width, 0px)"
-                        header=view! {
-                            <div class="tool-hscroll" node_ref=header_scroll>
-                            <div class="tool-grid-row flex flex-row items-center h-14 text-xs font-semibold uppercase tracking-wider text-[color:var(--color-text-muted)] border-b border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[44px] shrink-0 px-2 text-center">
+
+            <VirtualGrid
+                id="flip-finder-grid"
+                label=t_string!(i18n, flip_finder).to_string()
+                each=sorted_data
+                columns=grid_columns
+                layout=grid_layout
+                on_change=on_grid_change
+                reset_scroll=grid_reset
+                visible_range=visible_range
+                row_height=FLIP_ROW_HEIGHT_PX
+                key=move |(_, data): &(usize, CalculatedProfitData)| (data.inner.sale_summary.item_id, data.inner.cheapest_world_id, data.inner.sale_summary.hq)
+                header=move |column| { match column { "hq" => (view! { <div class="  px-2 text-center">
                                     {t!(i18n, analyzer_col_hq)}
-                                </div>
-                                <div role="columnheader" class="flex-1 min-w-[14rem] px-3">
+                                </div> }).into_any(),
+"item" => (view! { <div class="  px-3">
                                     {t!(i18n, analyzer_col_item)}
-                                </div>
-                                <div role="columnheader" class="w-28 shrink-0 px-3 text-right">
+                                </div> }).into_any(),
+"profit" => (view! { <div class="  px-3 text-right">
                                     <SortHeader
                                         mode=SortMode::Profit
                                         label=t_string!(i18n, analyzer_col_profit).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                                {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2" title=t_string!(i18n, analyzer_tooltip_profit_per_day)>
+                                </div> }).into_any(),
+COL_PROFIT_PER_DAY => (view! {
+                                    <div class="  px-3 py-2" title=t_string!(i18n, analyzer_tooltip_profit_per_day)>
                                         <SortHeader
                                             mode=SortMode::ProfitPerDay
                                             label=t_string!(i18n, analyzer_col_profit_per_day).to_string()
@@ -2564,9 +2575,9 @@ fn AnalyzerTable(
                                             sort_dir
                                         />
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_TAX).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2" title=t_string!(i18n, analyzer_tooltip_tax)>
+                                }).into_any(),
+COL_TAX => (view! {
+                                    <div class="  px-3 py-2" title=t_string!(i18n, analyzer_tooltip_tax)>
                                         <SortHeader
                                             mode=SortMode::Tax
                                             label=t_string!(i18n, analyzer_col_tax).to_string()
@@ -2574,9 +2585,9 @@ fn AnalyzerTable(
                                             sort_dir
                                         />
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_DRIFT).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
+                                }).into_any(),
+COL_DRIFT => (view! {
+                                    <div class="  px-3 py-2 flex items-center justify-end" title=t_string!(i18n, analyzer_tooltip_drift)>
                                         <SortHeader
                                             mode=SortMode::Drift
                                             label=t_string!(i18n, analyzer_col_drift).to_string()
@@ -2584,14 +2595,14 @@ fn AnalyzerTable(
                                             sort_dir
                                         />
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_CONFIDENCE).then(|| view! {
-                                    <div role="columnheader" class="w-[72px] shrink-0 px-3 py-2 flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
+                                }).into_any(),
+COL_CONFIDENCE => (view! {
+                                    <div class="  px-3 py-2 flex items-center justify-center" title=t_string!(i18n, analyzer_tooltip_confidence)>
                                         {t!(i18n, analyzer_col_confidence)}
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                }).into_any(),
+COL_ROI => (view! {
+                                    <div class="  px-3 py-2">
                                         <SortHeader
                                             mode=SortMode::Roi
                                             label=t_string!(i18n, analyzer_col_roi).to_string()
@@ -2599,17 +2610,17 @@ fn AnalyzerTable(
                                             sort_dir
                                         />
                                     </div>
-                                })}
-                                <div role="columnheader" class="w-28 shrink-0 px-3 py-2">
+                                }).into_any(),
+"buy_price" => (view! { <div class="  px-3 py-2">
                                     <SortHeader
                                         mode=SortMode::BuyPrice
                                         label=t_string!(i18n, analyzer_col_buy_price).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                                {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
+                                </div> }).into_any(),
+COL_WORLD => (view! {
+                                    <div class="  px-3 py-2 flex flex-row gap-2">
                                         {t!(i18n, analyzer_col_world)}
                                         <div>
                                             {move || {
@@ -2631,9 +2642,9 @@ fn AnalyzerTable(
                                             }}
                                         </div>
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-row gap-2">
+                                }).into_any(),
+COL_DATACENTER => (view! {
+                                    <div class="  px-3 py-2 flex flex-row gap-2">
                                         {t!(i18n, analyzer_col_datacenter)}
                                         <div>
                                             {move || {
@@ -2655,34 +2666,34 @@ fn AnalyzerTable(
                                             }}
                                         </div>
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_TREND).then(|| view! {
-                                    <div role="columnheader" class="w-[100px] shrink-0 px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
+                                }).into_any(),
+COL_TREND => (view! {
+                                    <div class="  px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_trend)>
                                         <span>{t!(i18n, analyzer_col_spark)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| view! {
-                                    <div role="columnheader" class="w-[140px] shrink-0 px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
+                                }).into_any(),
+COL_SALES_PER_DAY => (view! {
+                                    <div class="  px-3 py-2 flex flex-col items-center text-center leading-tight" title=t_string!(i18n, analyzer_tooltip_sales_per_day)>
 
                                         <span>{t!(i18n, analyzer_col_sales_per_day)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_VOLUME_30D).then(|| view! {
-                                    <div role="columnheader" class="w-[88px] shrink-0 px-3 py-2 flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
+                                }).into_any(),
+COL_VOLUME_30D => (view! {
+                                    <div class="  px-3 py-2 flex flex-col items-end text-right leading-tight" title=t_string!(i18n, analyzer_tooltip_volume_30d)>
                                         <span>{t!(i18n, analyzer_col_volume_30d)}</span>
                                         <span class="text-[10px] font-normal normal-case text-[color:var(--color-text-muted)] truncate max-w-full">
                                             {move || world()}
                                         </span>
                                     </div>
-                                })}
-                                {move || visible_cols().contains(COL_LAST_SOLD).then(|| view! {
-                                    <div role="columnheader" class="w-28 shrink-0 px-3 py-2 flex flex-col leading-tight">
+                                }).into_any(),
+COL_LAST_SOLD => (view! {
+                                    <div class="  px-3 py-2 flex flex-col leading-tight">
                                         <SortHeader
                                             mode=SortMode::LastSold
                                             label=t_string!(i18n, analyzer_col_last_sold).to_string()
@@ -2693,24 +2704,35 @@ fn AnalyzerTable(
                                             {move || world()}
                                         </span>
                                     </div>
-                                })}
-                            </div>
-                            </div>
-                        }.into_any()
-                        each=sorted_data.into()
-                        key=move |(index, data): &(usize, CalculatedProfitData)| (
-                            *index,
-                            data.inner.sale_summary.item_id,
-                            data.inner.cheapest_world_id,
-                            data.inner.sale_summary.hq,
-                            data.profit,
-                        )
-                        view=move |(index, data): (usize, CalculatedProfitData)| {
-                            // Hoist the Copy scalars out so each per-column `move ||`
-                            // closure can capture them without contending for
-                            // `data.inner` (an Arc, and not Copy). `row_key` is bound
-                            // below alongside `item_id`/`hq`.
-                            let row_cheapest_price = data.inner.cheapest_price;
+                                }).into_any(), _ => ().into_any() } }
+                measure=move |(_, data): &(usize, CalculatedProfitData), column| {
+                    use thousands::Separable;
+                    let text = match column {
+                        "item" => items.get(&ItemId(data.inner.sale_summary.item_id)).map(|i|i.name.clone()).unwrap_or_default(),
+                        "hq" => if data.inner.sale_summary.hq { t_string!(i18n,analyzer_col_hq).to_string() } else { String::new() },
+                        "profit" => data.profit.separate_with_commas(),
+                        COL_PROFIT_PER_DAY => data.profit_per_day.separate_with_commas(),
+                        COL_TAX => sale_tax(data.inner.estimated_sale_price).separate_with_commas(),
+                        "buy_price" => data.inner.cheapest_price.separate_with_commas(),
+                        COL_ROI => format!("{}%",data.return_on_investment),
+                        COL_DRIFT => price_drift_pct(&data.inner.prices).map(|d|format!("{d:+.0}%")).unwrap_or_else(||"—".into()),
+                        COL_WORLD => worlds_for_measure.lookup_selector(AnySelector::World(data.inner.cheapest_world_id)).map(|w|w.get_name().to_string()).unwrap_or_default(),
+                        COL_DATACENTER => worlds_for_measure.lookup_selector(AnySelector::World(data.inner.cheapest_world_id)).and_then(|w|worlds_for_measure.get_datacenters(&w).first().map(|dc|dc.name.clone())).unwrap_or_default(),
+                        COL_VOLUME_30D => enrichment.with_untracked(|s|quality_for(s,&(data.inner.sale_summary.item_id,data.inner.sale_summary.hq)).map(|q|q.sample_size.to_string())).unwrap_or_else(||"—".into()),
+                        COL_CONFIDENCE => [t_string!(i18n,analyzer_confidence_high),t_string!(i18n,analyzer_confidence_medium),t_string!(i18n,analyzer_confidence_low)].into_iter().max_by_key(|s|s.len()).map(|s|s.to_string()).unwrap_or_default(),
+                        COL_LAST_SOLD => data.inner.sale_summary.days_since_last_sale.and_then(|d|d.to_std().ok()).map(|d| {
+                            let hours=d.as_secs()/3600;
+                            if hours>=24 { t_string!(i18n,analyzer_last_sold_days_ago).replace("%count%",&(hours/24).to_string()) }
+                            else if hours>0 { t_string!(i18n,analyzer_last_sold_hours_ago).replace("%count%",&hours.to_string()) }
+                            else { t_string!(i18n,analyzer_last_sold_just_now).to_string() }
+                        }).unwrap_or_else(||t_string!(i18n,analyzer_last_sold_never).to_string()),
+                        _ => String::new(),
+                    };
+                    let padding=match column { "item"=>150.0, COL_TREND=>140.0, COL_SALES_PER_DAY=>200.0, "profit"|"buy_price"|COL_PROFIT_PER_DAY|COL_TAX=>48.0, _=>32.0 };
+                    (text,padding)
+                }
+                view=move |(index, data): (usize, CalculatedProfitData), column| {
+                    let row_cheapest_price = data.inner.cheapest_price;
                             let row_tax = sale_tax(data.inner.estimated_sale_price);
                             let row_days_since = data.inner.sale_summary.days_since_last_sale;
                             let row_roi = data.return_on_investment;
@@ -2744,21 +2766,15 @@ fn AnalyzerTable(
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
-                            let classes = if (index % 2) == 0 {
-                                "tool-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                            } else {
-                                "tool-grid-row flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                            };
-                            view! {
-                                <div class=classes role="row-group">
-                                    <div role="cell" class="px-2 py-2 w-[44px] shrink-0 flex items-center justify-center">
+
+                    match column { "hq" => (view! { <div class="px-2 py-2   flex items-center justify-center">
                                         {if data.inner.sale_summary.hq {
                                             Some(view! { <span class="px-2 py-0.5 rounded-full text-xs font-semibold border text-[color:var(--color-text)] border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_14%,transparent)]">{t!(i18n, analyzer_col_hq)}</span> })
                                         } else {
                                             None
                                         }}
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 flex flex-row flex-1 min-w-[14rem] items-center gap-2">
+                                    </div> }).into_any(),
+"item" => (view! { <div class="px-4 py-2 flex flex-row   items-center gap-2">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip min-w-0"
                                             href=move || {
@@ -2791,21 +2807,21 @@ fn AnalyzerTable(
                                         </a>
                                         <Clipboard clipboard_text=item.to_string() />
                                         <AddToList item_id />
-                                    </div>
-                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    </div> }).into_any(),
+"profit" => (view! { <div class="px-3 py-2   text-right flex items-center justify-end">
                                         <Gil amount=data.profit />
-                                    </div>
-                                    {move || visible_cols().contains(COL_PROFIT_PER_DAY).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    </div> }).into_any(),
+COL_PROFIT_PER_DAY => (view! {
+                                        <div class="px-3 py-2   text-right flex items-center justify-end">
                                             <Gil amount=data.profit_per_day />
                                         </div>
-                                    })}
-                                    {move || visible_cols().contains(COL_TAX).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    }).into_any(),
+COL_TAX => (view! {
+                                        <div class="px-3 py-2   text-right flex items-center justify-end">
                                             <Gil amount=row_tax />
                                         </div>
-                                    })}
-                                    {move || visible_cols().contains(COL_DRIFT).then(|| {
+                                    }).into_any(),
+COL_DRIFT => ({
                                         // +/- 1% is inside the noise floor of a 6-sale window,
                                         // so it renders neutral rather than green/red — the
                                         // dead band `signed_delta_class` was folded out of.
@@ -2819,15 +2835,15 @@ fn AnalyzerTable(
                                         };
                                         view! {
                                             <div
-                                                role="cell"
+
                                                 title=title
-                                                class=format!("px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums {class}")
+                                                class=format!("px-3 py-2   flex items-center justify-end font-mono tabular-nums {class}")
                                             >
                                                 {text}
                                             </div>
                                         }
-                                    })}
-                                    {move || visible_cols().contains(COL_CONFIDENCE).then(|| {
+                                    }).into_any(),
+COL_CONFIDENCE => ({
                                         // ClickHouse band where it exists, else the band derived
                                         // from buffer depth + velocity.
                                         let ch_band = enrichment
@@ -2843,23 +2859,23 @@ fn AnalyzerTable(
                                             },
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[72px] shrink-0 flex items-center justify-center">
+                                            <div class="px-3 py-2   flex items-center justify-center">
                                                 <span class=format!("text-xs font-semibold {class}")>{label}</span>
                                             </div>
                                         }
-                                    })}
-                                    {move || visible_cols().contains(COL_ROI).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    }).into_any(),
+COL_ROI => (view! {
+                                        <div class="px-3 py-2   text-right flex items-center justify-end">
                                             <span class=roi_badge_class(row_roi)>
                                                 {format!("{row_roi}%")}
                                             </span>
                                         </div>
-                                    })}
-                                    <div role="cell" class="px-3 py-2 w-28 shrink-0 text-right flex items-center justify-end">
+                                    }).into_any(),
+"buy_price" => (view! { <div class="px-3 py-2   text-right flex items-center justify-end">
                                         <Gil amount=data.inner.cheapest_price />
-                                    </div>
-                                    {move || visible_cols().contains(COL_WORLD).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
+                                    </div> }).into_any(),
+COL_WORLD => (view! {
+                                        <div class="px-3 py-2   flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_world())
                                             })>
@@ -2874,9 +2890,9 @@ fn AnalyzerTable(
                                                 </QueryButton>
                                             </Tooltip>
                                         </div>
-                                    })}
-                                    {move || visible_cols().contains(COL_DATACENTER).then(|| view! {
-                                        <div role="cell" class="px-3 py-2 w-28 shrink-0 flex items-center">
+                                    }).into_any(),
+COL_DATACENTER => (view! {
+                                        <div class="px-3 py-2   flex items-center">
                                             <Tooltip tooltip_text=Signal::derive(move || {
                                                 t_string!(i18n, analyzer_only_show_world).to_string().replace("%world%", &buy_datacenter())
                                             })>
@@ -2891,8 +2907,8 @@ fn AnalyzerTable(
                                                 </QueryButton>
                                             </Tooltip>
                                         </div>
-                                    })}
-                                    {move || visible_cols().contains(COL_TREND).then(|| {
+                                    }).into_any(),
+COL_TREND => ({
                                         let (points, vwap, settled) = enrichment.with(|store| (
                                             sparkline_for(store, &row_key).map(<[u32]>::to_vec),
                                             quality_for(store, &row_key).map(|q| q.vwap),
@@ -2917,12 +2933,12 @@ fn AnalyzerTable(
                                             view! { <SingleLineSkeleton /> }.into_any()
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[100px] shrink-0 flex items-center justify-center">
+                                            <div class="px-3 py-2   flex items-center justify-center">
                                                 {inner}
                                             </div>
                                         }
-                                    })}
-                                    {move || visible_cols().contains(COL_SALES_PER_DAY).then(|| {
+                                    }).into_any(),
+COL_SALES_PER_DAY => ({
                                         // Cadence badge. Where the rollup has no row this
                                         // falls back to the buffer-derived rate — the same
                                         // rate the velocity floor filter evaluates — so
@@ -2946,12 +2962,12 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[140px] shrink-0 flex items-center justify-center">
+                                            <div class="px-3 py-2   flex items-center justify-center">
                                                 {inner}
                                             </div>
                                         }
-                                    })}
-                                    {move || visible_cols().contains(COL_VOLUME_30D).then(|| {
+                                    }).into_any(),
+COL_VOLUME_30D => ({
                                         let (sample_size, settled) = enrichment.with(|store| (
                                             quality_for(store, &row_key).map(|q| q.sample_size),
                                             store.is_settled(&row_key),
@@ -2962,12 +2978,12 @@ fn AnalyzerTable(
                                             (None, false) => view! { <SingleLineSkeleton /> }.into_any(),
                                         };
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-[88px] shrink-0 flex items-center justify-end font-mono tabular-nums">
+                                            <div class="px-3 py-2   flex items-center justify-end font-mono tabular-nums">
                                                 {inner}
                                             </div>
                                         }
-                                    })}
-                                    {move || visible_cols().contains(COL_LAST_SOLD).then(|| {
+                                    }).into_any(),
+COL_LAST_SOLD => ({
                                         let last = row_days_since
                                             .and_then(|d| d.to_std().ok())
                                             .map(|d| {
@@ -2986,25 +3002,14 @@ fn AnalyzerTable(
                                             })
                                             .unwrap_or_else(|| t_string!(i18n, analyzer_last_sold_never).to_string());
                                         view! {
-                                            <div role="cell" class="px-3 py-2 w-28 shrink-0 truncate flex items-center">
+                                            <div class="px-3 py-2   truncate flex items-center">
                                                 {last}
                                             </div>
                                         }
-                                    })}
-                                </div>
-                            }
-                                .into_any()
-                        }
-                    />
-            </div>
-
-            // Empty state. A *sibling* of the table container, never a
-            // replacement for it: the VirtualScroller (and the `list_scroll`
-            // node the horizontal scroll-sync effect above registered its
-            // listeners on) must stay mounted, or the listeners die with the
-            // node and never re-register. With zero rows the table renders
-            // just its header, which doubles as context for this panel.
-            //
+                                    }).into_any(), _ => ().into_any() }
+                }
+            />
+            // Empty state remains alongside the grid.
             // `sorted_data` is computed synchronously from props that only
             // exist once the route's resources resolved (AnalyzerTable mounts
             // inside `<Suspense>`), so an empty list here really means "every
@@ -3254,8 +3259,7 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                     </ToolHeader>
 
                     // Main Content. No `min-h-screen` and no scroll container:
-                    // the table virtualizes against the window, so the page
-                    // itself is what scrolls.
+                    // VirtualGrid owns the table scroll viewport.
                     <div>
                         // `<Transition>`, not `<Suspense>`: a realtime market
                         // tick refetches a board, which puts this boundary back
@@ -3415,7 +3419,6 @@ pub fn Analyzer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer_kit::enrichment::chunk_keys;
     use ultros_api_types::recent_sales::{SaleData, Sales};
     use ultros_api_types::sparklines::SparklineSeries;
 
@@ -4010,39 +4013,22 @@ mod tests {
         assert_eq!(flip_key(&(0, row)), (42, true));
     }
 
-    /// Row counts from `rows_for_viewport` with the values the `view!` passes
-    /// to `VirtualScroller` (the `FLIP_*` geometry consts), not copied
-    /// literals: the SSR shape (20 rows) and a 1080p window each fit in one
-    /// request under the smaller endpoint cap, and the viewport at which a
-    /// second chunk starts is derived, not quoted.
     #[test]
-    fn flip_window_is_one_request_below_the_derived_threshold() {
-        // `viewport_px` in Window mode: SSR_FALLBACK_ROWS * row_height until
-        // hydrated, then (innerHeight - sticky bar) - header.
-        let rows_at = |viewport: f64| {
-            rows_for_viewport(viewport, FLIP_ROW_HEIGHT_PX, FLIP_OVERSCAN_ROWS) as usize
+    fn grid_enrichment_window_fits_one_batch() {
+        use crate::components::virtual_grid::{
+            GRID_HEADER_HEIGHT, GRID_OVERSCAN, layout::row_range,
         };
-        let ssr_rows = rows_at(SSR_FALLBACK_ROWS as f64 * FLIP_ROW_HEIGHT_PX);
-        let hd_rows = rows_at(1080.0 - STICKY_BAR_HEIGHT - FLIP_HEADER_HEIGHT_PX);
-        assert_eq!((ssr_rows, hd_rows), (28, 32));
-        assert_eq!(FLIP_ENRICHMENT.max_keys_per_request, 200);
-        let cap = FLIP_ENRICHMENT.max_keys_per_request;
-        let margin = FLIP_ENRICHMENT.prefetch_margin;
-        let chunks_for = |rows: usize| {
-            let keys: Vec<FlipKey> = (0..rows + 2 * margin).map(|i| (i as i32, false)).collect();
-            chunk_keys(&keys, cap).len()
-        };
-        assert_eq!((chunks_for(ssr_rows), chunks_for(hd_rows)), (1, 1));
-        // The most viewport-derived rows that still fit one request — 132
-        // (+ 8 overscan = 140 rendered, 200 keys with the margin), a 5280 px
-        // usable viewport (innerHeight 5412 with the sticky bar and header).
-        // One pixel more and the window chunks; there the old single
-        // sparklines POST was rejected with a 400 instead.
-        let fits_rows = cap - 2 * margin - FLIP_OVERSCAN_ROWS as usize;
-        assert_eq!(fits_rows, 132);
-        let fits_px = fits_rows as f64 * FLIP_ROW_HEIGHT_PX;
-        assert_eq!(chunks_for(rows_at(fits_px)), 1);
-        assert_eq!(chunks_for(rows_at(fits_px + 1.0)), 2);
+        let (start, end) = row_range(
+            4000.0,
+            1080.0 - GRID_HEADER_HEIGHT,
+            FLIP_ROW_HEIGHT_PX,
+            20_000,
+            GRID_OVERSCAN,
+        );
+        assert!(
+            end - start + 2 * FLIP_ENRICHMENT.prefetch_margin
+                <= FLIP_ENRICHMENT.max_keys_per_request
+        );
     }
 
     #[test]

@@ -2413,12 +2413,8 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     flex: 1;
 }
 
-/* ----- Flip Finder sticky control bar -----
-   The bar is the only filter surface on the page, so it must not grow: the
-   table header sticks at `top: STICKY_BAR_HEIGHT` (76px, components/filter_chip.rs)
-   and a taller bar would cover it. The chip row scrolls horizontally instead
-   of wrapping. Deliberately no `overflow` here — an overflow on an ancestor
-   of the table header would re-parent its scrollport away from the viewport. */
+/* The filter controls remain outside the grid scrollport so their popovers
+   are not clipped. Grid headings freeze inside VirtualGrid independently. */
 @utility sticky-bar {
     position: sticky;
     top: 0;
@@ -2532,32 +2528,55 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         transparent 100%
     );
 }
-/* ----- Flip Finder grid: horizontal scrollports -----
-   The grid is wider than the viewport at every breakpoint, and `html`/`body`
-   are `overflow-x: hidden`, so something has to scroll or the right-hand
-   columns are simply unreachable. It cannot be a wrapper around the list: in
-   window-scroll mode that wrapper becomes the nearest scrollport for the
-   sticky table header (an `overflow-x` forces `overflow-y` to compute to
-   `auto`), and since it never scrolls vertically the header would never
-   stick. So the header and the row area are two *sibling* scrollports of
-   equal width whose scrollLeft is synchronized in analyzer.rs. */
-.tool-hscroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    /* Rows scroll underneath the sticky header, so it cannot be
-       semi-transparent. */
-    background-color: var(--color-background-panel);
-    scrollbar-width: thin;
+/* VirtualGrid owns both scroll axes. Its frozen header and virtual cells
+   occupy the same full-width canvas, without a second scroll container. */
+.virtual-grid-shell { min-width: 0; }
+.virtual-grid {
+    position: relative;
+    overflow: auto;
+    height: min(var(--grid-content-height, 600px), var(--grid-available-height, max(240px, calc(100dvh - 180px))));
+    border: 1px solid var(--color-outline);
+    background: var(--color-background-panel);
+    scrollbar-gutter: stable;
+    outline-offset: 2px;
+    font-size: 14px;
 }
-/* One width for the header row, every data row, and the spacer that holds the
-   rows, so the two scrollports scroll through the same range and the row
-   striping covers it.
-
-   No breakpoint enters into it: every column the user switched on renders at
-   every viewport width, and a narrow screen scrolls to reach them. The 30.75rem
-   here is the four always-on columns (HQ 44px + Item 14rem + Profit 7rem + Buy
-   Price 7rem); `--tool-optional-cols` is set inline by the route and carries
-   whatever `?cols=` turned on, which the stylesheet cannot know. */
+.virtual-grid-canvas { position: relative; }
+.virtual-grid-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    width: 100%;
+    background: var(--color-background-panel);
+    border-bottom: 1px solid var(--color-outline);
+}
+.virtual-grid-heading, .virtual-grid-cell { position: absolute; top: 0; height: 100%; box-sizing: border-box; }
+.virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); }
+.grid-heading-content { flex: 1; min-width: 0; overflow: hidden; }
+.grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
+.grid-column-menu, .grid-drag-handle { flex: 0 0 20px; padding: 4px 0; color: var(--color-text-muted); }
+.grid-drag-handle { cursor: grab; touch-action: none; user-select: none; }
+.grid-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 3; }
+.grid-resize-handle:hover { background: var(--brand-ring); }
+.virtual-grid-row { position: absolute; left: 0; width: 100%; background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.virtual-grid-row[data-even="false"] { background: color-mix(in srgb, var(--color-text) 3%, transparent); }
+.virtual-grid-row:hover { background: color-mix(in srgb, var(--brand-ring) 12%, transparent); }
+.virtual-grid-cell { overflow: hidden; border-right: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent); }
+.virtual-grid-cell > div { width: 100%; min-width: 0; height: 100%; }
+.virtual-grid-cell a { min-width: 0; }
+.virtual-grid-cell a, .virtual-grid-cell button { max-width: 100%; }
+.virtual-grid:focus-within .grid-active { box-shadow: inset 0 0 0 2px var(--brand-ring); }
+.grid-insert-before { border-left: 3px solid var(--brand-ring); }
+.grid-insert-after { border-right: 3px solid var(--brand-ring); }
+.grid-menu-backdrop { position: fixed; inset: 0; z-index: 80; }
+.grid-menu-panel { position: fixed; z-index: 81; width: 272px; max-height: min(420px, calc(100dvh - 16px)); overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--color-outline); border-radius: 8px; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 8px 32px #0008; font-size: 14px; }
+.grid-menu-panel button { padding: 6px 8px; text-align: left; border-radius: 4px; }
+.grid-menu-panel button:hover, .grid-menu-panel button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+.grid-menu-panel input { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--color-outline); border-radius: 4px; background: var(--color-background); }
+.grid-menu-actions { display: flex; gap: 8px; }
+.grid-insert-options { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; }
+/* Default widths for the Flip Finder loading skeleton. Live grid geometry
+   is controlled by VirtualGrid column definitions and saved layout state. */
 .tool-table {
     --tool-row-min-width: calc(30.75rem + var(--tool-optional-cols, 0px));
 }

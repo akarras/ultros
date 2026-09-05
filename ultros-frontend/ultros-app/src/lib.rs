@@ -520,6 +520,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                 <social_meta::SocialMetadata />
                 <AppShell>
                     <Routes fallback=NotFound>
+                        <components::virtual_grid::fixture::GridFixtureRoutes/>
                         <Route path=path!("") view=HomePage />
                         <ParentRoute path=path!("retainers") view=Retainers>
                             <Route path=path!("edit") view=EditRetainers />
