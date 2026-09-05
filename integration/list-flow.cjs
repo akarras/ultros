@@ -15,7 +15,7 @@
  *
  * Env:
  *   BASE_URL    default http://127.0.0.1:8080
- *   HEADLESS    "false" to watch, anything else uses puppeteer's "new" mode
+ *   HEADLESS    "false" to watch, anything else runs headless
  *   TIMEOUT_MS  default 30000
  */
 
@@ -129,7 +129,7 @@ async function main() {
   const puppeteer = require("puppeteer");
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
-  const headless = process.env.HEADLESS === "false" ? false : "new";
+  const headless = process.env.HEADLESS !== "false";
 
   const browser = await puppeteer.launch({
     headless,

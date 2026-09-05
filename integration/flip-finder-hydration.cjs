@@ -15,7 +15,7 @@ const route = (world) => `/flip-finder/${encodeURIComponent(world)}?next-sale=&l
 async function main() {
   assert.notEqual(WORLD, OTHER_WORLD, 'world-switch probe requires two distinct worlds');
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const errors = [];

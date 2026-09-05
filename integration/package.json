@@ -29,6 +29,7 @@
     "test:group-shared-list": "node ./group-shared-list.cjs",
     "test:group-shared-list-fixture": "node --test ./group-shared-list.test.cjs",
     "test:error-filter": "node --test ./error-filter.test.cjs",
+    "test:capture": "node --test ./capture.test.cjs",
     "diag:ooo-hydration-race": "node ./ooo-hydration-race.cjs",
     "diag:locale-hydration": "node ./locale-hydration.cjs",
     "diag:hydrate-timing": "node ./hydrate-timing.cjs",
@@ -36,6 +37,6 @@
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
-    "puppeteer": "^22.15.0"
+    "puppeteer": "^25.10.0"
   }
 }
