@@ -86,6 +86,7 @@ pub mod tool_help;
 pub mod tooltip;
 pub mod top_opportunity;
 pub mod ui_text;
+pub mod virtual_grid;
 pub mod virtual_scroller;
 pub mod wasm_loading_indicator;
 pub mod world_name;

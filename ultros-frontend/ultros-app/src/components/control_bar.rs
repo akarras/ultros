@@ -35,9 +35,7 @@ use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
 
-/// Height reserved for the sticky control bar. Feeds
-/// `ScrollSource::Window { sticky_offset }` so rows hidden behind the bar are
-/// not counted as visible, and is pinned by the bar's own `h-[76px]`.
+/// Height of the two-row control bar, independent of grid header positioning.
 pub const STICKY_BAR_HEIGHT: f64 = 76.0;
 
 /// A group heading in the columns picker. Options carrying the same
@@ -319,7 +317,7 @@ pub fn ControlBar(
     let has_columns = Signal::derive(move || !columns.get().is_empty());
 
     view! {
-        <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1" node_ref=bar_ref>
+        <div class="sticky-bar px-2 py-1 flex flex-col gap-1" style=format!("height: {STICKY_BAR_HEIGHT}px;") node_ref=bar_ref>
             // Row 1 — result count and view-level controls.
             <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
                 // The one item allowed to give up space. `overflow-hidden` is
