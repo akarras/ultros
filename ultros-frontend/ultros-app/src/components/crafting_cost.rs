@@ -9,9 +9,11 @@ use std::collections::HashMap;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 use xiv_gen::{ItemId, Recipe};
 
-/// Crystal/shard/cluster items are item_search_category == 59 in xiv-gen.
-/// Matches the convention used in add_recipe_to_current_list.rs.
-pub const CRYSTAL_SEARCH_CATEGORY: i32 = 59;
+/// Crystal/shard/cluster items are ItemSearchCategory 58 ("Crystals") in
+/// xiv-gen. 59 is "Catalysts" (dark matter, glamour prisms) — an easy
+/// off-by-one that silently turns every "exclude shards" toggle into a no-op,
+/// so every crystal check in the app routes through this constant.
+pub const CRYSTAL_SEARCH_CATEGORY: i32 = 58;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum ShardsMode {
@@ -167,8 +169,9 @@ pub mod fixtures;
 
 /// Compute the cost of one execution of `recipe`.
 ///
-/// `is_shard` returns true for ingredient item ids whose `item_search_category == 59`.
-/// In production this is `|id| tracked_data().items.get(&id).map(|i| i.item_search_category == 59).unwrap_or(false)`.
+/// `is_shard` returns true for ingredient item ids whose `item_search_category`
+/// is [`CRYSTAL_SEARCH_CATEGORY`]. In production this is
+/// `crate::components::related_items::is_shard_item`.
 /// In tests this is a closure over a fixture HashMap.
 pub fn compute_cost(
     recipe: &Recipe,

@@ -71,8 +71,8 @@ fn AddRecipeToListModal(
         IngredientsIter::new(recipe)
             .flat_map(|(item_id, amount)| {
                 items.get(&item_id).map(|item| {
-                    let category = item.item_search_category;
-                    let is_crystal = category == 5 || category == 6;
+                    let is_crystal = item.item_search_category
+                        == crate::components::crafting_cost::CRYSTAL_SEARCH_CATEGORY;
                     IngredientState {
                         item_id,
                         item,
