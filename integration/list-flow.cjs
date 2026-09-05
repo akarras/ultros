@@ -210,7 +210,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 1000));
       await waitFor(ownerPage, "input[placeholder*='search items']", 15000);
       const searchInput = await ownerPage.$("input[placeholder*='search items']");
-      await searchInput.click({ clickCount: 3 });
+      await searchInput.click({ count: 3 });
       await searchInput.type("Maple Log");
       // Wait for the row-level "add" button to render (locale string is lowercase).
       await ownerPage
@@ -262,7 +262,7 @@ async function main() {
         // Pick the input nearest to the modal — last placeholder-bearing input.
         const inputs = await ownerPage.$$("input[placeholder]");
         const modalInput = inputs[inputs.length - 1];
-        await modalInput.click({ clickCount: 3 });
+        await modalInput.click({ count: 3 });
         await modalInput.type("Bronze Ingot");
         // Wait for any modal button whose trimmed text is exactly "Add".
         await ownerPage
