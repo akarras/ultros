@@ -60,9 +60,15 @@ pub fn seed_query_default<T>(key: &'static str, default: T)
 where
     T: FromStr + ToString + PartialEq + Clone + Send + Sync + 'static,
 {
-    let (value, set_value) = filter_query_signal::<T>(key);
+    let query = use_query_map();
+    if query.with_untracked(|q| q.get(key).is_some() || q.get("v").is_some())
+        || crate::last_view::has_restorable_view()
+    {
+        return;
+    }
+    let (_, set_value) = filter_query_signal::<T>(key);
     Effect::new(move |_| {
-        if value.get_untracked().is_none() {
+        if query.with_untracked(|q| q.get(key).is_none() && q.get("v").is_none()) {
             set_value.set(Some(default.clone()));
         }
     });
@@ -122,6 +128,9 @@ fn has_view_query(query: &str) -> bool {
 /// Same route-component rule as [`seed_query_default`] — call this from the
 /// route, never from inside a `Suspense`/resource closure.
 pub fn seed_flip_finder_default_view() -> bool {
+    if crate::last_view::has_restorable_view() {
+        return true;
+    }
     let query = use_query_map();
     let was_bare = query.with_untracked(|q| !has_view_query(&q.to_query_string()));
     if was_bare {

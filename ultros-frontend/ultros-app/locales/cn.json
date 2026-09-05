@@ -1,4 +1,7 @@
 {
+    "grid_filter_any": "不限",
+    "grid_filter_apply": "应用筛选",
+    "grid_filter_clear": "清除筛选",
     "grid_move_column": "拖动以移动列",
     "grid_column_menu": "列选项",
     "grid_resize_hint": "拖动调整宽度；双击按已有结果自动调整",

@@ -15,7 +15,7 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader, cmp_none_last},
         tool_help::*,
-        virtual_scroller::*,
+        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
         world_picker::*,
     },
     error::AppError,
@@ -34,6 +34,7 @@ use leptos_router::{
     hooks::{query_signal, use_location, use_navigate, use_params_map, use_query_map},
 };
 use std::{collections::HashMap, str::FromStr, sync::Arc};
+use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::CheapestListings,
     recent_sales::{RecentSales, SaleData},
@@ -596,7 +597,7 @@ fn VendorResaleTable(
 
     view! {
         <div class="flex flex-col gap-6">
-            <ControlBar
+            <ControlBar sticky=false
                 summary=move || {
                     view! {
                         <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
@@ -758,70 +759,77 @@ fn VendorResaleTable(
             </ControlBar>
 
             // Results table
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                <VirtualScroller
-                        viewport_height=720.0
-                        row_height=40.0
-                        overscan=8
-                        header_height=64.0
-                        variable_height=false
-                        header=view! {
-                            <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                                <div role="columnheader" class="w-[40px] p-4 text-center">
+            <div class="rounded-2xl panel">
+                <QueryGrid id="vendor-resale-grid" label=t_string!(i18n, vendor_resale_hq).to_string()
+ row_height=40.0
+ columns=Signal::derive(move || vec![GridColumn::new("hq",t_string!(i18n, vendor_resale_hq).to_string(), 60.0, true, true),
+GridColumn::new("item",t_string!(i18n, vendor_resale_item).to_string(), 320.0, false, true),
+{ let mut col = GridColumn::new("profit",t_string!(i18n, vendor_resale_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
+{ let mut col = GridColumn::new("roi",t_string!(i18n, vendor_resale_roi).to_string(), 100.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Roi, sort_dir.get().unwrap_or_else(||SortMode::Roi.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("roi", filter_label("roi"), true)); col },
+GridColumn::new("vendor-price",t_string!(i18n, vendor_resale_vendor_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::VendorPrice, sort_dir.get().unwrap_or_else(||SortMode::VendorPrice.default_dir()) == SortDir::Asc),
+GridColumn::new("market-price",t_string!(i18n, vendor_resale_market_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::MarketPrice, sort_dir.get().unwrap_or_else(||SortMode::MarketPrice.default_dir()) == SortDir::Asc),
+{ let mut col = GridColumn::new("sale-time",t_string!(i18n, vendor_resale_avg_sale_time).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::SaleTime, sort_dir.get().unwrap_or_else(||SortMode::SaleTime.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("next-sale", filter_label("next-sale"), false)); col }])
+ header=move |id| {match id {"hq" => view! {<div  class="text-center w-full min-w-0">
                                     {t!(i18n, vendor_resale_hq)}
-                                </div>
-                                <div role="columnheader" class="w-84 p-4">
+                                </div>}.into_any(),
+"item" => view! {<div  class="w-full min-w-0">
                                     {t!(i18n, vendor_resale_item)}
-                                </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                </div>}.into_any(),
+"profit" => view! {<div  class="w-full min-w-0">
                                     <SortHeader
                                         mode=SortMode::Profit
                                         label=t_string!(i18n, vendor_resale_profit).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                </div>}.into_any(),
+"roi" => view! {<div  class="w-full min-w-0">
                                     <SortHeader
                                         mode=SortMode::Roi
                                         label=t_string!(i18n, vendor_resale_roi).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                </div>}.into_any(),
+"vendor-price" => view! {<div  class="w-full min-w-0">
                                     <SortHeader
                                         mode=SortMode::VendorPrice
                                         label=t_string!(i18n, vendor_resale_vendor_price).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                                <div role="columnheader" class="w-30 p-4">
+                                </div>}.into_any(),
+"market-price" => view! {<div  class="w-full min-w-0">
                                     <SortHeader
                                         mode=SortMode::MarketPrice
                                         label=t_string!(i18n, vendor_resale_market_price).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                                <div role="columnheader" class="w-30 p-4 hidden md:block">
+                                </div>}.into_any(),
+"sale-time" => view! {<div  class="w-full min-w-0">
                                     <SortHeader
                                         mode=SortMode::SaleTime
                                         label=t_string!(i18n, vendor_resale_avg_sale_time).to_string()
                                         sort_mode
                                         sort_dir
                                     />
-                                </div>
-                            </div>
-                        }.into_any()
-                        each=sorted_data.into()
+                                </div>}.into_any(), _ => ().into_any()}}
+ each=sorted_data
                         key=move |(index, data): &(usize, CalculatedVendorProfitData)| (
                             *index,
                             data.inner.item_id,
                             data.profit,
                         )
-                        view=move |(index, data): (usize, CalculatedVendorProfitData)| {
+
+ measure=move |(_, data): &(usize, CalculatedVendorProfitData), id| {match id {"hq" => (String::new(), 42.0),
+"item" => (items.get(&ItemId(data.inner.item_id)).map(|i|i.name.as_str()).unwrap_or_default().to_string(), 110.0),
+"profit" => (data.profit.separate_with_commas(), 42.0),
+"roi" => (format!("{}%",data.return_on_investment), 30.0),
+"vendor-price" => (data.inner.vendor_price.separate_with_commas(), 42.0),
+"market-price" => (data.inner.market_price.separate_with_commas(), 42.0),
+"sale-time" => (data.inner.sale_summary.as_ref().and_then(|s|s.avg_sale_duration).and_then(|d|d.to_std().ok()).map(|d|format_duration_short(d.as_secs())).unwrap_or_default(), 42.0), _ => (String::new(), 0.0)}}
+ view=move |(index, data): (usize, CalculatedVendorProfitData), id| {
                             let world = Signal::derive(move || world().to_string());
                             let item_id = data.inner.item_id;
                             let item = items
@@ -829,17 +837,13 @@ fn VendorResaleTable(
                                 .map(|item| item.name.as_str())
                                 .unwrap_or_default();
                             let icon_loading = if index < 20 { "eager" } else { "" };
-                            let classes = if (index % 2) == 0 {
-                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                            } else {
-                                "flex flex-row items-center flex-nowrap h-10 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                            };
-                            view! {
-                                <div class=classes role="row-group">
-                                    <div role="cell" class="px-2 py-2 w-[40px] flex items-center justify-center">
+
+
+ let _ = index;
+ match id {"hq" => view! {<div  class="flex items-center justify-center w-full min-w-0">
                                         // Vendor items are always NQ effectively
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
+                                    </div>}.into_any(),
+"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
                                         <a
                                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                                             href=format!("/item/{}/{item_id}", world())
@@ -851,22 +855,22 @@ fn VendorResaleTable(
                                         </a>
                                         <AddToList item_id />
                                         <Clipboard clipboard_text=item.to_string() />
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    </div>}.into_any(),
+"profit" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
                                         <Gil amount=data.profit />
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    </div>}.into_any(),
+"roi" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
                                         <span class={roi_badge_class(data.return_on_investment)}>
                                             {format!("{}%", data.return_on_investment)}
                                         </span>
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    </div>}.into_any(),
+"vendor-price" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
                                         <Gil amount=data.inner.vendor_price />
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 w-30 text-right flex items-center justify-end">
+                                    </div>}.into_any(),
+"market-price" => view! {<div  class="text-right flex items-center justify-end w-full min-w-0">
                                         <Gil amount=data.inner.market_price />
-                                    </div>
-                                    <div role="cell" class="px-4 py-2 w-30 truncate hidden md:block flex items-center">
+                                    </div>}.into_any(),
+"sale-time" => view! {<div  class="truncate flex items-center w-full min-w-0">
                                         {data.inner
                                             .sale_summary
                                             .as_ref()
@@ -874,12 +878,8 @@ fn VendorResaleTable(
                                             .and_then(|duration| duration.to_std().ok())
                                             .map(|duration| format_duration_short(duration.as_secs()))
                                             .unwrap_or_else(|| "---".to_string())}
-                                    </div>
-                                </div>
-                            }
-                                .into_any()
-                        }
-                    />
+                                    </div>}.into_any(), _ => ().into_any()}}
+ />
             </div>
         </div>
     }.into_any()

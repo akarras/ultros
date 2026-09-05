@@ -146,25 +146,6 @@ pub fn saved_default_query() -> Option<String> {
     }
 }
 
-/// Store (or, with `None`, forget) the user's default view.
-pub fn set_saved_default_query(query: Option<&str>) {
-    #[cfg(not(feature = "ssr"))]
-    {
-        // Storage-disabled browsers must degrade to "no default", never panic
-        // — same contract as the saved-views list above.
-        if let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) {
-            let _ = match query {
-                Some(q) => storage.set_item(DEFAULT_VIEW_KEY, q),
-                None => storage.remove_item(DEFAULT_VIEW_KEY),
-            };
-        }
-    }
-    #[cfg(feature = "ssr")]
-    {
-        let _ = query;
-    }
-}
-
 /// The query string to seed onto a bare Flip Finder URL: the user's own
 /// default if they saved one, otherwise "Realistic flips".
 pub fn default_view_query() -> String {
@@ -179,8 +160,8 @@ pub fn default_view_query() -> String {
 ///   that navigates to `view_href`. Saved (not built-in) entries also get a
 ///   delete button.
 /// - **Save view**: names the *current* URL query string and appends it to
-///   the saved list, optionally pinned to `current_world` and optionally
-///   made the default that a bare `/flip-finder/{world}` seeds.
+///   the saved list, optionally pinned to `current_world`. The last view is
+///   remembered automatically, independently of these named bookmarks.
 #[component]
 pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoView {
     let i18n = use_i18n();
@@ -199,12 +180,6 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
     let save_open = RwSignal::new(false);
     let new_name = RwSignal::new(String::new());
     let pin_to_world = RwSignal::new(false);
-    // Whether the query being saved should become the landing view. Seeded
-    // from storage when the popover *opens* rather than at setup: reading
-    // localStorage during component setup is the hydration race the storage
-    // options above go out of their way to avoid, and a click is
-    // unambiguously post-hydration.
-    let make_default = RwSignal::new(false);
 
     // Route change, click outside, Escape. Both popovers hang off the same
     // container, so one call closes both. The token is what settles this
@@ -244,16 +219,6 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
         let world = pin_to_world
             .get_untracked()
             .then(|| current_world.get_untracked());
-        // The checkbox describes a fact — "this query is my default" — so
-        // committing it unchecked clears the default when it *was* this
-        // query, and leaves someone else's default alone otherwise. That
-        // gives the setting a way back off, which a set-only checkbox
-        // wouldn't.
-        if make_default.get_untracked() {
-            set_saved_default_query(Some(&query_string));
-        } else if saved_default_query().as_deref() == Some(query_string.as_str()) {
-            set_saved_default_query(None);
-        }
         set_views.update(|vs| {
             vs.push(SavedView {
                 name,
@@ -263,7 +228,6 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
         });
         new_name.set(String::new());
         pin_to_world.set(false);
-        make_default.set(false);
         save_open.set(false);
     };
 
@@ -300,8 +264,6 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                     let opening = !save_open.get_untracked();
                     if opening {
                         popover_token.opening();
-                        let current = view_query_string(query.get_untracked());
-                        make_default.set(saved_default_query().as_deref() == Some(current.as_str()));
                     }
                     save_open.set(opening);
                 }
@@ -399,15 +361,6 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                             on:change=move |ev| pin_to_world.set(event_target_checked(&ev))
                         />
                         <span>{t!(i18n, analyzer_pin_view_to_world)}</span>
-                    </label>
-                    <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                        <input
-                            type="checkbox"
-                            class="accent-brand-300"
-                            prop:checked=move || make_default.get()
-                            on:change=move |ev| make_default.set(event_target_checked(&ev))
-                        />
-                        <span>{t!(i18n, analyzer_make_default_view)}</span>
                     </label>
                     <button class="btn-secondary" on:click=save_current_view>
                         {t!(i18n, analyzer_save_view)}

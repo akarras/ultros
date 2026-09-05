@@ -12,8 +12,8 @@ use crate::analyzer_kit::formula::{
     FormulaMarks, PriceSignal, ProfitFormula, RoiMath, Scope, SellScope, per_unit_cost, profit_line,
 };
 use crate::analyzer_kit::grid::{
-    AnalyzerGrid, AnalyzerRow, CustomCell, GridLayout, HeaderExtra, HeaderExtras, HeaderLine2,
-    HeaderPill, MarkLabels,
+    AnalyzerGrid, AnalyzerRow, CustomCell, HeaderExtra, HeaderExtras, HeaderLine2, HeaderPill,
+    MarkLabels,
 };
 use crate::analyzer_kit::hop::{HopGain, WorldsToVisit, hop_gain, worlds_to_visit};
 use crate::analyzer_kit::needed::{
@@ -33,6 +33,7 @@ use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::components::related_items::is_shard_item;
 use crate::components::term_badge::TermRole;
+use crate::components::virtual_grid::ColumnFilter;
 use crate::global_state::craft_options::{self, CraftOptions};
 use crate::global_state::labs::{LAB_ANALYZER_RECIPE, use_lab};
 use crate::global_state::region_for_world::use_datacenter_for_world;
@@ -827,14 +828,7 @@ const RECIPE_ENRICHMENT: EnrichmentConfig = EnrichmentConfig {
     max_keys_per_request: 200,
 };
 
-/// The grid's geometry, hoisted out of the `view!` so the window test
-/// derives the batch size from the same numbers the scroller uses.
-const RECIPE_GRID: GridLayout = GridLayout {
-    viewport_height: 720.0,
-    row_height: 60.0,
-    header_height: 64.0,
-    overscan: 8,
-};
+const RECIPE_ROW_HEIGHT: f64 = 60.0;
 
 // Labels: one fn per column so the table can be a `static`.
 fn label_item(i18n: I18nContext<Locale, I18nKeys>) -> String {
@@ -1334,24 +1328,6 @@ const CELL_28_MD: &str = "px-4 py-2 w-28 shrink-0 text-right hidden md:block";
 const HEAD: &str = "w-32 shrink-0 p-4";
 const HEAD_MD: &str = "w-32 shrink-0 p-4 hidden md:block";
 const HEAD_28_MD: &str = "w-28 shrink-0 p-4 hidden md:block";
-
-/// The kit's `VirtualScroller` runs in **container** mode, where the row
-/// spacer carries no width of its own and so resolves to the port width,
-/// clipping every row there while the header — a sibling outside that box —
-/// keeps painting the full grid. Sizing the spacer is what reaches the
-/// scroller's scrollable overflow region; widening the rows alone cannot,
-/// because the row box carries `contain: layout`.
-///
-/// `max-content` rather than an arithmetic sum: every column here is a fixed
-/// `w-*` with `shrink-0`, the rows are fixed-height (no `content-visibility`
-/// to make an intrinsic measurement unstable), and it follows the
-/// `hidden md:block` columns across the breakpoint on its own, so no constant
-/// has to track `RECIPE_COLUMNS`.
-const RECIPE_ROW_MIN_WIDTH: &str = "max-content";
-
-/// `min-w-max` so the header's tint band spans the whole scrolled width
-/// instead of stopping at the viewport edge, matching the spacer above.
-const RECIPE_HEADER_CLASS: &str = "min-w-max flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]";
 
 /// The two-line, wider variants a formula column switches to while the
 /// ledger marks are on.
@@ -3755,6 +3731,7 @@ fn RecipeAnalyzerTable(
     // does not carry (item names and icons, the world link, the on-hand
     // list button). Every branch is the old cell's markup verbatim, keyed
     // by the column's kind.
+    let world_names_for_measure = world_names.clone();
     let world_names_for_cells = world_names.clone();
     let custom: CustomCell<RecipeRow> = Arc::new(move |data, kind, class| {
         let data = data.clone();
@@ -3768,7 +3745,7 @@ fn RecipeAnalyzerTable(
                 let item_level = items.get(&item_id).map(|i| i.level_item).unwrap_or(0);
                 let job_abbrev = craft_type_acronym(data.recipe.craft_type);
                 view! {
-                    <div role="cell" class="px-4 py-2 flex flex-row w-64 md:w-80 shrink-0 items-center gap-2">
+                    <div  class=class>
                          <a
                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
                             href=format!("/item/{}/{}", world(), item_id.0)
@@ -3811,7 +3788,7 @@ fn RecipeAnalyzerTable(
                 view! {
                     // `title` is an `Option`: with the lab off the cell
                     // carries no attribute at all.
-                    <div role="cell" class=class title=readout>
+                    <div  class=class title=readout>
                         <Gil amount=data.profit />
                     </div>
                 }
@@ -3865,7 +3842,7 @@ fn RecipeAnalyzerTable(
                 if preview && data.unpriced > 0 {
                     let n = data.unpriced;
                     view! {
-                        <div role="cell" class=class>
+                        <div  class=class>
                             <Gil amount=data.cost />
                             {yield_note}
                             {sub_badge}
@@ -3880,7 +3857,7 @@ fn RecipeAnalyzerTable(
                     .into_any()
                 } else {
                     view! {
-                        <div role="cell" class=class>
+                        <div  class=class>
                             <Gil amount=data.cost />
                             {yield_note}
                             {sub_badge}
@@ -3909,7 +3886,7 @@ fn RecipeAnalyzerTable(
                 )
                 .to_string();
                 view! {
-                    <div role="cell" class="px-4 py-2 w-32 shrink-0 text-right hidden md:block">
+                    <div  class=format!("{class} text-right")>
                         <span class="text-xs text-[color:var(--color-text-muted)]" title=sales_tooltip>
                             {per_day}
                         </span>
@@ -3931,7 +3908,7 @@ fn RecipeAnalyzerTable(
                             move || world.clone()
                         });
                         view! {
-                            <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
+                            <div  class=format!("{class} items-center")>
                                 <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
                                     <QueryButton
                                         key=FILTER_LISTING_WORLD
@@ -3947,7 +3924,7 @@ fn RecipeAnalyzerTable(
                         }.into_any()
                     }
                     None => view! {
-                        <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
+                        <div  class=format!("{class} items-center text-[color:var(--color-text-muted)]")>"—"</div>
                     }.into_any(),
                 }
             }
@@ -3963,7 +3940,7 @@ fn RecipeAnalyzerTable(
                             move || dc.clone()
                         });
                         view! {
-                            <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center">
+                            <div  class=format!("{class} items-center")>
                                 <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
                                     <QueryButton
                                         key=FILTER_LISTING_DC
@@ -3979,7 +3956,7 @@ fn RecipeAnalyzerTable(
                         }.into_any()
                     }
                     None => view! {
-                        <div role="cell" class="px-4 py-2 w-28 shrink-0 hidden md:flex items-center text-[color:var(--color-text-muted)]">"—"</div>
+                        <div  class=format!("{class} items-center text-[color:var(--color-text-muted)]")>"—"</div>
                     }.into_any(),
                 }
             }
@@ -4005,7 +3982,7 @@ fn RecipeAnalyzerTable(
                 };
                 // `Tooltip`'s children are an `Fn` closure: clone, never move.
                 view! {
-                    <div role="cell" class=class>
+                    <div  class=class>
                         <Tooltip tooltip_text=Signal::derive(move || tooltip.clone())>
                             <span class=muted>{text.clone()}</span>
                         </Tooltip>
@@ -4014,7 +3991,7 @@ fn RecipeAnalyzerTable(
                 .into_any()
             }
             ColumnKind::Actions => view! {
-                <div role="cell" class="px-4 py-2 w-20 shrink-0">
+                <div  class=format!("{class} ")>
                     <AddRecipeToList recipe=data.recipe />
                 </div>
             }
@@ -4023,14 +4000,6 @@ fn RecipeAnalyzerTable(
         }
     });
 
-    // Zebra striping, verbatim from the markup the grid replaced.
-    fn stripe(index: usize) -> &'static str {
-        if index.is_multiple_of(2) {
-            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-        } else {
-            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-        }
-    }
     let cell_ctx = Signal::derive(move || CellCtx {
         now_unix: chrono::Utc::now().timestamp(),
         preview,
@@ -4135,7 +4104,7 @@ fn RecipeAnalyzerTable(
                 .into_any(),
             }}
             // Primary filter bar
-            <ControlBar
+            <ControlBar sticky=false
                 summary=move || {
                     view! {
                         <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
@@ -4467,7 +4436,7 @@ fn RecipeAnalyzerTable(
             }}
 
             // Results Table
-             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+             <div class="rounded-2xl panel">
                 <AnalyzerGrid
                     columns=&RECIPE_COLUMNS
                     rows=computed_data
@@ -4476,10 +4445,52 @@ fn RecipeAnalyzerTable(
                     sort_dir=sort_dir
                     ctx=cell_ctx
                     custom=custom
-                    layout=RECIPE_GRID
-                    header_class=RECIPE_HEADER_CLASS
-                    row_min_width=RECIPE_ROW_MIN_WIDTH
-                    row_class=stripe
+                    column_filters=Callback::new(move |kind| {
+                        let keys: &[(&str,bool)] = match kind {
+                            ColumnKind::Item => &[(FILTER_JOB,false)],
+                            ColumnKind::Profit => &[(FILTER_PROFIT,true)],
+                            ColumnKind::Roi => &[(FILTER_ROI,true)],
+                            ColumnKind::SalesPerDay7 => &[(FILTER_MIN_SALES,true)],
+                            ColumnKind::CostSlot => &[(FILTER_COST_BASIS,false),(FILTER_SUBCRAFTS,false),(FILTER_EXCLUDE_SHARDS,false),(FILTER_USE_ON_HAND,false)],
+                            ColumnKind::RevenueSlot => &[(FILTER_REVENUE,false)],
+                            ColumnKind::ListingWorld => &[(FILTER_LISTING_WORLD,false)],
+                            ColumnKind::ListingDc => &[(FILTER_LISTING_DC,false)],
+                            _ => &[],
+                        };
+                        keys.iter().map(|&(key,numeric)| {
+                            let label = match key {
+                                FILTER_COST_BASIS => t_string!(i18n,recipe_analyzer_cost_basis_label).to_string(),
+                                FILTER_REVENUE => t_string!(i18n,recipe_analyzer_revenue_label).to_string(),
+                                FILTER_LISTING_WORLD => t_string!(i18n,analyzer_col_world).to_string(),
+                                FILTER_LISTING_DC => t_string!(i18n,analyzer_col_datacenter).to_string(),
+                                _ => filter_label(key),
+                            };
+                            let mut filter = ColumnFilter::new(key,label,numeric);
+                            filter.options = match key {
+                                FILTER_JOB => job_chip_options(),
+                                FILTER_COST_BASIS | FILTER_REVENUE => cost_basis_options(i18n),
+                                FILTER_SUBCRAFTS | FILTER_EXCLUDE_SHARDS | FILTER_USE_ON_HAND => on_off_options(),
+                                _ => vec![],
+                            };
+                            filter
+                        }).collect()
+                    })
+                    custom_measure=Arc::new(move |data: &RecipeRow, kind| {
+                        match kind {
+                            ColumnKind::Item => (items.get(&ItemId(data.recipe.item_result)).map(|i|i.name.as_str()).unwrap_or_default().to_string(),80.0),
+                            ColumnKind::Profit => (data.profit.separate_with_commas(),42.0),
+                            ColumnKind::CostSlot => (data.cost.separate_with_commas(),42.0),
+                            ColumnKind::SalesPerDay7 => (format!("{:.1}",data.daily_sales),40.0),
+                            ColumnKind::ListingWorld => (world_names_for_measure.get(&data.cheapest_world_id).map(|(world,_)|world.clone()).unwrap_or_default(),24.0),
+                            ColumnKind::ListingDc => (world_names_for_measure.get(&data.cheapest_world_id).map(|(_,dc)|dc.clone()).unwrap_or_default(),24.0),
+                            ColumnKind::HopWorlds => (data.worlds.as_ref().map(|w|w.worlds.len().to_string()).unwrap_or_default(),24.0),
+                            _ => (String::new(),100.0),
+                        }
+                    })
+                    row_height=RECIPE_ROW_HEIGHT
+
+
+
                     marks=marks
                     extras=header_extras
                     on_pill=on_pill
@@ -5395,9 +5406,7 @@ mod test {
     use crate::analysis::{DELTA_DEAD_BAND_PCT, signed_delta_class};
     use crate::analyzer_kit::enrichment::{chunk_keys, visible_keys};
     use crate::analyzer_kit::formula::Term;
-    use crate::components::virtual_scroller::{
-        first_visible_row, rendered_range, rows_for_viewport,
-    };
+    use crate::components::virtual_grid::{GRID_OVERSCAN, row_range};
     use std::collections::BTreeSet;
     use ultros_api_types::cheapest_listings::CheapestListingItem;
     use xiv_gen::ClassJobId;
@@ -5431,36 +5440,6 @@ mod test {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect()
-    }
-
-    /// `analyzer_kit::grid`'s own test pins the *plumbing* — that a
-    /// `row_min_width` reaches the scroller's row spacer. Nothing pinned the
-    /// *wiring*: deleting the two props from this page's `<AnalyzerGrid>`
-    /// call re-blanks every cell past the viewport width and leaves the whole
-    /// suite green. `AnalyzerGrid` cannot be rendered here without the full
-    /// route context, so the call site is read back from source instead.
-    #[test]
-    fn the_grid_call_opts_into_a_sized_row_spacer() {
-        // Reads the production half only, so this test's own source cannot
-        // satisfy the needle. The names are still assembled at run time:
-        // the helper strips the test module, not this doc comment.
-        let src = production_source();
-        let passes = |prop: &str, konst: &str| src.contains(&format!("{prop}={konst}"));
-
-        assert_eq!(RECIPE_ROW_MIN_WIDTH, "max-content");
-        assert!(
-            passes("row_min_width", "RECIPE_ROW_MIN_WIDTH"),
-            "the <AnalyzerGrid> call must pass row_min_width, or the spacer resolves to the port width and clips every row"
-        );
-
-        assert!(
-            RECIPE_HEADER_CLASS.contains("min-w-max"),
-            "the header band must span the scrolled width: {RECIPE_HEADER_CLASS}"
-        );
-        assert!(
-            passes("header_class", "RECIPE_HEADER_CLASS"),
-            "the <AnalyzerGrid> call must pass header_class"
-        );
     }
 
     /// `ADDABLE_FILTERS`' ids are the `filter_query_signal` keys the old
@@ -10220,16 +10199,13 @@ mod test {
     /// geometry rather than a literal, and under the endpoint's 200-key cap.
     #[test]
     fn the_recipe_window_is_one_request_per_scroll_settle() {
-        let rendered = rows_for_viewport(
-            RECIPE_GRID.viewport_height - RECIPE_GRID.header_height,
-            RECIPE_GRID.row_height,
-            RECIPE_GRID.overscan,
-        ) as usize;
-        assert_eq!(rendered, 19, "11 rows in 656 px plus 8 overscan");
+        let rendered = row_range(6000.0, 600.0, RECIPE_ROW_HEIGHT, 500, GRID_OVERSCAN);
+        let rendered = rendered.1 - rendered.0;
+        assert_eq!(rendered, 18);
         let keys: Vec<SparkKey> = (0..rendered + 2 * PREFETCH_MARGIN)
             .map(|i| (i as i32, false))
             .collect();
-        assert_eq!(keys.len(), 79);
+        assert_eq!(keys.len(), 78);
         assert_eq!(
             chunk_keys(&keys, RECIPE_ENRICHMENT.max_keys_per_request).len(),
             1
@@ -10263,48 +10239,15 @@ mod test {
     /// one scroll settle fetches every row on the page.
     #[test]
     fn the_visible_range_follows_the_scroll_and_bounds_the_fetch() {
-        let shown = rows_for_viewport(
-            RECIPE_GRID.viewport_height - RECIPE_GRID.header_height,
-            RECIPE_GRID.row_height,
-            RECIPE_GRID.overscan,
-        ) as usize;
-
-        // Where the scroller starts rendering, for this grid's row height.
-        // Uniform rows, so no measured per-row deltas.
-        let first_at = |scroll: f64, len: usize| {
-            first_visible_row(
-                len,
-                RECIPE_GRID.row_height,
-                scroll,
-                |_| 0.0,
-                RECIPE_GRID.overscan,
-            ) as usize
-        };
-        // Unscrolled, the window starts at the top.
-        assert_eq!(first_at(0.0, 500), 0);
-        assert_eq!(first_at(1.0, 500), 0, "part of a row still shows row 0");
-        // Half the overscan renders above the fold, so a scroll of exactly
-        // n rows starts at n - 4: the range moves with the scroll.
-        assert_eq!(first_at(100.0 * RECIPE_GRID.row_height, 500), 96);
-        assert_eq!(first_at(200.0 * RECIPE_GRID.row_height, 500), 196);
-
-        // ... and the range that first row publishes.
-        assert_eq!(rendered_range(0, shown, 500), (0, 19));
-        assert_eq!(rendered_range(96, shown, 500), (96, 115));
-        // Near the end it clamps to the data instead of running past it.
-        assert_eq!(rendered_range(495, shown, 500), (495, 500));
-        // Fewer rows than the viewport holds: the whole table, once.
-        assert_eq!(rendered_range(0, shown, 4), (0, 4));
-        // Nothing rendered, nothing to fetch.
-        assert_eq!(rendered_range(0, shown, 0), (0, 0));
-
-        // What the hook does with that range: the rendered window plus the
-        // prefetch margin either side, in row order, never the whole table.
+        let at = |scroll, count| row_range(scroll, 600.0, RECIPE_ROW_HEIGHT, count, GRID_OVERSCAN);
+        assert_eq!(at(0.0, 500), (0, 14));
+        assert_eq!(at(6000.0, 500), (96, 114));
+        assert_eq!(at(12000.0, 500), (196, 214));
+        assert_eq!(at(29800.0, 500), (492, 500));
+        assert_eq!(at(0.0, 4), (0, 4));
+        assert_eq!(at(0.0, 0), (0, 0));
         let rows = window_rows();
-        assert!(rows.len() > shown + 2 * PREFETCH_MARGIN);
-        let scrolled = first_at(100.0 * RECIPE_GRID.row_height, rows.len());
-        let range = rendered_range(scrolled, shown, rows.len());
-        assert_eq!(range, (96, 115));
+        let range = at(6000.0, rows.len());
         let keys = visible_keys(
             &rows,
             range,
@@ -10312,12 +10255,12 @@ mod test {
             &HashSet::new(),
             recipe_spark_key,
         );
-        let expected: Vec<SparkKey> = rows[66..145]
+        let expected: Vec<SparkKey> = rows[66..144]
             .iter()
             .map(|(_, r)| (r.recipe.item_result, r.stat_hq))
             .collect();
         assert_eq!(keys, expected);
-        assert_eq!(keys.len(), 79);
+        assert_eq!(keys.len(), 78);
         assert!(
             keys.len() < rows.len(),
             "a scroll settle must not fetch the whole table"
@@ -10425,7 +10368,7 @@ mod test {
         assert!(
             visible_keys(
                 &empty,
-                rendered_range(0, 19, 0),
+                row_range(0.0, 600.0, RECIPE_ROW_HEIGHT, 0, GRID_OVERSCAN),
                 PREFETCH_MARGIN,
                 &HashSet::new(),
                 recipe_spark_key,
@@ -10497,7 +10440,7 @@ mod test {
         assert!(
             visible_keys(
                 &mirror,
-                rendered_range(0, 19, 0),
+                row_range(0.0, 600.0, RECIPE_ROW_HEIGHT, 0, GRID_OVERSCAN),
                 PREFETCH_MARGIN,
                 &HashSet::new(),
                 recipe_spark_key,

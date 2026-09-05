@@ -13,7 +13,7 @@ use crate::{
         skeleton::BoxSkeleton,
         sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
-        virtual_scroller::*,
+        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -640,226 +640,222 @@ fn ScripSourceTable(
     });
 
     view! {
-        <div class="flex flex-col gap-6">
-            <ControlBar
-                summary=move || {
-                    view! {
-                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                            {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
-                        </span>
-                        <Show when=move || { total_count() > ROW_LIMIT }>
-                            <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
-                                {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
-                            </span>
-                        </Show>
-                        <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
-                            {move || t!(i18n, scrip_sources_region_pricing, region = world())}
-                        </span>
-                    }
-                    .into_any()
-                }
-                actions=move || {
-                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
-                        .into_any()
-                }
-                available_filters=Signal::derive(filter_options)
-                on_add_filter=add_filter
-                on_clear_all=clear_all
-                empty_label=Signal::derive(move || {
-                    t_string!(i18n, scrip_sources_no_filters_hint).to_string()
-                })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-            >
-                {move || {
-                    (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, scrip_sources_scrip_type).to_string()
-                                    value=Signal::derive(scrip_filter)
-                                    options=scrip_options()
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_scrip_filter(v);
-                                        if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, scrip_sources_job_filter).to_string()
-                                    value=Signal::derive(job_filter)
-                                    options=job_options()
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_job_filter(v);
-                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-            </ControlBar>
-
-            // Empty states render as *siblings* of the scroller container,
-            // never by unmounting it in a <Show>: the VirtualScroller wires
-            // scroll-sync effects to node refs and remounting breaks them.
-            <Show when=move || gatherer_filter_selected() && total_count() == 0>
-                <ActionableEmptyState
-                    title=t_string!(i18n, scrip_sources_gatherers_unsupported_title).to_string()
-                    body=t_string!(i18n, scrip_sources_gatherers_unsupported_body).to_string()
-                />
-            </Show>
-            <Show when=move || !gatherer_filter_selected() && total_count() == 0>
-                <ActionableEmptyState
-                    title=t_string!(i18n, scrip_sources_no_results_title).to_string()
-                    body=t_string!(i18n, scrip_sources_no_results_body).to_string()
-                />
-            </Show>
-
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                <VirtualScroller
-                    viewport_height=720.0
-                    row_height=60.0
-                    overscan=8
-                    header_height=64.0
-                    variable_height=false
-                    header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">{t!(i18n, scrip_sources_item)}</div>
-                             <div role="columnheader" class="w-40 p-4">
-                                <SortHeader
-                                    mode=SortMode::CostPerScrip
-                                    label=t_string!(i18n, scrip_sources_cost_per_scrip).to_string()
-                                    sort_mode
-                                    sort_dir
-                                />
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <SortHeader
-                                    mode=SortMode::ScripAmount
-                                    label=t_string!(i18n, scrip_sources_scrips).to_string()
-                                    sort_mode
-                                    sort_dir
-                                />
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <SortHeader
-                                    mode=SortMode::Cost
-                                    label=t_string!(i18n, scrip_sources_cost).to_string()
-                                    sort_mode
-                                    sort_dir
-                                />
-                             </div>
-                             <div role="columnheader" class="w-40 p-4 hidden md:block">{t!(i18n, scrip_sources_scrip_type_header)}</div>
-                        </div>
-                    }.into_any()
-                    each=computed_data.into()
-                    key=move |(index, data): &(usize, Arc<ScripSourceData>)| (*index, data.item_id)
-                    view=move |(index, data): (usize, Arc<ScripSourceData>)| {
-                        let item_id = data.item_id;
-                        let classes = if (index % 2) == 0 {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                        } else {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                        };
-
+            <div class="flex flex-col gap-6">
+                <ControlBar sticky=false
+                    summary=move || {
                         view! {
-                            <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
-                                     <a
-                                        class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id.0)
-                                    >
-                                        <div class="shrink-0">
-                                            <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
-                                        </div>
-                                        <div class="flex flex-col truncate">
-                                            <span class="font-semibold">{data.item_name.clone()}</span>
-                                            <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {match data.craft_type {
-                                                    None => view! { {t!(i18n, gathering)} }.into_any(),
-                                                    Some(0) => view! { {t!(i18n, carpenter)} }.into_any(),
-                                                    Some(1) => view! { {t!(i18n, blacksmith)} }.into_any(),
-                                                    Some(2) => view! { {t!(i18n, armorer)} }.into_any(),
-                                                    Some(3) => view! { {t!(i18n, goldsmith)} }.into_any(),
-                                                    Some(4) => view! { {t!(i18n, leatherworker)} }.into_any(),
-                                                    Some(5) => view! { {t!(i18n, weaver)} }.into_any(),
-                                                    Some(6) => view! { {t!(i18n, alchemist)} }.into_any(),
-                                                    Some(7) => view! { {t!(i18n, culinarian)} }.into_any(),
-                                                    _ => view! { {t!(i18n, unknown)} }.into_any(),
-                                                }}
-                                            </span>
-                                        </div>
-                                    </a>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-40 text-right font-bold text-brand-300">
-                                    // One decimal below 10 gil/scrip: whole-gil
-                                    // truncation collapsed the interesting end
-                                    // of the efficiency scale (2.4 and 2.9
-                                    // both showed as 2).
-                                    <div class="flex flex-row items-center">
-                                        <GilIcon />
-                                        <div>
-                                            {if data.cost_per_scrip < 10.0 {
-                                                format!("{:.1}", data.cost_per_scrip)
-                                            } else {
-                                                (data.cost_per_scrip as i32).separate_with_commas()
-                                            }}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    {data.scrip_amount}
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.cost />
-                                    {(data.coverage_tier() != 0)
-                                        .then(|| {
-                                            view! {
-                                                <span
-                                                    class="block text-[10px] leading-tight text-amber-400"
-                                                    title=t_string!(i18n, scrip_sources_coverage_hint).to_string()
-                                                >
-                                                    {t!(
-                                                        i18n, scrip_sources_coverage_badge, priced =
-                                                        data.priced_ingredients, total = data.total_ingredients
-                                                    )}
-                                                </span>
-                                            }
-                                        })}
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-40 text-right hidden md:block">
-                                    <span class={format!("text-xs {}", data.scrip_type.color_class())}>
-                                        {match data.scrip_type {
-                                            ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
-                                            ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
-                                            ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
-                                            ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
-                                            ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
-                                            ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
-                                            ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
-                                        }}
-                                    </span>
-                                </div>
-                            </div>
-                        }.into_any()
+                            <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                                {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
+                            </span>
+                            <Show when=move || { total_count() > ROW_LIMIT }>
+                                <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                                    {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
+                                </span>
+                            </Show>
+                            <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                                {move || t!(i18n, scrip_sources_region_pricing, region = world())}
+                            </span>
+                        }
+                        .into_any()
                     }
-                />
-             </div>
-        </div>
-    }
+                    actions=move || {
+                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                            .into_any()
+                    }
+                    available_filters=Signal::derive(filter_options)
+                    on_add_filter=add_filter
+                    on_clear_all=clear_all
+                    empty_label=Signal::derive(move || {
+                        t_string!(i18n, scrip_sources_no_filters_hint).to_string()
+                    })
+                    is_empty=Signal::derive(move || active_filters().is_empty())
+                >
+                    {move || {
+                        (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
+                            .then(|| {
+                                let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
+                                view! {
+                                    <FilterChip
+                                        label=t_string!(i18n, scrip_sources_scrip_type).to_string()
+                                        value=Signal::derive(scrip_filter)
+                                        options=scrip_options()
+                                        start_editing=start_editing
+                                        on_commit=Callback::new(move |v: Option<String>| {
+                                            set_scrip_filter(v);
+                                            if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
+                                                pending_filter.set(None);
+                                            }
+                                        })
+                                    />
+                                }
+                            })
+                    }}
+                    {move || {
+                        (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                            .then(|| {
+                                let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
+                                view! {
+                                    <FilterChip
+                                        label=t_string!(i18n, scrip_sources_job_filter).to_string()
+                                        value=Signal::derive(job_filter)
+                                        options=job_options()
+                                        start_editing=start_editing
+                                        on_commit=Callback::new(move |v: Option<String>| {
+                                            set_job_filter(v);
+                                            if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                                pending_filter.set(None);
+                                            }
+                                        })
+                                    />
+                                }
+                            })
+                    }}
+                </ControlBar>
+
+                // Empty states render as *siblings* of the scroller container,
+                // never by unmounting it in a <Show>: the VirtualScroller wires
+                // scroll-sync effects to node refs and remounting breaks them.
+                <Show when=move || gatherer_filter_selected() && total_count() == 0>
+                    <ActionableEmptyState
+                        title=t_string!(i18n, scrip_sources_gatherers_unsupported_title).to_string()
+                        body=t_string!(i18n, scrip_sources_gatherers_unsupported_body).to_string()
+                    />
+                </Show>
+                <Show when=move || !gatherer_filter_selected() && total_count() == 0>
+                    <ActionableEmptyState
+                        title=t_string!(i18n, scrip_sources_no_results_title).to_string()
+                        body=t_string!(i18n, scrip_sources_no_results_body).to_string()
+                    />
+                </Show>
+
+                <div class="rounded-2xl panel">
+                    <QueryGrid id="scrip-sources-grid" label=t_string!(i18n, scrip_sources_item).to_string()
+     row_height=60.0
+     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, scrip_sources_item).to_string(), 320.0, false, true),
+    GridColumn::new("cost-per-scrip",t_string!(i18n, scrip_sources_cost_per_scrip).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::CostPerScrip, sort_dir.get().unwrap_or_else(||SortMode::CostPerScrip.default_dir()) == SortDir::Asc),
+    GridColumn::new("scrip-amount",t_string!(i18n, scrip_sources_scrips).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::ScripAmount, sort_dir.get().unwrap_or_else(||SortMode::ScripAmount.default_dir()) == SortDir::Asc),
+    GridColumn::new("cost",t_string!(i18n, scrip_sources_cost).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Cost, sort_dir.get().unwrap_or_else(||SortMode::Cost.default_dir()) == SortDir::Asc),
+    { let mut col = GridColumn::new("scrip-type",t_string!(i18n, scrip_sources_scrip_type_header).to_string(), 130.0, true, true); let mut filter = ColumnFilter::new("scrip", filter_label("scrip"), false); filter.options = scrip_options(); col.filters.push(filter); col }])
+     header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_item)}</div>}.into_any(),
+    "cost-per-scrip" => view! {<div  class="w-full min-w-0">
+                                    <SortHeader
+                                        mode=SortMode::CostPerScrip
+                                        label=t_string!(i18n, scrip_sources_cost_per_scrip).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
+                                 </div>}.into_any(),
+    "scrip-amount" => view! {<div  class="w-full min-w-0">
+                                    <SortHeader
+                                        mode=SortMode::ScripAmount
+                                        label=t_string!(i18n, scrip_sources_scrips).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
+                                 </div>}.into_any(),
+    "cost" => view! {<div  class="w-full min-w-0">
+                                    <SortHeader
+                                        mode=SortMode::Cost
+                                        label=t_string!(i18n, scrip_sources_cost).to_string()
+                                        sort_mode
+                                        sort_dir
+                                    />
+                                 </div>}.into_any(),
+    "scrip-type" => view! {<div  class="w-full min-w-0">{t!(i18n, scrip_sources_scrip_type_header)}</div>}.into_any(), _ => ().into_any()}}
+     each=computed_data
+                        key=move |(index, data): &(usize, Arc<ScripSourceData>)| (*index, data.item_id)
+
+     measure=move |(_, data): &(usize, Arc<ScripSourceData>), id| {match id {"item" => (data.item_name.clone(), 110.0),
+    "cost-per-scrip" => (format!("{:.1}",data.cost_per_scrip), 42.0),
+    "scrip-amount" => (data.scrip_amount.to_string(), 42.0),
+    "cost" => (data.cost.separate_with_commas(), 42.0),
+    "scrip-type" => (format!("{:?}",data.scrip_type), 42.0), _ => (String::new(), 0.0)}}
+     view=move |(index, data): (usize, Arc<ScripSourceData>), id| {
+                            let item_id = data.item_id;
+
+
+
+     let _ = index;
+     match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
+                                         <a
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            href=format!("/item/{}/{}", world(), item_id.0)
+                                        >
+                                            <div class="shrink-0">
+                                                <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
+                                            </div>
+                                            <div class="flex flex-col truncate">
+                                                <span class="font-semibold">{data.item_name.clone()}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] truncate">
+                                                    {t!(i18n, scrip_sources_lv_prefix)} " " {data.level} " " {match data.craft_type {
+                                                        None => view! { {t!(i18n, gathering)} }.into_any(),
+                                                        Some(0) => view! { {t!(i18n, carpenter)} }.into_any(),
+                                                        Some(1) => view! { {t!(i18n, blacksmith)} }.into_any(),
+                                                        Some(2) => view! { {t!(i18n, armorer)} }.into_any(),
+                                                        Some(3) => view! { {t!(i18n, goldsmith)} }.into_any(),
+                                                        Some(4) => view! { {t!(i18n, leatherworker)} }.into_any(),
+                                                        Some(5) => view! { {t!(i18n, weaver)} }.into_any(),
+                                                        Some(6) => view! { {t!(i18n, alchemist)} }.into_any(),
+                                                        Some(7) => view! { {t!(i18n, culinarian)} }.into_any(),
+                                                        _ => view! { {t!(i18n, unknown)} }.into_any(),
+                                                    }}
+                                                </span>
+                                            </div>
+                                        </a>
+                                    </div>}.into_any(),
+    "cost-per-scrip" => view! {<div  class="text-right font-bold text-brand-300 w-full min-w-0">
+                                        // One decimal below 10 gil/scrip: whole-gil
+                                        // truncation collapsed the interesting end
+                                        // of the efficiency scale (2.4 and 2.9
+                                        // both showed as 2).
+                                        <div class="flex flex-row items-center">
+                                            <GilIcon />
+                                            <div>
+                                                {if data.cost_per_scrip < 10.0 {
+                                                    format!("{:.1}", data.cost_per_scrip)
+                                                } else {
+                                                    (data.cost_per_scrip as i32).separate_with_commas()
+                                                }}
+                                            </div>
+                                        </div>
+                                    </div>}.into_any(),
+    "scrip-amount" => view! {<div  class="text-right w-full min-w-0">
+                                        {data.scrip_amount}
+                                    </div>}.into_any(),
+    "cost" => view! {<div  class="text-right w-full min-w-0">
+                                        <Gil amount=data.cost />
+                                        {(data.coverage_tier() != 0)
+                                            .then(|| {
+                                                view! {
+                                                    <span
+                                                        class="block text-[10px] leading-tight text-amber-400"
+                                                        title=t_string!(i18n, scrip_sources_coverage_hint).to_string()
+                                                    >
+                                                        {t!(
+                                                            i18n, scrip_sources_coverage_badge, priced =
+                                                            data.priced_ingredients, total = data.total_ingredients
+                                                        )}
+                                                    </span>
+                                                }
+                                            })}
+                                    </div>}.into_any(),
+    "scrip-type" => view! {<div  class="text-right w-full min-w-0">
+                                        <span class={format!("text-xs {}", data.scrip_type.color_class())}>
+                                            {match data.scrip_type {
+                                                ScripType::OrangeCrafters => t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+                                                ScripType::OrangeGatherers => t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+                                                ScripType::WhiteCrafters => t_string!(i18n, scrip_sources_white_crafters).to_string(),
+                                                ScripType::PurpleCrafters => t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+                                                ScripType::WhiteGatherers => t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+                                                ScripType::PurpleGatherers => t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+                                                ScripType::Other(_) => t_string!(i18n, scrip_sources_other_name).to_string(),
+                                            }}
+                                        </span>
+                                    </div>}.into_any(), _ => ().into_any()}}
+     />
+                 </div>
+            </div>
+        }
 }
 
 #[component]

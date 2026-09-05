@@ -13,8 +13,9 @@ pub fn GridFixtureRoutes() -> impl leptos_router::MatchNestedRoutes + Clone + Se
 
 #[cfg(debug_assertions)]
 mod development {
+    use super::super::query_grid::QueryGrid;
     use super::super::*;
-    use leptos_router::{NavigateOptions, hooks::*};
+    use leptos_router::hooks::*;
 
     const IDS: &[&str] = &[
         "c00", "c01", "c02", "c03", "c04", "c05", "c06", "c07", "c08", "c09", "c10", "c11", "c12",
@@ -27,8 +28,6 @@ mod development {
     #[component]
     pub fn GridFixture() -> impl IntoView {
         let query = use_query_map();
-        let nav = use_navigate();
-        let location = use_location();
         let tick = RwSignal::new(0u32);
         let sorts = RwSignal::new(0u32);
         let size = RwSignal::new(10_000usize);
@@ -49,41 +48,6 @@ mod development {
                 })
                 .collect::<Vec<_>>()
         });
-        let layout = Signal::derive(move || query.with(|q| q.get("layout")));
-        let change = Callback::new(move |change: GridChange| {
-            let mut q = query.get_untracked();
-            q.remove("layout");
-            if let Some(layout) = change.layout {
-                q.insert("layout", layout);
-            }
-            if change.reset {
-                q.remove("cols");
-            }
-            if let Some((id, show)) = change.visibility {
-                let mut ids: Vec<_> = columns
-                    .get_untracked()
-                    .iter()
-                    .filter(|c| c.visible)
-                    .map(|c| c.id)
-                    .collect();
-                ids.retain(|v| *v != id);
-                if show {
-                    ids.push(id);
-                }
-                q.insert("cols", ids.join(","));
-            }
-            nav(
-                &format!(
-                    "{}{}",
-                    location.pathname.get_untracked(),
-                    q.to_query_string()
-                ),
-                NavigateOptions {
-                    scroll: false,
-                    ..Default::default()
-                },
-            );
-        });
         let text = |(row, tick): &(usize, u32), id: &str| {
             if *row == 9000 && id == "c00" {
                 "A deliberately long value outside the rendered window for auto-fit".to_string()
@@ -97,7 +61,7 @@ mod development {
             <button id="fixture-empty" on:click=move |_|size.set(0)>"Empty results"</button>
             <button id="fixture-restore" on:click=move |_|size.set(10_000)>"Restore results"</button>
             <span id="fixture-sorts">{move || sorts.get()}</span>
-            <VirtualGrid id="fixture-grid" label="Grid fixture" each=rows columns layout on_change=change reset_scroll=Signal::derive(String::new)
+            <QueryGrid id="fixture-grid" label="Grid fixture" each=rows columns
                 key=|r:&(usize,u32)|r.0
                 header=move |id|view!{<button on:click=move |_|sorts.update(|s|*s+=1)>{id}</button>}.into_any()
                 view=move |row,id|view!{<div>{text(&row,id)}</div>}.into_any()

@@ -181,6 +181,15 @@ if [ "${RUN_FC_CRAFTING_BREAKDOWN:-1}" != "0" ]; then
     fi
 fi
 
+if [ "${RUN_ANALYZER_GRIDS:-1}" != "0" ]; then
+    log "running analyzer grid and last-view E2E"
+    analyzer_grids_exit=0
+    ( cd integration && BASE_URL="$BASE_URL" npm run test:analyzer-grids ) || analyzer_grids_exit=$?
+    if [ "$analyzer_grids_exit" -ne 0 ] && [ "$test_exit" -eq 0 ]; then
+        test_exit="$analyzer_grids_exit"
+    fi
+fi
+
 # If we built with test-auth, also exercise the login flow even when the
 # screenshot suite failed — failures may be unrelated and the login signal
 # is independently valuable.

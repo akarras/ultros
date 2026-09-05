@@ -214,26 +214,26 @@ pub fn render_cell(
 ) -> Option<AnyView> {
     Some(match value {
         CellValue::Gil(amount) => view! {
-            <div role="cell" class=class><Gil amount=amount /></div>
+            <div  class=class><Gil amount=amount /></div>
         }
         .into_any(),
         CellValue::RoiBadge(roi) => view! {
-            <div role="cell" class=class>
+            <div  class=class>
                 <span class=roi_badge_class(roi)>{format!("{roi}%")}</span>
             </div>
         }
         .into_any(),
         CellValue::Count(n) => view! {
-            <div role="cell" class=class>{n.to_string()}</div>
+            <div  class=class>{n.to_string()}</div>
         }
         .into_any(),
         CellValue::Confidence(band) => view! {
-            <div role="cell" class=class><ConfidenceBadge band=band /></div>
+            <div  class=class><ConfidenceBadge band=band /></div>
         }
         .into_any(),
         CellValue::LastSoldUnix(unix) => {
             let label = last_sold_label(i18n, unix, ctx.now_unix);
-            view! { <div role="cell" class=class>{label}</div> }.into_any()
+            view! { <div  class=class>{label}</div> }.into_any()
         }
         CellValue::GilWithPct { amount, pct } => {
             let sub = pct
@@ -241,7 +241,7 @@ pub fn render_cell(
                 .map(|p| format!("{p:+.0}%"))
                 .unwrap_or_default();
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <GilOrDash amount=(amount > 0).then_some(amount) />
                     <div class="text-xs text-[color:var(--color-text-muted)]">{sub}</div>
                 </div>
@@ -267,7 +267,7 @@ pub fn render_cell(
                 t_string!(i18n, analyzer_alt_cost_delta_title).to_string()
             };
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class="text-[color:var(--color-text-muted)]">
                         <GilOrDash amount=amount />
                     </div>
@@ -320,7 +320,7 @@ pub fn render_cell(
                 ),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <Gil amount=amount />
                     <div class=note_class>{text}</div>
                 </div>
@@ -334,7 +334,7 @@ pub fn render_cell(
                 _ => (Vec::new(), 0.0),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <span class=if loading { "hidden" } else { "" }>
                         <Sparkline points=points pct_change=pct />
@@ -359,7 +359,7 @@ pub fn render_cell(
             };
             let colour = signed_delta_class(pct, DELTA_DEAD_BAND_PCT);
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <span class=if loading { "hidden" } else { colour }>{text}</span>
                 </div>
@@ -374,7 +374,7 @@ pub fn render_cell(
                 Enrich::Loading => String::new(),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <span class=if loading { "hidden" } else { "" }>{text}</span>
                 </div>
@@ -393,7 +393,7 @@ pub fn render_cell(
                 _ => (None, String::new()),
             };
             view! {
-                <div role="cell" class=class>
+                <div  class=class>
                     <div class=bar_class(loading) aria-hidden="true"></div>
                     <div class=if loading { "hidden" } else { "" }>
                         <GilOrDash amount=amount />
@@ -428,7 +428,7 @@ pub fn render_cell(
             // One shape (the `GilOrDash` rule): the icon hides and the value
             // mutes by class; the arms never swap elements.
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class="flex flex-row items-center">
                         <span class=if has_amount { "inline-flex" } else { "hidden" }><GilIcon /></span>
                         <div class=if has_amount { "" } else { "text-[color:var(--color-text-muted)]" }>{text}</div>
@@ -490,7 +490,7 @@ pub fn render_cell(
             // One shape (the `GilOrDash` rule): the icon hides and the value
             // mutes by class; the arms never swap elements.
             view! {
-                <div role="cell" class=class title=title>
+                <div  class=class title=title>
                     <div class="flex flex-row items-center justify-end">
                         <span class=if has { "inline-flex" } else { "hidden" }><GilIcon /></span>
                         <div class=value_class>{text}</div>
@@ -555,7 +555,11 @@ mod tests {
             )
             .unwrap()
             .to_html();
-            assert_eq!(count(&a, "role=\"cell\""), 1);
+            assert_eq!(
+                count(&a, "role=\"cell\""),
+                0,
+                "the grid owns cell semantics"
+            );
             assert_eq!(count(&a, "<div"), count(&b, "<div"), "{a}\n{b}");
             assert!(a.contains("+4%"), "{a}");
             assert!(b.contains("—"), "{b}");
@@ -737,8 +741,8 @@ mod tests {
             }));
             assert_eq!(count(&loading, "<div"), count(&missing, "<div"));
             assert_eq!(count(&loading, "<span"), count(&missing, "<span"));
-            assert_eq!(count(&loading, "role=\"cell\""), 1);
-            assert_eq!(count(&ready, "role=\"cell\""), 1);
+            assert_eq!(count(&loading, "role=\"cell\""), 0);
+            assert_eq!(count(&ready, "role=\"cell\""), 0);
             assert!(loading.contains("skeleton-shimmer"), "{loading}");
             assert!(!missing.contains("skeleton-shimmer"), "{missing}");
             assert!(ready.contains("<svg"), "{ready}");

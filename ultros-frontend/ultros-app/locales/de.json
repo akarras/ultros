@@ -1,4 +1,7 @@
 {
+    "grid_filter_any": "Alle",
+    "grid_filter_apply": "Filter anwenden",
+    "grid_filter_clear": "Filter löschen",
     "grid_move_column": "Ziehen, um die Spalte zu verschieben",
     "grid_column_menu": "Spaltenoptionen",
     "grid_resize_hint": "Zum Ändern der Breite ziehen; zum Anpassen an verfügbare Ergebnisse doppelklicken",

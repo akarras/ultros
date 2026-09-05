@@ -7,6 +7,16 @@ const puppeteer = require('puppeteer');
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function decodeLayout(raw) {
+  if (!raw) return {order:[],widths:{}};
+  if (!raw.startsWith('2~')) return JSON.parse(raw);
+  const [, order, widths] = raw.split('~');
+  const prefix = order.split('.').filter(Boolean);
+  const ids = Array.from({length:64},(_,i)=>'c'+String(i).padStart(2,'0'));
+  const tokens=widths.split('.').filter(Boolean), sizes={};
+  for(let i=0;i<tokens.length;i+=2) sizes[tokens[i]]=parseInt(tokens[i+1],36);
+  return {order:[...prefix,...ids.filter(id=>!prefix.includes(id))],widths:sizes};
+}
 async function main() {
   const browser = await puppeteer.launch({headless: 'new', args: ['--no-sandbox']});
   const page = await browser.newPage();
@@ -24,13 +34,21 @@ async function main() {
     await page.click(`.virtual-grid-heading[data-column="${id}"] .grid-column-menu`);
     await page.waitForSelector('.grid-menu-panel');
   }
-  async function action(label) {
-    await page.evaluate(label => {
-      const button = [...document.querySelectorAll('.grid-menu-panel button')].find(b => b.textContent.trim() === label);
-      if (!button) throw Error(`Missing column action: ${label}`);
-      button.click();
-    }, label);
-    await sleep(120);
+  async function action(label, touch=false) {
+    const buttons=await page.$$('.grid-menu-panel button');
+    for(const button of buttons) {
+      if(await button.evaluate(e=>e.textContent.trim())===label) {
+        await button.evaluate(e=>e.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
+        await sleep(120);
+        assert(await button.evaluate(e=>{
+          const r=e.getBoundingClientRect();const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+          return hit===e||e.contains(hit);
+        }),`column action is reachable: ${label}`);
+        if(touch) await button.tap(); else await button.click();
+        await sleep(180);return;
+      }
+    }
+    throw Error(`Missing column action: ${label}`);
   }
   async function width(id) {
     return page.$eval(`.virtual-grid-heading[data-column="${id}"]`, e => e.getBoundingClientRect().width);
@@ -40,6 +58,7 @@ async function main() {
     await sleep(180);
   }
   async function verifyAlignment() {
+    assert(new URL(page.url()).searchParams.getAll('cols').length <= 1,'visibility changes replace the previous parameter');
     const measurement = await page.evaluate(() => {
       const port = document.querySelector('.virtual-grid');
       const bounds = port.getBoundingClientRect();
@@ -84,7 +103,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[role=columnheader][data-column=c00]').getBoundingClientRect().width > 350);
     const fitted=await width('c00');
     assert(fitted<800,'auto-fit stays bounded');
-    assert(new URL(page.url()).searchParams.has('layout'));
+    assert(new URL(page.url()).searchParams.has('l'));
     const handle=await border.boundingBox();
     await page.mouse.move(handle.x+3,handle.y+20);
     await page.mouse.down();
@@ -102,10 +121,10 @@ async function main() {
     await menu('c00');await action('Insert column after…');await action('Column 60');
     await page.waitForSelector('[role=columnheader][data-column=c60]');
     assert(new URL(page.url()).searchParams.get('cols').split(',').includes('c60'));
-    let layout=JSON.parse(new URL(page.url()).searchParams.get('layout'));
+    let layout=decodeLayout(new URL(page.url()).searchParams.get('l'));
     assert.equal(layout.order[layout.order.indexOf('c00')+1],'c60');
     await menu('c60');await action('Move left');
-    layout=JSON.parse(new URL(page.url()).searchParams.get('layout'));
+    layout=decodeLayout(new URL(page.url()).searchParams.get('l'));
     assert.equal(layout.order[0],'c60');
     await verifyAlignment();
     const grip=await page.$('.virtual-grid-heading[data-column=c60] .grid-drag-handle');
@@ -115,11 +134,11 @@ async function main() {
     });
     await page.mouse.move(source.x+source.width/2,source.y+source.height/2);
     await page.mouse.down();await page.mouse.move(destination.x,destination.y,{steps:12});await page.mouse.up();await sleep(180);
-    layout=JSON.parse(new URL(page.url()).searchParams.get('layout'));
+    layout=decodeLayout(new URL(page.url()).searchParams.get('l'));
     assert.equal(layout.order[layout.order.indexOf('c00')+1],'c60','grip drag commits the insertion target');
     await verifyAlignment();
     await page.goBack({waitUntil:'networkidle0'});
-    await page.waitForFunction(()=>JSON.parse(new URL(location.href).searchParams.get('layout')).order[0]==='c60');
+    await page.waitForFunction(()=>new URL(location.href).searchParams.get('l')?.startsWith('2~c60'));
     assert.equal(await page.$eval('[role=columnheader][data-column=c60]',e=>e.getAttribute('aria-colindex')),'1','history restores rendered order');
     await page.goForward({waitUntil:'networkidle0'});
     await page.waitForFunction(()=>document.querySelector('[role=columnheader][data-column=c60]')?.getAttribute('aria-colindex')==='2');
@@ -130,6 +149,7 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('[role=columnheader][data-column=c60]'));
     assert.equal(await page.$eval('#fixture-sorts',e=>e.textContent),'0','column operations never sort');
     await page.reload({waitUntil:'networkidle0'});
+    await page.waitForFunction(()=>window.__gridHydrated,{timeout:120000});
     assert(Math.abs(await width('c00')-beforeCancel)<2,'reload restores saved URL width');
     await scroll(0,0);
     await page.focus('.virtual-grid');await page.keyboard.press('F2');await page.keyboard.press('Tab');await page.keyboard.press('Enter');
@@ -148,10 +168,65 @@ async function main() {
       await page.setViewport(viewport);await scroll(5000,200000);await verifyAlignment();
       await page.screenshot({path:path.join(dir,`grid-${viewport.width}.png`),fullPage:true});
     }
+    // Touch emulation exercises native panning and the same pointer handlers used
+    // on phones. Changing viewport dimensions alone cannot verify these paths.
+    await page.setViewport({width:393,height:844,isMobile:true,hasTouch:true,deviceScaleFactor:1});
+    await page.goto(`${BASE}/__test/virtual-grid`,{waitUntil:'networkidle0'});
+    await page.waitForFunction(()=>window.__gridHydrated,{timeout:120000});
+    await page.evaluate(()=>{
+      window.__touchClicks=[];
+      document.addEventListener('click',e=>window.__touchClicks.push(e.target.closest('button')?.textContent),true);
+    });
+    const touch=await page.createCDPSession();
+    async function swipe(x,y,dx,dy) {
+      await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+      for(let i=1;i<=12;i++) {
+        await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*i/12,y:y+dy*i/12}]});
+        await sleep(25);
+      }
+      await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+      await sleep(600);
+    }
+    const tapAction=label=>action(label,true);
+    async function tapMenu(id) {
+      await page.tap(`.virtual-grid-heading[data-column="${id}"] .grid-column-menu`);
+      await page.waitForSelector('.grid-menu-panel');
+      assert(await page.$eval('.grid-menu-panel',e=>{
+        const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;
+      }),'column menu stays within the phone viewport');
+    }
+    const phoneGrid=await page.$eval('.virtual-grid',e=>{
+      const r=e.getBoundingClientRect();return {x:r.left,y:r.top,width:r.width,height:r.height};
+    });
+    assert(await page.evaluate(()=>document.querySelector('.virtual-grid').getBoundingClientRect().bottom<=document.querySelector('.mobile-bar').getBoundingClientRect().top),
+      'fixed mobile navigation does not cover the grid');
+    await swipe(phoneGrid.x+phoneGrid.width-40,phoneGrid.y+150,-220,0);
+    assert(await page.$eval('.virtual-grid',e=>e.scrollLeft)>100,'finger swipe pans columns');
+    await swipe(phoneGrid.x+100,phoneGrid.y+Math.min(phoneGrid.height-40,350),0,-180);
+    assert(await page.$eval('.virtual-grid',e=>e.scrollTop)>80,'finger swipe pans rows');
+    await verifyAlignment();
+    await scroll(0,0);
+    const touchBorder=await page.$('.virtual-grid-heading[data-column=c00] .grid-resize-handle');
+    const tb=await touchBorder.boundingBox();
+    const initialWidth=await width('c00');
+    await swipe(tb.x+tb.width/2,tb.y+tb.height/2,45,0);
+    assert(Math.abs(await width('c00')-initialWidth-45)<2,'touch border drag resizes');
+    assert(Math.abs(await page.$eval('.virtual-grid',e=>e.scrollLeft))<1,'resize gesture does not pan');
+    await tapMenu('c00');await tapAction('Insert column after…');await tapAction('Column 60');
+    await tapMenu('c60');await tapAction('Move left');
+    assert.equal(decodeLayout(new URL(page.url()).searchParams.get('l')).order[0],'c60','tap controls reorder columns');
+    await tapMenu('c60');await tapAction('Auto-fit column');
+    await page.waitForFunction(()=>new URL(location.href).searchParams.get('l')?.split('~')[2].split('.').includes('c60'));
+    await tapMenu('c60');await tapAction('Hide column');
+    await page.waitForFunction(()=>!document.querySelector('[role=columnheader][data-column=c60]'));
+    assert.equal(await page.$eval('#fixture-sorts',e=>e.textContent),'0','touch column operations never sort');
+    await verifyAlignment();
+    await page.screenshot({path:path.join(dir,'grid-touch-393.png'),fullPage:true});
+    await touch.detach();
     await page.click('#fixture-empty');await page.waitForFunction(()=>!document.querySelector('[role=gridcell]'));
     await page.click('#fixture-restore');await page.waitForSelector('[role=gridcell]');
     assert.deepEqual(errors,[],'no hydration or browser errors');
-    console.log('VirtualGrid: both axes, alignment, live updates, auto-fit, resize, cancel, insertion, ordering, persistence, keyboard and narrow screens passed');
+    console.log('VirtualGrid: both axes, alignment, live updates, auto-fit, resize, cancel, insertion, ordering, persistence, keyboard, narrow screens and mobile touch interactions passed');
   } catch(error) {
     console.error('Browser errors:',errors);
     console.error('Grid state:',await page.evaluate(()=>({
@@ -159,6 +234,7 @@ async function main() {
       firstCell:document.querySelector('[role=gridcell]')?.textContent,
       headings:document.querySelectorAll('[role=columnheader]').length,
       sorts:document.querySelector('#fixture-sorts')?.textContent,
+      touchClicks:window.__touchClicks,
       scripts:[...document.scripts].map(s=>s.src).filter(Boolean),
     })).catch(()=>null));
     await page.screenshot({path:path.join(dir,'failure.png'),fullPage:true}).catch(()=>{});

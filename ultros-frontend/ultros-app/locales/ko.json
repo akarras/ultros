@@ -1,4 +1,7 @@
 {
+    "grid_filter_any": "모두",
+    "grid_filter_apply": "필터 적용",
+    "grid_filter_clear": "필터 해제",
     "grid_move_column": "드래그하여 열 이동",
     "grid_column_menu": "열 옵션",
     "grid_resize_hint": "드래그하여 너비 조절, 두 번 클릭하여 가져온 결과에 맞춤",

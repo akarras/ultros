@@ -1,4 +1,7 @@
 {
+    "grid_filter_any": "指定なし",
+    "grid_filter_apply": "フィルターを適用",
+    "grid_filter_clear": "フィルターを解除",
     "grid_move_column": "ドラッグして列を移動",
     "grid_column_menu": "列の設定",
     "grid_resize_hint": "ドラッグで幅を変更、ダブルクリックで取得済みの結果に合わせる",

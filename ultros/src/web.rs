@@ -193,6 +193,34 @@ fn item_change_payload(
     serde_json::Value::Object(changes)
 }
 
+async fn restore_analyzer_view(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    if req.method() == axum::http::Method::GET
+        && let Some(cookies) = req
+            .headers()
+            .get(header::COOKIE)
+            .and_then(|h| h.to_str().ok())
+        && let Some(target) = ultros_app::last_view::cookie_redirect(
+            req.uri().path(),
+            req.uri().query().unwrap_or_default(),
+            cookies,
+        )
+    {
+        let mut response = Redirect::temporary(&target).into_response();
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+        response
+            .headers_mut()
+            .insert(header::VARY, axum::http::HeaderValue::from_static("Cookie"));
+        return response;
+    }
+    next.run(req).await
+}
+
 async fn redirect_legacy_book_host(
     req: axum::extract::Request,
     next: middleware::Next,
@@ -2647,6 +2675,7 @@ pub(crate) async fn start_web(
         .with_state(state)
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
+        .layer(middleware::from_fn(restore_analyzer_view))
         // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
         // which the `sentry_tracing` layer turns into a GlitchTip issue.
         // See `failure_report_level` for which failures still warrant one.

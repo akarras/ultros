@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "medium",
+  "title": "Your analyzers remember where you left off",
+  "blurb": "Each analyzer automatically remembers your filters, sorting and column layout on this device, even after closing your browser. Named views remain available as bookmarks, and opening a shared link uses that link's settings. Customized layouts also take much less space in shared URLs.",
+  "link": "/flip-finder"
+}

@@ -2,6 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ColumnFilter {
+    pub key: &'static str,
+    pub label: String,
+    pub numeric: bool,
+    pub options: Vec<(&'static str, String)>,
+}
+
+impl ColumnFilter {
+    pub fn new(key: &'static str, label: String, numeric: bool) -> Self {
+        Self {
+            key,
+            label,
+            numeric,
+            options: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct GridColumn {
     pub id: &'static str,
     pub label: String,
@@ -11,6 +30,7 @@ pub struct GridColumn {
     pub optional: bool,
     pub visible: bool,
     pub aria_sort: &'static str,
+    pub filters: Vec<ColumnFilter>,
 }
 
 impl GridColumn {
@@ -24,6 +44,7 @@ impl GridColumn {
             optional,
             visible,
             aria_sort: "none",
+            filters: Vec::new(),
         }
     }
 
@@ -33,6 +54,17 @@ impl GridColumn {
         } else {
             self.width
         }
+    }
+
+    pub fn sorted(mut self, active: bool, ascending: bool) -> Self {
+        self.aria_sort = if !active {
+            "none"
+        } else if ascending {
+            "ascending"
+        } else {
+            "descending"
+        };
+        self
     }
 }
 
@@ -48,7 +80,32 @@ impl GridLayout {
     pub fn parse(raw: Option<&str>, columns: &[GridColumn]) -> Self {
         let parsed = raw
             .filter(|s| s.len() <= 16_384)
-            .and_then(|s| serde_json::from_str::<Self>(s).ok())
+            .and_then(|s| {
+                if let Some(body) = s.strip_prefix("2~") {
+                    let (order, widths) = body.split_once('~')?;
+                    let tokens: Vec<_> = widths.split('.').filter(|s| !s.is_empty()).collect();
+                    if tokens.len() % 2 != 0 {
+                        return None;
+                    }
+                    let widths = tokens
+                        .chunks_exact(2)
+                        .map(|p| {
+                            Some((p[0].to_string(), u32::from_str_radix(p[1], 36).ok()? as f64))
+                        })
+                        .collect::<Option<BTreeMap<_, _>>>()?;
+                    Some(Self {
+                        v: 1,
+                        order: order
+                            .split('.')
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                            .collect(),
+                        widths,
+                    })
+                } else {
+                    serde_json::from_str::<Self>(s).ok()
+                }
+            })
             .filter(|s| s.v == 1);
         let mut layout = parsed.unwrap_or(Self {
             v: 1,
@@ -75,8 +132,37 @@ impl GridLayout {
         layout
     }
 
+    #[cfg(test)]
     pub fn encode(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
+    }
+
+    /// Only a changed order prefix and non-default widths belong in a URL.
+    /// IDs remain stable if a later release adds or removes other columns.
+    pub fn compact(&self, columns: &[GridColumn]) -> Option<String> {
+        let prefix = (0..=self.order.len())
+            .find(|&n| {
+                let used: HashSet<_> = self.order[..n].iter().map(String::as_str).collect();
+                self.order[n..]
+                    .iter()
+                    .map(String::as_str)
+                    .eq(columns.iter().map(|c| c.id).filter(|id| !used.contains(id)))
+            })
+            .unwrap_or(self.order.len());
+        let widths = self
+            .widths
+            .iter()
+            .filter_map(|(id, width)| {
+                let column = columns.iter().find(|c| c.id == id)?;
+                let width = column.clamp(*width).round() as u32;
+                (width != column.width.round() as u32).then(|| format!("{id}.{}", base36(width)))
+            })
+            .collect::<Vec<_>>()
+            .join(".");
+        if prefix == 0 && widths.is_empty() {
+            return None;
+        }
+        Some(format!("2~{}~{}", self.order[..prefix].join("."), widths))
     }
 
     pub fn move_to(&mut self, id: &str, target: &str, after: bool) {
@@ -107,6 +193,18 @@ impl GridLayout {
             })
             .collect()
     }
+}
+
+fn base36(mut value: u32) -> String {
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from_digit(value % 36, 36).unwrap());
+        value /= 36;
+        if value == 0 {
+            break;
+        }
+    }
+    digits.into_iter().rev().collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -201,6 +299,30 @@ mod tests {
         assert_eq!(state.order, ["item", "profit", "trend"]);
         state.move_to("item", "item", true);
         assert_eq!(state.order, ["item", "profit", "trend"]);
+    }
+    #[test]
+    fn compact_layout_only_stores_changes_and_survives_registry_growth() {
+        let defs = columns();
+        let mut layout = GridLayout::parse(None, &defs);
+        assert_eq!(layout.compact(&defs), None);
+        layout.widths.insert("profit".into(), 100.0);
+        assert_eq!(layout.compact(&defs).as_deref(), Some("2~~profit.2s"));
+        assert_eq!(
+            GridLayout::parse(layout.compact(&defs).as_deref(), &defs),
+            layout
+        );
+        layout.move_to("trend", "item", false);
+        let compact = layout.compact(&defs).unwrap();
+        assert_eq!(compact, "2~trend~profit.2s");
+        let mut newer = defs.clone();
+        newer.insert(1, GridColumn::new("new", "New".into(), 100.0, true, false));
+        let restored = GridLayout::parse(Some(&compact), &newer);
+        assert_eq!(restored.order, ["trend", "item", "new", "profit"]);
+        assert_eq!(restored.widths["profit"], 100.0);
+        assert!(compact.len() * 3 < layout.encode().len());
+        layout.widths.insert("profit".into(), 120.0);
+        layout.move_to("trend", "profit", true);
+        assert_eq!(layout.compact(&defs), None);
     }
     #[test]
     fn both_axes_are_bounded_and_last_cells_reachable() {

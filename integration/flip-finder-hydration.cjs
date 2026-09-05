@@ -30,6 +30,8 @@ async function main() {
     });
     page.on('pageerror', (error) => errors.push(error.stack || String(error)));
     await page.evaluateOnNewDocument(() => {
+      window.__flipHydrated=false;
+      window.addEventListener('ultros:hydrated',()=>{window.__flipHydrated=true;});
       // Record real subscription IDs so a Stale message reaches the same
       // handler used when the server detects missed market updates.
       const send = WebSocket.prototype.send;
@@ -55,6 +57,7 @@ async function main() {
     });
 
     async function ready(world, requireRows = true) {
+      await page.waitForFunction(()=>window.__flipHydrated);
       await page.waitForFunction((world) => document.title.includes(world), {}, world);
       await page.waitForSelector(TABLE);
       if (requireRows) {
@@ -154,6 +157,38 @@ async function main() {
       'market refetch remounted the table');
     assert.deepEqual(errors, [], 'strict browser console must remain clean');
     console.log('[ok] real market refetch preserves the mounted interactive table');
+
+    await page.setViewport({width:393,height:844,isMobile:true,hasTouch:true,deviceScaleFactor:1});
+    await ready(WORLD);
+    const bounds=await page.$eval(`${TABLE} .virtual-grid`,e=>{
+      const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};
+    });
+    assert(await page.evaluate(()=>document.querySelector('.virtual-grid').getBoundingClientRect().bottom<=document.querySelector('.mobile-bar').getBoundingClientRect().top),
+      'mobile navigation must not cover Flip Finder results');
+    const touch=await page.createCDPSession();
+    const x=bounds.x+bounds.width-30,y=bounds.y+Math.min(bounds.height-30,160);
+    await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+    for(let i=1;i<=12;i++) {
+      await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x-220*i/12,y:y-60*i/12}]});
+      await new Promise(r=>setTimeout(r,25));
+    }
+    await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await page.waitForFunction(()=>document.querySelector('.virtual-grid').scrollLeft>100);
+    assert(await page.$eval('.virtual-grid',port=>{
+      const bounds=port.getBoundingClientRect();
+      return [...port.querySelectorAll('[role=columnheader]')].every(header=>{
+        const h=header.getBoundingClientRect();
+        if(h.right<=bounds.left||h.left>=bounds.right)return true;
+        const c=port.querySelector(`.virtual-grid-cell[data-column="${header.dataset.column}"]`)?.getBoundingClientRect();
+        return c&&Math.abs(c.left-h.left)<=1&&Math.abs(c.width-h.width)<=1&&Math.abs(h.top-bounds.top-1)<=1;
+      });
+    }),'populated Flip Finder headings stay aligned after a touch swipe');
+    const artifactDir=require('node:path').join(__dirname,'artifacts','virtual-grid');
+    require('node:fs').mkdirSync(artifactDir,{recursive:true});
+    await page.screenshot({path:require('node:path').join(artifactDir,'flip-finder-touch-393.png'),fullPage:true});
+    await touch.detach();
+    assert.deepEqual(errors, [], 'mobile hydration and scrolling remain error-free');
+    console.log('[ok] populated Flip Finder supports mobile touch scrolling with aligned headings and clear navigation');
   } finally {
     if (releaseRequest) await releaseRequest().catch(() => {});
     await browser.close();

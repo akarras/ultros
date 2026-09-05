@@ -125,6 +125,7 @@ async function captureOneSurface(
   { baseUrl, world, viewport, deviceLabel, outdir, timeout, consoleAllow },
 ) {
   const page = await browser.newPage();
+  await page.setCookie({ name: "HIDE_ADS", value: "true", url: baseUrl });
   await page.setViewport(viewport);
 
   const consoleErrors = [];
