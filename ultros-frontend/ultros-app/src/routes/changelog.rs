@@ -35,6 +35,42 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
         date: "2026-09-04",
         title: "Clearer browser notification setup",
         blurb: "Browser notification setup now explains when a push service is unsupported, so you can tell why a subscription could not be saved.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
+        title: "More reliable Discord sign-in",
+        blurb: "Discord sign-ins are checked again periodically, while temporary Discord outages no longer unnecessarily sign you out. Signing out and deleting your account now clear cached sign-in information more reliably.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
+        title: "Share Ultros with clearer, localized previews",
+        blurb: "Item links now show a bold preview with the item's icon and name. Gear sets, currency tools, analyzers and help pages have matching previews too. Shared links can keep your chosen language, and previews stay useful without showing prices that could go stale.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
+        title: "Jump straight to every way to get an item",
+        blurb: "Item pages now show compact, color-coded crafting, exchange, levequest, and vendor shortcuts beside the section links. Each shows how many options are available and jumps straight to the details. Swipe the bar on mobile to see more shortcuts.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
+        title: "Flip Finder opens reliably from world links",
+        blurb: "Opening a Flip Finder world link directly now finishes loading its controls and live updates, instead of leaving the page stuck after its first results appear.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
+        title: "Repriced market listings stay visible",
+        blurb: "A listing that has just been repriced is no longer removed by an older update arriving at the same time. Failed listing updates also stop marking incomplete market data as fresh.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
+        title: "Correct iOS notification device labels",
+        blurb: "New browser notification subscriptions that identify as an iPhone or iPad are now labeled iOS instead of macOS.",
         link: Some("/settings"),
     },
     ChangelogEntry {
