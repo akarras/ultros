@@ -1652,7 +1652,11 @@ pub fn ChartWrapper(
                                         <a
                                             class="btn-primary text-sm"
                                             target="_blank"
-                                            href=move || format!("/itemcard/{}/{}", world(), item_id())
+                                            href=move || crate::social_meta::social_image_path(
+                                                i18n.get_locale(),
+                                                &crate::social_card::SocialCardKind::Item(item_id()),
+                                                Some(&world()),
+                                            )
                                         >
                                             {move || t_string!(i18n, download_png).to_string()}
                                         </a>
@@ -2129,7 +2133,6 @@ fn ItemViewContent() -> impl IntoView {
             t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
         } />
         <MetaDescription text=description />
-        <MetaImage url=move || format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) />
         <Meta
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())

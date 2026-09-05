@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Share Ultros with clearer, localized previews",
+        blurb: "Item links now show a bold preview with the item's icon and name. Gear sets, currency tools, analyzers and help pages have matching previews too. Shared links can keep your chosen language, and previews stay useful without showing prices that could go stale.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Flip Finder opens reliably from world links",
         blurb: "Opening a Flip Finder world link directly now finishes loading its controls and live updates, instead of leaving the page stuck after its first results appear.",
         link: Some("/flip-finder"),

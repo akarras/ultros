@@ -9,6 +9,7 @@ use codee::string::JsonSerdeCodec;
 use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
+use leptos_router::params::ParamsMap;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,12 @@ use crate::components::icon::Icon;
 use crate::i18n::*;
 
 pub const SAVED_VIEWS_KEY: &str = "ultros.flipfinder.views";
+
+/// A saved market view must not change the reader's selected language.
+fn view_query_string(mut query: ParamsMap) -> String {
+    query.remove("lang");
+    query.to_query_string()
+}
 
 /// The query string seeded when the Flip Finder is opened with no filters at
 /// all (see `seed_flip_finder_default_view` in `query_defaults.rs`). Stored as a
@@ -230,7 +237,7 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
         if name.is_empty() {
             return;
         }
-        let query_string = query.get_untracked().to_query_string();
+        let query_string = view_query_string(query.get_untracked());
         let world = pin_to_world
             .get_untracked()
             .then(|| current_world.get_untracked());
@@ -285,7 +292,7 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                     list_open.set(false);
                     let opening = !save_open.get_untracked();
                     if opening {
-                        let current = query.get_untracked().to_query_string();
+                        let current = view_query_string(query.get_untracked());
                         make_default.set(saved_default_query().as_deref() == Some(current.as_str()));
                     }
                     save_open.set(opening);
@@ -407,6 +414,22 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_a_localized_view_does_not_capture_its_language() {
+        assert_eq!(
+            view_query_string(ParamsMap::from_iter([
+                ("lang", "ja"),
+                ("roi", "30"),
+                ("name", "Iron"),
+            ])),
+            "?name=Iron&roi=30"
+        );
+        assert_eq!(
+            view_query_string(ParamsMap::from_iter([("lang", "de")])),
+            ""
+        );
+    }
 
     #[test]
     fn unpinned_view_keeps_the_current_world() {
