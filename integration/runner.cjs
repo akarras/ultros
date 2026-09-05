@@ -95,9 +95,16 @@ const ROUTE_ASSERTS = {
   // `&sell-scope=datacenter` is Phase F's, and it is the point of listing
   // `scope-vs-home` at all: at the default sell scope every cell in that
   // column is `ScopeVsHome::Off` and the harness would screenshot a column
-  // of dashes. It costs no extra request here — the buy scope already
-  // defaults to the datacenter, so the sell-scope cheapest map dedupes
-  // against the buy side's.
+  // of dashes.
+  //
+  // It costs no extra request here, and BOTH halves of that need saying.
+  // The cheapest map dedupes because the buy scope already defaults to the
+  // datacenter, so both sides name the same place. The *statistics* body
+  // dedupes only because `cost-sale-median` is in the `cols=` list below:
+  // that is what puts `BuyScopeStats(7)` into the computed set, and the
+  // sell side is suppressed only against a body that was really fetched.
+  // Drop `cost-sale-median` from this URL and the sweep starts issuing a
+  // `sale_stats?window=7` for the datacenter.
   "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],

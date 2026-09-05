@@ -193,8 +193,18 @@ pub fn ColumnsPickerList(
             let disabled = col.disabled && !visible_columns.get().contains(id);
             out.push(if disabled || col.hint.is_some() {
                 let hint = col.hint.clone().unwrap_or_default();
+                // The grey and the cursor follow `disabled`, not `hint`. A
+                // hint on a toggleable entry says why the column may look
+                // empty; rendering it as unavailable would be a lie, and
+                // the ticked-capped case above already relies on the entry
+                // staying usable.
+                let class = if disabled {
+                    "inline-flex items-center gap-2 cursor-not-allowed opacity-60 text-[color:var(--color-text)]"
+                } else {
+                    "inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]"
+                };
                 view! {
-                    <label class="inline-flex items-center gap-2 cursor-not-allowed opacity-60 text-[color:var(--color-text)]" title=hint>
+                    <label class=class title=hint>
                         <input
                             type="checkbox"
                             class="accent-brand-300"
@@ -522,6 +532,15 @@ mod tests {
                 hint: Some("capped".into()),
                 ..ColumnOption::new("cost-sale-avg", "Sale average (7d)".into())
             },
+            // Hinted but perfectly toggleable — the recipe analyzer's
+            // "Needs a wider sell scope". It gets the title and NOT the
+            // lock, and the ticked-capped entry above relies on the same
+            // split (`disabled` is recomputed against the visible set, so
+            // a ticked capped column keeps its hint and loses its lock).
+            ColumnOption {
+                hint: Some("needs a wider scope".into()),
+                ..ColumnOption::new("scope-vs-home", "Scope vs home".into())
+            },
         ]);
         assert_eq!(html.matches("Revenue · Gilgamesh").count(), 1, "{html}");
         assert_eq!(html.matches("Cost · Aether").count(), 1, "{html}");
@@ -529,6 +548,14 @@ mod tests {
         assert_eq!(html.matches("basis-full").count(), 2, "{html}");
         assert_eq!(html.matches("disabled").count(), 1, "{html}");
         assert!(html.contains("title=\"capped\""), "{html}");
+        // The grey and the cursor follow `disabled`, never `hint`: exactly
+        // one entry here is unavailable, so exactly one is drawn that way.
+        assert!(html.contains("title=\"needs a wider scope\""), "{html}");
+        assert_eq!(
+            html.matches("cursor-not-allowed").count(),
+            1,
+            "a hint explains an entry; it does not disable it: {html}"
+        );
         // Headings precede their options.
         let rev_at = html.find("Revenue · Gilgamesh").unwrap();
         let first_opt = html.find("Sale minimum (7d)").unwrap();

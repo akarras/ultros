@@ -648,11 +648,20 @@ const UNRESOLVED_PLACE: &str = "…";
 
 /// A place name that can be sent to the API and compared against another.
 ///
-/// The comparison half is the load-bearing one. `sell_scope_is_buy_scope`
-/// is a raw name equality, and an unresolved name equal to another
-/// unresolved name would answer `true` — the dedupe would then reuse a
-/// buy-scope body that `needed_bodies` never put in the set, which is the
-/// shape that leaves a revenue cell permanently showing a dash.
+/// The comparison half is the load-bearing one — in fact it is the only
+/// half that ever fires. `sell_scope_is_buy_scope` is a raw name equality,
+/// and an unresolved name equal to another unresolved name would answer
+/// `true`; the dedupe would then reuse a buy-scope body that
+/// `needed_bodies` never put in the set, which is the shape that leaves a
+/// revenue cell permanently showing a dash.
+///
+/// The fetch half, `sell_scope_key`'s guard, is belt and braces rather
+/// than a live check: `use_region_for_world` always yields a real name
+/// (`DEFAULT_REGION` when nothing resolves), so `revenue_place_for`
+/// returns `UNRESOLVED_PLACE` only for `Scope::World` — where there is no
+/// sell-scope body to key in the first place. Harmless there too, since
+/// `buy_scope_name` resolves to the same default and the dedupe covers it.
+/// Kept because "…" must never reach a URL if either resolver changes.
 fn place_resolved(name: &str) -> bool {
     !name.is_empty() && name != UNRESOLVED_PLACE
 }
@@ -1958,6 +1967,7 @@ fn market_extra(
     i18n: I18nContext<Locale, I18nKeys>,
     kind: ColumnKind,
     sell_place: &str,
+    scoped_place: Option<&str>,
 ) -> Option<HeaderExtra> {
     // Each `t_string!` here is a plain key, so the tuple holds
     // `&'static str` and the one allocation happens at the end.
@@ -1993,8 +2003,25 @@ fn market_extra(
         ),
         _ => return None,
     };
+    // Profit/day is the one market column that is *not* one market's
+    // number: it is `profit × daily_sales`, a scope-wide revenue times a
+    // sell-world velocity. The rate does not move with the sell scope —
+    // which is why the column keeps no `7d · ‹place›` line — but the gil
+    // it reports does, and it is the column people sort by to pick what to
+    // craft. Two keys rather than one edited one, exactly as
+    // `recipe_analyzer_calc_formula_live_scoped` does it: the default
+    // page's tooltip must not move.
+    let title = match (kind, scoped_place) {
+        (ColumnKind::ProfitPerDay, Some(place)) => t_string!(
+            i18n,
+            recipe_analyzer_tooltip_profit_per_day_scoped,
+            place = place.to_string()
+        )
+        .to_string(),
+        _ => title.to_string(),
+    };
     Some(HeaderExtra {
-        title: title.to_string(),
+        title,
         line2: windowed.then(|| HeaderLine2 {
             sub_label: window_and_place(i18n, sell_place),
             pill: None,
@@ -3176,6 +3203,11 @@ fn RecipeAnalyzerTable(
     // untracked read anywhere), because it is otherwise an accidental
     // invariant.
     let sell_scope_value = sell_scope.map(SellScope::scope).unwrap_or(Scope::World);
+    // The live sentence's gate, on the prop the page already put through
+    // `sell_scope_for`: `false` on every flag-off page and at the default
+    // scope. Read by the header extras below, so the one column whose
+    // number blends two markets can say which.
+    let scope_is_wider = sell_scope_value != Scope::World;
     let scope_prices = sell_scope_bodies
         .as_ref()
         .and_then(|b| b.listings.clone())
@@ -3197,6 +3229,18 @@ fn RecipeAnalyzerTable(
     // `revenue_stats_loaded` is what `effective()` downgrades on, so it
     // must say "the body REVENUE reads arrived", never "the sell world's
     // did". `sell_stats_loaded` keeps its own meaning for `hop_signal`.
+    //
+    // The `Missing` arm's `false` is NOT only "the fetch failed": it is
+    // also the ordinary `?sell-scope=datacenter` page under a listing
+    // revenue signal with no `rev-sale-*` column, where no statistics body
+    // was ever *requested*. So `revenue_stats_loaded` reads false on a
+    // perfectly healthy page, and what makes that safe lives in
+    // `needed.rs`, not here: `wants_sell_stats` is exactly the condition
+    // under which a sale revenue signal can reach this table, so in this
+    // state the signal is provably a listing and `effective()` — which
+    // only ever downgrades a *sale* signal — has nothing to downgrade.
+    // All three consumers compare `effective()` outputs; one that rendered
+    // the boolean directly would light a fallback that never happened.
     let (revenue_stats_index, revenue_stats_loaded): (Option<Arc<StatsIndex>>, bool) =
         match revenue_stats_source(
             sell_scope_value,
@@ -3279,6 +3323,11 @@ fn RecipeAnalyzerTable(
         // They are the same string unless a lab-on URL widened the scope.
         let sell_now = sell_place.get();
         let revenue_now = revenue_place.get();
+        // `Some` only when a wider scope really moved the revenue side, on
+        // the live sentence's own gate rather than on a name comparison.
+        // The one column it reaches — Profit/day — blends the two markets
+        // and says so.
+        let scoped_now = scope_is_wider.then(|| revenue_now.clone());
         for col in RECIPE_COLUMNS.iter() {
             let extra = match col.spec.kind {
                 ColumnKind::RevSignal(s) => HeaderExtra {
@@ -3343,7 +3392,7 @@ fn RecipeAnalyzerTable(
                     line2: None,
                     header_class: None,
                 },
-                kind => match market_extra(i18n, kind, &sell_now) {
+                kind => match market_extra(i18n, kind, &sell_now, scoped_now.as_deref()) {
                     Some(extra) => extra,
                     None => continue,
                 },
@@ -3624,6 +3673,10 @@ fn RecipeAnalyzerTable(
                     revenue: f.revenue_signal(),
                     cost: f.cost_signal(),
                     capped: needs.get().capped,
+                    // Hints Scope vs home before it is ticked: at the
+                    // default scope the column is dashes end to end.
+                    sell_scope_is_world: sell_scope.map(SellScope::scope).unwrap_or(Scope::World)
+                        == Scope::World,
                 },
             )
         } else {
@@ -4230,8 +4283,15 @@ fn RecipeAnalyzerTable(
                             }
                         })
                 }}
+                // ONE child, not two — Global Constraint 2 and the same rule
+                // the amber banner above follows. An `Option` child that
+                // resolves to `None` still writes a `<!>` hydration marker,
+                // so a second `{move || …}` beside this one would add a
+                // marker to every flag-off page, where `sell_scope` is
+                // always `None`. The `None` arm here is the buy chip alone,
+                // exactly the child that shipped before.
                 {move || {
-                    buy_scope()
+                    let buy = buy_scope()
                         .map(|current| {
                             view! {
                                 <FilterChip
@@ -4244,7 +4304,31 @@ fn RecipeAnalyzerTable(
                                     })
                                 />
                             }
-                        })
+                        });
+                    // Counted in `active_filters` like the three Market
+                    // params above it, so it must be removable like them:
+                    // without a chip it suppresses the "no filters" hint
+                    // while offering nothing to clear, and `Clear all`
+                    // drops it with no trace of what it dropped. A plain
+                    // value, already through the page's lab gate.
+                    match sell_scope {
+                        None => buy.into_any(),
+                        Some(current) => view! {
+                            {buy}
+                            <FilterChip
+                                label=t_string!(i18n, recipe_analyzer_sell_scope_label).to_string()
+                                value=Signal::derive(move || Some(current.to_string()))
+                                options=sell_scope_options(i18n)
+                                on_commit=Callback::new(move |v: Option<String>| {
+                                    let parsed = v.and_then(|v| v.parse::<SellScope>().ok());
+                                    // `SellScope::default()` is the WORLD,
+                                    // not `Scope::default()`'s datacenter.
+                                    set_sell_scope(parsed.filter(|s| *s != SellScope::default()));
+                                })
+                            />
+                        }
+                        .into_any(),
+                    }
                 }}
                 {move || {
                     listing_world_filter()
@@ -4594,6 +4678,23 @@ pub fn RecipeAnalyzer() -> impl IntoView {
         )
     });
     let buy_place = Memo::new(move |_| buy_scope_name.get());
+
+    // The on-page half of the sell scope's honesty. `None` — nothing
+    // rendered — with the lab off and at the default scope, on the same
+    // gate the live sentence uses, so it cannot say anything about a page
+    // that did not widen its scope.
+    let sell_scope_note = Signal::derive(move || {
+        sell_scope_for(preview.get(), sell_scope())
+            .filter(|s| s.scope() != Scope::World)
+            .map(|_| {
+                t_string!(
+                    i18n,
+                    recipe_analyzer_sell_scope_note,
+                    place = revenue_place.get()
+                )
+                .to_string()
+            })
+    });
 
     // The ledger as chips: `[=] Profit / unit  [+] revenue · sell world
     // [−] 5% tax  [−] cost · buy scope`. Every select writes the same URL
@@ -5147,6 +5248,31 @@ pub fn RecipeAnalyzer() -> impl IntoView {
                     <div class="hidden md:flex flex-wrap items-center gap-2">
                         <FormulaStrip terms=strip_terms() layout=StripLayout::Inline />
                     </div>
+                    // What picking a wider scope actually does to the page:
+                    // every profit number falls and rows drop out of the
+                    // count, because a market that contains your world can
+                    // only undercut it. The column tooltip that says so is
+                    // off by default, lab-gated and `hidden md:`, and the
+                    // changelog is not on the page at all — so a player who
+                    // sets the scope from the Market popover on a phone has
+                    // nowhere to read it, and a correct feature reads as a
+                    // broken one. Not `hidden md:`: this is the half of the
+                    // strip a phone needs most.
+                    //
+                    // Inside the `Show`, so it is not merely `None` with the
+                    // lab off — the children closure never runs and no `<!>`
+                    // marker exists to move (Global Constraint 2).
+                    {move || {
+                        sell_scope_note
+                            .get()
+                            .map(|note| {
+                                view! {
+                                    <p class="text-xs text-[color:var(--color-text-muted)] max-w-prose">
+                                        {note}
+                                    </p>
+                                }
+                            })
+                    }}
                 </Show>
 
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
@@ -5653,6 +5779,85 @@ mod test {
             production_squeezed()
                 .contains("set_sell_scope(parsed.filter(|s|*s!=SellScope::default()));"),
             "the sell-scope setter strips the sell side's default, not the buy side's"
+        );
+        // Counted in `active_filters` means "drawn as a chip": that memo's
+        // own comment says so, `is_empty` drives the "no filters" hint off
+        // it, and `Clear all` resets it. Without a chip the sell scope was
+        // the one entry that suppressed the hint while offering nothing to
+        // remove, and `Clear all` dropped it with no trace of what it had
+        // dropped.
+        //
+        // One needle, from the `match` down to the label key, because it
+        // has three separate jobs. It pins that the chip EXISTS; that it
+        // shares the buy chip's child rather than adding a second one (a
+        // sibling `{move || …}` resolving to `None` still writes a `<!>`
+        // hydration marker, on every flag-off page — Global Constraint 2,
+        // and the same rule the amber banner follows); and that the two
+        // chips did not swap labels, which two whole-file existence checks
+        // would have missed exactly as they did for the two arias.
+        assert!(
+            production_squeezed().contains(
+                "matchsell_scope{None=>buy.into_any(),Some(current)=>view!{{buy}\
+                 <FilterChiplabel=t_string!(i18n,recipe_analyzer_sell_scope_label)"
+            ),
+            "the sell-scope chip renders beside the buy one, inside ONE child"
+        );
+        assert!(
+            production_squeezed().contains("options=sell_scope_options(i18n)"),
+            "…offering the same three tokens the strip's select does"
+        );
+        // The buy chip keeps its own label: the popover fallback and the
+        // chip. A swap would satisfy both needles above.
+        assert_eq!(
+            production_source()
+                .matches("recipe_analyzer_buy_from_label")
+                .count(),
+            2
+        );
+        assert_eq!(
+            production_source()
+                .matches("recipe_analyzer_sell_scope_label")
+                .count(),
+            1
+        );
+    }
+
+    /// Picking a wider scope lowers every profit number and drops rows out
+    /// of the count — correct (a market that contains your world can only
+    /// undercut it), and explained nowhere a player looks: the column
+    /// tooltip that says it is off by default, lab-gated and `hidden md:`,
+    /// and the changelog is not on the page. So the page says it itself.
+    ///
+    /// Flag-off inertness is STRUCTURAL, not a `None`: the line lives
+    /// inside `<Show when=preview>`, whose children closure never runs with
+    /// the lab off, so there is no `<!>` marker to move. The slice below is
+    /// what pins that — an existence check would pass with the line
+    /// rendered anywhere on the page.
+    #[test]
+    fn the_wider_scope_says_what_it_does_to_the_numbers() {
+        let squeezed = production_squeezed();
+        assert!(
+            squeezed.contains(
+                "letsell_scope_note=Signal::derive(move||{sell_scope_for(preview.get(),\
+                 sell_scope()).filter(|s|s.scope()!=Scope::World)"
+            ),
+            "the note is gated on the lab AND on the scope really being wider"
+        );
+        assert!(
+            squeezed.contains("recipe_analyzer_sell_scope_note,place=revenue_place.get()"),
+            "…and names the market the price was read across, not the sell world"
+        );
+        // Inside the lab `Show`, between the inline strip and its close.
+        let strip = squeezed
+            .find("<FormulaStripterms=strip_terms()layout=StripLayout::Inline/>")
+            .expect("the inline strip");
+        let close = squeezed[strip..]
+            .find("</Show>")
+            .expect("the strip's Show closes");
+        assert!(
+            squeezed[strip..strip + close].contains("sell_scope_note.get()"),
+            "the note renders under the strip and inside the lab gate, so it \
+             cannot exist at all with the toggle off"
         );
     }
 
@@ -8177,7 +8382,7 @@ mod test {
         owner.with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
             let i18n = use_i18n();
-            let daily = market_extra(i18n, ColumnKind::SalesPerDay7, "Gilgamesh").unwrap();
+            let daily = market_extra(i18n, ColumnKind::SalesPerDay7, "Gilgamesh", None).unwrap();
             let line2 = daily.line2.clone().expect("a second line");
             assert_eq!(line2.sub_label, "7d · Gilgamesh");
             assert!(line2.pill.is_none(), "no formula input to write");
@@ -8188,11 +8393,11 @@ mod test {
                 ColumnKind::Trend,
                 ColumnKind::DriftSpark,
             ] {
-                let e = market_extra(i18n, kind, "Gilgamesh").unwrap();
+                let e = market_extra(i18n, kind, "Gilgamesh", None).unwrap();
                 assert_eq!(e.line2.expect("a second line").sub_label, "7d · Gilgamesh");
             }
             assert_eq!(
-                market_extra(i18n, ColumnKind::Confidence, "Gilgamesh")
+                market_extra(i18n, ColumnKind::Confidence, "Gilgamesh", None)
                     .unwrap()
                     .header_class,
                 Some(HEAD_28_MD_2)
@@ -8206,7 +8411,9 @@ mod test {
                 (ColumnKind::DriftSpark, COL_DRIFT),
             ] {
                 assert_eq!(
-                    market_extra(i18n, kind, "Gilgamesh").unwrap().header_class,
+                    market_extra(i18n, kind, "Gilgamesh", None)
+                        .unwrap()
+                        .header_class,
                     None,
                     "{id}: the column's own class stacks the lines"
                 );
@@ -8226,14 +8433,54 @@ mod test {
                 ColumnKind::VolumeUnits30,
                 ColumnKind::Vwap30,
             ] {
-                let e = market_extra(i18n, kind, "Gilgamesh").unwrap();
+                let e = market_extra(i18n, kind, "Gilgamesh", None).unwrap();
                 assert!(e.line2.is_none(), "{kind:?}: the label carries the window");
                 assert_eq!(e.header_class, None, "{kind:?}: classes do not move");
                 assert!(!e.title.is_empty());
             }
             // Phase D's kinds keep their own extras; a plain column has none.
-            assert!(market_extra(i18n, ColumnKind::HopGain, "Gilgamesh").is_none());
-            assert!(market_extra(i18n, ColumnKind::Item, "Gilgamesh").is_none());
+            assert!(market_extra(i18n, ColumnKind::HopGain, "Gilgamesh", None).is_none());
+            assert!(market_extra(i18n, ColumnKind::Item, "Gilgamesh", None).is_none());
+
+            // A wider sell scope moves exactly ONE tooltip, and only its
+            // title: Profit/day is `profit × daily_sales`, a scope-wide
+            // revenue times a sell-world velocity, so it is the one market
+            // column whose number is not one market's. The two-key shape
+            // (`…_scoped`) is what keeps the default page's tooltip byte
+            // for byte where it was.
+            let scoped = market_extra(i18n, ColumnKind::ProfitPerDay, "Gilgamesh", Some("Aether"))
+                .expect("a market extra");
+            let plain =
+                market_extra(i18n, ColumnKind::ProfitPerDay, "Gilgamesh", None).expect("ditto");
+            assert!(
+                scoped.title.contains("Aether"),
+                "the scoped Profit/day tooltip names the market the profit \
+                 was read across ({})",
+                scoped.title
+            );
+            assert_ne!(scoped.title, plain.title);
+            assert_eq!(scoped.line2, plain.line2, "no second line either way");
+            assert_eq!(scoped.header_class, plain.header_class);
+            // …and nothing else moves. A scoped arm keyed on the wrong kind
+            // — or on none, applying to all of them — dies here.
+            for kind in [
+                ColumnKind::SalesPerDay7,
+                ColumnKind::Confidence,
+                ColumnKind::Trend,
+                ColumnKind::DriftSpark,
+                ColumnKind::VolumeUnits30,
+                ColumnKind::Vwap30,
+            ] {
+                assert_eq!(
+                    market_extra(i18n, kind, "Gilgamesh", Some("Aether"))
+                        .expect("a market extra")
+                        .title,
+                    market_extra(i18n, kind, "Gilgamesh", None)
+                        .expect("a market extra")
+                        .title,
+                    "{kind:?}: reads one market and must not name a second"
+                );
+            }
         });
     }
 
@@ -8256,8 +8503,8 @@ mod test {
                 ColumnKind::Trend,
                 ColumnKind::DriftSpark,
             ] {
-                let one = market_extra(i18n, kind, "Gilgamesh").expect("a market extra");
-                let two = market_extra(i18n, kind, "Aether").expect("a market extra");
+                let one = market_extra(i18n, kind, "Gilgamesh", None).expect("a market extra");
+                let two = market_extra(i18n, kind, "Aether", None).expect("a market extra");
                 let (l1, l2) = (
                     one.line2.expect("a second line").sub_label,
                     two.line2.expect("a second line").sub_label,
@@ -8284,8 +8531,11 @@ mod test {
         let production = production_source();
         let squeezed = production_squeezed();
         assert!(
-            squeezed.contains(&format!("{}(i18n,kind,&{})", "market_extra", "sell_now")),
-            "market_extra takes the sell WORLD's name"
+            squeezed.contains(&format!(
+                "{}(i18n,kind,&{},scoped_now.as_deref())",
+                "market_extra", "sell_now"
+            )),
+            "market_extra takes the sell WORLD in the place slot, the sell PLACE beside it"
         );
         assert!(
             production.contains(&format!("let {} = {}.get();", "sell_now", "sell_place")),
@@ -8436,7 +8686,7 @@ mod test {
         owner.with(|| {
             provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
             assert!(
-                market_extra(use_i18n(), ColumnKind::ScopeVsHome, "Aether").is_none(),
+                market_extra(use_i18n(), ColumnKind::ScopeVsHome, "Aether", None).is_none(),
                 "if this ever returns Some, delete the arm instead of keeping both"
             );
         });
@@ -8688,6 +8938,7 @@ mod test {
                 revenue: PriceSignal::ListingMin,
                 cost: PriceSignal::ListingMin,
                 capped: BTreeSet::new(),
+                sell_scope_is_world: true,
             };
             let ids: Vec<&str> = grouped_picker_options(&RECIPE_COLUMNS, i18n, &ctx)
                 .iter()
@@ -8707,6 +8958,17 @@ mod test {
     /// what the kit says they hold.
     #[test]
     fn the_grouped_picker_lists_market_and_location() {
+        // The hint below is a pure function of this field, so the field has
+        // to be a pure function of the page's scope: hard-coding it either
+        // way hints every page or none, and no unit test can render the
+        // picker's own `Signal::derive` to notice.
+        assert!(
+            production_squeezed().contains(
+                "sell_scope_is_world:sell_scope.map(SellScope::scope)\
+                 .unwrap_or(Scope::World)==Scope::World,"
+            ),
+            "the picker's hint follows the table's own sell-scope prop"
+        );
         let _ = any_spawner::Executor::init_futures_executor();
         let owner = Owner::new();
         owner.with(|| {
@@ -8718,6 +8980,7 @@ mod test {
                 revenue: PriceSignal::ListingMin,
                 cost: PriceSignal::ListingMin,
                 capped: BTreeSet::new(),
+                sell_scope_is_world: true,
             };
             let got = grouped_picker_options(&RECIPE_COLUMNS, i18n, &ctx);
             let mut headings: Vec<String> = got
@@ -8763,6 +9026,53 @@ mod test {
                  column still lists third in Travel"
             );
             assert_eq!(ids_in("Location"), ["listing-world", "listing-dc"]);
+
+            // Ticking Scope vs home at the default sell scope renders a
+            // column of dashes, and the picker is the only place that can
+            // say so BEFORE the click. Hinted, never disabled: it is a
+            // perfectly working toggle, and the capped cost columns are
+            // the ones that lock.
+            let hinted = got
+                .iter()
+                .find(|o| o.id == COL_SCOPE_VS_HOME)
+                .expect("catalogued");
+            assert_eq!(
+                hinted.hint.as_deref(),
+                Some(t_string!(i18n, analyzer_picker_scope_vs_home_hint)),
+                "the entry says what the column needs before it is ticked"
+            );
+            assert!(
+                !hinted.disabled,
+                "a hint is not a lock — widening the scope and ticking the \
+                 column are two independent actions and either can go first"
+            );
+            // …and it is gone once the scope IS wider, which is the whole
+            // claim. A hint keyed on the column alone would survive this.
+            let wider = grouped_picker_options(
+                &RECIPE_COLUMNS,
+                i18n,
+                &PickerContext {
+                    sell_scope_is_world: false,
+                    ..ctx
+                },
+            );
+            assert_eq!(
+                wider
+                    .iter()
+                    .find(|o| o.id == COL_SCOPE_VS_HOME)
+                    .expect("catalogued")
+                    .hint,
+                None
+            );
+            // No other entry moved with the scope: the hint belongs to one
+            // column, and `capped` is what greys the cost ones.
+            for (a, b) in got.iter().zip(wider.iter()) {
+                assert_eq!(a.id, b.id);
+                if a.id != COL_SCOPE_VS_HOME {
+                    assert_eq!(a.hint, b.hint, "{}", a.id);
+                    assert_eq!(a.disabled, b.disabled, "{}", a.id);
+                }
+            }
         });
     }
 
@@ -9589,11 +9899,29 @@ mod test {
         // Squeezed, per `production_squeezed()`'s doc: both are three-argument
         // calls rustfmt breaks onto one line per argument, so `…_source(`
         // and `sell_scope_value` never share a source line.
+        //
+        // The needle runs to the CLOSING paren, not to the first argument.
+        // `revenue_listings_source` and `revenue_stats_source` are
+        // byte-identical delegations, so swapping the two call sites is a
+        // genuine no-op; the third argument is the only thing that tells
+        // them apart, and swapping THAT is a silent re-price — the scope's
+        // cheapest map dropped whenever the statistics half is absent, and
+        // used whenever it is present. A needle that stopped at
+        // `(sell_scope_value,` could not see it.
         let squeezed = production_squeezed();
         assert!(
-            squeezed.contains(&format!("{}(sell_scope_value,", "revenue_listings_source"))
-                && squeezed.contains(&format!("{}(sell_scope_value,", "revenue_stats_source")),
-            "the table must resolve through both helpers, not an inline match"
+            squeezed.contains(&format!(
+                "{}(sell_scope_value,sell_scope_is_buy_scope,{}.is_some(),)",
+                "revenue_listings_source", "scope_prices"
+            )),
+            "the cheapest map's `have_body` must be the cheapest map's own"
+        );
+        assert!(
+            squeezed.contains(&format!(
+                "{}(sell_scope_value,sell_scope_is_buy_scope,{}.is_some(),)",
+                "revenue_stats_source", "scope_stats_index"
+            )),
+            "…and the statistics index's must be the statistics index's own"
         );
         // …and the four arms each reach the value they name. The rule above
         // is a pure function with a truth table; the arm -> value mapping

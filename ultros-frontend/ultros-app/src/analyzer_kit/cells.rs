@@ -101,8 +101,10 @@ pub enum CellValue {
     /// listing). `pct: None` renders the value uncoloured, which is what
     /// the one-sided listing case wants: the sign is the whole message and
     /// a permanent red stripe teaches readers to ignore the colour.
-    /// `unavailable` titles the dash with the reason, the way
-    /// [`CellValue::LazyPct`]'s empty state does.
+    /// A dash is always titled with its reason, the way
+    /// [`CellValue::LazyPct`]'s empty state does; `unavailable` chooses
+    /// which of the two reasons, since "one market has no figure" and "the
+    /// two markets are the same market" are different questions.
     SignedGil {
         delta: Option<i32>,
         pct: Option<f32>,
@@ -461,21 +463,30 @@ pub fn render_cell(
             } else {
                 signed_delta_class(None, DELTA_DEAD_BAND_PCT)
             };
-            // Only the "could have had a figure and did not" dash is
-            // titled. The "sell scope is your sell world" dash is the whole
-            // column at once and the header tooltip is what explains it; a
-            // per-cell reason there would be a second wrong answer.
+            // Both dashes are titled, and with different reasons, because
+            // the two causes are different questions.
             //
-            // And the reason is its own key, not the drift column's
-            // `analyzer_drift_unavailable` ("Not enough sales"): this dash
-            // is raised whenever *either* market has no figure for the
-            // revenue signal, and under the default `listing-min` signal
-            // that means "no listing on one side", not a thin sales
-            // window. A title is only worth having if it is true under
-            // every signal — the same argument that leaves the `Off` dash
-            // untitled.
-            let title = unavailable
-                .then(|| t_string!(i18n, analyzer_scope_vs_home_unavailable).to_string());
+            // The "could have had a figure and did not" reason is its own
+            // key, not the drift column's `analyzer_drift_unavailable`
+            // ("Not enough sales"): this dash is raised whenever *either*
+            // market has no figure for the revenue signal, and under the
+            // default `listing-min` signal that means "no listing on one
+            // side", not a thin sales window.
+            //
+            // The other dash — the whole column at once — used to carry no
+            // title on the argument that a per-cell reason would be a
+            // second wrong answer. It is not: by the time this cell exists
+            // the column has been asked for, so the only remaining cause is
+            // that the sell scope IS the sell world, and saying so is the
+            // cheapest way to answer "why is this column empty?" without
+            // opening a header tooltip that is `hidden md:`.
+            let title = (!has).then(|| {
+                if unavailable {
+                    t_string!(i18n, analyzer_scope_vs_home_unavailable).to_string()
+                } else {
+                    t_string!(i18n, analyzer_scope_vs_home_off).to_string()
+                }
+            });
             // One shape (the `GilOrDash` rule): the icon hides and the value
             // mutes by class; the arms never swap elements.
             view! {
@@ -978,31 +989,46 @@ mod tests {
                 "a dropped percentage leaves the sub-line EMPTY: {one_sided}"
             );
             assert!(off.contains("—"), "{off}");
+            // BOTH dashes are titled, and with DIFFERENT reasons. By the
+            // time a cell exists the column has been asked for, so `Off`
+            // has exactly one remaining cause — the sell scope is the sell
+            // world — and saying it is the only answer a phone gets: the
+            // header tooltip that would otherwise explain the empty column
+            // is `hidden md:`.
             assert!(
-                !off.contains("title="),
-                "the Off dash carries no title: {off}"
+                off.contains(&*t_string!(i18n, analyzer_scope_vs_home_off)),
+                "the Off dash names the sell scope: {off}"
             );
             assert!(
-                missing.contains("title="),
+                missing.contains(&*t_string!(i18n, analyzer_scope_vs_home_unavailable)),
                 "the Unavailable dash is titled: {missing}"
             );
+            // One title each way. A single shared key, or an arm that
+            // titles `Off` with the Unavailable reason, dies here.
+            assert!(
+                !off.contains(&*t_string!(i18n, analyzer_scope_vs_home_unavailable))
+                    && !missing.contains(&*t_string!(i18n, analyzer_scope_vs_home_off)),
+                "the two blank causes are different questions:\n{off}\n{missing}"
+            );
+            // A cell that HAS a figure explains nothing — a title over a
+            // number is noise, and the `has` gate is what keeps it off.
+            for html in [&down, &up, &one_sided] {
+                assert!(
+                    !html.contains("title="),
+                    "a priced cell has no title: {html}"
+                );
+            }
             // …and titled with a reason that holds under EVERY revenue
             // signal. `analyzer_drift_unavailable` ("Not enough sales") is
             // the drift column's, and it is false under the default
             // `listing-min`, where this dash means "one of the two markets
             // has no listing". A wrong-but-confident label is worse than
-            // none, which is why the `Off` dash has none at all.
+            // none — which is why this dash gets a key of its own and the
+            // `Off` dash gets a second one rather than borrowing either.
             assert!(
                 !missing.contains(t_string!(i18n, analyzer_drift_unavailable)),
                 "the Unavailable title must not name a cause only three of \
                  the four revenue signals have: {missing}"
-            );
-            // Banning the wrong key is not the same as requiring the right
-            // one: without this, a swap to some third key passes both
-            // assertions above — the `title=` check only catches deletion.
-            assert!(
-                missing.contains(&*t_string!(i18n, analyzer_scope_vs_home_unavailable)),
-                "the Unavailable dash must carry its own reason: {missing}"
             );
             for html in [&down, &up, &one_sided, &off, &missing] {
                 assert_eq!(count(html, "<div"), count(&down, "<div"), "{down}\n{html}");
