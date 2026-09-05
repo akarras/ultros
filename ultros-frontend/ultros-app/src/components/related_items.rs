@@ -559,7 +559,7 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 Some(view! {
                     <a
                         href=format!("https://garlandtools.org/db/#npc/{}", resident.key_id.0)
-                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:bg-[color:var(--color-base)]/50 hover:shadow-md border border-brand-700/30"
+                        class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:bg-[color:var(--color-base)]/50 hover:shadow-md border border-brand-700/30"
                     >
                         <div class="flex items-center justify-between gap-2 border-b border-[color:var(--color-outline)] pb-2">
                             <div class="font-medium text-[color:var(--color-text)]">{resident.singular.as_str()}</div>
@@ -575,13 +575,14 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div id="vendor-sources" class:hidden=empty class="scroll-mt-20 min-w-0">
+        <div id="vendor-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || npcs.with(Vec::len)>
             <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
                 <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                     <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
                     {t!(i18n, related_vendor_sources_title)}
+                    <span class="item-detail-count">{move || npcs.with(Vec::len)}</span>
                 </h3>
-                <div class="grid grid-cols-1 gap-3">{data}</div>
+                <div class="item-detail-entries">{data}</div>
             </div>
         </div>
     }
@@ -701,6 +702,14 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
         let item_id = item_id();
         exchange_shops_for_item(&data.special_shops, item_id)
     });
+    let trade_count = Memo::new(move |_| {
+        exchanges.with(|shops| {
+            shops
+                .iter()
+                .map(|shop| get_trade_costs(shop, item_id()).len())
+                .sum::<usize>()
+        })
+    });
 
     let view = move || {
         exchanges
@@ -738,16 +747,17 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             })
     };
 
-    let empty = move || exchanges.with(|e| e.is_empty());
+    let empty = move || trade_count.get() == 0;
 
     view! {
-        <div id="exchange-sources" class:hidden=empty class="scroll-mt-20 min-w-0">
+        <div id="exchange-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || trade_count.get()>
             <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
                 <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                     <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
                     {t!(i18n, related_exchange_sources_title)}
+                    <span class="item-detail-count">{move || trade_count.get()}</span>
                 </h3>
-                <div class="grid grid-cols-1 gap-3">
+                <div class="item-detail-entries">
                     {view}
                 </div>
             </div>
@@ -1079,7 +1089,7 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 .map(|leve| {
                     let job_name = data.class_job_categorys.get(&xiv_gen::ClassJobCategoryId(leve.class_job_category)).map(|c| c.name.as_str()).unwrap_or("Unknown");
                     view! {
-                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all h-full hover:shadow-md border border-[color:var(--color-outline)] hover:border-brand-300/60">
+                        <div class="group flex flex-col gap-2 rounded-lg card p-3 transition-all hover:shadow-md border border-[color:var(--color-outline)] hover:border-brand-300/60">
                              <div class="text-sm font-medium border-b border-[color:var(--color-outline)] pb-2 text-brand-100">{leve.name.as_str()}</div>
                              <div class="flex items-center gap-2 mt-1">
                                 <span class="px-2 py-1 rounded border border-brand-400/40 text-xs text-brand-200 font-bold">
@@ -1100,13 +1110,14 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || leves.with(|l| l.is_empty());
 
     view! {
-        <div id="leve-sources" class:hidden=empty class="scroll-mt-20 min-w-0">
+        <div id="leve-sources" class:hidden=empty class="item-detail-section scroll-mt-20 min-w-0" data-entry-count=move || leves.with(Vec::len)>
             <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
                 <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
                     <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
                     {t!(i18n, related_levequest_rewards_title)}
+                    <span class="item-detail-count">{move || leves.with(Vec::len)}</span>
                 </h3>
-                <div class="grid grid-cols-1 gap-3">{view}</div>
+                <div class="item-detail-entries">{view}</div>
             </div>
         </div>
     }
@@ -1190,12 +1201,30 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 
     let (show_more, set_show_more) = signal(false);
     let has_more = move || related_items_data.with(|items| items.len() > 12);
+    let source_counts = Memo::new(move |_| item_source_counts(item_id()));
+    let source_entries = move || {
+        let counts = source_counts.get();
+        counts.vendor + counts.exchange + counts.levequest
+    };
+    let visible_recipes = Memo::new(move |_| {
+        let mut recipes = recipes.get();
+        // Every acquisition recipe counted in the shortcut must be visible.
+        let acquisition_count = recipes
+            .iter()
+            .take_while(|r| r.item_result == item_id())
+            .count();
+        recipes.truncate(5.max(acquisition_count));
+        recipes
+    });
 
     view! {
-        <div class="flex flex-col gap-6">
-            <div class="panel p-4 sm:p-6" class:hidden=move || related_items_data.with(|i| i.is_empty())>
-                <h2 class="text-xl font-bold text-brand-200 mb-4 px-1">{t!(i18n, related_items_heading)}</h2>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        <div class="item-details-layout">
+            <div class="item-detail-section panel p-4 sm:p-6" data-entry-count=move || related_items_data.with(Vec::len) class:hidden=move || related_items_data.with(|i| i.is_empty())>
+                <h2 class="text-lg font-bold text-brand-200 mb-4 flex flex-wrap items-center gap-2">
+                    {t!(i18n, related_items_heading)}
+                    <span class="item-detail-count">{move || related_items_data.with(Vec::len)}</span>
+                </h2>
+                <div class="item-detail-entries">
                     {item_set}
                     {move || {
                         show_more().then(|| {
@@ -1244,35 +1273,35 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             // The inner #vendor-sources / #exchange-sources / #leve-sources ids
             // stay — SectionNav's source shortcuts link to them directly.
             // This wrapper id is the jump-nav's coarser "Sources" destination.
-            <div id="sources" class="scroll-mt-16 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 empty:hidden">
+            <div id="sources" class="item-source-group scroll-mt-16" data-entry-count=source_entries
+                data-section-count=move || {
+                    let counts = source_counts.get();
+                    [counts.vendor, counts.exchange, counts.levequest].into_iter().filter(|count| *count > 0).count()
+                }
+                class:hidden=move || source_entries() == 0
+            >
                 <VendorItems item_id />
                 <ExchangeSources item_id />
                 <LeveSources item_id />
             </div>
 
-            // max-w on the panel, not the inner grid: capping only the grid
-            // left the full-width panel with a large empty region to its right.
             <div
                 id="crafting-recipes"
-                class="scroll-mt-20 panel p-4 sm:p-6 max-w-6xl"
+                class="item-recipe-section item-detail-section scroll-mt-20 panel p-4 sm:p-6"
+                data-entry-count=move || visible_recipes.with(Vec::len)
                 class:hidden=move || recipes.with(|recipes| recipes.is_empty())
             >
                 <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
-                    <h2 class="text-xl font-bold text-brand-200 px-1">{t!(i18n, related_items_crafting_recipes_heading)}</h2>
+                    <h2 class="text-lg font-bold text-brand-200 flex flex-wrap items-center gap-2">
+                        {t!(i18n, related_items_crafting_recipes_heading)}
+                        <span class="item-detail-count">{move || visible_recipes.with(Vec::len)}</span>
+                    </h2>
                     <CraftOptionsToggleRow />
                 </div>
                 <ActiveListBanner />
-                // auto-fit so a lone recipe spans the panel instead of
-                // occupying one of two fixed columns; two or more still split.
-                <div class="grid grid-cols-[repeat(auto-fit,minmax(min(30rem,100%),1fr))] gap-4">
+                <div class="item-detail-entries item-recipe-entries">
                     <For
-                        each=Signal::derive(move || {
-                            let mut r = recipes();
-                            // Every acquisition recipe counted in the shortcut must be visible.
-                            let acquisition_count = r.iter().take_while(|r| r.item_result == item_id()).count();
-                            r.truncate(5.max(acquisition_count));
-                            r
-                        })
+                        each=move || visible_recipes.get()
                         key=|recipe| recipe.key_id
                         children=move |recipe: &'static Recipe| {
                             view! { <Recipe recipe item_id=ItemId(item_id()) /> }
