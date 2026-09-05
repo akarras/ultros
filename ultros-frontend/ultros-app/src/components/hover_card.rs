@@ -1,3 +1,4 @@
+use crate::components::dismissable::use_dismiss_on_navigate;
 use cfg_if::cfg_if;
 use leptos::children::ViewFn;
 use leptos::leptos_dom::helpers::{TimeoutHandle, set_timeout_with_handle};
@@ -133,6 +134,25 @@ where
             pending.set_value(handle);
         }
     };
+
+    // A navigation must never strand the overlay. `mouseleave` is the only
+    // thing that closes a hover-opened card, and it does not fire when the
+    // route change leaves the anchor in place (the item page keeps its hero
+    // `HoverCard` across `/item/:world/:id` → `/item/:world/:other`) or when
+    // it removes the anchor from under a cursor that never moved. Either way
+    // the portal outlives the page it belonged to (#1283).
+    use_dismiss_on_navigate(move || {
+        clear_pending();
+        // Guarded: `set` notifies whether or not the value changed, and a
+        // page of item rows carries hundreds of closed cards whose overlay
+        // closures would all re-run on every navigation for nothing.
+        if hover_open.get_untracked() {
+            set_hover_open.set(false);
+        }
+        if is_focused.get_untracked() {
+            set_is_focused.set(false);
+        }
+    });
 
     let is_open = Signal::derive(move || !disabled.get() && (hover_open.get() || is_focused.get()));
     // Suppress unused warnings on the server build, where the overlay closure

@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use thousands::Separable;
 
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 
 #[cfg(feature = "hydrate")]
 fn spawn_gil_party(mut x: f64, mut y: f64) {
@@ -78,7 +79,10 @@ fn spawn_gil_party(mut x: f64, mut y: f64) {
 
 #[component]
 pub fn GilIcon() -> impl IntoView {
-    let i18n = use_i18n();
+    // Reached from the item page's suspended tables, so this can render under
+    // the empty owner `ScopedFuture` substitutes for a disposed one. See
+    // `crate::i18n_fallback`.
+    let i18n = use_i18n_or_default();
     view! {
         <button
             type="button"

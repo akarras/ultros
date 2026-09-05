@@ -1,4 +1,4 @@
-//! Shared dismissal wiring for toggle-button popovers.
+//! Shared dismissal wiring for popovers and hover overlays.
 //!
 //! Extracted from the item explorer's `GroupedNavPopover`, which was the
 //! reference implementation of the idiom: a popover closes on route change,
@@ -10,6 +10,11 @@
 //! (`GroupedNavAccordion`), which needs none of this — it is not an overlay,
 //! so there is nothing to tap away from. The helper lives on for the seven
 //! call sites that are still overlays.
+//!
+//! [`use_dismiss_on_navigate`] is the route-change half on its own, for
+//! overlays that are not toggle buttons at all: the hover cards and sparkline
+//! tooltips, which have their own open/close wiring but share the rule that a
+//! navigation must never leave an overlay behind (#1283).
 //!
 //! ## Why outside-click is not enough on its own
 //!
@@ -28,9 +33,38 @@
 
 use std::sync::Arc;
 
+use crate::components::app_link::use_location_or_default;
 use leptos::html::Div;
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
+
+/// Close on route change, and nothing else.
+///
+/// Split out of [`use_dismissable`] so an overlay that owns the rest of its
+/// wiring can still share the one dismissal rule that has nothing to do with
+/// pointers. `HoverCard` is that caller: it opens on hover and closes on
+/// `mouseleave`, so it has no container to click outside of, and a navigation
+/// that leaves the anchor in place — or removes it from under a motionless
+/// cursor — fires no `mouseleave` at all. The overlay then stays on screen,
+/// anchored to nothing the user can hover away from (#1283).
+///
+/// Only the pathname is tracked, deliberately. The query string is where
+/// `ControlBar` and `ChartToolbar` popovers write the filters they exist to
+/// edit; closing them the moment a user picks one would be a worse bug than
+/// the one this fixes.
+///
+/// Reads the location through [`use_location_or_default`] rather than
+/// `use_location()`: this runs under every overlay in the app, including ones
+/// rendered inside a suspended SSR fragment whose owner can be disposed before
+/// it resolves, and `use_location()` is an `expect` in exactly that case (see
+/// `components::app_link`). A missing router yields a pathname that never
+/// changes, so the effect runs once and then never again.
+pub fn use_dismiss_on_navigate(dismiss: impl Fn() + Send + Sync + 'static) {
+    let pathname = use_location_or_default().pathname;
+    Effect::new(move |_| {
+        pathname.track();
+        dismiss();
+    });
+}
 
 /// A member's closer: shared because [`PopoverGroup::close_others`] clones
 /// the ones it is about to run out of the collection first.
@@ -142,15 +176,7 @@ pub fn use_dismissable(
 ) -> PopoverToken {
     // Close after navigation — link clicks change the route, not the
     // popover's own state.
-    let location = use_location();
-    let pathname = location.pathname;
-    {
-        let dismiss = dismiss.clone();
-        Effect::new(move |_| {
-            pathname.track();
-            dismiss();
-        });
-    }
+    use_dismiss_on_navigate(dismiss.clone());
 
     #[cfg(feature = "hydrate")]
     {
