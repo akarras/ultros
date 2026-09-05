@@ -1,5 +1,100 @@
 @import "tailwindcss" source("../ultros-frontend/ultros-app/src");
 
+/* Item reference sections share rows without stretching sparse wells. Keep
+   the Sources wrapper in flow so its fragment link remains a scroll target. */
+.item-details-layout,
+.item-source-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1.5rem;
+    min-width: 0;
+}
+
+.item-detail-section,
+.item-source-group {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* These classes supply display outside Tailwind's layers, so explicitly keep
+   reactive empty sections out of layout, including the Sources wrapper. */
+.item-details-layout > .hidden,
+.item-source-group > .hidden {
+    display: none;
+}
+
+.item-detail-entries {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+    align-items: start;
+    gap: 0.75rem;
+}
+
+.item-recipe-entries {
+    grid-template-columns: repeat(auto-fit, minmax(min(30rem, 100%), 1fr));
+    gap: 1rem;
+}
+
+.item-detail-count {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.item-detail-section h3 {
+    flex-wrap: wrap;
+}
+
+/* A lone entry uses the panel's surface and padding. Interactive entries keep
+   their link and keyboard focus behavior without a second permanent box. */
+.item-detail-section[data-entry-count="1"] .item-detail-entries > :only-child {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+}
+
+@media (min-width: 40rem) {
+    .item-detail-section,
+    .item-source-group {
+        flex: 2 1 44rem;
+    }
+
+    .item-detail-section[data-entry-count="1"],
+    .item-source-group[data-entry-count="1"] {
+        flex: 1 1 22rem;
+        max-width: 26rem;
+    }
+
+    .item-source-group[data-section-count="1"]:not([data-entry-count="1"]) {
+        flex-basis: 32rem;
+        max-width: 46rem;
+    }
+
+    .item-source-group > .item-detail-section:not([data-entry-count="1"]) {
+        flex-basis: 32rem;
+    }
+
+    /* Several populated source lists need the whole row; otherwise their
+       shared wrapper would stack them beside a short Related section. */
+    .item-source-group:not([data-section-count="1"]):has(> .item-detail-section:not(.hidden):not([data-entry-count="1"])) {
+        flex-basis: 100%;
+    }
+
+    .item-recipe-section[data-entry-count="1"] {
+        flex: 1 1 38rem;
+        max-width: 40rem;
+    }
+
+    .item-recipe-section:not([data-entry-count="1"]) {
+        flex-basis: 100%;
+    }
+}
+
 /* Legacy CSS folded into Tailwind build so brand tokens are available */
 @layer base {
     /* Back-compat CSS variables that legacy selectors may reference */
