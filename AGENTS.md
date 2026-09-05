@@ -113,7 +113,14 @@ Set `GLITCHTIP_DSN` to a Glitchtip (or Sentry) DSN to ship panics + `error!` tra
 
 Set `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=true` to start the server without subscribing to the Universalis market feed. Intended for QA/staging deploys that share one database and aren't exercising live market data: the websocket spawns a database write per inbound event, so turning it off drops the write churn several replicas otherwise pile onto that one Postgres.
 
-**It is not a fix for connection-pool exhaustion.** The pool is sized by `POSTGRES_MAX_CONNECTIONS` (`ultros-db/src/lib.rs`), and a replica with the ingest off still opens connections up to that ceiling serving ordinary page traffic. Budget the ceiling as `(server max_connections − headroom) / instances you run at once`; this flag only makes those instances quieter, it does not cap them.
+**It is not a fix for connection-pool exhaustion.** The pool is sized by `POSTGRES_MAX_CONNECTIONS` / `POSTGRES_MIN_CONNECTIONS` (`ultros-db/src/lib.rs`), and a replica with the ingest off still opens connections up to that ceiling serving ordinary page traffic. This flag only makes instances quieter, it does not cap them.
+
+### Running several instances against one Postgres
+
+Budget the ceiling as `(server max_connections − headroom) / instances you run at once` — a stock Postgres allows 200, and `superuser_reserved_connections` holds a few of those back. Both knobs matter:
+
+- `POSTGRES_MAX_CONNECTIONS` (default 50) is the ceiling.
+- `POSTGRES_MIN_CONNECTIONS` (default 10, clamped to the ceiling) is the floor the pool claims eagerly at startup and holds whether or not it's used. `Migrator::up` needs headroom on top of it, so a ceiling of 15 against the default floor of 10 will not boot even with connections free on the box. Lower the floor when you're squeezing in extra instances.
 
 Accepts `1`/`true`/`yes`/`on` (case-insensitive) to disable; unset, empty, `0`/`false`/`no`/`off` keep the ingest running, which is what production does. Any other value is treated as "disable" and logs a warning.
 
