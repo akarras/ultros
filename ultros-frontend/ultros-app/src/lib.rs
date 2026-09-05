@@ -14,6 +14,8 @@ pub(crate) mod routes;
 pub(crate) mod sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;
+#[cfg(feature = "ssr")]
+pub mod ssr_api;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));

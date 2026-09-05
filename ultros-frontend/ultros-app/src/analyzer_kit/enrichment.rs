@@ -250,8 +250,7 @@ pub fn use_wide_viewport() -> Signal<bool> {
 /// Call it inside a component: it creates two `Effect::new`s, whose bodies
 /// never run under `leptos/ssr` (`Effect::new` only spawns when
 /// `reactive_graph/effects` is on — a runtime `cfg!`, so the bodies still
-/// compile on the server), which is what keeps `fetch` — a `post_api`
-/// caller whose SSR arm is `unreachable!` — client-only. Never
+/// compile on the server), which is what keeps `fetch` client-only. Never
 /// `new_isomorphic` / `new_sync` here, and never a `spawn_local` or
 /// `TimeoutFuture` outside an effect body.
 pub fn use_visible_enrichment<T, K, V, S, F, Fut>(

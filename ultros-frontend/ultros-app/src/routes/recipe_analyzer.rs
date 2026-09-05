@@ -801,8 +801,7 @@ fn spark_entry(s: SparklineSeries) -> (SparkKey, SparkValue) {
 /// The visible window's sparkline fetch. A world that has not resolved yet
 /// and a failed request both yield nothing; the hook settles every
 /// requested key either way, so a cell goes loading → "—" rather than
-/// shimmering forever. Only ever called from the hook's effect (`post_api`
-/// is `unreachable!` under SSR).
+/// shimmering forever. Only ever called from the hook's client-side effect.
 async fn fetch_recipe_sparklines(
     world: Option<String>,
     keys: Vec<SparkKey>,
