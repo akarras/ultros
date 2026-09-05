@@ -1764,6 +1764,8 @@
     "item_view_nav_history": "紀錄",
     "item_view_nav_sources": "獲取方式",
     "item_view_nav_related": "相關",
+    "item_view_nav_levequest": "理符",
+    "item_view_nav_vendorable": "商店購買",
     "item_view_listings_count": "{{count}} 筆在售",
     "item_view_filtered_listings_count": "{{visible}} / {{total}} 筆在售",
     "item_view_no_listings_match_exclusions": "沒有符合目前排除條件的在售物品。",

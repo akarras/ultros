@@ -1764,6 +1764,8 @@
     "item_view_nav_history": "Historique",
     "item_view_nav_sources": "Obtention",
     "item_view_nav_related": "Objets liés",
+    "item_view_nav_levequest": "Mandat",
+    "item_view_nav_vendorable": "Chez un PNJ",
     "item_view_listings_count": "{{count}} annonces",
     "item_view_filtered_listings_count": "{{visible}} annonces sur {{total}}",
     "item_view_no_listings_match_exclusions": "Aucune annonce ne correspond à vos exclusions.",

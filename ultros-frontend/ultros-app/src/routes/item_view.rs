@@ -756,37 +756,6 @@ fn MarketStatsPanel(
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let cheapest_prices = use_context::<CheapestPrices>();
-
-    // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
-    // after hydration. The chip lives inside an inner `<Suspense>` in
-    // `source_callout`'s recipe branch and reads the resource via `.with()` —
-    // which (same gotcha as #719) does NOT subscribe the wrapping Suspense, so
-    // SSR proceeds with whatever state the resource happens to be in. When SSR
-    // renders the text branch (`{t!(i18n, craftable)}` / `{t!(i18n,
-    // used_in_crafting)}`) but the client-side serialised resource resolves to
-    // `Some(prices)` with `min_cost > 0`, the first CSR render swaps in
-    // `view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }`
-    // — an `<span>` element where the SSR'd DOM has a bare text node. tachys'
-    // walker then hits `failed_to_cast_text_node` at
-    // `tachys-0.2.15/src/hydration.rs:227` (the post-debug-strip `unreachable!()`
-    // — see GlitchTip cluster on `/item/<world>/<id>`: issues 5270/5269/5268/
-    // 5267/5266/…/5234 etc. on releases 51d31a9 and db795c3, plus the
-    // long-running `RuntimeError: unreachable` mirrors 4 and 5147). The
-    // wasm-bindgen-futures executor then cascades into `RefCell already
-    // borrowed` from the same trace.
-    //
-    // Same idiom as #725 (chart), #719 (item-explorer), #712 (home),
-    // #730 (relative-time): an `Effect`-driven `hydrated` flag (effects run
-    // client-only, after first render) so SSR and the initial CSR hydration
-    // render both treat prices as unavailable. Both sides emit the text
-    // branches, shapes match, and a frame later the effect fires, the closure
-    // re-runs with the real price map, and the chip reactively swaps to the
-    // `<span>` form.
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
 
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
@@ -862,171 +831,6 @@ fn MarketStatsPanel(
                                 t!(i18n, not_enough_data).into_any()
                             };
 
-                            let source_callout = {
-                                let game_data = tracked_data();
-                                let cheapest_prices = cheapest_prices.clone();
-                                let item_id = item_id();
-                                let vendor_exists = is_vendor_item(item_id);
-                                let exchange_exists = game_data
-                                    .special_shops
-                                    .values()
-                                    .any(|shop| special_shop_has_item(shop, item_id));
-                                let leve_exists = game_data.leves.values().any(|leve| {
-                                    leve_rewards_item(
-                                        leve,
-                                        item_id,
-                                        &game_data.leve_reward_items,
-                                        &game_data.leve_reward_item_groups,
-                                    )
-                                });
-                                let recipe_exists =
-                                    recipe_tree_iter(ItemId(item_id)).next().is_some();
-
-                                if vendor_exists || exchange_exists || recipe_exists || leve_exists {
-                                    let (title, summary, icon, href, accent_class): (
-                                        String,
-                                        AnyView,
-                                        icondata::Icon,
-                                        &str,
-                                        &str,
-                                    ) = if vendor_exists {
-                                        let price = game_data
-                                            .items
-                                            .get(&ItemId(item_id))
-                                            .map(|item| {
-                                                if item.price_mid > 0 {
-                                                    item.price_mid
-                                                } else {
-                                                    item.price_low
-                                                }
-                                            })
-                                            .unwrap_or(0);
-                                        (
-                                            t_string!(i18n, vendor_available).to_string(),
-                                            view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
-                                            icondata::FaShopSolid,
-                                            "#vendor-sources",
-                                            "text-amber-300 border-amber-400/40",
-                                        )
-                                    } else if exchange_exists {
-                                        (
-                                            t_string!(i18n, exchange_available).to_string(),
-                                            view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
-                                            icondata::BsArrowLeftRight,
-                                            "#exchange-sources",
-                                            "text-purple-300 border-purple-400/40",
-                                        )
-                                    } else if recipe_exists {
-                                        let summary_view = view! {
-                                            <Suspense fallback=move || t_string!(i18n, craftable).to_string()>
-                                                {move || {
-                                                    if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
-                                                        // Skip the price-aware branch entirely during the
-                                                        // first (SSR-matching) render so SSR and CSR both
-                                                        // pick the same text-only branches below. The effect
-                                                        // above flips `hydrated` to true a frame later and
-                                                        // the closure re-runs with the real price map.
-                                                        if hydrated.get()
-                                                            && let Some(prices) = cheapest_prices.as_ref()
-                                                        {
-                                                            prices.read_listings.with(|prices| {
-                                                                let prices = prices.as_ref().and_then(|prices| prices.as_ref().ok());
-                                                                if let Some(prices) = prices {
-                                                                    let prices = prices.clone();
-                                                                    let empty = crate::components::crafting_cost::EmptyOnHand;
-                                                                    let recipes_by_output = std::collections::HashMap::new();
-                                                                    // Read the user's shard preference so the chip stays
-                                                                    // consistent with the cost line in the recipe panel.
-                                                                    let opts_value = use_context::<crate::global_state::cookies::Cookies>()
-                                                                        .map(|c| c.use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(crate::global_state::craft_options::COOKIE_NAME).0.get().unwrap_or_default())
-                                                                        .unwrap_or_default();
-                                                                    let shards_mode = if opts_value.exclude_shards {
-                                                                        crate::components::crafting_cost::ShardsMode::ExcludeShards
-                                                                    } else {
-                                                                        crate::components::crafting_cost::ShardsMode::IncludeMarket
-                                                                    };
-                                                                    let lq_opts = crate::components::crafting_cost::CraftingCostOptions {
-                                                                        require_hq: false,
-                                                                        max_subcraft_depth: 0,
-                                                                        shards: shards_mode,
-                                                                        on_hand: &empty,
-                                                                        vendor_prices: Some(crate::components::crafting_cost::vendor_price_map()),
-                                                                    };
-                                                                    let hq_opts = crate::components::crafting_cost::CraftingCostOptions {
-                                                                        require_hq: true,
-                                                                        max_subcraft_depth: 0,
-                                                                        shards: shards_mode,
-                                                                        on_hand: &empty,
-                                                                        vendor_prices: Some(crate::components::crafting_cost::vendor_price_map()),
-                                                                    };
-                                                                    let is_shard = crate::components::related_items::is_shard_item;
-                                                                    let lq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &lq_opts, &is_shard).cost;
-                                                                    let hq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &hq_opts, &is_shard).cost;
-                                                                    let min_cost = if lq > 0 { lq } else { hq };
-                                                                    if min_cost > 0 && recipe.item_result == item_id {
-                                                                        view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }.into_any()
-                                                                    } else if recipe.item_result == item_id {
-                                                                        t!(i18n, craftable).into_any()
-                                                                    } else {
-                                                                        t!(i18n, used_in_crafting).into_any()
-                                                                    }
-                                                                } else if recipe.item_result == item_id {
-                                                                    t!(i18n, craftable).into_any()
-                                                                } else {
-                                                                    t!(i18n, used_in_crafting).into_any()
-                                                                }
-                                                            })
-                                                        } else if recipe.item_result == item_id {
-                                                            t!(i18n, craftable).into_any()
-                                                        } else {
-                                                            t!(i18n, used_in_crafting).into_any()
-                                                        }
-                                                    } else {
-                                                        t!(i18n, craftable).into_any()
-                                                    }
-                                                }}
-                                            </Suspense>
-                                        }
-                                        .into_any();
-                                        (
-                                            t_string!(i18n, crafting_recipe).to_string(),
-                                            summary_view,
-                                            icondata::FaHammerSolid,
-                                            "#crafting-recipes",
-                                            "text-orange-300 border-orange-400/40",
-                                        )
-                                    } else {
-                                        (
-                                            t_string!(i18n, levequest_reward).to_string(),
-                                            view! { t!(i18n, obtainable_via_levequest) }.into_any(),
-                                            icondata::FaScrollSolid,
-                                            "#leve-sources",
-                                            "text-pink-300 border-pink-400/40",
-                                        )
-                                    };
-
-                                    Some(
-                                        view! {
-                                            // Inline chip, not a block card — the callout is a
-                                            // pointer to another section, not a stat of its own.
-                                            <a
-                                                href=href
-                                                class=format!(
-                                                    "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors hover:border-[color:var(--brand-ring)] {}",
-                                                    accent_class,
-                                                )
-                                            >
-                                                <Icon icon=icon attr:class="shrink-0" />
-                                                <span class="font-semibold">{title}</span>
-                                                <span class="text-[color:var(--color-text)]">{summary}</span>
-                                            </a>
-                                        }
-                                        .into_any(),
-                                    )
-                                } else {
-                                    None
-                                }
-                            };
 
                             view! {
                                 <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
@@ -1157,8 +961,7 @@ fn MarketStatsPanel(
                                         </a>
                                     </div>
 
-                                    <div class="mt-2 flex flex-wrap items-center gap-2">
-                                        {source_callout}
+                                    <div class="mt-2 flex flex-wrap items-center gap-2" class:hidden={move || listings_count > 0}>
                                         {if listings_count == 0 {
                                             view! {
                                                 <div role="status" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
@@ -2219,7 +2022,7 @@ fn ItemViewContent() -> impl IntoView {
 
             <WorldMenu world_name=world item_id />
 
-            <SectionNav>
+            <SectionNav item_id>
                 <span class="text-sm font-bold text-brand-200 whitespace-nowrap">
                     {move || Url::unescape(&world())}
                 </span>

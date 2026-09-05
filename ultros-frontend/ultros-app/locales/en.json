@@ -1764,6 +1764,8 @@
     "item_view_nav_history": "History",
     "item_view_nav_sources": "Sources",
     "item_view_nav_related": "Related",
+    "item_view_nav_levequest": "Levequest",
+    "item_view_nav_vendorable": "Vendorable",
     "item_view_listings_count": "{{count}} listings",
     "item_view_filtered_listings_count": "{{visible}} of {{total}} listings",
     "item_view_no_listings_match_exclusions": "No listings match your exclusions.",
