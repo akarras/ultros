@@ -1792,6 +1792,8 @@
     "item_view_nav_history": "내역",
     "item_view_nav_sources": "획득 방법",
     "item_view_nav_related": "관련",
+    "item_view_nav_levequest": "의뢰",
+    "item_view_nav_vendorable": "NPC 판매",
     "item_view_listings_count": "{{count}}개 판매 중",
     "item_view_filtered_listings_count": "판매 {{total}}개 중 {{visible}}개",
     "item_view_no_listings_match_exclusions": "제외 조건에 맞는 판매 목록이 없습니다.",

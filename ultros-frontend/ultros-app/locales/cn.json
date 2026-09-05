@@ -1792,6 +1792,8 @@
     "item_view_nav_history": "记录",
     "item_view_nav_sources": "获取方式",
     "item_view_nav_related": "相关",
+    "item_view_nav_levequest": "理符",
+    "item_view_nav_vendorable": "商店购买",
     "item_view_listings_count": "{{count}} 条在售",
     "item_view_filtered_listings_count": "{{visible}} / {{total}} 条在售",
     "item_view_no_listings_match_exclusions": "没有符合当前排除条件的在售物品。",

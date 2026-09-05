@@ -39,6 +39,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Jump straight to every way to get an item",
+        blurb: "Item pages now show compact, color-coded crafting, exchange, levequest, and vendor shortcuts beside the section links. Each shows how many options are available and jumps straight to the details. Swipe the bar on mobile to see more shortcuts.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Flip Finder opens reliably from world links",
         blurb: "Opening a Flip Finder world link directly now finishes loading its controls and live updates, instead of leaving the page stuck after its first results appear.",
         link: Some("/flip-finder"),

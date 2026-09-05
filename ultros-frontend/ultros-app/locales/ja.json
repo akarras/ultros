@@ -1792,6 +1792,8 @@
     "item_view_nav_history": "履歴",
     "item_view_nav_sources": "入手方法",
     "item_view_nav_related": "関連",
+    "item_view_nav_levequest": "リーヴ",
+    "item_view_nav_vendorable": "NPC販売",
     "item_view_listings_count": "出品{{count}}件",
     "item_view_filtered_listings_count": "{{total}}件中{{visible}}件の出品",
     "item_view_no_listings_match_exclusions": "除外条件に一致する出品はありません。",
