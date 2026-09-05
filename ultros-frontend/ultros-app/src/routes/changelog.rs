@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "More reliable Discord sign-in",
+        blurb: "Discord sign-ins are checked again periodically, while temporary Discord outages no longer unnecessarily sign you out. Signing out and deleting your account now clear cached sign-in information more reliably.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Share Ultros with clearer, localized previews",
         blurb: "Item links now show a bold preview with the item's icon and name. Gear sets, currency tools, analyzers and help pages have matching previews too. Shared links can keep your chosen language, and previews stay useful without showing prices that could go stale.",
         link: Some("/items"),
