@@ -12,6 +12,8 @@ pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
+pub mod social_card;
+pub(crate) mod social_meta;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
@@ -319,13 +321,6 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 <meta name="theme-color" content="#0f0710" />
                 <meta name="application-name" content="Ultros" />
                 <meta property="og:type" content="website" />
-                <meta property="og:locale" content="en_US" />
-                <meta property="og:locale:alternate" content="ja_JP" />
-                <meta property="og:locale:alternate" content="fr_FR" />
-                <meta property="og:locale:alternate" content="de_DE" />
-                <meta property="og:locale:alternate" content="ko_KR" />
-                <meta property="og:locale:alternate" content="zh_CN" />
-                <meta property="og:locale:alternate" content="zh_TW" />
                 <meta property="og:site_name" content="Ultros" />
                 {error_reporting_script
                     .map(|script| {
@@ -443,7 +438,7 @@ pub fn App() -> impl IntoView {
     let cookies = Cookies::new();
     provide_meta_context();
     view! {
-        <I18nContextProvider>
+        <I18nContextProvider cookie_options=leptos_use::UseCookieOptions::default().path("/")>
             <AppInner cookies />
         </I18nContextProvider>
     }
@@ -452,12 +447,20 @@ pub fn App() -> impl IntoView {
 #[component]
 pub fn AppInner(cookies: Cookies) -> impl IntoView {
     let i18n = use_i18n();
+    let explicit_locale = social_meta::request_locale();
+    if let Some(locale) = explicit_locale {
+        i18n.set_locale(locale);
+    }
     let region = use_context::<GuessedRegion>();
     #[cfg(feature = "hydrate")]
     let region_for_tags = region.clone();
     Effect::new(move |_| {
-        if let Some(region) = region.as_ref() {
-            let current_locale = i18n.get_locale();
+        if explicit_locale.is_none()
+            && let Some(region) = region.as_ref()
+        {
+            // This is an initial guess only. Subscribing here would override
+            // a later explicit switch back to English in these regions.
+            let current_locale = i18n.get_locale_untracked();
             if current_locale == Locale::en {
                 let new_locale = match region.0.as_str() {
                     "Japan" => Some(Locale::ja),
@@ -467,6 +470,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                 };
                 if let Some(new_locale) = new_locale {
                     i18n.set_locale(new_locale);
+                    components::language_picker::reload_locale_data(new_locale);
                 }
             }
         }
@@ -512,6 +516,8 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
             <ToastContainer />
             <Router>
                 <SentryRouteTag />
+                <social_meta::ShareLocale />
+                <social_meta::SocialMetadata />
                 <AppShell>
                     <Routes fallback=NotFound>
                         <Route path=path!("") view=HomePage />

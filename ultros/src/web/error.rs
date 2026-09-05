@@ -292,10 +292,6 @@ impl IntoResponse for ApiError {
 define_error_enum!(WebError {
     #[error("Not authorized to view this page")]
     NotAuthenticated,
-    #[error("Item id {0} is not valid")]
-    InvalidItemId(i32),
-    #[error("World not found {0}")]
-    WorldNotFound(String),
     #[error("Not found")]
     NotFound,
     #[error("Bad request")]
@@ -331,7 +327,6 @@ impl WebError {
             WebError::NotFound => StatusCode::NOT_FOUND,
             WebError::BadRequest => StatusCode::BAD_REQUEST,
             WebError::TemporarilyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
-            WebError::InvalidItemId(_) | WebError::WorldNotFound(_) => StatusCode::BAD_REQUEST,
             // Analyzer warm-up isn't a server bug — it's a transient state at
             // startup. 503 lets clients retry instead of treating it as fatal.
             WebError::AnalyzerError(AnalyzerError::Uninitialized) => {

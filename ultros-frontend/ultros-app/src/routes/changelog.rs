@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Share Ultros with clearer, localized previews",
+        blurb: "Item links now show a bold preview with the item's icon and name. Gear sets, currency tools, analyzers and help pages have matching previews too. Shared links can keep your chosen language, and previews stay useful without showing prices that could go stale.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Jump straight to every way to get an item",
         blurb: "Item pages now show compact, color-coded crafting, exchange, levequest, and vendor shortcuts beside the section links. Each shows how many options are available and jumps straight to the details. Swipe the bar on mobile to see more shortcuts.",
         link: None,

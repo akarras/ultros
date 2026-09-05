@@ -57,6 +57,20 @@ fn get_i18n_lang() -> String {
         use wasm_bindgen::JsCast;
         let window = leptos::prelude::window();
         if let Some(document) = window.document() {
+            // SSR resolves explicit ?lang before cookies and browser language.
+            // Load that exact game-data pack before hydration walks the DOM.
+            if let Some(lang) = document
+                .document_element()
+                .and_then(|html| html.get_attribute("lang"))
+                .filter(|lang| {
+                    matches!(
+                        lang.as_str(),
+                        "en" | "ja" | "de" | "fr" | "cn" | "ko" | "tc"
+                    )
+                })
+            {
+                return lang;
+            }
             if let Some(html_doc) = document.dyn_ref::<web_sys::HtmlDocument>() {
                 if let Ok(cookie) = html_doc.cookie() {
                     for part in cookie.split(';') {

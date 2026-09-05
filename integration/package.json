@@ -23,6 +23,7 @@
     "test:fc-crafting-breakdown": "node ./fc-crafting-breakdown.cjs",
     "test:dashboard": "node ./dashboard.cjs",
     "test:jobset-card-hydration": "node ./jobset-card-hydration.cjs",
+    "test:social-cards": "node ./social-cards.cjs",
     "test:flip-finder-mobile-bar": "node ./flip-finder-mobile-bar.cjs",
     "test:flip-finder-hydration": "node ./flip-finder-hydration.cjs",
     "test:group-shared-list": "node ./group-shared-list.cjs",

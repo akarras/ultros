@@ -49,7 +49,7 @@ const LANGUAGE_OPTIONS: [LanguageOption; 7] = [
     },
 ];
 
-fn reload_locale_data(new_locale: Locale) {
+pub(crate) fn reload_locale_data(new_locale: Locale) {
     #[cfg(feature = "ssr")]
     let _ = new_locale;
 
