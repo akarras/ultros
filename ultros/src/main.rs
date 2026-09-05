@@ -328,6 +328,48 @@ async fn init_db(
     Ok(())
 }
 
+/// Name of the env var that turns the Universalis websocket ingest off.
+const DISABLE_WEBSOCKET_ENV: &str = "ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET";
+
+/// Interpret a boolean-ish environment variable.
+///
+/// Unset, empty, or any recognised falsy spelling means "off"; the usual truthy
+/// spellings mean "on". An unrecognised value is treated as "on" *and* warned
+/// about: someone who set the variable at all meant to flip it, so honouring
+/// the intent beats silently ignoring `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=please`
+/// and letting a QA deploy keep writing to the shared database.
+fn env_flag_enabled(name: &str, raw: Option<&str>) -> bool {
+    let Some(value) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return false;
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        other => {
+            warn!(
+                variable = name,
+                value = other,
+                "unrecognised boolean value; treating it as enabled"
+            );
+            true
+        }
+    }
+}
+
+/// Whether this process should skip subscribing to the Universalis websocket.
+///
+/// QA/staging deploys generally point at a database shared with other testers.
+/// The websocket fans every inbound event out into its own `tokio::spawn`ed
+/// write (see [`run_socket_listener`]), so a handful of replicas pointed at one
+/// database exhaust the connection pool with market data nobody is testing.
+/// Production leaves this unset and ingests as before.
+fn universalis_websocket_disabled() -> bool {
+    env_flag_enabled(
+        DISABLE_WEBSOCKET_ENV,
+        std::env::var(DISABLE_WEBSOCKET_ENV).ok().as_deref(),
+    )
+}
+
 /// Resolve the environment name Sentry will actually stamp on every event.
 ///
 /// This must mirror `sentry::init`'s own defaulting, because that is what
@@ -555,6 +597,7 @@ async fn main() -> Result<()> {
     let history_sender = senders.history.clone();
     let token = CancellationToken::new();
     let socket_token = token.clone();
+    let websocket_disabled = universalis_websocket_disabled();
     tokio::spawn(async move {
         let (datacenters, worlds) = futures::future::join(
             startup_client.get_data_centers(),
@@ -565,6 +608,12 @@ async fn main() -> Result<()> {
         init_db(&init, worlds, datacenters)
             .await
             .expect("Unable to populate worlds datacenters- is universalis down?");
+        if websocket_disabled {
+            // World/datacenter data above is still primed — the app needs it to
+            // serve anything at all — we just never open the market feed.
+            warn!("{DISABLE_WEBSOCKET_ENV} is set: skipping the Universalis websocket ingest");
+            return;
+        }
         info!("starting websocket");
         run_socket_listener(init, listings_sender, history_sender, socket_token).await;
     });
@@ -765,7 +814,44 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{error_reporting_disabled, resolve_environment};
+    use super::{
+        DISABLE_WEBSOCKET_ENV, env_flag_enabled, error_reporting_disabled, resolve_environment,
+    };
+
+    #[test]
+    fn an_unset_or_empty_flag_leaves_the_ingest_on() {
+        // Production sets nothing, and must be unaffected by this knob.
+        assert!(!env_flag_enabled(DISABLE_WEBSOCKET_ENV, None));
+        assert!(!env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some("")));
+        assert!(!env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some("   ")));
+    }
+
+    #[test]
+    fn truthy_spellings_disable_the_ingest() {
+        for value in ["1", "true", "TRUE", "True", "yes", "on", " true "] {
+            assert!(
+                env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some(value)),
+                "{value:?} should read as enabled"
+            );
+        }
+    }
+
+    #[test]
+    fn falsy_spellings_leave_the_ingest_on() {
+        for value in ["0", "false", "FALSE", "no", "off"] {
+            assert!(
+                !env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some(value)),
+                "{value:?} should read as disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_value_still_disables_the_ingest() {
+        // Setting the variable at all is an explicit act; failing open would
+        // let a typo'd QA deploy keep writing to the shared database.
+        assert!(env_flag_enabled(DISABLE_WEBSOCKET_ENV, Some("please")));
+    }
 
     #[test]
     fn development_environment_suppresses_reporting() {

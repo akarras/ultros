@@ -109,6 +109,14 @@ BASE_URL=http://127.0.0.1:8080 npm --prefix integration run test:jobset-card-hyd
 
 Set `GLITCHTIP_DSN` to a Glitchtip (or Sentry) DSN to ship panics + `error!` tracing events with backtraces. Unset → no-op, no network calls. The DSN itself contains the project key so no other env vars are needed. Set `RUST_BACKTRACE=1` in the container so spawned-task panics include a stack trace.
 
+### Optional: disable the Universalis websocket ingest
+
+Set `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=true` to start the server without subscribing to the Universalis market feed. Intended for QA/staging deploys that share one database: the websocket spawns a database write per inbound event, so several replicas pointed at the same Postgres exhaust its connections with market data nobody is testing.
+
+Accepts `1`/`true`/`yes`/`on` (case-insensitive) to disable; unset, empty, `0`/`false`/`no`/`off` keep the ingest running, which is what production does. Any other value is treated as "disable" and logs a warning.
+
+With it set, the app still fetches worlds/datacenters from Universalis at startup (nothing renders without them) and still serves whatever listings and sales are already in the database — they simply stop updating, so `ultros_world_ingest_staleness_seconds` will climb. On-demand refreshes (the periodic catch-up sweep in `item_update_service`, and manual sweeps) are unaffected.
+
 E2E is currently run locally only — not wired into GitHub Actions. Run `./scripts/run_e2e.sh` before merging anything that touches routing, hydration, or the analyzer service.
 
 ## Cursor Cloud specific instructions
