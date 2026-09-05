@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "A changelog that's easier to scan",
+  "blurb": "Each day's changes are grouped under Features, Improvements, and Bug Fixes, with the most important updates first in each section.",
+  "link": "/changelog",
+  "importance": "medium"
+}

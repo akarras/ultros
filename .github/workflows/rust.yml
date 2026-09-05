@@ -20,6 +20,11 @@ on:
 
 env:
     CARGO_TERM_COLOR: always
+    # Bound simultaneous rustc processes on standard hosted runners.
+    CARGO_BUILD_JOBS: "2"
+
+permissions:
+    contents: read
 
 jobs:
     check:
@@ -57,34 +62,18 @@ jobs:
                   key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
                   restore-keys: ${{ runner.os }}-cargo-
 
-            - name: Install cargo-binstall
-              uses: cargo-bins/cargo-binstall@main
+            - name: Run shared lint and Rust regression checks
+              run: ./check_ci.sh
 
-            - name: Install cargo tools
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: |
-                  install_if_missing() {
-                      if ! command -v $1 &> /dev/null; then
-                          echo "Installing $1..."
-                          cargo binstall --no-confirm $1
-                      else
-                          echo "$1 is already installed, skipping."
-                      fi
-                  }
-                  install_if_missing cargo-deny
-                  install_if_missing cargo-outdated
-                  install_if_missing cargo-udeps
-                  install_if_missing cargo-audit
-                  install_if_missing cargo-pants
-            # giving up on this fmt check for now
-            # - run: cargo fmt --version
-            - name: Check formatting
-              run: cargo fmt --all -- --check
+            - name: Install Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
 
-            - name: Run Clippy
-              # it would be good to support --all-features, but xiv-gen is a little unstable.
-              run: cargo clippy --all-targets -- -D warnings
+            - name: Run JavaScript regression tests
+              # These use node:test and local fixtures; no browser, app server,
+              # package installation, credentials or external services needed.
+              run: node --test integration/*.test.cjs
 
             # Only main writes the cache (see the restore step above). Runs on
             # failure too, so a red lint run still leaves the next build warm;
@@ -101,15 +90,46 @@ jobs:
                       target
                   key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-            #- name: Run cargo-deny, outdated, udeps, audit, and pants
-            #  run: |
-            #      cargo deny check
-            #      cargo outdated --exit-code 1
-            #      cargo udeps
-            #      rm -rf ~/.cargo/advisory-db
-            #      cargo audit
-            #      cargo pants
-            # - name: Run tests
-            # --all-features makes sense, but breaks xiv-gen oops.
-            # some broken tests that i can't figure out right now.
-            # run: cargo test --workspace
+    audit:
+        name: Dependency security advisory report
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4.2.2
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Install cargo-binstall
+              uses: cargo-bins/cargo-binstall@main
+
+            - name: Install cargo-audit
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: cargo +stable binstall --no-confirm cargo-audit
+
+            - name: Check locked dependencies against RustSec
+              id: audit
+              # Existing advisories require dependency migrations; report them
+              # visibly without blocking unrelated PRs or suppressing any IDs.
+              # See scripts/DEPENDENCY_AUDIT.md for the initial triage.
+              continue-on-error: true
+              run: cargo +stable audit --file Cargo.lock --json > audit-report.json
+
+            - name: Install Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Summarize dependency advisories
+              # Invalid/missing reports fail here, so a broken audit tool does
+              # not silently produce a green security report.
+              run: node scripts/summarize_audit.cjs audit-report.json
+
+            - name: Upload dependency audit report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: dependency-audit
+                  path: audit-report.json
+                  if-no-files-found: error

@@ -8,7 +8,7 @@ use leptos::{
 };
 
 use super::cookies::{Cookies, get_now};
-use crate::routes::changelog::latest_changelog_date;
+use ultros_changelog::latest_changelog_date;
 
 const CHANGELOG_SEEN_COOKIE: &str = "CHANGELOG_SEEN";
 
@@ -38,8 +38,8 @@ pub fn use_changelog_seen() -> (Signal<Option<String>>, SignalSetter<Option<Stri
 ///
 /// Both arguments are ISO-8601 `YYYY-MM-DD` strings, which sort
 /// lexicographically in the same order they sort chronologically — that
-/// equivalence is why the dates are stored zero-padded (see the shape test in
-/// `routes::changelog`).
+/// equivalence is why the build validates zero-padded calendar dates in the
+/// changelog fragments.
 ///
 /// A visitor with no cookie gets no dot: they have never seen *any* entry, and
 /// nagging a first-time visitor about a feature they are already looking at

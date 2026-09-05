@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "A few more loading spinners became skeletons",
+  "blurb": "The last few pulsing-text loading states in the crafting/gathering analyzers, and the item page's sale-history chart, now show skeletons shaped like the content they load into instead of a spinner or a plain pulsing line.",
+  "importance": "medium"
+}

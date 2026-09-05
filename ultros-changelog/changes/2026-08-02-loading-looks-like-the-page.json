@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Loading looks like the page",
+  "blurb": "Tables sketch their real columns with a shimmer while data loads, instead of a blank panel that jumps when content arrives.",
+  "importance": "medium"
+}

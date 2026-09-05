@@ -49,23 +49,18 @@ function failIf(condition, failures, message) {
   if (condition) failures.push(message);
 }
 
-async function main() {
-  const puppeteer = require("puppeteer");
-  const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
-  const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 30000);
-  const headless = process.env.HEADLESS === "false" ? false : "new";
-
-  const browser = await puppeteer.launch({
-    headless,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-
+async function runGroupSharedList(browser, BASE_URL, TIMEOUT_MS = 30000) {
   const failures = [];
+  let ownerPage;
+  let groupId;
+  let listId;
 
   try {
-    const ownerPage = await browser.newPage();
-    const memberPage = await browser.newPage();
-    const nonMemberPage = await browser.newPage();
+    // Pages in the default context share cookies. Each actor needs a separate
+    // context or the last login silently authenticates every page as that user.
+    ownerPage = await (await browser.createBrowserContext()).newPage();
+    const memberPage = await (await browser.createBrowserContext()).newPage();
+    const nonMemberPage = await (await browser.createBrowserContext()).newPage();
     for (const page of [ownerPage, memberPage, nonMemberPage]) {
       page.setDefaultTimeout(TIMEOUT_MS);
     }
@@ -74,14 +69,26 @@ async function main() {
     await login(memberPage, BASE_URL, USERS.member);
     await login(nonMemberPage, BASE_URL, USERS.nonMember);
 
+    // Check after ALL logins: checking immediately after each login would miss
+    // another actor overwriting the shared cookie. Stop before creating data.
+    const actors = [["owner", ownerPage], ["member", memberPage], ["nonMember", nonMemberPage]];
+    for (const [actor, page] of actors) {
+      const identity = await api(page, "GET", "/api/v1/current_user");
+      if (identity.status !== 200 || String(identity.body?.id) !== String(USERS[actor].id)) {
+        throw new Error(`session identity mismatch for ${actor}: expected ${USERS[actor].id}, got ${identity.body?.id} (HTTP ${identity.status})`);
+      }
+      console.log(`[identity] ${actor}: ${identity.body.id}`);
+    }
+
     // 1. Owner creates a group
     const groupName = `Group E2E ${Date.now()}`;
     const createGroup = await api(ownerPage, "POST", "/api/v1/group/create", {
       name: groupName,
     });
     failIf(createGroup.status !== 200, failures, `create group expected 200, got ${createGroup.status}`);
-    const groupId = createGroup.body.id;
+    groupId = createGroup.body?.id;
     failIf(!groupId, failures, "group id missing after create");
+    if (!groupId) throw new Error("cannot continue without created group");
 
     // 2. Owner adds member to group
     const addMember = await api(ownerPage, "POST", `/api/v1/group/${groupId}/member/add/${USERS.member.id}`);
@@ -103,7 +110,7 @@ async function main() {
     const created = ownerLists.body.find((entry) => entry.list.name === listName);
     failIf(!created, failures, "created list not returned to owner");
     if (!created) throw new Error("cannot continue without created list");
-    const listId = created.list.id;
+    listId = created.list.id;
 
     // 4. Owner shares list with group (Read permission = 1)
     const groupShare = await api(ownerPage, "POST", `/api/v1/list/${listId}/share/group`, {
@@ -151,27 +158,54 @@ async function main() {
       acquired: null,
     });
     failIf(writeAdd.status !== 200, failures, `write-permission member add expected 200, got ${writeAdd.status}`);
-
-    // Cleanup
-    await api(ownerPage, "DELETE", `/api/v1/list/${listId}/delete`);
-    await api(ownerPage, "DELETE", `/api/v1/group/${groupId}`);
-
-    for (const page of [ownerPage, memberPage, nonMemberPage]) {
-      await page.close();
-    }
   } finally {
-    await browser.close();
+    try {
+      // Try both deletions even when an assertion, request, or cleanup fails.
+      // The owner context stays open until all server-side cleanup completes.
+      const paths = [
+        listId && `/api/v1/list/${listId}/delete`,
+        groupId && `/api/v1/group/${groupId}`,
+      ].filter(Boolean);
+      for (const path of paths) {
+        try {
+          const result = await api(ownerPage, "DELETE", path);
+          failIf(result.status !== 200, failures, `cleanup ${path} expected 200, got ${result.status}`);
+        } catch (err) {
+          failures.push(`cleanup ${path} failed: ${err.message || err}`);
+        }
+      }
+      for (const failure of failures) console.error(`  - ${failure}`);
+    } finally {
+      // Closing the browser also closes contexts created before a partial
+      // setup failure, including any whose newPage() never completed.
+      await browser.close();
+    }
   }
 
   if (failures.length) {
-    console.error(`[fail] ${failures.length} group-shared-list assertion(s) failed:`);
-    for (const f of failures) console.error(`  - ${f}`);
-    process.exit(1);
+    throw new Error(`${failures.length} group-shared-list assertion(s) failed`);
   }
   console.log("[ok] group-shared-list flow passed");
 }
 
-main().catch((err) => {
-  console.error("[error]", err && err.stack ? err.stack : err);
-  process.exit(1);
-});
+async function main() {
+  const puppeteer = require("puppeteer");
+  const browser = await puppeteer.launch({
+    headless: process.env.HEADLESS === "false" ? false : "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+  await runGroupSharedList(
+    browser,
+    process.env.BASE_URL || "http://127.0.0.1:8080",
+    Number(process.env.TIMEOUT_MS || 30000),
+  );
+}
+
+module.exports = { runGroupSharedList, USERS };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[error]", err && err.stack ? err.stack : err);
+    process.exitCode = 1;
+  });
+}

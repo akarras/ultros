@@ -45,6 +45,47 @@ function sanitizeFileComponent(s) {
   return replaced.length ? replaced : "_root";
 }
 
+/** Check the item jump bar without assuming which sources an item has. */
+async function checkItemSectionNav(page) {
+  return page.evaluate(() => {
+    const nav = document.querySelector("[data-item-section-nav]");
+    if (!nav) return ["item section navigation is missing"];
+    const failures = [];
+    const links = [...nav.querySelectorAll("a")];
+    const sections = ["#overview", "#listings", "#history", "#sources", "#related"];
+    if (JSON.stringify(links.slice(0, 5).map((link) => link.getAttribute("href"))) !== JSON.stringify(sections)) {
+      failures.push("item section navigation changed the existing link order");
+    }
+    const allowed = ["#crafting-recipes", "#exchange-sources", "#leve-sources", "#vendor-sources"];
+    const sources = links.slice(5);
+    const hrefs = sources.map((link) => link.getAttribute("href"));
+    if (new Set(hrefs).size !== hrefs.length) failures.push("duplicate source shortcuts");
+    for (const link of sources) {
+      const href = link.getAttribute("href");
+      if (!allowed.includes(href)) {
+        failures.push(`unexpected source shortcut: ${href}`);
+        continue;
+      }
+      const target = document.querySelector(href);
+      if (!target || !target.getClientRects().length) failures.push(`missing/hidden source destination: ${href}`);
+      if (!(Number(link.lastElementChild.textContent) > 0)) failures.push(`invalid source count: ${href}`);
+      if (target && parseFloat(getComputedStyle(target).scrollMarginTop) < 64) failures.push(`source destination lacks sticky-header clearance: ${href}`);
+    }
+    const top = links[0]?.getBoundingClientRect().top;
+    for (const link of links) {
+      const rect = link.getBoundingClientRect();
+      if (Math.abs(rect.top - top) > 1) failures.push("item navigation wrapped to a second row");
+      if (rect.height < 44) failures.push("item navigation touch target is below 44px");
+    }
+    const rect = nav.getBoundingClientRect();
+    if (rect.right > document.documentElement.clientWidth + 1) failures.push("item navigation overflows the viewport");
+    if (nav.scrollWidth > nav.clientWidth && !["auto", "scroll"].includes(getComputedStyle(nav).overflowX)) {
+      failures.push("overflowing item navigation cannot be scrolled");
+    }
+    return failures;
+  });
+}
+
 /**
  * Per-route assertions. Each entry has:
  *   - titleIncludes:    substring expected in <title>
@@ -84,14 +125,28 @@ const ROUTE_ASSERTS = {
   // cross-device assertions are the title and that sub-label; the sweep
   // still checks console errors and horizontal overflow.
   //
-  // `cols=` names ten of the twenty-two optional columns — one of each
-  // distinct cell kind Phases C–E2 added, including all five market
-  // columns — so the desktop pass renders eighteen columns at once and
+  // `cols=` names eleven of the twenty-three optional columns — one of each
+  // distinct cell kind Phases C–F added, including all five market
+  // columns — so the desktop pass renders nineteen columns at once and
   // the mobile pass renders only the six that are not `hidden md:`. Trend,
   // Drift and the two 30-day columns are *listed* here, but a local run
   // fires no enrichment at all: this route pins their markup and their
   // console cleanliness, never their data. Settling is a prod-only check.
-  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d": {
+  //
+  // `&sell-scope=datacenter` is Phase F's, and it is the point of listing
+  // `scope-vs-home` at all: at the default sell scope every cell in that
+  // column is `ScopeVsHome::Off` and the harness would screenshot a column
+  // of dashes.
+  //
+  // It costs no extra request here, and BOTH halves of that need saying.
+  // The cheapest map dedupes because the buy scope already defaults to the
+  // datacenter, so both sides name the same place. The *statistics* body
+  // dedupes only because `cost-sale-median` is in the `cols=` list below:
+  // that is what puts `BuyScopeStats(7)` into the computed set, and the
+  // sell side is suppressed only against a body that was really fetched.
+  // Drop `cost-sale-median` from this URL and the sweep starts issuing a
+  // `sale_stats?window=7` for the datacenter.
+  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
     titleIncludes: "Recipe Analyzer",
     bodyIncludesAny: ["after 5% tax"],
   },
@@ -141,7 +196,7 @@ function getRoutes() {
     "/retainers",
     "/currency-exchange",
     "/recipe-analyzer?world=Gilgamesh",
-    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d",
+    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home",
     "/history",
     "/settings",
     "/groups",
@@ -394,6 +449,12 @@ async function main() {
         if (!SKIP_ASSERTS && ROUTE_ASSERTS[r]) {
           const fails = await runAsserts(page, r, ROUTE_ASSERTS[r]);
           for (const f of fails) failures.push(`${r}: ${f}`);
+        }
+
+        if (!SKIP_ASSERTS && r.startsWith("/item/")) {
+          for (const failure of await checkItemSectionNav(page)) {
+            failures.push(`${r}: ${failure}`);
+          }
         }
 
         // Applies to every route, not just the ones with content assertions.

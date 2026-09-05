@@ -82,10 +82,9 @@ after scrolling or hiding columns; this preserves useful cache reuse.
 - This isolated branch passed `./check_ci.sh`, including the feature-gated
   `xiv-gen` lint. A first attempt hit a Git Perl/OpenSSL environment failure;
   the successful retry explicitly selected Strawberry Perl.
-- `cargo test --locked -p ultros-app --lib` is queued behind the shared artifact
-  cache lock. It runs with `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_BUILD_JOBS=2`,
-  and explicit Strawberry Perl; assertions and tests remain enabled. Its result
-  is pending, so the PR remains a draft.
+- The isolated `cargo test --locked -p ultros-app --lib` subsequently passed:
+  792 passed, 0 failed, 0 ignored, with `CARGO_PROFILE_TEST_DEBUG=0` and two
+  build jobs. Assertions and tests remained enabled.
 - A populated combined audit build passed five bounded Puppeteer checks after
   its real `ultros:hydrated` event: narrow viewport request gates; opening both
   lazy feeds with the revenue quality; same-document picker A → B → A with a
@@ -98,3 +97,44 @@ after scrolling or hiding columns; this preserves useful cache reuse.
   integration, fully priced crafting costs, or performance under load. Keep
   issue #1233 and the Labs opt-in open while those broader checks and the
   product semantics above remain unresolved.
+
+## Integration with main on 2026-09-05
+
+Merged main at `58c672d5`, including Phase F's wider revenue scopes and the
+individual JSON changelog format. The conflict resolution keeps the winning
+revenue quality for all home-world history and lazy-feed keys, while retaining
+Phase F's suppression of price/median and price/VWAP ratios between different
+geographical scopes. Added combined quality/scope/fallback fixtures. Updated
+the default-scope oracle's five HQ fallback flags; all recorded prices and
+fallback decisions remain unchanged.
+
+- Full `./check_ci.sh` passed, including 840 app tests, 275 server tests,
+  workspace tests, both Clippy invocations, and game-data pack sanity.
+- `cargo leptos build --bin-features=""` passed for the WASM client and server.
+  Empty bin features avoid the unsupported jemalloc build on Windows; existing
+  local static OpenSSL artifacts were selected explicitly.
+- The 66 local JavaScript regression tests passed.
+- Seven controlled, hydrated browser cases passed on fresh table mounts:
+  listing and sale-median pricing at world/datacenter/region scope, plus failed
+  region-body fallback to the ingredient market. Assertions checked the price,
+  exact home-world quality in 7d/30d history, settled sparklines, and suppression
+  of cross-market ratios. No page errors. API responses were deterministic
+  fixtures; this does not validate live ClickHouse data or fully priced costs.
+- The standard route runner passed the selected home/changelog/Analyzer routes
+  at desktop, mobile, and wide sizes. The broader driver's optional FC-crafting
+  fixture timed out in the disposable database, and dashboard probes encountered
+  unavailable analytics and third-party ad errors.
+
+### Separate remaining row-refresh defect
+
+A same-document revenue change from `listing-min` to `sale-median` can update
+the header while leaving existing rows at their previous price. Reproduction:
+use output 5056 with home listings NQ=100/HQ=500 and history NQ=110/HQ=550,
+mount the listing view, then change `revenue=sale-median` without leaving the
+route. The header reads median but the row still shows 100; remounting the table
+shows the correct 110. `AnalyzerGrid` captures the row supplied to its keyed
+`VirtualScroller`, and the scroller's `For` does not replace a retained key's
+captured value. Both files and the recipe key implementation are unchanged from
+main. The seven pricing checks above deliberately mount each configuration
+afresh and do not establish correctness of in-place revenue-signal switching.
+Keep this acceptance item open; it is outside the conflict resolution.

@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "Recipe Analyzer: see and filter by where the cheapest listing is",
+  "blurb": "Two more optional columns show which world and datacenter currently hold the cheapest listing of the item you'd craft. Clicking either one filters the table down to that world or datacenter, the same way the flip finder does, and the filter shows as a chip you can remove.",
+  "link": "/recipe-analyzer",
+  "importance": "medium"
+}

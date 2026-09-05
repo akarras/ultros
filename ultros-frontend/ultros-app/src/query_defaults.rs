@@ -89,6 +89,14 @@ fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Language selects presentation, not a saved market view. A freshly shared
+/// localized URL should still receive the same landing defaults as a bare URL.
+fn has_view_query(query: &str) -> bool {
+    parse_query_pairs(query)
+        .iter()
+        .any(|(key, _)| key != "lang")
+}
+
 /// Seed a whole default *view* onto a bare Flip Finder URL.
 ///
 /// Returns whether the URL was bare, so the caller can skip the per-param
@@ -97,7 +105,7 @@ fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
 /// view never asked for.
 ///
 /// Unlike [`seed_query_default`], which fires on a single *absent* param,
-/// this fires only when the query map is **entirely empty**, and the
+/// this fires only when the query map has **no view parameters**, and the
 /// emptiness is decided synchronously at setup, before any seeding effect
 /// has had a chance to write. That is what keeps Clear All cleared: it
 /// empties the query long after this component mounted, and nothing here
@@ -115,7 +123,7 @@ fn parse_query_pairs(query: &str) -> Vec<(String, String)> {
 /// route, never from inside a `Suspense`/resource closure.
 pub fn seed_flip_finder_default_view() -> bool {
     let query = use_query_map();
-    let was_bare = query.with_untracked(|q| q.to_query_string().is_empty());
+    let was_bare = query.with_untracked(|q| !has_view_query(&q.to_query_string()));
     if was_bare {
         Effect::new(move |_| {
             // Reads localStorage, so it must happen post-hydration — which is
@@ -124,6 +132,9 @@ pub fn seed_flip_finder_default_view() -> bool {
             // An empty default is a real choice ("land me on the whole
             // list"), and parses to no pairs, so it seeds nothing.
             for (key, value) in parse_query_pairs(&default_view_query()) {
+                if key == "lang" {
+                    continue;
+                }
                 let (_, set) = query_signal_with_options::<String>(key, filter_nav_options());
                 set.set(Some(value));
             }
@@ -138,6 +149,15 @@ mod test {
     use crate::components::saved_views::{
         FALLBACK_DEFAULT_VIEW, built_in_views, fallback_default_query,
     };
+
+    #[test]
+    fn language_only_links_still_receive_the_saved_default_view() {
+        assert!(!has_view_query("?lang=ja"));
+        assert!(!has_view_query("?%6cang=de"));
+        assert!(!has_view_query(""));
+        assert!(has_view_query("?lang=ja&roi=30"));
+        assert!(has_view_query("?lang=ja&next-sale="));
+    }
 
     /// The seeded value goes through the same `humantime` parse as anything
     /// typed into the box, and an unparseable duration doesn't error — it just
