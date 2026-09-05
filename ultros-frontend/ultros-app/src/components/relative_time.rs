@@ -5,10 +5,14 @@ use leptos_use::{UseIntervalReturn, use_interval};
 use timeago::Formatter;
 
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 
 #[component]
 pub fn RelativeToNow(timestamp: NaiveDateTime) -> impl IntoView {
-    let i18n = use_i18n();
+    // Reached from the item page's suspended tables, so this can render under
+    // the empty owner `ScopedFuture` substitutes for a disposed one. See
+    // `crate::i18n_fallback`.
+    let i18n = use_i18n_or_default();
     // this could probably be moved to a global state so we just have one interval for every clock
     #[cfg(feature = "hydrate")]
     let UseIntervalReturn { counter, .. } = use_interval(1000);
