@@ -419,7 +419,10 @@ fn MarketMenu(
 
     let open = RwSignal::new(false);
     let container = NodeRef::<leptos::html::Div>::new();
-    use_dismissable(container, move || open.set(false));
+    // Mounted inside the control bar's `actions`, so opening this has to be
+    // announced to the bar's popover group — a click on this button is not
+    // an outside click as far as the bar's own menus are concerned.
+    let container_token = use_dismissable(container, move || open.set(false));
 
     view! {
         <div class="relative flex items-center" node_ref=container>
@@ -429,7 +432,13 @@ fn MarketMenu(
                 class="sticky-bar-button sticky-bar-button-shrink"
                 aria-label=t_string!(i18n, recipe_analyzer_market_button)
                 aria-expanded=move || open.get().to_string()
-                on:click=move |_| open.update(|v| *v = !*v)
+                on:click=move |_| {
+                    let opening = !open.get_untracked();
+                    if opening {
+                        container_token.opening();
+                    }
+                    open.set(opening);
+                }
             >
                 <Icon icon=icondata::MdiCashMultiple />
                 <span class="hidden md:inline sticky-bar-button-label">
