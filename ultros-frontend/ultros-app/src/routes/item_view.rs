@@ -40,7 +40,6 @@ use std::{
 use ultros_api_types::cheapest_listings::{CheapestListingData, PriceSummary};
 use ultros_api_types::price_series::{HqFilter, SeriesGroup};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
-use ultros_api_types::world::Datacenter;
 use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer};
@@ -329,141 +328,7 @@ fn WorldMenu(world_name: Memo<String>, item_id: Memo<i32>) -> impl IntoView {
     .into_any()
 }
 
-#[component]
-pub fn DatacenterExclusionControls(
-    world: Memo<String>,
-    excluded_datacenters: RwSignal<HashSet<String>>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
-
-    let datacenters = Memo::new({
-        let world_data = world_data.clone();
-        move |_| {
-            let world_name = Url::unescape(&world());
-            let mut datacenters = world_data
-                .lookup_world_by_name(&world_name)
-                .map(|result| {
-                    world_data
-                        .get_datacenters(&result)
-                        .into_iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            // Keep an exclusion from a previously selected scope removable,
-            // but render every datacenter exactly once.
-            excluded_datacenters.with(|excluded| {
-                for name in excluded {
-                    let already_visible = datacenters
-                        .iter()
-                        .any(|datacenter| datacenter.name == *name);
-                    if !already_visible
-                        && let Some(datacenter) = world_data
-                            .lookup_world_by_name(name)
-                            .and_then(|result| result.as_datacenter())
-                    {
-                        datacenters.push(datacenter.clone());
-                    }
-                }
-            });
-            datacenters.sort_by(|a, b| a.name.cmp(&b.name));
-            datacenters
-        }
-    });
-
-    view! {
-        {move || {
-            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty());
-            has_controls.then(|| {
-                view! {
-                    <div
-                        class="flex flex-wrap items-center gap-2"
-                        role="group"
-                        aria-label=move || t_string!(i18n, item_view_exclude_datacenters).to_string()
-                    >
-                            {move || {
-                                datacenters
-                                    .get()
-                                    .into_iter()
-                                    .map(|datacenter: Datacenter| {
-                                        let name = datacenter.name.clone();
-                                        let label_name = name.clone();
-                                        let state_name = name.clone();
-                                        let click_name = name.clone();
-                                        let hook_name = name.clone();
-                                        let is_excluded = Signal::derive(move || {
-                                            excluded_datacenters.with(|set| set.contains(&state_name))
-                                        });
-                                        view! {
-                                            <button
-                                                type="button"
-                                                data-datacenter=hook_name
-                                                aria-pressed=move || is_excluded().to_string()
-                                                aria-label=move || {
-                                                    if is_excluded() {
-                                                        t_string!(i18n, item_view_include_datacenter_aria, datacenter = label_name.clone()).to_string()
-                                                    } else {
-                                                        t_string!(i18n, item_view_exclude_datacenter_aria, datacenter = label_name.clone()).to_string()
-                                                    }
-                                                }
-                                                class=move || {
-                                                    [
-                                                        "inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]",
-                                                        if is_excluded() {
-                                                            "border-brand-300/60 bg-[color:var(--brand-bg)] font-semibold text-[color:var(--brand-fg)]"
-                                                        } else {
-                                                            "border-[color:var(--color-outline)] bg-[color:var(--color-background-elevated)] text-[color:var(--color-text)] hover:border-brand-300/60"
-                                                        },
-                                                    ]
-                                                        .join(" ")
-                                                }
-                                                on:click=move |_| {
-                                                    excluded_datacenters.update(|set| {
-                                                        if !set.remove(&click_name) {
-                                                            set.insert(click_name.clone());
-                                                        }
-                                                    });
-                                                }
-                                            >
-                                                {move || {
-                                                    is_excluded()
-                                                        .then(|| view! { <Icon icon=icondata::MdiClose attr:class="text-sm" /> })
-                                                }}
-                                                <span>{name.clone()}</span>
-                                            </button>
-                                        }
-                                    })
-                                    .collect_view()
-                            }}
-                            {move || {
-                                (!excluded_datacenters.with(|set| set.is_empty()))
-                                    .then(|| {
-                                        view! {
-                                            <button
-                                                type="button"
-                                                class="inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]"
-                                                data-testid="clear-datacenter-exclusions"
-                                                on:click=move |_| {
-                                                    excluded_datacenters.update(|set| set.clear());
-                                                }
-                                            >
-                                                <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                                {t!(i18n, clear_all)}
-                                            </button>
-                                        }
-                                    })
-                            }}
-                    </div>
-                }
-            })
-        }}
-    }
-    .into_any()
-}
-
-fn cheapest_listing_for_quality(
+pub(crate) fn cheapest_listing_for_quality(
     listings: &ListingRows,
     hq: bool,
 ) -> Option<(ActiveListing, Arc<Retainer>)> {
@@ -579,8 +444,7 @@ fn DecisionHeader(
     let cheapest_prices = use_context::<CheapestPrices>();
     let (compare_world, set_compare_world) = filter_query_signal::<String>(COMPARE_BUY_FROM_PARAM);
 
-    // Same idiom as `MarketStatsPanel` (see the long comment above it): the
-    // zone-cheapest resource must read as unavailable during SSR and the
+    // The zone-cheapest resource must read as unavailable during SSR and the
     // initial hydration render, or the SSR/CSR DOM shapes mismatch and
     // tachys panics.
     let hydrated = RwSignal::new(false);
@@ -748,50 +612,20 @@ fn DecisionHeader(
 }
 
 #[component]
-fn MarketStatsPanel(
+pub(crate) fn RealPriceSummary(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
-    #[prop(into)] filtered_listings: Signal<ListingRows>,
     item_id: Memo<i32>,
-    realtime_status: Signal<String>,
-    last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
 
     view! {
-        <Transition fallback=move || view! { <BoxSkeleton /> }>
+        <Transition fallback=move || ()>
             {move || {
                 listing_resource
                     .with(|data_ref| {
                         if let Some(Ok(data)) = data_ref.as_ref() {
                             let data = data.clone();
-                            let listings = get_or_default(&filtered_listings);
-                            let cheapest_nq = cheapest_listing_for_quality(&listings, false);
-                            let cheapest_hq = cheapest_listing_for_quality(&listings, true);
-                            let listings_count = listings.len();
-                            let recent_sales = data.sales.clone();
-                            let avg_price = if recent_sales.is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    recent_sales
-                                        .iter()
-                                        .map(|sale| sale.price_per_item as i64)
-                                        .sum::<i64>() as i32
-                                        / recent_sales.len() as i32,
-                                )
-                            };
-                            let median_price = if recent_sales.is_empty() {
-                                None
-                            } else {
-                                let mut prices = recent_sales
-                                    .iter()
-                                    .map(|sale| sale.price_per_item)
-                                    .collect::<Vec<_>>();
-                                let len = prices.len();
-                                // ⚡ Bolt: Optimization: Use select_nth_unstable instead of sort_unstable for median calculation.
-                                let (_, &mut median, _) = prices.select_nth_unstable(len / 2);
-                                Some(median)
-                            };
+                            let recent_sales = &data.sales;
                             let vendor_price = tracked_data()
                                 .items
                                 .get(&ItemId(item_id()))
@@ -807,173 +641,21 @@ fn MarketStatsPanel(
                             );
                             let real_primary = real.primary();
                             let real_secondary = real.secondary();
-                            let sales_cadence = if recent_sales.len() > 1 {
-                                let newest = recent_sales.first().unwrap().sold_date;
-                                let oldest = recent_sales.last().unwrap().sold_date;
-                                let seconds = (newest - oldest).num_seconds().abs();
-                                let count = recent_sales.len() - 1;
-
-                                if seconds > 0 {
-                                    let seconds_per_sale = seconds as f64 / count as f64;
-                                    if seconds_per_sale < 60.0 {
-                                        t!(i18n, sells_per_minute, count = format!("{:.1}", 60.0 / seconds_per_sale)).into_any()
-                                    } else if seconds_per_sale < 3600.0 {
-                                        t!(i18n, sells_per_hour, count = format!("{:.1}", 3600.0 / seconds_per_sale)).into_any()
-                                    } else if seconds_per_sale < 86400.0 {
-                                        t!(i18n, sells_per_day, count = format!("{:.1}", 86400.0 / seconds_per_sale)).into_any()
-                                    } else {
-                                        t!(i18n, sells_every_days, count = format!("{:.1}", seconds_per_sale / 86400.0)).into_any()
-                                    }
-                                } else {
-                                    t!(i18n, very_high_frequency).into_any()
-                                }
-                            } else {
-                                t!(i18n, not_enough_data).into_any()
-                            };
-
-
                             view! {
-                                <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                                    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
-                                        <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
-                                            {t!(i18n, cheapest_found)}
-                                        </h2>
-                                        <RealtimeStatus
-                                            status=realtime_status
-                                            last_update=last_update_at
-                                        />
-                                        <p class="text-sm text-[color:var(--color-text-muted)]">
-                                            {move || t!(i18n, based_on_sales, count = recent_sales.len())}
-                                        </p>
-                                    </div>
-
-                                    // Flat stat strip: 2x2 grid with hairline separators on
-                                    // mobile, one row of 4 with left dividers at lg+.
-                                    <div class="grid grid-cols-2 lg:grid-cols-4 [&>a]:border-[color:var(--color-outline)] [&>a:nth-child(even)]:border-l lg:[&>a:not(:first-child)]:border-l [&>a:nth-child(n+3)]:border-t lg:[&>a]:border-t-0">
-                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
-                                            <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
-                                            {if let Some((listing, _)) = cheapest_nq.clone() {
-                                                view! {
-                                                    <div>
-                                                        <div class="text-lg sm:text-xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
-                                                            <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
-                                                            <WorldName id=AnySelector::World(listing.world_id) />
-                                                        </div>
-                                                    </div>
-                                                }
-                                                .into_any()
-                                            } else {
-                                                view! { <div class="text-base sm:text-lg text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</div> }.into_any()
-                                            }}
-                                        </a>
-
-                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
-                                            <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
-                                                <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
-                                                {t!(i18n, hq)}
-                                            </div>
-                                            {if let Some((listing, _)) = cheapest_hq.clone() {
-                                                view! {
-                                                    <div>
-                                                        <div class="text-lg sm:text-xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
-                                                            <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
-                                                            <WorldName id=AnySelector::World(listing.world_id) />
-                                                        </div>
-                                                    </div>
-                                                }
-                                                .into_any()
-                                            } else {
-                                                view! { <div class="text-base sm:text-lg text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</div> }.into_any()
-                                            }}
-                                        </a>
-
-                                        <a href="#history" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
-                                            <div class="text-xs font-bold uppercase text-blue-300 mb-1 flex items-center gap-1">
-                                                {t!(i18n, real_price)}
-                                                {real_primary
-                                                    .map(|(is_hq, _)| {
-                                                        if is_hq {
-                                                            view! { <span class="text-[10px] text-[color:var(--color-text-muted)]">{t!(i18n, hq)}</span> }.into_any()
-                                                        } else {
-                                                            view! { <span class="text-[10px] text-[color:var(--color-text-muted)]">{t!(i18n, nq)}</span> }.into_any()
-                                                        }
-                                                    })
-                                                    .unwrap_or_else(|| ().into_any())}
-                                            </div>
-                                            <div class="text-lg sm:text-xl font-bold leading-none">
-                                                {match real_primary {
-                                                    Some((_, est)) => view! { <Gil amount=est.value /> }.into_any(),
-                                                    None => view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any(),
-                                                }}
-                                            </div>
-                                            {match real_secondary {
-                                                Some((is_hq, est)) => {
-                                                    let tag = if is_hq {
-                                                        view! { <span class="font-semibold">{t!(i18n, hq)}</span> }.into_any()
-                                                    } else {
-                                                        view! { <span class="font-semibold">{t!(i18n, nq)}</span> }.into_any()
-                                                    };
-                                                    view! {
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
-                                                            {tag}
-                                                            <Gil amount=est.value />
-                                                        </div>
-                                                    }
-                                                    .into_any()
-                                                }
-                                                None => ().into_any(),
-                                            }}
-                                            <div class="text-[10px] text-[color:var(--color-text-muted)] mt-1">
-                                                {match real_primary {
-                                                    Some((_, est)) => {
-                                                        view! {
-                                                            <span>
-                                                                {t!(i18n, real_price_basis, used = est.used, total = est.total, excluded = est.excluded)}
-                                                                " · "
-                                                            </span>
-                                                        }
-                                                        .into_any()
-                                                    }
-                                                    None => ().into_any(),
-                                                }}
-                                                {t!(i18n, recent_average)}
-                                                " "
-                                                {avg_price
-                                                    .map(|price| view! { <Gil amount=price /> }.into_any())
-                                                    .unwrap_or_else(|| view! { <span>{t!(i18n, no_data)}</span> }.into_any())}
-                                                " · "
-                                                {t!(i18n, median_label)}
-                                                " "
-                                                {median_price
-                                                    .map(|price| view! { <Gil amount=price /> }.into_any())
-                                                    .unwrap_or_else(|| view! { <span>{t!(i18n, no_data)}</span> }.into_any())}
-                                            </div>
-                                        </a>
-
-                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
-                                            <div class="text-xs font-bold uppercase text-emerald-300 mb-1">{t!(i18n, active_listings)}</div>
-                                            <div class="text-lg sm:text-xl font-bold leading-none">{listings_count}</div>
-                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-1">
-                                                {sales_cadence}
-                                            </div>
-                                        </a>
-                                    </div>
-
-                                    <div class="mt-2 flex flex-wrap items-center gap-2" class:hidden={move || listings_count > 0}>
-                                        {if listings_count == 0 {
+                                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" data-testid="real-price-summary">
+                                        <span class="font-semibold text-blue-300">{t!(i18n, real_price)}</span>
+                                        {[real_primary, real_secondary].into_iter().flatten().map(|(hq, estimate)| {
                                             view! {
-                                                <div role="status" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
-                                                    {move || t_string!(i18n, no_active_listings_found).to_string()}
+                                                <div class="flex items-center gap-1.5">
+                                                    <span class="text-xs text-[color:var(--color-text-muted)]">
+                                                        {if hq { t!(i18n, hq).into_any() } else { t!(i18n, nq).into_any() }}
+                                                    </span>
+                                                    <Gil amount=estimate.value />
                                                 </div>
                                             }
-                                            .into_any()
-                                        } else {
-                                            ().into_any()
-                                        }}
+                                        }).collect_view()}
+                                        {real_primary.is_none().then(|| view! { <span>{t!(i18n, no_data)}</span> })}
                                     </div>
-                                </div>
                             }
                             .into_any()
                         } else {
@@ -1528,32 +1210,55 @@ fn SalesDetails(
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     view! {
-        // Removed mt-8 and space-y-6 wrapper to let grid control layout
-        <Transition fallback=move || {
-            view! { <BoxSkeleton /> }
-        }>
+        <Transition fallback=move || view! { <BoxSkeleton /> }>
             {move || {
-                let sales = Memo::new(move |_| {
-                    listing_resource
-                        .with(|l| {
-                            l.as_ref().and_then(|l| l.as_ref().map(|l| l.sales.clone()).ok())
-                        })
-                        .unwrap_or_default()
-                });
-
-                view! {
-                    <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
-                        <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                            {move || t_string!(i18n, sale_history).to_string()}
-                        </h2>
-                        <SaleHistoryTable sales=sales.into() />
-                    </div>
+                if !listing_resource.with(|r| matches!(r, Some(Ok(_)))) {
+                    return ().into_any();
                 }
-                    .into_any()
+                let sales = Memo::new(move |_| {
+                    listing_resource.with(|data| data.as_ref().and_then(|data| data.as_ref().ok()).map(|data| data.sales.clone())).unwrap_or_default()
+                });
+                let summary = Memo::new(move |_| {
+                    sales.with(|sales| recent_sale_summary(sales.iter().map(|sale| sale.price_per_item)))
+                });
+                view! {
+                    <div class="flex h-full flex-col gap-3 rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
+                        <div class="flex min-h-8 flex-wrap items-center gap-3">
+                            <h2 class="text-xl font-bold text-brand-200">{t!(i18n, sale_history)}</h2>
+                            <span class="text-sm text-[color:var(--color-text-muted)]">
+                                {move || t!(i18n, based_on_sales, count = sales.with(|sales| sales.len()))}
+                            </span>
+                        </div>
+                        <div class="flex min-h-6 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[color:var(--color-text-muted)]" data-testid="sales-summary">
+                            <div class="flex items-center gap-2">
+                                <span>{t!(i18n, median_label)}</span>
+                                <crate::components::gil::GilOrDash amount=Signal::derive(move || summary.get().map(|(_, median)| median)) />
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span>{t!(i18n, recent_average)}</span>
+                                <crate::components::gil::GilOrDash amount=Signal::derive(move || summary.get().map(|(average, _)| average)) />
+                            </div>
+                        </div>
+                        <div><SaleHistoryTable sales=sales.into() /></div>
+                    </div>
+                }.into_any()
             }}
         </Transition>
+    }.into_any()
+}
+
+/// Raw per-sale prices for the history summary, across both qualities. Retains
+/// the existing upper-middle median convention; average arithmetic stays i64
+/// until after division so large prices cannot overflow the displayed result.
+fn recent_sale_summary(prices: impl Iterator<Item = i32>) -> Option<(i32, i32)> {
+    let mut prices = prices.collect::<Vec<_>>();
+    if prices.is_empty() {
+        return None;
     }
-    .into_any()
+    let count = prices.len();
+    let average = (prices.iter().map(|&price| i64::from(price)).sum::<i64>() / count as i64) as i32;
+    let (_, &mut median, _) = prices.select_nth_unstable(count / 2);
+    Some((average, median))
 }
 
 fn update_current_item(
@@ -1573,11 +1278,10 @@ fn update_current_item(
 fn ListingsContent(
     item_id: Memo<i32>,
     world: Memo<String>,
+    realtime_status: RwSignal<String>,
+    last_update_at: RwSignal<Option<chrono::DateTime<chrono::Utc>>>,
     #[prop(into, default = Signal::derive(HashSet::new))] excluded_worlds: Signal<HashSet<i32>>,
 ) -> impl IntoView {
-    let (realtime_status, set_realtime_status) = signal("connecting".to_string());
-    let (last_update_at, set_last_update_at) =
-        signal::<Option<chrono::DateTime<chrono::Utc>>>(None);
     let listing_resource = Resource::new(
         move || (item_id(), world()),
         |(item_id, world)| async move {
@@ -1607,7 +1311,6 @@ fn ListingsContent(
     });
     let realtime = use_realtime();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
-    let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
     let filtered_listings = Memo::new({
         // Every read in here goes through a `try_*` accessor. `ArcMemo` `take()`s
         // its cached value before running this closure, so a panic in the body
@@ -1629,9 +1332,7 @@ fn ListingsContent(
                 })
             })
             .unwrap_or_default();
-            // Datacenter exclusions belong to the Active Listings panel. Keeping
-            // them out of this page-wide dataset prevents a table preference from
-            // changing the price summary, chart, and per-world supply breakdown.
+            // Shared comparison links can still scope out individual worlds.
             filter_listing_rows(
                 listings,
                 None,
@@ -1643,6 +1344,8 @@ fn ListingsContent(
     let market_subscriptions = StoredValue::new(Vec::<RealtimeSubscription>::new());
     Effect::new(move |_| {
         market_subscriptions.update_value(|subscriptions| subscriptions.clear());
+        realtime_status.set("connecting".to_string());
+        last_update_at.set(None);
         let item_id = item_id();
         let world = Url::unescape(&world());
         let Some(realtime) = realtime.clone() else {
@@ -1664,18 +1367,18 @@ fn ListingsContent(
             SocketMessageType::Listings,
             move |message| match message {
                 ServerClient::Subscribed { .. } => {
-                    set_realtime_status.set("live".to_string());
+                    realtime_status.set("live".to_string());
                 }
                 ServerClient::Listings(event) => {
-                    set_realtime_status.set("live".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    realtime_status.set("live".to_string());
+                    last_update_at.set(Some(chrono::Utc::now()));
                     update_current_item(listing_resource, |data| {
                         data.apply_listing_event(item_id, event);
                     });
                 }
                 ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                    set_realtime_status.set("reconnecting".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    realtime_status.set("reconnecting".to_string());
+                    last_update_at.set(Some(chrono::Utc::now()));
                     listing_resource.refetch();
                 }
                 _ => {}
@@ -1686,18 +1389,18 @@ fn ListingsContent(
             SocketMessageType::Sales,
             move |message| match message {
                 ServerClient::Subscribed { .. } => {
-                    set_realtime_status.set("live".to_string());
+                    realtime_status.set("live".to_string());
                 }
                 ServerClient::Sales(event) => {
-                    set_realtime_status.set("live".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    realtime_status.set("live".to_string());
+                    last_update_at.set(Some(chrono::Utc::now()));
                     update_current_item(listing_resource, |data| {
                         data.apply_sales_event(item_id, event);
                     });
                 }
                 ServerClient::Stale { .. } | ServerClient::Error { .. } => {
-                    set_realtime_status.set("reconnecting".to_string());
-                    set_last_update_at.set(Some(chrono::Utc::now()));
+                    realtime_status.set("reconnecting".to_string());
+                    last_update_at.set(Some(chrono::Utc::now()));
                     listing_resource.refetch();
                 }
                 _ => {}
@@ -1713,13 +1416,6 @@ fn ListingsContent(
             <div id="overview" class="scroll-mt-16">
                 <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
                 <DecisionHeader listing_resource filtered_listings world item_id />
-                <MarketStatsPanel
-                    listing_resource
-                    filtered_listings
-                    item_id
-                    realtime_status=realtime_status.into()
-                    last_update_at=last_update_at.into()
-                />
             </div>
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
@@ -1735,8 +1431,7 @@ fn ListingsContent(
                         <ListingsPanel
                             listing_resource
                             filtered_listings
-                            world
-                            excluded_datacenters
+                            item_id
                         />
                     </div>
                     <div id="history" class="scroll-mt-16 min-w-0">
@@ -1845,6 +1540,8 @@ pub fn ItemView() -> impl IntoView {
 #[component]
 fn ItemViewContent() -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
+    let realtime_status = RwSignal::new("connecting".to_string());
+    let last_update_at = RwSignal::new(None::<chrono::DateTime<chrono::Utc>>);
     let params = use_params_map();
     let query = use_query_map();
     let item_id = Memo::new(move |_| {
@@ -1979,7 +1676,8 @@ fn ItemViewContent() -> impl IntoView {
                             </div>
                         </div>
 
-                        <div class="flex flex-wrap gap-2 items-center">
+                        <div class="flex flex-wrap gap-2 items-center" data-testid="item-actions">
+                            <RealtimeStatus status=realtime_status last_update=last_update_at />
                             <div class="cursor-pointer"><AddToList item_id /></div>
                             <a
                                 class="btn-primary"
@@ -2032,7 +1730,7 @@ fn ItemViewContent() -> impl IntoView {
             </SectionNav>
 
             <div class="main-content px-0 sm:px-4">
-                <ListingsContent item_id world excluded_worlds />
+                <ListingsContent item_id world excluded_worlds realtime_status last_update_at />
                 <div id="related" class="scroll-mt-16 mt-6">
                     <RelatedItems item_id=Signal::from(item_id) />
                 </div>
@@ -2044,41 +1742,28 @@ fn ItemViewContent() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use leptos_i18n::context::init_i18n_context;
-    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
-    use ultros_api_types::world_helper::WorldHelper;
 
-    fn world_data_for_exclusion_controls() -> LocalWorldData {
-        LocalWorldData(Ok(Arc::new(WorldHelper::new(WorldData {
-            regions: vec![Region {
-                id: 1,
-                name: "North-America".to_string(),
-                datacenters: vec![
-                    Datacenter {
-                        id: 10,
-                        name: "Aether".to_string(),
-                        region_id: 1,
-                        worlds: vec![World {
-                            id: 100,
-                            name: "Gilgamesh".to_string(),
-                            datacenter_id: 10,
-                        }],
-                    },
-                    Datacenter {
-                        id: 20,
-                        name: "Primal".to_string(),
-                        region_id: 1,
-                        worlds: vec![World {
-                            id: 200,
-                            name: "Excalibur".to_string(),
-                            datacenter_id: 20,
-                        }],
-                    },
-                ],
-            }],
-        }))))
+    #[test]
+    fn recent_sale_summary_handles_empty_and_large_prices() {
+        assert_eq!(recent_sale_summary([].into_iter()), None);
+        assert_eq!(recent_sale_summary([42].into_iter()), Some((42, 42)));
+        assert_eq!(
+            recent_sale_summary([i32::MAX, i32::MAX].into_iter()),
+            Some((i32::MAX, i32::MAX))
+        );
     }
 
+    #[test]
+    fn recent_sale_summary_preserves_upper_middle_median() {
+        assert_eq!(
+            recent_sale_summary([900, 100, 200, 400].into_iter()),
+            Some((400, 400))
+        );
+        assert_eq!(
+            recent_sale_summary([900, 100, 200].into_iter()),
+            Some((400, 200))
+        );
+    }
     fn listing(
         id: i32,
         world_id: i32,
@@ -2131,37 +1816,6 @@ mod tests {
 
         assert_eq!(result.0.id, 2);
         assert_eq!(result.0.world_id, 200);
-    }
-
-    #[test]
-    fn datacenter_exclusion_controls_render_each_datacenter_once() {
-        let _ = any_spawner::Executor::init_futures_executor();
-        let owner = Owner::new();
-        owner.with(|| {
-            provide_context(init_i18n_context::<crate::i18n::Locale>());
-            provide_context(world_data_for_exclusion_controls());
-            let world = Memo::new(|_| "North-America".to_string());
-            let excluded_datacenters = RwSignal::new(HashSet::from(["Aether".to_string()]));
-
-            let html = view! {
-                <DatacenterExclusionControls world excluded_datacenters />
-            }
-            .to_html();
-
-            assert_eq!(
-                html.matches("data-datacenter=\"Aether\"").count(),
-                1,
-                "{html}"
-            );
-            assert_eq!(
-                html.matches("data-datacenter=\"Primal\"").count(),
-                1,
-                "{html}"
-            );
-            assert_eq!(html.matches("Clear all").count(), 1);
-            assert!(html.contains("aria-pressed=\"true\""));
-            assert!(!html.contains("<h2"));
-        });
     }
 
     fn zone_listing(price: i32, world_id: i32) -> CheapestListingData {

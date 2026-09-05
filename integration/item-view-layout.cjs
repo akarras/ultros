@@ -22,8 +22,8 @@
 //  4. the crafting-recipes grid spans its panel (no half-empty panel), when
 //     the item has recipes.
 //  5. active listings use the same reachable, outside-the-scrollport footer,
-//  6. datacenter exclusions render once, stay local to the listings panel,
-//     and replace a fully filtered table with a resettable empty state.
+//  6. market summaries sit above their tables without datacenter exclusions
+//     or a duplicate price card, and live status sits beside the item actions.
 //
 // REQUIRE_MARKET_DATA=1 turns missing rows/footer scenarios into failures;
 // otherwise an empty dev DB explicitly reports those coverage gaps.
@@ -149,6 +149,9 @@ function measure() {
     listingsShowMore: listingsShowMoreInfo,
     gridW: Math.round(gridW),
     sideBySide,
+    tableTopDifference: listings.querySelector('table') && table
+      ? Math.abs(listings.querySelector('table').getBoundingClientRect().top - table.getBoundingClientRect().top)
+      : null,
     recipes,
   };
 }
@@ -250,6 +253,14 @@ async function verifyExpansion(page, failures) {
       continue;
     }
     const before = await panel.$$eval('tbody tr', (rows) => rows.length);
+    // The preceding scroll probes leave the page at an arbitrary position.
+    // Center the footer clear of sticky navigation before clicking it.
+    await footer.evaluate((button) => button.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await page.waitForFunction((button) => {
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return hit && (hit === button || button.contains(hit));
+    }, { timeout: TIMEOUT_MS }, footer);
     await footer.click();
     await page.waitForFunction((id, count) =>
       document.querySelectorAll(`#${id} tbody tr`).length > count,
@@ -260,91 +271,34 @@ async function verifyExpansion(page, failures) {
   }
 }
 
-async function verifyDatacenterExclusions(page, failures) {
-  await page.setViewport({ width: 1280, height: 1100, deviceScaleFactor: 1 });
-  await page.goto(`${BASE_URL}${ROUTE}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
-  await sleep(SETTLE_MS);
-
-  const fixture = await page.evaluate(() => {
+async function verifyMarketSummaries(page, failures) {
+  const result = await page.evaluate(() => {
     const listings = document.getElementById('listings');
-    const summary = listings?.querySelector('[data-testid="datacenter-exclusions"] > summary');
-    const marketCount = [...document.querySelectorAll('#overview a[href$="#listings"]')]
-      .find((link) => /active listings/i.test(link.textContent || ''))?.textContent || '';
+    const history = document.getElementById('history');
+    const summary = document.querySelector('[data-testid="market-price-strip"]');
+    const realPrice = listings?.querySelector('[data-testid="real-price-summary"]');
+    const actions = document.querySelector('[data-testid="item-actions"]');
     return {
-      hasSummary: Boolean(summary),
-      initialMarketCount: marketCount.replace(/\s+/g, ' ').trim(),
-      initialRows: listings?.querySelectorAll('tbody tr').length || 0,
+      hasExclusions: Boolean(listings?.querySelector('[data-testid="datacenter-exclusions"], [data-datacenter]')),
+      hasListingsSummary: Boolean(listings?.querySelector('[data-testid="listings-summary"]')),
+      hasSalesSummary: Boolean(history?.querySelector('[data-testid="sales-summary"]')),
+      priceHasSalesDetails: /recent average|median|filtered|based on/i.test(realPrice?.textContent || ''),
+      hasPriceStrip: Boolean(summary),
+      hasRealPrice: Boolean(realPrice),
+      hasHeaderLiveBadge: Boolean(actions?.querySelector('[data-testid="realtime-status-indicator"]')),
+      liveBadgeCount: document.querySelectorAll('[data-testid="realtime-status-indicator"]').length,
     };
   });
-
-  if (!fixture.hasSummary || fixture.initialRows === 0) {
-    const message = 'datacenter exclusion probe: fixture has no filterable listings';
-    if (REQUIRE_MARKET_DATA) failures.push(message);
-    else console.log(`[skip] ${message}`);
-    return;
+  if (result.hasExclusions) failures.push('item page still exposes datacenter exclusions');
+  if (!result.hasListingsSummary || !result.hasSalesSummary) {
+    failures.push('missing table-level market summaries');
   }
-
-  await page.click('#listings [data-testid="datacenter-exclusions"] > summary');
-  const datacenterButtons = await page.$$('#listings [data-datacenter]');
-  if (datacenterButtons.length === 0) {
-    const message = 'datacenter exclusion probe: fixture exposes no datacenter';
-    if (REQUIRE_MARKET_DATA) failures.push(message);
-    else console.log(`[skip] ${message}`);
-    return;
+  if (result.hasPriceStrip || !result.hasRealPrice || result.priceHasSalesDetails) {
+    failures.push('Real Price must be in active listings without the standalone price strip or sale statistics');
   }
-
-  const selectedName = await datacenterButtons[0].evaluate((button) =>
-    button.getAttribute('data-datacenter'),
-  );
-  await datacenterButtons[0].click();
-  await page.waitForFunction(
-    () => document.querySelector('#listings [data-datacenter][aria-pressed="true"]'),
-    { timeout: TIMEOUT_MS },
-  );
-
-  const filtered = await page.evaluate((name) => {
-    const listings = document.getElementById('listings');
-    const matchingButtons = [...listings.querySelectorAll('[data-datacenter]')]
-      .filter((button) => button.getAttribute('data-datacenter') === name);
-    const count = listings.querySelector('[data-testid="listings-count"]');
-    const marketCount = [...document.querySelectorAll('#overview a[href$="#listings"]')]
-      .find((link) => /active listings/i.test(link.textContent || ''))?.textContent || '';
-    return {
-      matchingButtons: matchingButtons.length,
-      filteredCount: count?.textContent?.trim() || '',
-      marketCount: marketCount.replace(/\s+/g, ' ').trim(),
-      hasEmptyState: Boolean(listings.querySelector('[data-testid="listings-filter-empty"]')),
-      hasTable: Boolean(listings.querySelector('table')),
-      hasReset: Boolean(listings.querySelector('[data-testid="reset-datacenter-exclusions"]')),
-    };
-  }, selectedName);
-
-  if (filtered.matchingButtons !== 1) {
-    failures.push(`datacenter exclusion renders ${selectedName} ${filtered.matchingButtons} times`);
+  if (!result.hasHeaderLiveBadge || result.liveBadgeCount !== 1) {
+    failures.push('the live badge must appear once beside the item actions');
   }
-  if (!filtered.filteredCount.includes(' of ')) {
-    failures.push(`filtered listing count lost its total: "${filtered.filteredCount}"`);
-  }
-  if (filtered.marketCount !== fixture.initialMarketCount) {
-    failures.push('datacenter exclusion changed the page-level Active Listings summary');
-  }
-
-  // A world-scoped fixture has one datacenter, so excluding it should exercise
-  // the dedicated empty state. Multi-datacenter fixtures may retain rows.
-  if (filtered.filteredCount.startsWith('0 ')) {
-    if (!filtered.hasEmptyState || filtered.hasTable || !filtered.hasReset) {
-      failures.push('fully filtered listings did not show the resettable empty state');
-    }
-  }
-
-  const resetSelector = filtered.hasReset
-    ? '#listings [data-testid="reset-datacenter-exclusions"]'
-    : '#listings [data-testid="clear-datacenter-exclusions"]';
-  await page.click(resetSelector);
-  await page.waitForFunction(
-    () => !document.querySelector('#listings [data-datacenter][aria-pressed="true"]'),
-    { timeout: TIMEOUT_MS },
-  );
 }
 
 async function main() {
@@ -412,6 +366,9 @@ async function main() {
           failures.push(`${width}px: listings "Show more" is not hit-testable`);
         }
       }
+      if (m.sideBySide && m.tableTopDifference !== null && m.tableTopDifference > 2) {
+        failures.push(`${width}px: table headers differ in height by ${m.tableTopDifference}px`);
+      }
       const expectSplit = m.gridW >= SPLIT_MIN_CONTAINER_PX;
       if (m.sideBySide !== expectSplit) {
         failures.push(
@@ -440,7 +397,7 @@ async function main() {
     await page.setViewport({ width: 390, height: 1100, deviceScaleFactor: 1 });
     await sleep(500);
     await verifyExpansion(page, failures);
-    await verifyDatacenterExclusions(page, failures);
+    await verifyMarketSummaries(page, failures);
   } finally {
     await browser.close();
   }

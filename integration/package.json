@@ -5,6 +5,7 @@
   "description": "Puppeteer-based E2E tests for the Ultros Leptos app",
   "license": "MIT",
   "scripts": {
+    "test:virtual-grid": "node ./virtual-grid.cjs",
     "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",
     "run": "node ./runner.cjs",
     "test": "npm run test:desktop && npm run test:mobile && npm run test:wide",
@@ -13,6 +14,8 @@
     "test:wide": "cross-env CONCURRENCY=16 DEVICE=wide npm run run",
     "test:item-view-layout": "node ./item-view-layout.cjs",
     "test:item-source-nav": "node ./item-source-nav.cjs",
+    "test:recipe-planner": "node ./recipe-planner.cjs",
+    "test:hover-card-navigation": "node ./hover-card-navigation.cjs",
     "test:login": "node ./login.cjs",
     "test:push": "node ./push.cjs",
     "test:shared-list": "node ./shared-list.cjs",

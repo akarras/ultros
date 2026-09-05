@@ -459,8 +459,9 @@ async function main() {
       if (!renameInput) {
         fail(failures, "drawer rename input not found");
       } else {
-        await renameInput.click({ clickCount: 3 });
-        await renameInput.type(newName);
+        // Resource updates may replace the drawer between locating and editing.
+        // A locator reacquires the input instead of retaining a detached node.
+        await ownerPage.locator('[data-testid="drawer-rename-input"]').fill(newName);
         const saveBtn = await ownerPage.$('[data-testid="drawer-save-details"]');
         if (!saveBtn) {
           fail(failures, "drawer save button not found");
@@ -618,10 +619,10 @@ async function main() {
           await ownerPage
             .waitForFunction(() => window.location.pathname === "/list", { timeout: 15000 })
             .catch(() => {});
-          if (ownerPage.url().endsWith("/list")) {
+          if (new URL(ownerPage.url()).pathname === "/list") {
             pass("owner returned to /list after delete");
           } else {
-            fail(failures, `expected url to end with /list, got ${ownerPage.url()}`);
+            fail(failures, `expected path /list, got ${ownerPage.url()}`);
           }
           const checkResp = await api(ownerPage, "GET", "/api/v1/list");
           const stillThere = (checkResp.body || []).find((e) => e.list.id === listId);

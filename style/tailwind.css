@@ -1,5 +1,100 @@
 @import "tailwindcss" source("../ultros-frontend/ultros-app/src");
 
+/* Item reference sections share rows without stretching sparse wells. Keep
+   the Sources wrapper in flow so its fragment link remains a scroll target. */
+.item-details-layout,
+.item-source-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 1.5rem;
+    min-width: 0;
+}
+
+.item-detail-section,
+.item-source-group {
+    flex: 1 1 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* These classes supply display outside Tailwind's layers, so explicitly keep
+   reactive empty sections out of layout, including the Sources wrapper. */
+.item-details-layout > .hidden,
+.item-source-group > .hidden {
+    display: none;
+}
+
+.item-detail-entries {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+    align-items: start;
+    gap: 0.75rem;
+}
+
+.item-recipe-entries {
+    grid-template-columns: repeat(auto-fit, minmax(min(30rem, 100%), 1fr));
+    gap: 1rem;
+}
+
+.item-detail-count {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.item-detail-section h3 {
+    flex-wrap: wrap;
+}
+
+/* A lone entry uses the panel's surface and padding. Interactive entries keep
+   their link and keyboard focus behavior without a second permanent box. */
+.item-detail-section[data-entry-count="1"] .item-detail-entries > :only-child {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+}
+
+@media (min-width: 40rem) {
+    .item-detail-section,
+    .item-source-group {
+        flex: 2 1 44rem;
+    }
+
+    .item-detail-section[data-entry-count="1"],
+    .item-source-group[data-entry-count="1"] {
+        flex: 1 1 22rem;
+        max-width: 26rem;
+    }
+
+    .item-source-group[data-section-count="1"]:not([data-entry-count="1"]) {
+        flex-basis: 32rem;
+        max-width: 46rem;
+    }
+
+    .item-source-group > .item-detail-section:not([data-entry-count="1"]) {
+        flex-basis: 32rem;
+    }
+
+    /* Several populated source lists need the whole row; otherwise their
+       shared wrapper would stack them beside a short Related section. */
+    .item-source-group:not([data-section-count="1"]):has(> .item-detail-section:not(.hidden):not([data-entry-count="1"])) {
+        flex-basis: 100%;
+    }
+
+    .item-recipe-section[data-entry-count="1"] {
+        flex: 1 1 38rem;
+        max-width: 40rem;
+    }
+
+    .item-recipe-section:not([data-entry-count="1"]) {
+        flex-basis: 100%;
+    }
+}
+
 /* Legacy CSS folded into Tailwind build so brand tokens are available */
 @layer base {
     /* Back-compat CSS variables that legacy selectors may reference */
@@ -55,6 +150,29 @@
         );
         --line: color-mix(in srgb, var(--color-brand-300) 13%, transparent);
         --surface: rgba(255, 255, 255, 0.025);
+
+        /* === Scrollbar tokens ===
+         * Consumed by the themed-scrollbar rule below, which reaches every
+         * scrollport in the app, so every scrollbar picks up the active
+         * palette and theme.
+         *
+         * `--scrollbar-ink` is the solid color the thumb is mixed out of.
+         * On dark it is just the brand ring, which every palette defines as
+         * a rung bright enough to read against the page. Light mode
+         * re-points it (see the `[data-theme="light"]` block) because the
+         * same rung would wash out on a near-white surface.
+         *
+         * There is no hover variant: `scrollbar-color` takes a thumb and a
+         * track and has no hover state, so the resting alpha is the only
+         * one the user ever sees and it carries a little more weight than a
+         * hoverable thumb would need.
+         */
+        --scrollbar-ink: var(--brand-ring);
+        --scrollbar-thumb: color-mix(
+            in srgb,
+            var(--scrollbar-ink) 50%,
+            transparent
+        );
     }
 
     /* Fonts (kept as-is for wide support) */
@@ -113,6 +231,43 @@
            clipped off the right edge of every page. `100%` resolves against
            the real content box, so the two agree. */
         width: 100%;
+    }
+
+    /* ----- Themed scrollbars -----
+       These tint and slim every scrollport on every page. Firefox, Chromium
+       121+ and Safari 18.2+ honour them; anything older ignores them and
+       keeps the platform scrollbar.
+
+       The two properties need different reach: `scrollbar-color` inherits,
+       so the root carries it to every descendant, but `scrollbar-width`
+       does not, so slimming a nested scrollport takes the universal
+       selector. `*` is inert on everything that never scrolls.
+
+       Deliberately *not* `::-webkit-scrollbar` pseudo-elements, which would
+       buy a rounded pill and let us drop the stepper arrows: styling them
+       opts the element out of the platform's overlay scrollbars and into
+       classic ones, which occupy layout width. On macOS — where Chromium
+       and Safari are overlay by default and cost zero width — a universal
+       rule would hand every scrollport in the app a permanent 10px gutter,
+       and this layout has had width regressions before. The standard
+       properties recolor the scrollbar the platform was already going to
+       draw, so they change appearance without moving anything.
+
+       These two are also mutually exclusive, which is worth knowing before
+       reaching for the pseudo-elements on one scrollport later: Chromium
+       and Safari drop *all* `::-webkit-scrollbar` styling on an element
+       whose `scrollbar-color` is set, and a non-`auto` `scrollbar-width`
+       pins the track to the engine's own thin metric and ignores the
+       pseudo-element's `width`/`height`. That is why `.scroll-panel`'s
+       former `::-webkit-scrollbar` rules never rendered in those engines —
+       it declared both — and why `scrollbar-width: none` (hiding the bar
+       outright, as `.filter-chip-row` does) is the one value that composes
+       cleanly with them. */
+    * {
+        scrollbar-width: thin;
+    }
+    html {
+        scrollbar-color: var(--scrollbar-thumb) transparent;
     }
 
     body {
@@ -185,6 +340,18 @@
 
     /* Decorative spot for gradients in light */
     --decor-spot: rgba(0, 0, 0, 0.06);
+
+    /* Scrollbar ink is mixed toward the page's ink color before the alpha
+     * band is applied. Which rung `--brand-ring` lands on differs between
+     * the default light scale (inverted) and an explicitly picked palette
+     * (not inverted), so keying off a rung directly would give a thumb that
+     * is legible under some palettes and invisible under others. Blending
+     * toward `--color-text` keeps the palette's hue while guaranteeing the
+     * thumb stays darker than the near-white surface it sits on. */
+    --scrollbar-ink: color-mix(in srgb, var(--brand-ring) 65%, var(--color-text));
+    /* A tinted thumb carries less contrast against near-white than against
+       the dark page, so light mode leans on the alpha band harder. */
+    --scrollbar-thumb: color-mix(in srgb, var(--scrollbar-ink) 62%, transparent);
 
     /* Flip brand scale (violet) for better contrast on light backgrounds) */
     --color-brand-50: #2e1065;
@@ -931,10 +1098,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
 }
 
-[data-item-section-nav] {
-    scrollbar-color: color-mix(in srgb, var(--brand-ring) 45%, transparent) transparent;
-}
-
 /* Source accents need darker shades on the light page surface. */
 [data-theme="light"] [data-item-section-nav] a[href="#crafting-recipes"] {
     @apply text-orange-700;
@@ -1467,35 +1630,14 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     --tw-ring-color: color-mix(in srgb, var(--brand-ring) 20%, transparent);
 }
 
+/* No scrollbar declarations here: a slim, themed scrollbar is what every
+   scrollport inherits by default now (see `@layer base`). */
 @utility scroll-panel {
     @apply max-h-[500px] overflow-y-auto overflow-x-hidden rounded-lg border;
-    /* Firefox */
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--color-brand-600) 50%, transparent)
-        transparent;
 }
 
 [data-theme="dark"] .scroll-panel {
     @apply border-white/10 bg-gradient-to-br from-brand-950/90 to-brand-900/85 backdrop-blur-md shadow-lg shadow-black/50;
-}
-/* WebKit */
-.scroll-panel::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-.scroll-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-.scroll-panel::-webkit-scrollbar-thumb {
-    background-color: color-mix(
-        in srgb,
-        var(--color-brand-600) 50%,
-        transparent
-    );
-    border-radius: 9999px;
-}
-.scroll-panel::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-brand-600);
 }
 
 /* Performance utilities for virtualization and large lists */
@@ -2413,12 +2555,8 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     flex: 1;
 }
 
-/* ----- Flip Finder sticky control bar -----
-   The bar is the only filter surface on the page, so it must not grow: the
-   table header sticks at `top: STICKY_BAR_HEIGHT` (76px, components/filter_chip.rs)
-   and a taller bar would cover it. The chip row scrolls horizontally instead
-   of wrapping. Deliberately no `overflow` here — an overflow on an ancestor
-   of the table header would re-parent its scrollport away from the viewport. */
+/* The filter controls remain outside the grid scrollport so their popovers
+   are not clipped. Grid headings freeze inside VirtualGrid independently. */
 @utility sticky-bar {
     position: sticky;
     top: 0;
@@ -2532,32 +2670,55 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         transparent 100%
     );
 }
-/* ----- Flip Finder grid: horizontal scrollports -----
-   The grid is wider than the viewport at every breakpoint, and `html`/`body`
-   are `overflow-x: hidden`, so something has to scroll or the right-hand
-   columns are simply unreachable. It cannot be a wrapper around the list: in
-   window-scroll mode that wrapper becomes the nearest scrollport for the
-   sticky table header (an `overflow-x` forces `overflow-y` to compute to
-   `auto`), and since it never scrolls vertically the header would never
-   stick. So the header and the row area are two *sibling* scrollports of
-   equal width whose scrollLeft is synchronized in analyzer.rs. */
-.tool-hscroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    /* Rows scroll underneath the sticky header, so it cannot be
-       semi-transparent. */
-    background-color: var(--color-background-panel);
-    scrollbar-width: thin;
+/* VirtualGrid owns both scroll axes. Its frozen header and virtual cells
+   occupy the same full-width canvas, without a second scroll container. */
+.virtual-grid-shell { min-width: 0; }
+.virtual-grid {
+    position: relative;
+    overflow: auto;
+    height: min(var(--grid-content-height, 600px), var(--grid-available-height, max(240px, calc(100dvh - 180px))));
+    border: 1px solid var(--color-outline);
+    background: var(--color-background-panel);
+    scrollbar-gutter: stable;
+    outline-offset: 2px;
+    font-size: 14px;
 }
-/* One width for the header row, every data row, and the spacer that holds the
-   rows, so the two scrollports scroll through the same range and the row
-   striping covers it.
-
-   No breakpoint enters into it: every column the user switched on renders at
-   every viewport width, and a narrow screen scrolls to reach them. The 30.75rem
-   here is the four always-on columns (HQ 44px + Item 14rem + Profit 7rem + Buy
-   Price 7rem); `--tool-optional-cols` is set inline by the route and carries
-   whatever `?cols=` turned on, which the stylesheet cannot know. */
+.virtual-grid-canvas { position: relative; }
+.virtual-grid-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    width: 100%;
+    background: var(--color-background-panel);
+    border-bottom: 1px solid var(--color-outline);
+}
+.virtual-grid-heading, .virtual-grid-cell { position: absolute; top: 0; height: 100%; box-sizing: border-box; }
+.virtual-grid-heading { display: flex; align-items: center; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--brand-ring) 8%, var(--color-background-panel)); }
+.grid-heading-content { flex: 1; min-width: 0; overflow: hidden; }
+.grid-heading-content > div { width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
+.grid-column-menu, .grid-drag-handle { flex: 0 0 20px; padding: 4px 0; color: var(--color-text-muted); }
+.grid-drag-handle { cursor: grab; touch-action: none; user-select: none; }
+.grid-resize-handle { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 3; }
+.grid-resize-handle:hover { background: var(--brand-ring); }
+.virtual-grid-row { position: absolute; left: 0; width: 100%; background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.virtual-grid-row[data-even="false"] { background: color-mix(in srgb, var(--color-text) 3%, transparent); }
+.virtual-grid-row:hover { background: color-mix(in srgb, var(--brand-ring) 12%, transparent); }
+.virtual-grid-cell { overflow: hidden; border-right: 1px solid color-mix(in srgb, var(--color-outline) 35%, transparent); }
+.virtual-grid-cell > div { width: 100%; min-width: 0; height: 100%; }
+.virtual-grid-cell a { min-width: 0; }
+.virtual-grid-cell a, .virtual-grid-cell button { max-width: 100%; }
+.virtual-grid:focus-within .grid-active { box-shadow: inset 0 0 0 2px var(--brand-ring); }
+.grid-insert-before { border-left: 3px solid var(--brand-ring); }
+.grid-insert-after { border-right: 3px solid var(--brand-ring); }
+.grid-menu-backdrop { position: fixed; inset: 0; z-index: 80; }
+.grid-menu-panel { position: fixed; z-index: 81; width: 272px; max-height: min(420px, calc(100dvh - 16px)); overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--color-outline); border-radius: 8px; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 8px 32px #0008; font-size: 14px; }
+.grid-menu-panel button { padding: 6px 8px; text-align: left; border-radius: 4px; }
+.grid-menu-panel button:hover, .grid-menu-panel button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
+.grid-menu-panel input { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--color-outline); border-radius: 4px; background: var(--color-background); }
+.grid-menu-actions { display: flex; gap: 8px; }
+.grid-insert-options { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; }
+/* Default widths for the Flip Finder loading skeleton. Live grid geometry
+   is controlled by VirtualGrid column definitions and saved layout state. */
 .tool-table {
     --tool-row-min-width: calc(30.75rem + var(--tool-optional-cols, 0px));
 }

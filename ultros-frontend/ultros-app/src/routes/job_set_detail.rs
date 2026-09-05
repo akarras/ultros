@@ -16,7 +16,7 @@ use crate::CheapestPrices;
 use crate::api::get_cheapest_listings;
 use crate::components::add_set_to_list::AddSetToList;
 use crate::components::cheapest_price::CheapestPrice;
-use crate::components::crafting_cost::IngredientsIter;
+use crate::components::crafting_cost::{CRYSTAL_SEARCH_CATEGORY, IngredientsIter};
 use crate::components::gil::{Gil, GilOrDash};
 use crate::components::item_icon::{IconSize, ItemIcon};
 use crate::components::job_set_grouping::{GroupableItem, JobSetGroup, group_into_sets};
@@ -284,7 +284,7 @@ pub(crate) struct MaterialEntry {
     pub id: ItemId,
     pub name: String,
     pub amount: i32,
-    /// True for crystal/shard/cluster (item_search_category == 59) —
+    /// True for crystal/shard/cluster (see `CRYSTAL_SEARCH_CATEGORY`) —
     /// the UI groups these visually since they're cheap and not really
     /// part of the "ingredient shopping list" most users care about.
     pub is_shard: bool,
@@ -317,7 +317,7 @@ pub(crate) fn aggregate_materials(
                 id: ItemId(id),
                 name: item.name.clone(),
                 amount,
-                is_shard: item.item_search_category == 59,
+                is_shard: item.item_search_category == CRYSTAL_SEARCH_CATEGORY,
             })
         })
         .collect();
@@ -1134,7 +1134,10 @@ mod tests {
         .collect();
         let items: HashMap<ItemId, Item> = [
             (ItemId(100), make_item(100, "Garlean Fiber", 0, 0, 51)),
-            (ItemId(59), make_item(59, "Wind Shard", 0, 0, 59)),
+            (
+                ItemId(59),
+                make_item(59, "Wind Shard", 0, 0, CRYSTAL_SEARCH_CATEGORY),
+            ),
         ]
         .into_iter()
         .collect();

@@ -7,7 +7,7 @@ use axum::http::{HeaderValue, header};
 /// you should be able to build and serve leptos with one install step.
 ///
 use axum::{
-    Router,
+    Extension, Router,
     body::Body,
     extract::State,
     http::Request,
@@ -21,6 +21,7 @@ use tower_http::set_header::SetResponseHeader;
 use tracing::{info, instrument};
 use ultros_api_types::user::UserData;
 use ultros_api_types::world_helper::WorldHelper;
+use ultros_app::ssr_api::SsrApi;
 use ultros_app::*;
 
 use crate::web::error::ApiError;
@@ -46,6 +47,7 @@ async fn render_leptos(
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
     mode: StreamMode,
+    api: SsrApi,
 ) -> Response {
     info!("Custom handler");
     // The HTML now carries per-user data (region + current_user), so it must
@@ -82,6 +84,7 @@ async fn render_leptos(
         provide_context(LocalWorldData(Ok(worlds.clone())));
         provide_context(GuessedRegion(region_for_ctx.clone()));
         provide_context(BootstrapUser(current_user_for_ctx.clone()));
+        provide_context(api.clone());
     };
     let app_fn = move || shell(options.clone(), bootstrap_script.clone());
     let mut response = match mode {
@@ -106,16 +109,26 @@ async fn render_leptos(
     response
 }
 
-#[instrument(skip(worlds, options, req, user))]
+#[instrument(skip(worlds, options, req, user, api))]
 #[axum::debug_handler(state = WebState)]
 async fn custom_handler(
     State(worlds): State<Arc<WorldHelper>>,
     State(options): State<LeptosOptions>,
+    Extension(api): Extension<SsrApi>,
     region: Option<Region>,
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
 ) -> Response {
-    render_leptos(worlds, options, region, user, req, StreamMode::OutOfOrder).await
+    render_leptos(
+        worlds,
+        options,
+        region,
+        user,
+        req,
+        StreamMode::OutOfOrder,
+        api,
+    )
+    .await
 }
 
 /// Handler for routes that declare `SsrMode::InOrder`.
@@ -126,20 +139,22 @@ async fn custom_handler(
 /// panics at `hydration.rs:163` (`failed_to_cast_element`) — GlitchTip #6831.
 /// In-order streaming resolves each boundary before emitting it, so no
 /// relocation script is produced and there is nothing to race.
-#[instrument(skip(worlds, options, req, user))]
+#[instrument(skip(worlds, options, req, user, api))]
 #[axum::debug_handler(state = WebState)]
 async fn in_order_handler(
     State(worlds): State<Arc<WorldHelper>>,
     State(options): State<LeptosOptions>,
+    Extension(api): Extension<SsrApi>,
     region: Option<Region>,
     user: Result<AuthDiscordUser, ApiError>,
     req: Request<Body>,
 ) -> Response {
-    render_leptos(worlds, options, region, user, req, StreamMode::InOrder).await
+    render_leptos(worlds, options, region, user, req, StreamMode::InOrder, api).await
 }
 
 pub(crate) async fn create_leptos_app(
     worlds: Arc<WorldHelper>,
+    api: SsrApi,
 ) -> Result<Router<WebState>, Box<dyn Error>> {
     use tower_http::services::ServeDir;
 
@@ -213,7 +228,9 @@ pub(crate) async fn create_leptos_app(
     if !in_order_routes.is_empty() {
         router = router.leptos_routes_with_handler(in_order_routes, in_order_handler);
     }
-    Ok(router.leptos_routes_with_handler(streaming_routes, custom_handler))
+    Ok(router
+        .leptos_routes_with_handler(streaming_routes, custom_handler)
+        .layer(Extension(api)))
     // .with_state(state)
     // .layer(Extension(Arc::new(leptos_options))))
 }
