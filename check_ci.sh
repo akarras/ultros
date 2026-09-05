@@ -1,5 +1,7 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # prop:href/alt/src/content sets a DOM property after wasm hydration and is a
 # no-op during SSR (tachys renders nothing for it), so crawlers/social
@@ -14,11 +16,11 @@ fi
 cargo fmt --all -- --check
 
 # Run cargo clippy check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --locked --all-targets -- -D warnings
 
 # xiv-gen's csv_to_rkyv module (and its tests) only compile under this
 # non-default feature, so the workspace clippy above never sees it. Lint it
-# explicitly; the matching test gate is:
-#   cargo test -p xiv-gen --features csv_to_rkyv
-# (CI's test step is disabled, so run that locally when touching the module.)
-cargo clippy -p xiv-gen --features csv_to_rkyv --all-targets -- -D warnings
+# explicitly as well as executing its feature-gated tests below.
+cargo clippy --locked -p xiv-gen --features csv_to_rkyv --all-targets -- -D warnings
+
+"$BASH" scripts/check_tests.sh
