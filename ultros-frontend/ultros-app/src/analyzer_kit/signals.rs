@@ -55,20 +55,6 @@ pub fn stats_index(stats: &BulkSaleStats) -> StatsIndex {
 /// cells settle to "—" instead of shimmering forever.
 pub type LateStats = RwSignal<Option<Arc<StatsIndex>>>;
 
-/// The statistics row for `(item, quality)`, preferring `prefer_hq` and
-/// falling back to the other quality: the rule the pricing pass applies to
-/// the 7-day body, so a row's 30-day figures come from the same quality its
-/// 7-day ones did.
-pub fn stat_row_either(
-    index: &StatsIndex,
-    item_id: i32,
-    prefer_hq: bool,
-) -> Option<&ItemSaleStats> {
-    index
-        .get(&(item_id, prefer_hq))
-        .or_else(|| index.get(&(item_id, !prefer_hq)))
-}
-
 /// The statistic a signal reads from one row.
 pub fn stat_price(row: &ItemSaleStats, stat: SaleStat) -> i32 {
     match stat {
@@ -185,15 +171,6 @@ mod tests {
                     },
                 )
                 .collect(),
-        }
-    }
-
-    fn stat_row(item_id: i32, hq: bool, min_price: i32) -> ItemSaleStats {
-        ItemSaleStats {
-            item_id,
-            hq,
-            min_price,
-            ..Default::default()
         }
     }
 
@@ -359,30 +336,5 @@ mod tests {
             "the zero HQ avg is skipped"
         );
         assert_eq!(stat_only_cheapest(&index, 8, SaleStat::Min), None);
-    }
-
-    #[test]
-    fn stat_row_either_falls_back_to_the_other_quality() {
-        let mut index: StatsIndex = StatsIndex::new();
-        index.insert((7, false), stat_row(7, false, 100));
-        assert_eq!(
-            stat_row_either(&index, 7, false).map(|r| r.min_price),
-            Some(100)
-        );
-        // HQ preferred but absent: the NQ row is what actually traded.
-        assert_eq!(
-            stat_row_either(&index, 7, true).map(|r| r.min_price),
-            Some(100)
-        );
-        index.insert((7, true), stat_row(7, true, 250));
-        assert_eq!(
-            stat_row_either(&index, 7, true).map(|r| r.min_price),
-            Some(250)
-        );
-        assert_eq!(
-            stat_row_either(&index, 7, false).map(|r| r.min_price),
-            Some(100)
-        );
-        assert!(stat_row_either(&index, 8, false).is_none());
     }
 }

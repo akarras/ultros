@@ -112,7 +112,7 @@ pub struct CostBreakdown {
     pub sub_crafts: Vec<SubcraftInfo>,
     /// Lines bought on a market that no listing priced (`unit_price == 0`),
     /// after the shard flag and the sub-craft pass: shards under
-    /// `ExcludeShards` and vendor-sold items are not counted, and the
+    /// `ExcludeShards` and actual vendor purchases are not counted, and the
     /// winning sub-run's count propagates up.
     pub unpriced_market_lines: u16,
 }
@@ -328,19 +328,14 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
         }
 
         // Counted after the shard flag and the sub-craft pass: a rescued line
-        // is `Subcraft` by now, an excluded shard is off the books, and an
-        // item the vendor sells is never "unpriced" even when require_hq
-        // skipped its vendor floor.
-        let vendor_sold = opts
-            .vendor_prices
-            .and_then(|m| m.get(&item_id.0))
-            .is_some_and(|p| *p > 0);
+        // is `Subcraft` by now and an excluded shard is off the books.
+        // Only an actual vendor purchase is priced: when require_hq skips
+        // the vendor floor, an absent market listing still needs a warning.
         let off_the_books = line.is_shard && matches!(opts.shards, ShardsMode::ExcludeShards);
         if line.source == PriceSource::Market
             && line.used_from_market > 0
             && line.unit_price == 0
             && !off_the_books
-            && !vendor_sold
         {
             unpriced = unpriced.saturating_add(1);
         }
@@ -1088,7 +1083,7 @@ mod tests {
     }
 
     #[test]
-    fn unpriced_ignores_excluded_shards_and_vendor_sold() {
+    fn unpriced_ignores_excluded_shards_and_actual_vendor_purchases() {
         let prices = one_listing(1000, false, 100, 1);
         let cats = fixture_categories();
         let outer = make_recipe(&[(1000, 1), (1001, 1), (2000, 1)]);
@@ -1106,6 +1101,8 @@ mod tests {
         };
         // Shard excluded, 2000 vendor-sold: nothing is unpriced.
         let cb = compute_cost(&outer, &prices, &by_output, &excl, &is_shard);
+        assert_eq!(cb.cost, 125);
+        assert_eq!(cb.ingredient_lines[2].source, PriceSource::Vendor);
         assert_eq!(cb.unpriced_market_lines, 0);
         // Shards on the books: the unlisted shard counts.
         let incl = CraftingCostOptions {
@@ -1114,7 +1111,9 @@ mod tests {
         };
         let cb = compute_cost(&outer, &prices, &by_output, &incl, &is_shard);
         assert_eq!(cb.unpriced_market_lines, 1);
-        // require_hq skips the vendor floor, but a vendor-sold item is still not "unpriced".
+        // require_hq skips the vendor floor. Item 2000 has no listing of
+        // either quality, so its missing price must be reported even though
+        // a vendor sells the NQ item. Keep the existing pricing policy.
         let hq = CraftingCostOptions {
             require_hq: true,
             ..opts_copy(&excl, &oh)
@@ -1122,7 +1121,8 @@ mod tests {
         let cb = compute_cost(&outer, &prices, &by_output, &hq, &is_shard);
         assert_eq!(cb.ingredient_lines[2].source, PriceSource::Market);
         assert_eq!(cb.ingredient_lines[2].unit_price, 0);
-        assert_eq!(cb.unpriced_market_lines, 0);
+        assert_eq!(cb.cost, 100);
+        assert_eq!(cb.unpriced_market_lines, 1);
     }
 
     #[test]
