@@ -10,10 +10,13 @@ pub(crate) mod i18n_fallback;
 pub(crate) mod math;
 pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
+pub(crate) mod recipe_planner;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;
+#[cfg(feature = "ssr")]
+pub mod ssr_api;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
@@ -55,6 +58,7 @@ use crate::{
         lists::*,
         not_found::NotFound,
         recipe_analyzer::*,
+        recipe_view::RecipeView,
         retainers::*,
         scrip_sources::*,
         settings::*,
@@ -520,6 +524,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                 <social_meta::SocialMetadata />
                 <AppShell>
                     <Routes fallback=NotFound>
+                        <components::virtual_grid::fixture::GridFixtureRoutes/>
                         <Route path=path!("") view=HomePage />
                         <ParentRoute path=path!("retainers") view=Retainers>
                             <Route path=path!("edit") view=EditRetainers />
@@ -569,6 +574,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("vendor-resale") view=VendorResale />
                         <Route path=path!("vendor-resale/:world") view=VendorWorldView />
                         <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                        <Route path=path!("recipe/:id") view=RecipeView />
                         <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
                         <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
                         <Route path=path!("leve-analyzer") view=LeveAnalyzer />

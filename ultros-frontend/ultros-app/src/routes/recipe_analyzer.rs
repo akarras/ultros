@@ -419,7 +419,10 @@ fn MarketMenu(
 
     let open = RwSignal::new(false);
     let container = NodeRef::<leptos::html::Div>::new();
-    use_dismissable(container, move || open.set(false));
+    // Mounted inside the control bar's `actions`, so opening this has to be
+    // announced to the bar's popover group — a click on this button is not
+    // an outside click as far as the bar's own menus are concerned.
+    let container_token = use_dismissable(container, move || open.set(false));
 
     view! {
         <div class="relative flex items-center" node_ref=container>
@@ -429,7 +432,13 @@ fn MarketMenu(
                 class="sticky-bar-button sticky-bar-button-shrink"
                 aria-label=t_string!(i18n, recipe_analyzer_market_button)
                 aria-expanded=move || open.get().to_string()
-                on:click=move |_| open.update(|v| *v = !*v)
+                on:click=move |_| {
+                    let opening = !open.get_untracked();
+                    if opening {
+                        container_token.opening();
+                    }
+                    open.set(opening);
+                }
             >
                 <Icon icon=icondata::MdiCashMultiple />
                 <span class="hidden md:inline sticky-bar-button-label">
@@ -789,8 +798,7 @@ fn spark_entry(s: SparklineSeries) -> (SparkKey, SparkValue) {
 /// The visible window's sparkline fetch. A world that has not resolved yet
 /// and a failed request both yield nothing; the hook settles every
 /// requested key either way, so a cell goes loading → "—" rather than
-/// shimmering forever. Only ever called from the hook's effect (`post_api`
-/// is `unreachable!` under SSR).
+/// shimmering forever. Only ever called from the hook's client-side effect.
 async fn fetch_recipe_sparklines(
     world: Option<String>,
     keys: Vec<SparkKey>,
@@ -3094,6 +3102,7 @@ fn RecipeAnalyzerTable(
     let recipes = &data.recipes;
     let recipe_level_tables = &data.recipe_level_tables;
     let i18n = use_i18n();
+    let recipe_query = use_query_map();
 
     // Index recipes by output item for subcraft lookup
     let recipes_by_output = Memo::new(move |_| {
@@ -3763,7 +3772,7 @@ fn RecipeAnalyzerTable(
                     <div role="cell" class="px-4 py-2 flex flex-row w-64 md:w-80 shrink-0 items-center gap-2">
                          <a
                             class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                            href=format!("/item/{}/{}", world(), item_id.0)
+                            href=crate::routes::recipe_view::recipe_href(data.recipe.key_id.0, &world(), &recipe_query.get())
                         >
                             <div class="shrink-0">
                                 <ItemIcon item_id=item_id.0 icon_size=IconSize::Small />
@@ -6880,20 +6889,24 @@ mod test {
             })
             .collect();
         println!("ORACLE = {got:?}");
-        // Recorded from the pre-refactor pipeline (Move A, commit above).
+        // Recorded against `ShardsMode::ExcludeShards` actually excluding
+        // crystals. The pre-fix numbers were taken while
+        // `CRYSTAL_SEARCH_CATEGORY` pointed at 59 ("Catalysts"), so
+        // `is_shard_item` never matched and the fixture's crystal
+        // ingredients were priced into every cost despite the mode.
         const ORACLE: &[(i32, i32, i32, i32, i32, i32)] = &[
             (0, 114, 0, 0, 120, 6),
-            (1, 89, 74, 120, 220, 11),
-            (2, 35, 13, 267, 318, 16),
-            (3, 203, 74, 272, 500, 25),
-            (4, 47, 17, 275, 339, 17),
-            (5, 332, 269, 123, 479, 24),
-            (7, 209, 74, 279, 514, 26),
-            (9, 421, 150, 280, 738, 37),
-            (12, 134, 50, 267, 423, 22),
-            (13, 413, 150, 274, 724, 37),
-            (14, 238, 86, 276, 542, 28),
-            (15, 210, 77, 271, 507, 26),
+            (1, 203, 3383, 6, 220, 11),
+            (2, 284, 1577, 18, 318, 16),
+            (3, 452, 1965, 23, 500, 25),
+            (4, 296, 1138, 26, 339, 17),
+            (5, 446, 4955, 9, 479, 24),
+            (6, 118, 437, 27, 153, 8),
+            (7, 458, 1526, 30, 514, 26),
+            (8, 127, 488, 26, 162, 9),
+            (9, 670, 2161, 31, 738, 37),
+            (10, 88, 338, 26, 120, 6),
+            (11, 189, 675, 28, 229, 12),
         ];
         assert_eq!(got, ORACLE);
     }
@@ -6955,6 +6968,12 @@ mod test {
         // fix intentionally changes stat_hq where the buy-side HQ fallback
         // (nq + 50) beats the sell world's NQ listing (nq * 1.2). Missing
         // same-quality history still leaves the median empty.
+        //
+        // Which recipes appear (and in what order) was re-recorded once
+        // `ShardsMode::ExcludeShards` began excluding crystals: the earlier
+        // rows were captured while `CRYSTAL_SEARCH_CATEGORY` pointed at 59
+        // ("Catalysts"), so `is_shard_item` never matched and the fixture's
+        // crystal ingredients were priced into every cost despite the mode.
         const WITH: &[RevProjection] = &[
             (0, 120, [Some(120), None, None, None], true, None, false),
             (1, 220, [Some(220), None, None, None], true, None, false),
@@ -6983,29 +7002,30 @@ mod test {
                 Some(434),
                 false,
             ),
+            (6, 153, [Some(153), None, None, None], true, None, false),
             (7, 514, [Some(556), None, None, None], true, None, true),
+            (
+                8,
+                140,
+                [Some(162), Some(125), Some(140), Some(144)],
+                false,
+                Some(140),
+                false,
+            ),
             (9, 738, [Some(825), None, None, None], true, None, true),
             (
-                12,
-                378,
-                [Some(447), Some(363), Some(378), Some(382)],
+                10,
+                105,
+                [Some(120), Some(90), Some(105), Some(109)],
                 false,
-                Some(378),
-                false,
-            ),
-            (13, 724, [Some(808), None, None, None], true, None, true),
-            (
-                14,
-                497,
-                [Some(590), Some(482), Some(497), Some(501)],
-                false,
-                Some(497),
+                Some(105),
                 false,
             ),
-            (15, 507, [Some(548), None, None, None], true, None, true),
+            (11, 229, [Some(229), None, None, None], true, None, false),
         ];
         const WITHOUT: &[RevProjection] = &[
             (1, 184, [None, None, None, None], true, None, false),
+            (2, 268, [None, None, None, None], true, None, false),
             (
                 3,
                 455,
@@ -7030,33 +7050,32 @@ mod test {
                 Some(434),
                 false,
             ),
+            (6, 128, [None, None, None, None], true, None, false),
             (7, 464, [None, None, None, None], true, None, false),
+            (
+                8,
+                140,
+                [None, Some(125), Some(140), Some(144)],
+                false,
+                Some(140),
+                false,
+            ),
             (9, 688, [None, None, None, None], true, None, false),
+            (
+                10,
+                105,
+                [None, Some(90), Some(105), Some(109)],
+                false,
+                Some(105),
+                false,
+            ),
+            (11, 191, [None, None, None, None], true, None, false),
             (
                 12,
                 378,
                 [None, Some(363), Some(378), Some(382)],
                 false,
                 Some(378),
-                false,
-            ),
-            (13, 674, [None, None, None, None], true, None, false),
-            (
-                14,
-                497,
-                [None, Some(482), Some(497), Some(501)],
-                false,
-                Some(497),
-                false,
-            ),
-            (15, 457, [None, None, None, None], true, None, false),
-            (16, 548, [None, None, None, None], true, None, false),
-            (
-                18,
-                770,
-                [None, Some(755), Some(770), Some(774)],
-                false,
-                Some(770),
                 false,
             ),
         ];

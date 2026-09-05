@@ -164,8 +164,8 @@ pub fn OnHandQuantity(
     let on_hand = use_context::<OnHandMap>().expect("OnHandMap not provided");
     let value = Signal::derive(move || on_hand.0.with(|m| m.get(&item_id()).copied().unwrap_or(0)));
     let aria = move || match &item_name {
-        Some(name) => format!("On-hand quantity for {}", name.get()),
-        None => "On-hand quantity".to_string(),
+        Some(name) => t_string!(i18n, on_hand_quantity_for_aria, item = name.get()).to_string(),
+        None => t_string!(i18n, on_hand_quantity_aria).to_string(),
     };
 
     view! {

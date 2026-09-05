@@ -207,9 +207,12 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
     let make_default = RwSignal::new(false);
 
     // Route change, click outside, Escape. Both popovers hang off the same
-    // container, so one call closes both.
+    // container, so one call closes both. The token is what settles this
+    // menu against the control bar it is mounted inside: outside-click
+    // cannot, because the bar's Columns / `+ Filter` popovers are *outside*
+    // this container but the buttons that open them are not.
     let container = NodeRef::<Div>::new();
-    use_dismissable(container, move || {
+    let popover_token = use_dismissable(container, move || {
         list_open.set(false);
         save_open.set(false);
     });
@@ -276,7 +279,11 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                 aria-expanded=move || list_open.get().to_string()
                 on:click=move |_| {
                     save_open.set(false);
-                    list_open.update(|v| *v = !*v);
+                    let opening = !list_open.get_untracked();
+                    if opening {
+                        popover_token.opening();
+                    }
+                    list_open.set(opening);
                 }
             >
                 <Icon icon=icondata::MdiBookmarkMultipleOutline />
@@ -292,6 +299,7 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                     list_open.set(false);
                     let opening = !save_open.get_untracked();
                     if opening {
+                        popover_token.opening();
                         let current = view_query_string(query.get_untracked());
                         make_default.set(saved_default_query().as_deref() == Some(current.as_str()));
                     }
