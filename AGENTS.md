@@ -26,13 +26,15 @@ JavaScript regression tests and a dependency security audit.
 ## Shipping a user-visible feature? Add a changelog entry
 
 When a change alters something a player would notice — a new tool, a new
-filter, a redesigned page, a bug that was visibly broken and now isn't — append
-an entry to the top of `CHANGELOG` in
-`ultros-frontend/ultros-app/src/routes/changelog.rs` in the same PR. Newest
-first; the sidebar's what's-new dot reads the first entry's date, so appending
-at the bottom silently stops the dot from ever firing again. Write the blurb
-for a player ("Get pinged when an item crosses the price you set"), not for a
-reviewer. Refactors, dependency bumps, and CI work don't belong there.
+filter, a redesigned page, a bug that was visibly broken and now isn't — add
+a new `YYYY-MM-DD-description.json` file to `ultros-changelog/changes/`.
+Each change gets its own file, even when several ship on the same day.
+Follow `ultros-changelog/README.md`: choose a category (`features`,
+`improvements`, or `bug_fixes`) and importance (`high`, `medium`, or `low`).
+The crate's `build.rs` generates the static entry list; do not edit a shared
+array or generated output. Write the blurb for a player ("Get pinged when an
+item crosses the price you set"), not for a reviewer. Refactors, dependency
+bumps, and CI work don't belong there.
 
 ## Git hooks (optional but recommended)
 

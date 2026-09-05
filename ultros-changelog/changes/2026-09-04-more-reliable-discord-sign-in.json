@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "More reliable Discord sign-in",
+  "blurb": "Discord sign-ins are checked again periodically, while temporary Discord outages no longer unnecessarily sign you out. Signing out and deleting your account now clear cached sign-in information more reliably."
+}
