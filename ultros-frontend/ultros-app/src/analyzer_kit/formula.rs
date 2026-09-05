@@ -120,6 +120,54 @@ impl Display for BuyScope {
     }
 }
 
+/// The same three places, named for what they are when they are not the
+/// buy side's: the sell world, its datacenter, or the whole region. The
+/// spec calls the shared enum `Scope`; `BuyScope` keeps its name at the
+/// ~60 sites that already spell it.
+pub type Scope = BuyScope;
+
+/// Where the *product's price is read* — [`ProfitFormula::sell_scope`]'s
+/// URL value under `?sell-scope=`.
+///
+/// Named for the sale, not for a destination: FFXIV retainers list only on
+/// their own world, so a wider sell scope is a reference read ("what does
+/// this go for across my datacenter"), never somewhere to go and sell.
+///
+/// A newtype over [`Scope`] rather than a bare `Scope`, because
+/// `Scope::default()` is `Datacenter`: that is the **buy** side's default,
+/// and the sell side's is the world. A bare `param.unwrap_or_default()`, or
+/// the default-stripping setter idiom this repo writes everywhere
+/// (`parsed.filter(|s| *s != Scope::default())`), would silently re-price
+/// every existing recipe-analyzer URL across the datacenter and strip the
+/// wrong token out of the URL. Both idioms are correct on this type.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SellScope(pub Scope);
+
+impl Default for SellScope {
+    fn default() -> Self {
+        SellScope(Scope::World)
+    }
+}
+
+impl SellScope {
+    pub fn scope(self) -> Scope {
+        self.0
+    }
+}
+
+impl FromStr for SellScope {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<Scope>().map(SellScope)
+    }
+}
+
+impl Display for SellScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
 /// A slot in the ledger: fixed by the tool, or chosen by the user.
 /// Phase C gives `Select` its URL key when the strip renders it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -187,11 +235,11 @@ pub enum DropRule {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ProfitFormula {
     pub revenue: Term<RevenueEstimator>,
-    /// Fixed to the sell world until Phase F seats the sell-side scope
-    /// here. Nothing reads it yet: the derived `PartialEq` (which
-    /// `Memo<ProfitFormula>` needs) is what keeps `dead_code` quiet, so do
-    /// not "clean it up".
-    pub sell_scope: Term<BuyScope>,
+    /// Where the product's price is read. `Fixed(Scope::World)` — today's
+    /// and every pre-Phase-F URL's value — until
+    /// [`ProfitFormula::with_sell_scope`] seats it, which only the recipe
+    /// analyzer does and only under the `analyzer-recipe` lab.
+    pub sell_scope: Term<Scope>,
     pub cost: Term<CostEstimator>,
     pub buy_scope: Term<BuyScope>,
     pub tax: Term<TaxPolicy>,
@@ -236,6 +284,28 @@ impl ProfitFormula {
         self.buy_scope.value()
     }
 
+    /// Seat the sell side's scope. Phase F's one entry point: a caller that
+    /// never calls this keeps `Term::Fixed(Scope::World)`, which is
+    /// `PartialEq`-identical to what `recipe_from_query` has always
+    /// produced, so the flag-off page's `Memo<ProfitFormula>` cannot fire
+    /// on it. Takes a [`SellScope`], never an `Option<Scope>`: see the
+    /// newtype's doc for why the default matters.
+    ///
+    /// Exactly one caller in the crate — `recipe_analyzer::seat_sell_scope`.
+    /// The page and the table build their formulas in two different places
+    /// and only the table's prices rows, so the seating goes through one
+    /// function that both of them (and the pricing test harness) call.
+    pub fn with_sell_scope(mut self, sell: SellScope) -> Self {
+        self.sell_scope = Term::Select(sell.scope());
+        self
+    }
+
+    /// Where revenue is priced: the sell world (the default), its
+    /// datacenter, or the region.
+    pub fn sell_scope(&self) -> Scope {
+        self.sell_scope.value()
+    }
+
     /// The formula the numbers actually use: a sale signal whose stats
     /// body is absent (not requested, or the fetch failed) falls back to
     /// the listing, so no label ever names a signal the table ignores.
@@ -263,6 +333,9 @@ impl ProfitFormula {
 pub struct FormulaMarks {
     pub revenue: PriceSignal,
     pub cost: PriceSignal,
+    /// Where revenue is priced — the sell world, or the wider sell scope
+    /// when a page has one. Never the place a market column's 7-day
+    /// figures came from.
     pub sell_place: String,
     pub buy_place: String,
 }
@@ -476,5 +549,50 @@ mod tests {
         assert_eq!(e.revenue_signal(), PriceSignal::ListingMin);
         let e = f.effective(true, true);
         assert_eq!(e, f);
+    }
+
+    /// The sell side's default is the sell WORLD. `Scope::default()` is
+    /// `Datacenter` — the buy side's default — so a bare
+    /// `unwrap_or_default()` here, or a `filter(|s| *s != Scope::default())`
+    /// default-stripping setter, would move every existing URL's revenue to
+    /// the datacenter. The newtype is what makes both idioms correct.
+    #[test]
+    fn sell_scope_defaults_to_the_world_not_the_buy_sides_datacenter() {
+        assert_eq!(SellScope::default().scope(), Scope::World);
+        assert_ne!(SellScope::default().scope(), Scope::default());
+        assert_eq!(Scope::default(), Scope::Datacenter);
+    }
+
+    #[test]
+    fn sell_scope_tokens_are_the_buy_scope_tokens() {
+        for s in ["world", "datacenter", "region"] {
+            assert_eq!(s.parse::<SellScope>().unwrap().to_string(), s);
+        }
+        assert_eq!(SellScope::default().to_string(), "world");
+        assert!("home".parse::<SellScope>().is_err());
+    }
+
+    /// A formula that never seats the sell scope is byte-identical to
+    /// today's: `Fixed(World)`, not `Select(World)`. That is what keeps the
+    /// flag-off `Memo<ProfitFormula>` from firing on a value nothing reads.
+    #[test]
+    fn with_sell_scope_is_the_only_way_to_move_the_sell_side() {
+        let untouched = ProfitFormula::recipe_from_query(None, None, None);
+        assert_eq!(untouched.sell_scope, Term::Fixed(Scope::World));
+        assert_eq!(untouched.sell_scope(), Scope::World);
+
+        let seated = untouched.with_sell_scope(SellScope::default());
+        assert_eq!(seated.sell_scope, Term::Select(Scope::World));
+        assert_eq!(seated.sell_scope(), Scope::World);
+
+        let region = untouched.with_sell_scope(SellScope(Scope::Region));
+        assert_eq!(region.sell_scope(), Scope::Region);
+        // Nothing else in the ledger moved.
+        assert_eq!(region.cost_signal(), untouched.cost_signal());
+        assert_eq!(region.revenue_signal(), untouched.revenue_signal());
+        assert_eq!(region.buy_scope(), untouched.buy_scope());
+        assert_eq!(region.tax, untouched.tax);
+        assert_eq!(region.roi, untouched.roi);
+        assert_eq!(region.drop, untouched.drop);
     }
 }

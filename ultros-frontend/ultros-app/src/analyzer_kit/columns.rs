@@ -63,6 +63,10 @@ pub enum ColumnKind {
     CostSignal(PriceSignal),
     HopGain,
     HopWorlds,
+    /// The revenue signal at the sell scope minus the same signal on the
+    /// sell world's own map: the sell-side counterpart of Hop gain, and a
+    /// reference read rather than a place to go.
+    ScopeVsHome,
     Actions,
 }
 
@@ -222,11 +226,20 @@ pub fn picker_options<T, M>(
 /// unpriced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PickerContext {
+    /// Where revenue is priced — the sell world, or the wider sell scope
+    /// when a page has one. Never the place a market column's 7-day
+    /// figures came from.
     pub sell_place: String,
     pub buy_place: String,
     pub revenue: PriceSignal,
     pub cost: PriceSignal,
     pub capped: BTreeSet<PriceSignal>,
+    /// The sell scope is the sell world, so a column that compares the two
+    /// would render nothing. Hints the entry rather than disabling it —
+    /// the answer to "why is this all dashes?" is worth having *before*
+    /// the column is ticked, which is the only place the picker can give
+    /// it.
+    pub sell_scope_is_world: bool,
 }
 
 fn heading(
@@ -314,6 +327,12 @@ pub fn grouped_picker_options<T, M>(
                         disabled = true;
                         hint = Some(t_string!(i18n, analyzer_picker_subcraft_cap_hint).to_string());
                     }
+                }
+                // Hinted, never disabled: ticking it is what a player does
+                // *after* widening the scope, and the whole point of the
+                // hint is that it is readable before either happens.
+                ColumnKind::ScopeVsHome if ctx.sell_scope_is_world => {
+                    hint = Some(t_string!(i18n, analyzer_picker_scope_vs_home_hint).to_string());
                 }
                 _ => {}
             }
@@ -702,6 +721,7 @@ mod tests {
                 revenue: PriceSignal::SaleMedian,
                 cost: PriceSignal::ListingMin,
                 capped: BTreeSet::from([PriceSignal::SaleAvg]),
+                sell_scope_is_world: true,
             };
             let got = grouped_picker_options(&PICKER, i18n, &ctx);
             let ids: Vec<&str> = got.iter().map(|o| o.id).collect();
