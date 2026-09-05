@@ -61,6 +61,23 @@ keys.
 
 ## Operational notes
 
+* Subscription URLs are accepted only over HTTPS on port 443, without URL
+  credentials or fragments, at these browser push providers:
+  * `fcm.googleapis.com` ([Chromium's endpoint definition](https://chromium.googlesource.com/chromium/src/+/refs/tags/141.0.7390.94/components/push_messaging/push_messaging_constants.cc)).
+  * `updates.push.services.mozilla.com` ([Mozilla production endpoint](https://mozilla-services.github.io/autopush-rs/)).
+  * Subdomains of `push.apple.com` ([Apple's documented access policy](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)).
+  * Subdomains of `notify.windows.com` ([Microsoft's channel validation policy](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/push-notifications/wns-overview)).
+  The two suffix rules require the separating dot; lookalike domains are not
+  accepted. Paths and queries remain opaque so provider token changes work.
+* The same URL policy is enforced before sending, including for existing saved
+  subscriptions. The delivery client never follows redirects. This prevents
+  users from supplying arbitrary server request destinations. The allowlist
+  deliberately excludes custom/self-hosted push servers and provider staging
+  environments; adding another provider requires reviewing its official
+  endpoint policy and updating the validator and tests. The policy trusts these
+  providers' domains and the deployment's DNS/TLS configuration; it is not a
+  replacement for network egress controls.
+
 * The service worker is served from `/service-worker.js` (not
   `/static/service-worker.js`) so it gets site-wide scope. The
   `Service-Worker-Allowed: /` header is set on that response.

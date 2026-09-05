@@ -380,6 +380,39 @@ fn build_push_payload(title: &str, body: &str, click_url: &str) -> Result<Vec<u8
     }))?)
 }
 
+/// A subscription is untrusted input, including subscriptions saved before this
+/// policy existed. Only browser push services may receive our signed requests.
+/// Keep paths and queries opaque: providers can change their token formats.
+/// See `docs/push.md` for the supported providers and the allowlist tradeoff.
+pub(crate) fn validate_web_push_endpoint(endpoint: &str) -> Result<url::Url, &'static str> {
+    let url = url::Url::parse(endpoint).map_err(|_| "invalid push endpoint URL")?;
+    if url.scheme() != "https" || url.port_or_known_default() != Some(443) {
+        return Err("push endpoint must use HTTPS on port 443");
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err("push endpoint must not contain credentials or a fragment");
+    }
+    let host = url.host_str().ok_or("push endpoint must have a host")?;
+    let supported = matches!(
+        host,
+        "fcm.googleapis.com" | "updates.push.services.mozilla.com"
+    ) || host.ends_with(".push.apple.com")
+        || host.ends_with(".notify.windows.com");
+    if !supported {
+        return Err("push endpoint must belong to a supported browser push service");
+    }
+    Ok(url)
+}
+
+fn web_push_http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        // Even a supported provider must not redirect our signed request to an
+        // arbitrary URL. A redirect is a delivery failure, never a new target.
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?)
+}
+
 /// Send a Web Push notification to a single subscription. Body is JSON-encoded
 /// `{title, body, url}` — the service worker decodes that in its `push` handler.
 ///
@@ -408,8 +441,8 @@ async fn send_webpush(
     };
 
     let sub = db.get_push_subscription_by_id(subscription_id).await?;
-
-    let info = SubscriptionInfo::new(&sub.endpoint, &sub.p256dh, &sub.auth);
+    let endpoint = validate_web_push_endpoint(&sub.endpoint).map_err(anyhow::Error::msg)?;
+    let info = SubscriptionInfo::new(endpoint.as_str(), &sub.p256dh, &sub.auth);
 
     // VAPID signature: parse the operator's private key, attach the `sub`
     // claim with their contact email, then sign.
@@ -432,9 +465,7 @@ async fn send_webpush(
     let req = reqwest::Request::try_from(http_req)
         .map_err(|e| anyhow!("push request convert failed: {e}"))?;
 
-    let resp = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?
+    let resp = web_push_http_client()?
         .execute(req)
         .await
         .map_err(|e| anyhow!("push send failed: {e}"))?;
@@ -508,6 +539,101 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn push_endpoint_accepts_browser_providers_and_opaque_tokens() {
+        for endpoint in [
+            "https://fcm.googleapis.com/fcm/send/token",
+            "https://fcm.googleapis.com/wp/new-format?token=abc%2Fdef",
+            "https://updates.push.services.mozilla.com/wpush/v2/token",
+            "https://web.push.apple.com/Q/token",
+            "https://regional.push.apple.com/future-token-format",
+            "https://wns2-par02p.notify.windows.com/w/?token=abc%2Fdef",
+            "https://FCM.GOOGLEAPIS.COM:443/fcm/send/token",
+        ] {
+            assert!(validate_web_push_endpoint(endpoint).is_ok(), "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn push_endpoint_rejects_internal_destinations_and_host_spoofing() {
+        // Validation only: none of these URLs is ever resolved or contacted.
+        for endpoint in [
+            "https://127.0.0.1/push",
+            "https://2130706433/push",
+            "https://[::1]/push",
+            "https://[::ffff:127.0.0.1]/push",
+            "https://10.0.0.1/push",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://localhost/push",
+            "https://attacker.example/push",
+            "https://fcm.googleapis.com.attacker.example/push",
+            "https://attacker.example/fcm.googleapis.com/push",
+            "https://evilpush.apple.com/push",
+            "https://evilnotify.windows.com/push",
+            "https://web.push.apple.com.attacker.example/push",
+            "https://notify.windows.com.attacker.example/push",
+            "https://attacker.fcm.googleapis.com/push",
+            "https://attacker.updates.push.services.mozilla.com/push",
+            "https://fcm.googleapis.com@127.0.0.1/push",
+        ] {
+            assert!(validate_web_push_endpoint(endpoint).is_err(), "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn push_endpoint_rejects_unsafe_url_components() {
+        for endpoint in [
+            "not a URL",
+            "http://fcm.googleapis.com/fcm/send/token",
+            "ftp://fcm.googleapis.com/fcm/send/token",
+            "https://fcm.googleapis.com:8443/fcm/send/token",
+            "https://user@fcm.googleapis.com/fcm/send/token",
+            "https://user:password@fcm.googleapis.com/fcm/send/token",
+            "https://fcm.googleapis.com/fcm/send/token#fragment",
+            "https://fcm.googleapis.com./fcm/send/token",
+        ] {
+            assert!(validate_web_push_endpoint(endpoint).is_err(), "{endpoint}");
+        }
+    }
+
+    #[tokio::test]
+    async fn push_http_client_does_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A synthetic local HTTP server exercises the actual delivery client
+        // without push credentials or requests to any external service. The
+        // production send path separately requires a validated HTTPS endpoint.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let received = socket.read(&mut request).await.unwrap();
+            assert!(
+                received > 0,
+                "the client must send a request before redirecting"
+            );
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{address}/redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let response = web_push_http_client()
+            .unwrap()
+            .post(format!("http://{address}/original"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.url().path(), "/original");
+        server.await.unwrap();
+    }
 
     #[test]
     fn dead_discord_destinations_are_permanent() {

@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Clearer browser notification setup",
+        blurb: "Browser notification setup now explains when a push service is unsupported, so you can tell why a subscription could not be saved.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "More reliable Discord sign-in",
         blurb: "Discord sign-ins are checked again periodically, while temporary Discord outages no longer unnecessarily sign you out. Signing out and deleting your account now clear cached sign-in information more reliably.",
         link: None,
