@@ -39,6 +39,12 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
     },
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Flip Finder opens reliably from world links",
+        blurb: "Opening a Flip Finder world link directly now finishes loading its controls and live updates, instead of leaving the page stuck after its first results appear.",
+        link: Some("/flip-finder"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Repriced market listings stay visible",
         blurb: "A listing that has just been repriced is no longer removed by an older update arriving at the same time. Failed listing updates also stop marking incomplete market data as fresh.",
         link: Some("/items"),

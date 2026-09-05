@@ -1994,7 +1994,7 @@ fn AnalyzerTable(
     );
 
     view! {
-        <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-4" data-testid="flip-finder-table">
             <ControlBar
                 chip_row=chip_row
                 summary=move || {
@@ -3270,12 +3270,17 @@ pub fn AnalyzerWorldView() -> impl IntoView {
                             // live in the `market` memo, which runs under its
                             // own owner and so cannot register anything here —
                             // without this the server would stream the skeleton
-                            // instead of waiting for the data. Renders no DOM.
+                            // instead of waiting for the data. Return an actual
+                            // element: resolving an erased closure returning ()
+                            // adds an extra SSR placeholder in Tachys, which the
+                            // client closure does not consume during hydration.
+                            // `hidden` keeps this registration out of the layout.
                             {move || {
                                 let _ = register_world.get();
                                 let _ = register_sales.get();
                                 let _ = register_region.get();
                                 let _ = register_cross.get();
+                                view! { <span hidden aria-hidden="true"></span> }
                             }}
                             <Show
                                 when=has_table
