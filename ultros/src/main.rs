@@ -85,8 +85,19 @@ fn spawn_rollup_scheduler(
     ch: ultros_clickhouse::ClickHouseClient,
     db: UltrosDb,
     token: CancellationToken,
+    writer: ultros_clickhouse::writer::Writer,
 ) {
     tokio::spawn(async move {
+        // The writer owns migration retries. Rollups must wait for schema
+        // readiness too, without running a competing migration on startup.
+        tokio::select! {
+            _ = token.cancelled() => return,
+            ready = writer.wait_ready() => {
+                if !ready {
+                    return;
+                }
+            }
+        }
         loop {
             let pool = db.get_connection().get_postgres_connection_pool();
             let mut connection = tokio::select! {
@@ -561,35 +572,27 @@ async fn main() -> Result<()> {
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
-    // ClickHouse: analytical store. Migration is idempotent — re-running it on
-    // every startup is fine. We log-and-continue on failure because PG is the
-    // source of truth and the analyzer's RAM caches keep the snappy tools
-    // alive even if CH is unreachable. When migrate fails we wire a disabled
-    // writer (silently drops rows) and skip the rollup scheduler — otherwise
-    // the flush task would fire `ClickHouse flush failed` every 5s and the
-    // sentry-tracing layer would report each one as a separate issue (see
-    // GlitchTip #5080, ~1k events from a dev box without CH running).
+    // Migration retries in the writer so an outage at startup does not disable
+    // analytics for the lifetime of this process. Keep its cancellation separate
+    // so the analyzer can finish sending before the writer's final flush.
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
-    let ch_writer = match ch_client.migrate().await {
-        Ok(()) => {
-            let writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
-            // Exactly one web replica keeps the ClickHouse rollups fresh. A
-            // Postgres advisory lock prevents deployment scale from
-            // multiplying the scheduled raw-sales scans.
-            spawn_rollup_scheduler(ch_client.clone(), db.clone(), token.clone());
-            writer
-        }
-        Err(e) => {
-            warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
-            ultros_clickhouse::writer::Writer::disabled()
-        }
-    };
+    let ch_writer = ultros_clickhouse::writer::Writer::spawn_recovering(
+        ch_client.clone(),
+        CancellationToken::new(),
+    );
+    // A Postgres advisory lock elects one web replica to refresh rollups.
+    spawn_rollup_scheduler(
+        ch_client.clone(),
+        db.clone(),
+        token.clone(),
+        ch_writer.clone(),
+    );
 
-    let analyzer_service = AnalyzerService::start_analyzer(
+    let (analyzer_service, analyzer_shutdown) = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
         world_cache.clone(),
-        ch_writer,
+        ch_writer.clone(),
         ch_client.clone(),
         token.clone(),
     )
@@ -700,18 +703,64 @@ async fn main() -> Result<()> {
         price_series_cache: Default::default(),
         sale_stats_cache: Default::default(),
     };
-    let web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("ctrl-c received");
+    let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
+    let web_finished = tokio::select! {
+        _ = shutdown_signal() => {
+            info!("shutdown signal received");
+            false
         }
-        _ = web_task => {
-            info!("web task finished");
+        result = &mut web_task => {
+            if let Err(e) = result {
+                error!("Web task failed: {e:?}");
+            }
+            true
         }
-    }
+    };
     token.cancel();
+    let shutdown = async {
+        let drain_analytics = async {
+            if let Err(e) = analyzer_shutdown.await {
+                error!("Analyzer shutdown failed: {e:?}");
+            }
+            ch_writer.shutdown().await;
+        };
+        let drain_web = async {
+            if !web_finished && let Err(e) = web_task.await {
+                error!("Web shutdown failed: {e:?}");
+            }
+        };
+        tokio::join!(drain_analytics, drain_web);
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
+        .await
+        .is_err()
+    {
+        error!("Graceful shutdown exceeded 30 seconds; unfinished work may require recovery");
+    }
     info!("Exiting");
     Ok(())
+}
+
+/// Docker and service managers use SIGTERM rather than the interactive Ctrl-C
+/// signal. Both must run the same snapshot/flush shutdown path.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Unable to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(e) = result {
+                error!("Unable to listen for Ctrl-C: {e:?}");
+            }
+        }
+        _ = terminate => {}
+    }
 }
 
 #[cfg(test)]

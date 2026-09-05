@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::formula::{BuyScope, PriceSignal, ProfitFormula};
+use super::formula::{BuyScope, PriceSignal, ProfitFormula, Scope};
 
 /// The one sale-history window every recipe-analyzer body uses. The
 /// server serves 1 | 7 | 30 | 90; the labels in seven locales say "(7d)".
@@ -48,12 +48,23 @@ const _: () = assert!(
 
 /// A whole-scope body the page fetches. Symbolic: the page resolves each
 /// role to a world / datacenter / region name.
+///
+/// The derived `Ord` is the order `needed_bodies`' `BTreeSet` iterates in,
+/// which a test asserts as a `Vec` — so a new variant goes beside the one
+/// it is a sibling of, never at the front.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BodyRole {
     CheapestBuyScope,
     CheapestSellWorld,
+    /// The cheapest listings across the sell *scope*, when that is wider
+    /// than the sell world (Phase F). The `over` layer revenue is read
+    /// from; the sell world's own map stays for Hop gain's home side.
+    CheapestSellScope,
     SellWorldStats(u16),
     BuyScopeStats(u16),
+    /// The sell scope's sale statistics, read only by a sale revenue
+    /// signal or a visible `rev-sale-*` column at a wider sell scope.
+    SellScopeStats(u16),
     RecentSalesSellWorld,
 }
 
@@ -70,6 +81,13 @@ pub struct RecipeNeeds {
     /// visible or sorted sale-cost column needs the buy-scope body even
     /// when the selected signal is the listing.
     pub cost_signals: BTreeSet<PriceSignal>,
+    /// The sell scope resolved to the same place name as the buy scope, so
+    /// the buy side's bodies already hold these rows.
+    pub sell_scope_is_buy_scope: bool,
+    /// Every revenue signal the view will read ([`NeededSignals::rev`]): the
+    /// selected one plus any visible or sorted `rev-*` column. A sale signal
+    /// in here is what makes the sell-scope statistics body necessary.
+    pub rev_signals: BTreeSet<PriceSignal>,
     /// A 30-day column (Volume 30d, VWAP 30d) is visible or the sort
     /// target. Not "the lab is on": the body costs 438 KB on the wire, so
     /// only actually asking for one of those columns fetches it.
@@ -98,6 +116,27 @@ pub fn needed_bodies(formula: &ProfitFormula, needs: &RecipeNeeds) -> BTreeSet<B
     if needs.stats_30 {
         set.insert(BodyRole::SellWorldStats(STATS_30_WINDOW_DAYS));
     }
+    // Phase F. The sell scope only ever *adds*: at `Scope::World` — every
+    // pre-Phase-F URL and every flag-off page — this block is skipped
+    // entirely and the set is byte-identical to what it always was.
+    if formula.sell_scope() != Scope::World {
+        // `CheapestBuyScope` is unconditional, so a matching buy scope
+        // always covers the cheapest half.
+        if !needs.sell_scope_is_buy_scope {
+            set.insert(BodyRole::CheapestSellScope);
+        }
+        let wants_sell_stats = formula.revenue_signal().sale_stat().is_some()
+            || needs.rev_signals.iter().any(|s| s.sale_stat().is_some());
+        // The statistics half dedupes only against a body that is actually
+        // in the set: the buy-scope one is itself conditional (and is
+        // suppressed outright when it aliases the sell world), and reusing
+        // a body nobody fetched leaves the revenue cells permanently "—".
+        let buy_covers = needs.sell_scope_is_buy_scope
+            && set.contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS));
+        if wants_sell_stats && !buy_covers {
+            set.insert(BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS));
+        }
+    }
     set
 }
 
@@ -109,6 +148,12 @@ pub struct SignalWants {
     pub sort_cost: Option<PriceSignal>,
     pub hop: bool,
     pub worlds: bool,
+    /// Visible `rev-*` columns, in table order.
+    pub visible_rev: Vec<PriceSignal>,
+    /// The sort target, when it is a `rev-*` column.
+    pub sort_rev: Option<PriceSignal>,
+    /// Scope vs home is visible or the sort target.
+    pub scope_vs_home: bool,
 }
 
 /// The cost signals `price_rows` runs per recipe, plus the two hop flags.
@@ -119,6 +164,11 @@ pub struct NeededSignals {
     pub capped: BTreeSet<PriceSignal>,
     pub hop: bool,
     pub worlds: bool,
+    /// Revenue signals the view will read. No cap: an alternative revenue
+    /// column is an index into a body that is already loaded, not a
+    /// `compute_cost` run.
+    pub rev: BTreeSet<PriceSignal>,
+    pub scope_vs_home: bool,
 }
 
 /// {effective cost} ∪ {ListingMin when Worlds is wanted} ∪ {the sort
@@ -130,6 +180,12 @@ pub struct NeededSignals {
 /// rather than let them tick a column that renders "—". Enforced here, not
 /// in the picker, so it holds for any bookmarked URL and identically on SSR
 /// and CSR.
+///
+/// It also produces a second, independent family for the revenue side:
+/// `rev` (the union of the effective revenue signal, the visible `rev-*`
+/// columns and the revenue sort target) and `scope_vs_home`. Those two are
+/// not capped — the cap exists because sub-crafts multiply the COST pass,
+/// and the revenue side prices one item per row.
 pub fn needed_signals(
     formula: &ProfitFormula,
     wants: &SignalWants,
@@ -172,24 +228,31 @@ pub fn needed_signals(
             }
         }
     }
+    let mut rev = BTreeSet::from([formula.revenue_signal()]);
+    rev.extend(wants.sort_rev);
+    rev.extend(wants.visible_rev.iter().copied());
     NeededSignals {
         cost,
         capped,
         hop: wants.hop,
         worlds: wants.worlds,
+        rev,
+        scope_vs_home: wants.scope_vs_home,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyzer_kit::formula::{BuyScope, PriceSignal, ProfitFormula};
+    use crate::analyzer_kit::formula::{BuyScope, PriceSignal, ProfitFormula, Scope, SellScope};
 
     fn needs(outliers: bool, same: bool) -> RecipeNeeds {
         RecipeNeeds {
             outliers,
             buy_scope_is_sell_world: same,
             cost_signals: BTreeSet::new(),
+            sell_scope_is_buy_scope: false,
+            rev_signals: BTreeSet::new(),
             stats_30: false,
         }
     }
@@ -265,6 +328,7 @@ mod tests {
             sort_cost: Some(PriceSignal::SaleAvg),
             hop: false,
             worlds: true,
+            ..SignalWants::default()
         };
         let got = needed_signals(&f, &wants, false);
         assert_eq!(
@@ -341,6 +405,7 @@ mod tests {
             sort_cost: Some(PriceSignal::SaleAvg),
             hop: false,
             worlds: true,
+            ..SignalWants::default()
         };
         let got = needed_signals(&f, &wants, true);
         assert_eq!(
@@ -399,5 +464,166 @@ mod tests {
         assert!(needed_bodies(&f, &n).contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS)));
         n.cost_signals = set(&[PriceSignal::ListingMin]);
         assert!(!needed_bodies(&f, &n).contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS)));
+    }
+
+    fn sell(scope: Scope) -> ProfitFormula {
+        ProfitFormula::recipe_from_query(None, None, None).with_sell_scope(SellScope(scope))
+    }
+
+    /// The default sell scope adds nothing at all — the flag-off page and
+    /// every pre-Phase-F URL fetch exactly the three bodies they always did.
+    #[test]
+    fn the_world_sell_scope_adds_no_body() {
+        let base = needed_bodies(
+            &ProfitFormula::recipe_from_query(None, None, None),
+            &needs(false, false),
+        );
+        assert_eq!(
+            needed_bodies(&sell(Scope::World), &needs(false, false)),
+            base
+        );
+        // Even with a sale revenue signal: that reads the sell-WORLD body,
+        // which is already in the set.
+        let f = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None)
+            .with_sell_scope(SellScope(Scope::World));
+        assert_eq!(needed_bodies(&f, &needs(false, false)), base);
+    }
+
+    /// A wider sell scope needs its own cheapest map, and — only under a
+    /// sale revenue signal — its own statistics body.
+    #[test]
+    fn a_wider_sell_scope_adds_its_cheapest_map_and_only_then_its_stats() {
+        let got = needed_bodies(&sell(Scope::Datacenter), &needs(false, false));
+        assert!(got.contains(&BodyRole::CheapestSellScope));
+        assert!(
+            !got.contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS)),
+            "listing-min revenue reads no statistics: {got:?}"
+        );
+
+        let f = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleAvg), None)
+            .with_sell_scope(SellScope(Scope::Region));
+        let got = needed_bodies(&f, &needs(false, false));
+        assert!(got.contains(&BodyRole::CheapestSellScope));
+        assert!(got.contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS)));
+        // The sell WORLD's 7-day body is still needed: velocity, avg price,
+        // confidence, last sold, volume and VWAP all read it.
+        assert!(got.contains(&BodyRole::SellWorldStats(SALE_STATS_WINDOW_DAYS)));
+    }
+
+    /// A visible or sorted `rev-sale-*` column needs the scope's statistics
+    /// even when the *selected* revenue signal is the listing — the same
+    /// rule `cost_signals` already gives the buy side.
+    #[test]
+    fn a_visible_sale_revenue_column_needs_the_sell_scope_stats() {
+        let mut n = needs(false, false);
+        n.rev_signals = set(&[PriceSignal::ListingMin, PriceSignal::SaleMedian]);
+        assert!(
+            needed_bodies(&sell(Scope::Region), &n)
+                .contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS))
+        );
+        n.rev_signals = set(&[PriceSignal::ListingMin]);
+        assert!(
+            !needed_bodies(&sell(Scope::Region), &n)
+                .contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS))
+        );
+        // And never under the default sell scope, whatever the columns say.
+        n.rev_signals = set(&[PriceSignal::SaleMedian]);
+        assert!(
+            !needed_bodies(&sell(Scope::World), &n)
+                .contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS))
+        );
+    }
+
+    /// Deduping: the cheapest map always, the statistics body only when the
+    /// buy side actually fetched one. Deduping against a body that was never
+    /// requested is how a cell ends up permanently "—".
+    #[test]
+    fn the_sell_scope_dedupes_against_the_buy_scope_it_matches() {
+        // Buy = region (its cheapest body is unconditional), sell = region,
+        // revenue = a sale statistic, cost = the listing (so no buy stats).
+        let f = ProfitFormula::recipe_from_query(
+            None,
+            Some(PriceSignal::SaleMedian),
+            Some(Scope::Region),
+        )
+        .with_sell_scope(SellScope(Scope::Region));
+        let mut n = needs(false, false);
+        n.sell_scope_is_buy_scope = true;
+        let got = needed_bodies(&f, &n);
+        assert!(
+            !got.contains(&BodyRole::CheapestSellScope),
+            "the buy scope's cheapest map holds these rows: {got:?}"
+        );
+        assert!(
+            got.contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS)),
+            "the buy side fetched no statistics, so there is nothing to reuse: {got:?}"
+        );
+
+        // Now give the buy side a sale cost signal, so its statistics body
+        // IS in the set: the sell side reuses it.
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::SaleMin),
+            Some(PriceSignal::SaleMedian),
+            Some(Scope::Region),
+        )
+        .with_sell_scope(SellScope(Scope::Region));
+        let got = needed_bodies(&f, &n);
+        assert!(got.contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS)));
+        assert!(!got.contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS)));
+        assert!(!got.contains(&BodyRole::CheapestSellScope));
+
+        // The buy side's OWN alias rule still applies underneath: with
+        // `buy_scope_is_sell_world`, `BuyScopeStats` is never in the set, so
+        // there is nothing to dedupe against and the sell scope must fetch.
+        // The page passes its real gate into `sell_scope_key` for exactly
+        // this reason; a defaulted `false` here would answer differently.
+        let f = ProfitFormula::recipe_from_query(
+            Some(PriceSignal::SaleMin),
+            Some(PriceSignal::SaleMedian),
+            // Spelled out, never `None`: `BuyScope::default()` is the
+            // DATACENTER, so a defaulted third argument would leave the
+            // alias rule unfired and `BuyScopeStats` in the set.
+            Some(Scope::World),
+        )
+        .with_sell_scope(SellScope(Scope::Region));
+        let mut aliased = needs(false, true);
+        // This tuple is UNREACHABLE in production — a region's name never
+        // equals a world's, so the page cannot produce buy=World with
+        // `sell_scope_is_buy_scope`. The case exists anyway because it is
+        // the only one that kills a plausible wrong rule: hoisting the buy
+        // side's want flag (`sell_scope_is_buy_scope && wants_sale_stats`)
+        // instead of consulting set membership. Cases A and B both pass
+        // under that mutation; this one fails on the last assertion.
+        aliased.sell_scope_is_buy_scope = true;
+        let got = needed_bodies(&f, &aliased);
+        assert!(!got.contains(&BodyRole::BuyScopeStats(SALE_STATS_WINDOW_DAYS)));
+        assert!(got.contains(&BodyRole::SellScopeStats(SALE_STATS_WINDOW_DAYS)));
+    }
+
+    #[test]
+    fn needed_signals_collects_the_revenue_columns_and_the_scope_column() {
+        let f = ProfitFormula::recipe_from_query(None, Some(PriceSignal::SaleMedian), None);
+        let wants = SignalWants {
+            visible_rev: vec![PriceSignal::ListingMin],
+            sort_rev: Some(PriceSignal::SaleAvg),
+            scope_vs_home: true,
+            ..SignalWants::default()
+        };
+        let got = needed_signals(&f, &wants, false);
+        assert_eq!(
+            got.rev,
+            set(&[
+                PriceSignal::SaleMedian,
+                PriceSignal::ListingMin,
+                PriceSignal::SaleAvg
+            ])
+        );
+        assert!(got.scope_vs_home);
+        // The default: exactly the selected revenue signal, nothing else,
+        // and no sub-craft cap applies to the revenue side (these are array
+        // reads, not `compute_cost` runs).
+        let plain = needed_signals(&f, &SignalWants::default(), true);
+        assert_eq!(plain.rev, set(&[PriceSignal::SaleMedian]));
+        assert!(!plain.scope_vs_home);
     }
 }

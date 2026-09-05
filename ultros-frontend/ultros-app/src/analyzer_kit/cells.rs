@@ -94,6 +94,22 @@ pub enum CellValue {
         gain: HopGain,
         daily_sales: f32,
     },
+    /// A signed gil delta against a baseline, with an always-present
+    /// percent sub-line: Scope vs home. **Not** `MutedGil` — that one
+    /// filters `amount > 0`, and a negative delta is this column's normal
+    /// state (a wider market can only undercut under the cheapest
+    /// listing). `pct: None` renders the value uncoloured, which is what
+    /// the one-sided listing case wants: the sign is the whole message and
+    /// a permanent red stripe teaches readers to ignore the colour.
+    /// A dash is always titled with its reason, the way
+    /// [`CellValue::LazyPct`]'s empty state does; `unavailable` chooses
+    /// which of the two reasons, since "one market has no figure" and "the
+    /// two markets are the same market" are different questions.
+    SignedGil {
+        delta: Option<i32>,
+        pct: Option<f32>,
+        unavailable: bool,
+    },
     /// The page renders this cell itself.
     Custom,
 }
@@ -417,6 +433,69 @@ pub fn render_cell(
                         <span class=if has_amount { "inline-flex" } else { "hidden" }><GilIcon /></span>
                         <div class=if has_amount { "" } else { "text-[color:var(--color-text-muted)]" }>{text}</div>
                     </div>
+                </div>
+            }
+            .into_any()
+        }
+        CellValue::SignedGil {
+            delta,
+            pct,
+            unavailable,
+        } => {
+            let has = delta.is_some();
+            let text = delta.map(signed_gil).unwrap_or_else(|| "—".to_string());
+            let sub = pct.map(|p| format!("{p:+.0}%")).unwrap_or_default();
+            // The `else` arm is defensive, not load-bearing: no caller
+            // builds `delta: None` with a `pct`, and for `pct: None`
+            // `signed_delta_class` already returns this exact class. It
+            // closes the shape for a future caller that separates the two,
+            // and a mutation that drops it therefore survives the test
+            // below — deliberately, and recorded rather than trusted.
+            //
+            // Spelled as the call rather than the literal it returns, so
+            // the equivalence that makes that survivor deliberate holds by
+            // construction. Written out, the two would have to stay
+            // character-identical to `signed_delta_class`'s muted arm, and
+            // the day they drifted the survivor would quietly become a real
+            // divergence instead of a recorded one.
+            let value_class = if has {
+                signed_delta_class(pct, DELTA_DEAD_BAND_PCT)
+            } else {
+                signed_delta_class(None, DELTA_DEAD_BAND_PCT)
+            };
+            // Both dashes are titled, and with different reasons, because
+            // the two causes are different questions.
+            //
+            // The "could have had a figure and did not" reason is its own
+            // key, not the drift column's `analyzer_drift_unavailable`
+            // ("Not enough sales"): this dash is raised whenever *either*
+            // market has no figure for the revenue signal, and under the
+            // default `listing-min` signal that means "no listing on one
+            // side", not a thin sales window.
+            //
+            // The other dash — the whole column at once — used to carry no
+            // title on the argument that a per-cell reason would be a
+            // second wrong answer. It is not: by the time this cell exists
+            // the column has been asked for, so the only remaining cause is
+            // that the sell scope IS the sell world, and saying so is the
+            // cheapest way to answer "why is this column empty?" without
+            // opening a header tooltip that is `hidden md:`.
+            let title = (!has).then(|| {
+                if unavailable {
+                    t_string!(i18n, analyzer_scope_vs_home_unavailable).to_string()
+                } else {
+                    t_string!(i18n, analyzer_scope_vs_home_off).to_string()
+                }
+            });
+            // One shape (the `GilOrDash` rule): the icon hides and the value
+            // mutes by class; the arms never swap elements.
+            view! {
+                <div role="cell" class=class title=title>
+                    <div class="flex flex-row items-center justify-end">
+                        <span class=if has { "inline-flex" } else { "hidden" }><GilIcon /></span>
+                        <div class=value_class>{text}</div>
+                    </div>
+                    <div class=SUB_LINE>{sub}</div>
                 </div>
             }
             .into_any()
@@ -840,6 +919,121 @@ mod tests {
                     crate::analysis::DELTA_DEAD_BAND_PCT
                 )
             );
+        });
+    }
+
+    /// A signed delta keeps one shape across "there is a number", "there is
+    /// not" and "there could have been": the gil icon hides by class, the
+    /// value mutes by class, and the sub-line element is always present. A
+    /// negative delta is the COMMON case for Scope vs home under the
+    /// cheapest listing, so this asserts the number survives —
+    /// `MutedGil`'s `amount > 0` filter would have swallowed it — and that
+    /// a `None` percentage renders muted rather than coloured, which is how
+    /// the one-sided listing case avoids a permanent red stripe.
+    #[test]
+    fn signed_gil_cells_keep_one_shape_and_render_negatives() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(leptos_i18n::context::init_i18n_context::<crate::i18n::Locale>());
+            let i18n = crate::i18n::use_i18n();
+            let ctx = CellCtx {
+                now_unix: 1_700_000_000,
+                preview: true,
+                capped_cost: [false; 4],
+                sparklines: None,
+                stats_30: None,
+            };
+            let render = |v: CellValue| render_cell("w-28", v, i18n, &ctx).unwrap().to_html();
+            let down = render(CellValue::SignedGil {
+                delta: Some(-1_250),
+                pct: Some(-8.0),
+                unavailable: false,
+            });
+            let up = render(CellValue::SignedGil {
+                delta: Some(430),
+                pct: Some(3.0),
+                unavailable: false,
+            });
+            let one_sided = render(CellValue::SignedGil {
+                delta: Some(-1_250),
+                pct: None,
+                unavailable: false,
+            });
+            let off = render(CellValue::SignedGil {
+                delta: None,
+                pct: None,
+                unavailable: false,
+            });
+            let missing = render(CellValue::SignedGil {
+                delta: None,
+                pct: None,
+                unavailable: true,
+            });
+            assert!(down.contains("-1,250"), "{down}");
+            assert!(down.contains("text-red-300"), "{down}");
+            assert!(down.contains("-8%"), "{down}");
+            assert!(up.contains("+430"), "{up}");
+            assert!(up.contains("text-emerald-300"), "{up}");
+            assert!(
+                one_sided.contains("-1,250")
+                    && !one_sided.contains("text-red-300")
+                    && !one_sided.contains("text-emerald-300"),
+                "a dropped percentage must render the delta with no colour: {one_sided}"
+            );
+            // Colour alone is not enough: `signed_delta_class(None, ..)` is
+            // the muted class, so a `pct.unwrap_or(0.0)` slip would render
+            // "+0%" on a one-sided cell and still read uncoloured.
+            assert!(
+                !one_sided.contains('%') && !off.contains('%') && !missing.contains('%'),
+                "a dropped percentage leaves the sub-line EMPTY: {one_sided}"
+            );
+            assert!(off.contains("—"), "{off}");
+            // BOTH dashes are titled, and with DIFFERENT reasons. By the
+            // time a cell exists the column has been asked for, so `Off`
+            // has exactly one remaining cause — the sell scope is the sell
+            // world — and saying it is the only answer a phone gets: the
+            // header tooltip that would otherwise explain the empty column
+            // is `hidden md:`.
+            assert!(
+                off.contains(&*t_string!(i18n, analyzer_scope_vs_home_off)),
+                "the Off dash names the sell scope: {off}"
+            );
+            assert!(
+                missing.contains(&*t_string!(i18n, analyzer_scope_vs_home_unavailable)),
+                "the Unavailable dash is titled: {missing}"
+            );
+            // One title each way. A single shared key, or an arm that
+            // titles `Off` with the Unavailable reason, dies here.
+            assert!(
+                !off.contains(&*t_string!(i18n, analyzer_scope_vs_home_unavailable))
+                    && !missing.contains(&*t_string!(i18n, analyzer_scope_vs_home_off)),
+                "the two blank causes are different questions:\n{off}\n{missing}"
+            );
+            // A cell that HAS a figure explains nothing — a title over a
+            // number is noise, and the `has` gate is what keeps it off.
+            for html in [&down, &up, &one_sided] {
+                assert!(
+                    !html.contains("title="),
+                    "a priced cell has no title: {html}"
+                );
+            }
+            // …and titled with a reason that holds under EVERY revenue
+            // signal. `analyzer_drift_unavailable` ("Not enough sales") is
+            // the drift column's, and it is false under the default
+            // `listing-min`, where this dash means "one of the two markets
+            // has no listing". A wrong-but-confident label is worse than
+            // none — which is why this dash gets a key of its own and the
+            // `Off` dash gets a second one rather than borrowing either.
+            assert!(
+                !missing.contains(t_string!(i18n, analyzer_drift_unavailable)),
+                "the Unavailable title must not name a cause only three of \
+                 the four revenue signals have: {missing}"
+            );
+            for html in [&down, &up, &one_sided, &off, &missing] {
+                assert_eq!(count(html, "<div"), count(&down, "<div"), "{down}\n{html}");
+                assert_eq!(count(html, "<span"), count(&down, "<span"));
+            }
         });
     }
 }

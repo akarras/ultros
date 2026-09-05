@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "title": "Candles, ranges and density on price charts",
+  "blurb": "A toolbar above the chart switches how sales are drawn. Candles and ranges show how far prices spread within a day, not just the average.",
+  "importance": "medium"
+}

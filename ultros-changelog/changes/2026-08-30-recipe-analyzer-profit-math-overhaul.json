@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Recipe Analyzer: profit math overhaul",
+  "blurb": "Multi-yield recipes are now costed per unit, NPC vendor prices floor ingredient costs, the 5% market board tax is deducted from profit, and revenue now defaults to your selected world's price instead of the region-wide minimum.",
+  "link": "/recipe-analyzer",
+  "importance": "medium"
+}

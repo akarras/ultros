@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Discord bot, help, and changelog moved down the sidebar",
+  "blurb": "The three informational links no longer sit in the tool list — they now live in their own group at the bottom of the sidebar, just above the Discord and GitHub icons. When the sidebar is collapsed to icons, expand it to reach them. Retainers also got its own icon instead of sharing one with Groups.",
+  "importance": "medium"
+}
