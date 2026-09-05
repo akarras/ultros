@@ -24,6 +24,7 @@ pub mod list_view;
 pub mod lists;
 pub mod not_found;
 pub mod recipe_analyzer;
+pub mod recipe_view;
 pub mod retainers;
 pub mod scrip_sources;
 pub mod settings;

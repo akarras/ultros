@@ -1743,7 +1743,7 @@
     "history_resend_failed_toast": "重新發送失敗",
     "side_nav_aria_primary": "主導覽",
     "profile_login_button": "登入",
-    "related_items_aria_open_recipe": "在分析器中打開此配方",
+    "related_items_aria_open_recipe": "檢視配方",
     "related_items_costs_label": "成本：",
     "related_items_heading": "相關物品",
     "related_items_crafting_recipes_heading": "製作配方",

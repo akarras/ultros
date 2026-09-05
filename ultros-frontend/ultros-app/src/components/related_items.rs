@@ -31,20 +31,6 @@ use crate::{
 
 use super::{cheapest_price::*, gil::*, small_item_display::*};
 
-fn job_code_from_craft_type(craft_type: i32) -> &'static str {
-    match craft_type {
-        0 => "CRP",
-        1 => "BSM",
-        2 => "ARM",
-        3 => "GSM",
-        4 => "LTW",
-        5 => "WVR",
-        6 => "ALC",
-        7 => "CUL",
-        _ => "",
-    }
-}
-
 pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
     tracked_data()
         .items
@@ -295,11 +281,10 @@ fn CraftOptionsToggleRow() -> impl IntoView {
 #[component]
 fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let i18n = use_i18n();
-    let job = job_code_from_craft_type(recipe.craft_type);
-    // The craft-options toggles have to reach the ingredient rows, not just
-    // the cost chips — the point of "exclude shards" / "use on-hand" is seeing
-    // which lines you still have to shop for. So every row is a reactive view
-    // over the options cookie and the on-hand map rather than a static render.
+    let query = leptos_router::hooks::use_query_map();
+    let params = leptos_router::hooks::use_params_map();
+    let (home, _) = crate::global_state::home_world::use_home_world();
+    // Share the options signal between the ingredient rows and planner link.
     let (opts_cookie, _) = use_context::<crate::global_state::cookies::Cookies>()
         .unwrap()
         .use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(
@@ -308,14 +293,20 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let on_hand_map = use_context::<OnHandMap>();
     let analyzer_href = move || {
         let o = opts_cookie.get().unwrap_or_default();
-        format!(
-            "/recipe-analyzer?job={job}&require-hq={hq}&subcrafts={sub}&shards-exclude={shards}&on-hand={oh}",
-            job = job,
-            hq = o.require_hq,
-            sub = o.include_subcrafts,
-            shards = o.exclude_shards,
-            oh = o.use_on_hand,
-        )
+        let world = params
+            .get()
+            .get("world")
+            .or_else(|| home.get().map(|w| w.name))
+            .unwrap_or_default();
+        let mut url =
+            crate::routes::recipe_view::recipe_href(recipe.key_id.0, &world, &query.get());
+        if query.get().get("require-hq").is_none() {
+            url.push_str(&format!("&require-hq={}", o.require_hq));
+        }
+        if query.get().get("shards-exclude").is_none() {
+            url.push_str(&format!("&shards-exclude={}", o.exclude_shards));
+        }
+        url
     };
     let items = &tracked_data().items;
     let ingredients = IngredientsIter::new(recipe)
@@ -421,7 +412,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                         aria-label=t_string!(i18n, related_items_aria_open_recipe)
                     >
                         <Icon icon=icondata::AiBarChartOutlined />
-                        "Analyzer"
+                        {t!(i18n, related_items_aria_open_recipe)}
                     </a>
                 </div>
             </div>
