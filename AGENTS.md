@@ -111,7 +111,9 @@ Set `GLITCHTIP_DSN` to a Glitchtip (or Sentry) DSN to ship panics + `error!` tra
 
 ### Optional: disable the Universalis websocket ingest
 
-Set `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=true` to start the server without subscribing to the Universalis market feed. Intended for QA/staging deploys that share one database: the websocket spawns a database write per inbound event, so several replicas pointed at the same Postgres exhaust its connections with market data nobody is testing.
+Set `ULTROS_DISABLE_UNIVERSALIS_WEBSOCKET=true` to start the server without subscribing to the Universalis market feed. Intended for QA/staging deploys that share one database and aren't exercising live market data: the websocket spawns a database write per inbound event, so turning it off drops the write churn several replicas otherwise pile onto that one Postgres.
+
+**It is not a fix for connection-pool exhaustion.** The pool is sized by `POSTGRES_MAX_CONNECTIONS` (`ultros-db/src/lib.rs`), and a replica with the ingest off still opens connections up to that ceiling serving ordinary page traffic. Budget the ceiling as `(server max_connections − headroom) / instances you run at once`; this flag only makes those instances quieter, it does not cap them.
 
 Accepts `1`/`true`/`yes`/`on` (case-insensitive) to disable; unset, empty, `0`/`false`/`no`/`off` keep the ingest running, which is what production does. Any other value is treated as "disable" and logs a warning.
 

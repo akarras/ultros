@@ -30,6 +30,36 @@ use universalis::{ItemId, ListingView, WorldId};
 
 use crate::entity::*;
 
+/// Pool ceiling when `POSTGRES_MAX_CONNECTIONS` is unset.
+///
+/// Was 300, which exceeds a stock Postgres `max_connections = 200` on its own:
+/// one instance could claim the whole server, and two were enough to hand the
+/// third `pool timed out while waiting for an open connection` at startup. A
+/// default that cannot be run twice on one database is a footgun, so this now
+/// matches the value `.env.example` has always suggested. Deployments that
+/// genuinely need a larger pool set the variable explicitly.
+const DEFAULT_MAX_CONNECTIONS: u32 = 50;
+
+/// A default above a stock Postgres `max_connections = 200` lets one instance
+/// claim the whole server. Whatever this value becomes, four instances against
+/// a stock server have to stay inside it — enforced at compile time so raising
+/// the default is a deliberate act rather than an accident.
+const _: () = assert!(DEFAULT_MAX_CONNECTIONS * 4 <= 200);
+
+/// Connections the pool opens eagerly and holds, when the ceiling allows it.
+const DEFAULT_MIN_CONNECTIONS: u32 = 10;
+
+/// Clamp the eager-connection floor to the pool ceiling.
+///
+/// The floor used to be a hard-coded 10, which made a genuinely small pool
+/// impossible to ask for: `POSTGRES_MAX_CONNECTIONS=2` still opened ten
+/// connections eagerly, five times the ceiling it was given. That knob is
+/// exactly what you reach for when several instances share one Postgres, so it
+/// has to stay usable at small values rather than be silently overridden.
+fn min_connections_for(max_connections: u32) -> u32 {
+    DEFAULT_MIN_CONNECTIONS.min(max_connections)
+}
+
 #[derive(Clone, Debug)]
 pub struct UltrosDb {
     // Connections here
@@ -61,8 +91,9 @@ impl UltrosDb {
                     })
                     .ok()
             })
-            .unwrap_or(300);
-        opt.max_connections(max_connections).min_connections(10);
+            .unwrap_or(DEFAULT_MAX_CONNECTIONS);
+        opt.max_connections(max_connections)
+            .min_connections(min_connections_for(max_connections));
         let db: DatabaseConnection = Database::connect(opt).await?;
         Migrator::up(&db, None).await?;
 
@@ -526,4 +557,25 @@ impl UltrosDb {
 #[derive(Debug, FromQueryResult)]
 pub struct UniqueItemId {
     pub item: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_MIN_CONNECTIONS, min_connections_for};
+
+    #[test]
+    fn a_roomy_ceiling_keeps_the_usual_floor() {
+        assert_eq!(min_connections_for(300), DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(min_connections_for(50), DEFAULT_MIN_CONNECTIONS);
+        assert_eq!(min_connections_for(10), DEFAULT_MIN_CONNECTIONS);
+    }
+
+    #[test]
+    fn a_small_ceiling_lowers_the_floor_to_match() {
+        // THE BUG: the floor was a hard-coded 10, so `POSTGRES_MAX_CONNECTIONS=2`
+        // eagerly opened five times the pool it asked for. Several instances
+        // sharing one Postgres is precisely when someone sets it that low.
+        assert_eq!(min_connections_for(2), 2);
+        assert_eq!(min_connections_for(1), 1);
+    }
 }

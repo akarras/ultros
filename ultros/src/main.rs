@@ -358,10 +358,18 @@ fn env_flag_enabled(name: &str, raw: Option<&str>) -> bool {
 
 /// Whether this process should skip subscribing to the Universalis websocket.
 ///
-/// QA/staging deploys generally point at a database shared with other testers.
-/// The websocket fans every inbound event out into its own `tokio::spawn`ed
-/// write (see [`run_socket_listener`]), so a handful of replicas pointed at one
-/// database exhaust the connection pool with market data nobody is testing.
+/// QA/staging deploys generally point at a database shared with other testers,
+/// where nobody is exercising live market data. The websocket fans every
+/// inbound event out into its own `tokio::spawn`ed write (see
+/// [`run_socket_listener`]), so turning it off drops the write churn several
+/// replicas otherwise pile onto that one database.
+///
+/// This is not a fix for connection-pool exhaustion, and must not be sold as
+/// one: the pool is sized by `POSTGRES_MAX_CONNECTIONS` in `ultros-db`, and a
+/// replica with the ingest off still opens connections up to that ceiling
+/// serving ordinary page traffic. Size the pool for the number of replicas
+/// sharing the database; this flag only makes them quieter.
+///
 /// Production leaves this unset and ingests as before.
 fn universalis_websocket_disabled() -> bool {
     env_flag_enabled(
