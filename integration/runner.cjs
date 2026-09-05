@@ -5,7 +5,10 @@
  *
  * Env:
  *  - BASE_URL: base address of the running server (default http://127.0.0.1:8080)
- *  - DEVICE:   "mobile" or "desktop" (default "desktop")
+ *  - DEVICE:   "mobile", "desktop", or "wide" (default "desktop"). "wide" is a
+ *              2560px pass: the ad rail only mounts at >=1536px and its slot
+ *              once overflowed the document at >=1660px (issue #1234), which
+ *              the 1280px desktop pass could never see.
  *  - ROUTES:   comma-separated list of routes to visit (default built-in list)
  *  - TIMEOUT_MS: navigation timeout in ms (default 60000)
  *  - HEADLESS: "new" | "true" | "false" (default "new")
@@ -42,6 +45,47 @@ function sanitizeFileComponent(s) {
   return replaced.length ? replaced : "_root";
 }
 
+/** Check the item jump bar without assuming which sources an item has. */
+async function checkItemSectionNav(page) {
+  return page.evaluate(() => {
+    const nav = document.querySelector("[data-item-section-nav]");
+    if (!nav) return ["item section navigation is missing"];
+    const failures = [];
+    const links = [...nav.querySelectorAll("a")];
+    const sections = ["#overview", "#listings", "#history", "#sources", "#related"];
+    if (JSON.stringify(links.slice(0, 5).map((link) => link.getAttribute("href"))) !== JSON.stringify(sections)) {
+      failures.push("item section navigation changed the existing link order");
+    }
+    const allowed = ["#crafting-recipes", "#exchange-sources", "#leve-sources", "#vendor-sources"];
+    const sources = links.slice(5);
+    const hrefs = sources.map((link) => link.getAttribute("href"));
+    if (new Set(hrefs).size !== hrefs.length) failures.push("duplicate source shortcuts");
+    for (const link of sources) {
+      const href = link.getAttribute("href");
+      if (!allowed.includes(href)) {
+        failures.push(`unexpected source shortcut: ${href}`);
+        continue;
+      }
+      const target = document.querySelector(href);
+      if (!target || !target.getClientRects().length) failures.push(`missing/hidden source destination: ${href}`);
+      if (!(Number(link.lastElementChild.textContent) > 0)) failures.push(`invalid source count: ${href}`);
+      if (target && parseFloat(getComputedStyle(target).scrollMarginTop) < 64) failures.push(`source destination lacks sticky-header clearance: ${href}`);
+    }
+    const top = links[0]?.getBoundingClientRect().top;
+    for (const link of links) {
+      const rect = link.getBoundingClientRect();
+      if (Math.abs(rect.top - top) > 1) failures.push("item navigation wrapped to a second row");
+      if (rect.height < 44) failures.push("item navigation touch target is below 44px");
+    }
+    const rect = nav.getBoundingClientRect();
+    if (rect.right > document.documentElement.clientWidth + 1) failures.push("item navigation overflows the viewport");
+    if (nav.scrollWidth > nav.clientWidth && !["auto", "scroll"].includes(getComputedStyle(nav).overflowX)) {
+      failures.push("overflowing item navigation cannot be scrolled");
+    }
+    return failures;
+  });
+}
+
 /**
  * Per-route assertions. Each entry has:
  *   - titleIncludes:    substring expected in <title>
@@ -73,6 +117,39 @@ const ROUTE_ASSERTS = {
   "/list": { titleIncludes: "Ultros" },
   "/retainers": { titleIncludes: "Ultros" },
   "/currency-exchange": { titleIncludes: "Ultros" },
+  "/recipe-analyzer?world=Gilgamesh": { titleIncludes: "Recipe Analyzer" },
+  // One Labs toggle for the whole tool. With it on, the Profit header
+  // carries an "after 5% tax" sub-label at every width; the strip row
+  // itself is md+ only, and the mobile pass reads innerText, which drops
+  // display:none content. The lab columns are md+ only too, so the only
+  // cross-device assertions are the title and that sub-label; the sweep
+  // still checks console errors and horizontal overflow.
+  //
+  // `cols=` names eleven of the twenty-three optional columns — one of each
+  // distinct cell kind Phases C–F added, including all five market
+  // columns — so the desktop pass renders nineteen columns at once and
+  // the mobile pass renders only the six that are not `hidden md:`. Trend,
+  // Drift and the two 30-day columns are *listed* here, but a local run
+  // fires no enrichment at all: this route pins their markup and their
+  // console cleanliness, never their data. Settling is a prod-only check.
+  //
+  // `&sell-scope=datacenter` is Phase F's, and it is the point of listing
+  // `scope-vs-home` at all: at the default sell scope every cell in that
+  // column is `ScopeVsHome::Off` and the harness would screenshot a column
+  // of dashes.
+  //
+  // It costs no extra request here, and BOTH halves of that need saying.
+  // The cheapest map dedupes because the buy scope already defaults to the
+  // datacenter, so both sides name the same place. The *statistics* body
+  // dedupes only because `cost-sale-median` is in the `cols=` list below:
+  // that is what puts `BuyScopeStats(7)` into the computed set, and the
+  // sell side is suppressed only against a body that was really fetched.
+  // Drop `cost-sale-median` from this URL and the sweep starts issuing a
+  // `sale_stats?window=7` for the datacenter.
+  "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home": {
+    titleIncludes: "Recipe Analyzer",
+    bodyIncludesAny: ["after 5% tax"],
+  },
   "/history": { titleIncludes: "Ultros" },
   "/settings": { titleIncludes: "Ultros" },
   "/groups": { titleIncludes: "Groups", bodyIncludesAny: ["Groups", "No groups found"] },
@@ -118,6 +195,8 @@ function getRoutes() {
     "/list",
     "/retainers",
     "/currency-exchange",
+    "/recipe-analyzer?world=Gilgamesh",
+    "/recipe-analyzer?world=Gilgamesh&labs=analyzer-recipe&sell-scope=datacenter&cols=confidence,cost-sale-median,rev-sale-median,hop-gain,hop-worlds,profit-per-day,trend,drift,volume-30d,vwap-30d,scope-vs-home",
     "/history",
     "/settings",
     "/groups",
@@ -270,13 +349,14 @@ async function main() {
   const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:8080";
   const DEVICE = (process.env.DEVICE || "desktop").toLowerCase();
   const isMobile = DEVICE.startsWith("m");
+  const isWide = DEVICE.startsWith("w");
   const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 60000);
   const STRICT_CONSOLE = envFlag("STRICT_CONSOLE", true);
   const SKIP_ASSERTS = envFlag("SKIP_ASSERTS", false);
   const SKIP_OVERFLOW = envFlag("SKIP_OVERFLOW", false);
-  // Both device passes share this runner, and the same route can fit at one
+  // All device passes share this runner, and the same route can fit at one
   // width and not the other, so failures name the width they were seen at.
-  const DEVICE_LABEL = isMobile ? "mobile" : "desktop";
+  const DEVICE_LABEL = isMobile ? "mobile" : isWide ? "wide" : "desktop";
   const userAllow = (process.env.CONSOLE_ALLOW || "")
     .split(",")
     .map((s) => s.trim())
@@ -285,7 +365,9 @@ async function main() {
 
   const viewport = isMobile
     ? { width: 390, height: 844, isMobile: true, deviceScaleFactor: 2 }
-    : { width: 1280, height: 800, deviceScaleFactor: 1 };
+    : isWide
+      ? { width: 2560, height: 1200, deviceScaleFactor: 1 }
+      : { width: 1280, height: 800, deviceScaleFactor: 1 };
 
   const headless = parseHeadless(process.env.HEADLESS);
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
@@ -296,7 +378,7 @@ async function main() {
   fs.mkdirSync(outdir, { recursive: true });
 
   console.log(`[info] BASE_URL=${BASE_URL}`);
-  console.log(`[info] DEVICE=${isMobile ? "mobile" : "desktop"}`);
+  console.log(`[info] DEVICE=${DEVICE_LABEL}`);
   console.log(`[info] OUTPUT_DIR=${outdir}`);
   console.log(`[info] HEADLESS=${headless}`);
   console.log(
@@ -369,8 +451,27 @@ async function main() {
           for (const f of fails) failures.push(`${r}: ${f}`);
         }
 
+        if (!SKIP_ASSERTS && r.startsWith("/item/")) {
+          for (const failure of await checkItemSectionNav(page)) {
+            failures.push(`${r}: ${failure}`);
+          }
+        }
+
         // Applies to every route, not just the ones with content assertions.
         if (!SKIP_OVERFLOW) {
+          // AdSense never fills in headless Chrome, so the Ad component marks
+          // itself `.ad.hidden` and `:has(.ad.hidden)` collapses the whole ad
+          // rail — which once overflowed the document by 16px at >=1660px
+          // (issue #1234) while looking fine to this check. Un-hide the
+          // placeholder so the rail lays out the way it does for a real
+          // viewer with a served ad, then measure.
+          if (isWide) {
+            await page.evaluate(() => {
+              for (const ad of document.querySelectorAll(".ad.hidden")) {
+                ad.classList.remove("hidden");
+              }
+            });
+          }
           const fails = await checkHorizontalOverflow(page, r, DEVICE_LABEL);
           for (const f of fails) failures.push(`${r} [${DEVICE_LABEL}]: ${f}`);
         }
@@ -383,7 +484,7 @@ async function main() {
         }
 
         const safe = sanitizeFileComponent(r);
-        const filename = `${safe}-${isMobile ? "mobile" : "desktop"}.png`;
+        const filename = `${safe}-${DEVICE_LABEL}.png`;
         const file = path.join(outdir, filename);
 
         // Chrome refuses to capture past an internal bitmap limit, and a route

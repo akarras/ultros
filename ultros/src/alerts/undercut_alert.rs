@@ -32,6 +32,13 @@ pub(crate) fn is_undercut_by_more_than_margin(
     threshold > competitor_price
 }
 
+fn retainer_undercut_click_url(retainer_id: Option<i32>) -> String {
+    retainer_id.map_or_else(
+        || "/retainers/undercuts".to_string(),
+        |retainer_id| format!("/retainers/undercuts#retainer-{retainer_id}"),
+    )
+}
+
 pub(crate) struct RetainerAlertListener {
     pub(crate) retainer_alert_id: i32,
     pub(crate) cancellation_sender: tokio::sync::mpsc::Sender<RetainerAlertTx>,
@@ -364,6 +371,9 @@ impl RetainerAlertListener {
                                 }) => {
                                     let items = &xiv_gen_db::data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
+                                        let click_url = retainer_undercut_click_url(
+                                            undercut_retainers.iter().map(|r| r.id).min(),
+                                        );
                                         let retainer_names = undercut_retainers
                                             .into_iter()
                                             .map(|r| r.name)
@@ -371,7 +381,7 @@ impl RetainerAlertListener {
                                             .join(", ");
                                         let item_name = &item.name;
                                         let undercut_msg = format!(
-                                            "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app/retainers/undercuts"
+                                            "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app{click_url}"
                                         );
                                         let title = "Undercut Alert";
                                         let mut delivered = false;
@@ -386,7 +396,7 @@ impl RetainerAlertListener {
                                             alert_id,
                                             title,
                                             &undercut_msg,
-                                            "/retainers/undercuts",
+                                            &click_url,
                                             &ultros_db,
                                             &ctx,
                                         )
@@ -551,6 +561,19 @@ mod tests {
         // our 5, margin 10 → 5 * 0.9 = 4.5 → truncates to 4. Competitor must be < 4.
         assert!(!is_undercut_by_more_than_margin(5, 4, 10));
         assert!(is_undercut_by_more_than_margin(5, 3, 10));
+    }
+
+    #[test]
+    fn retainer_click_url_targets_the_retainer_anchor() {
+        assert_eq!(
+            retainer_undercut_click_url(Some(42)),
+            "/retainers/undercuts#retainer-42"
+        );
+    }
+
+    #[test]
+    fn retainer_click_url_falls_back_when_no_retainer_was_found() {
+        assert_eq!(retainer_undercut_click_url(None), "/retainers/undercuts");
     }
 
     // ---------- ListingValue Ord behavior (used by the fold in user-listings aggregation) ----------

@@ -8,6 +8,7 @@ clickhouse = { workspace = true }
 tokio = { workspace = true }
 tokio-util = "0.7.18"
 tracing = { workspace = true }
+metrics = "0.24.5"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

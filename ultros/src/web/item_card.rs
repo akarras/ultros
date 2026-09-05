@@ -3,11 +3,10 @@ use std::sync::{Arc, OnceLock};
 use super::{PriceSeriesArgs, WebState, build_price_series, error::WebError};
 use anyhow::{Result, anyhow};
 use axum::{
-    body::Body,
-    extract::{Path, State},
-    response::{IntoResponse, Response},
+    extract::{Path, Query, State},
+    http::HeaderMap,
+    response::IntoResponse,
 };
-use hyper::header;
 use resvg::{
     tiny_skia,
     usvg::{self, Options},
@@ -20,24 +19,19 @@ use ultros_charts::charts::price_history::{PriceChartOptions, build_price_histor
 use ultros_charts::svg::scene_to_svg;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::world_data::world_cache::WorldCache;
-use xiv_gen::{Item, ItemId};
+use xiv_gen::Item;
 
-/// Window shown on the item card: the last 30 days, ending now. The card is
-/// a single static snapshot (Discord embed / PNG download) with no
-/// timeline-slicer UI, so there's no "requested range" to preserve — this
-/// picks a fixed, reasonable default.
-const CARD_WINDOW_DAYS: i64 = 30;
+/// Window shown by the Discord bot's explicit price-history command.
+const HISTORY_WINDOW_DAYS: i64 = 30;
 
-/// Renders the item card PNG.
+/// Renders the live chart used only by the Discord bot's explicit history
+/// command. Unlike the social item card, this image is expected to be a point-
+/// in-time view of market data.
 ///
 /// Returns [`WebError`], **not** `anyhow::Result`: `build_price_series` hands
-/// back a typed [`WebError::ClickHouse`], and funnelling it through `anyhow`
-/// here flattened it into `WebError::AnyhowError` by the time the handler saw
-/// it. That is exactly the laundering `report_title` exists to prevent — the
-/// 2026-08-23 ClickHouse outage reported every item card as the generic
-/// "Returning web error" instead of "ClickHouse price_series query failed
-/// (unavailable)", so the outage was unalertable.
-pub(crate) async fn generate_image(
+/// back a typed [`WebError::ClickHouse`], which must not be flattened into the
+/// generic anyhow variant before the handler can report it.
+pub(crate) async fn generate_price_history_chart(
     ch: &ClickHouseClient,
     world_cache: &WorldCache,
     world_helper: &WorldHelper,
@@ -45,7 +39,7 @@ pub(crate) async fn generate_image(
     world: &str,
 ) -> Result<Vec<u8>, WebError> {
     let to = chrono::Utc::now();
-    let from = to - chrono::Duration::days(CARD_WINDOW_DAYS);
+    let from = to - chrono::Duration::days(HISTORY_WINDOW_DAYS);
     let series = build_price_series(
         ch,
         world_cache,
@@ -99,34 +93,15 @@ fn svg_to_png(svg: &str) -> Result<Vec<u8>> {
 #[axum_macros::debug_handler(state = WebState)]
 pub(crate) async fn item_card(
     Path((world, item_id)): Path<(String, i32)>,
-    State(ch): State<ClickHouseClient>,
-    State(world_cache): State<Arc<WorldCache>>,
     State(world_helper): State<Arc<WorldHelper>>,
 ) -> Result<impl IntoResponse, WebError> {
-    let item = xiv_gen_db::data()
-        .items
-        .get(&ItemId(item_id))
-        .ok_or(WebError::InvalidItemId(item_id))?;
-    // Validated up front against `WorldHelper` (cheap, in-memory) so an
-    // unknown world name 400s immediately rather than after a ClickHouse
-    // round trip — `build_price_series` would otherwise still catch it via
-    // `WorldCache::lookup_value_by_name`, just as a 404 instead.
-    if world_helper.lookup_world_by_name(&world).is_none() {
-        return Err(WebError::WorldNotFound(world));
-    }
-    let bytes = generate_image(&ch, &world_cache, &world_helper, item, &world).await?;
-    let mime_type = mime_guess::from_path("icon.png").first_or_text_plain();
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, mime_type.as_ref())
-        // Item cards are rendered per request from live prices. Half an hour
-        // keeps social-unfurl crawlers (which refetch aggressively) off the
-        // ClickHouse path without letting a card go visibly stale.
-        .header(
-            header::CACHE_CONTROL,
-            #[cfg(not(debug_assertions))]
-            header::HeaderValue::from_static("public, max-age=1800"),
-            #[cfg(debug_assertions)]
-            header::HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-        )
-        .body(Body::new(http_body_util::Full::from(bytes)))?)
+    // Existing shares and download links keep returning a PNG. Route them
+    // through the same bounded renderer/cache as the locale-explicit URLs.
+    super::social_card::social_card(
+        Path(("en".into(), "item".into(), item_id.to_string())),
+        Query(super::social_card::SocialCardQuery { world: Some(world) }),
+        State(world_helper),
+        HeaderMap::new(),
+    )
+    .await
 }

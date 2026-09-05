@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Recipe Analyzer now shows every matching recipe",
+  "blurb": "The Recipe Analyzer no longer stops after its first 100 results. Scroll through the full ranked list without loading thousands of table rows into the page at once, and keep using the same sorts and filters across the whole result set.",
+  "link": "/recipe-analyzer",
+  "importance": "medium"
+}

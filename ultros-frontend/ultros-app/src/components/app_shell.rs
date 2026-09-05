@@ -13,9 +13,11 @@ use leptos_router::hooks::use_location;
 /// drawer and adds a fixed bottom bar (Menu, Search, Items).
 #[component]
 pub fn AppShell(children: Children) -> impl IntoView {
-    // Everything below here renders inside `<Router>`; `AppLink` reads this
-    // marker to tell a live render from one whose owner has been disposed.
-    // See `components::app_link`.
+    // Everything below here renders inside `<Router>`, so this is the one
+    // place the router's `Location` can be read without risking the `expect`
+    // in `use_location()`. Publishing it here is what lets
+    // `use_location_or_default` degrade instead of panicking under a disposed
+    // owner. See `components::app_link`.
     provide_router_available();
     let nav = provide_side_nav_settings();
     provide_search_overlay_state();

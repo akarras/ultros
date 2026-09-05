@@ -892,12 +892,13 @@
    `.card-link` opts out: on a card-sized anchor the blanket hover:underline
    underlines every text node inside it at once (label, price, badge, …),
    which reads as broken rather than interactive. Those links style their own
-   hover — a background tint plus an underline on the title only. */
+   hover — a background tint plus an underline on the title only.
+   Item section shortcuts also own their colors, including source accents. */
 a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link) {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a) {
     @apply hover:underline rounded-md;
     color: var(--brand-fg);
     background-color: transparent;
@@ -906,7 +907,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link):hover {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a):hover {
     color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
     background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
 }
@@ -917,7 +918,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link) {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a) {
     color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
 }
 [data-theme="light"]
@@ -925,9 +926,27 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link):hover {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a):hover {
     color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
+}
+
+[data-item-section-nav] {
+    scrollbar-color: color-mix(in srgb, var(--brand-ring) 45%, transparent) transparent;
+}
+
+/* Source accents need darker shades on the light page surface. */
+[data-theme="light"] [data-item-section-nav] a[href="#crafting-recipes"] {
+    @apply text-orange-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#exchange-sources"] {
+    @apply text-purple-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#leve-sources"] {
+    @apply text-pink-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#vendor-sources"] {
+    @apply text-amber-800;
 }
 
 /* Light-mode text utility fixes for contrast */
@@ -1648,8 +1667,11 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     display: block;
 }
 
+/* Fill the rail's grid track instead of naming a width. A fixed 18.75rem here
+   used to exceed the ≥1660px track (300px minus the rail's own padding) and
+   gave the whole document a 16px horizontal scrollbar. */
 .ad-rail-slot {
-    width: 10rem;
+    width: 100%;
 }
 
 @media (min-width: 1536px) {
@@ -1664,12 +1686,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 
     .app-inline-ad {
         display: none;
-    }
-}
-
-@media (min-width: 1660px) {
-    .ad-rail-slot {
-        width: 18.75rem;
     }
 }
 
@@ -2047,6 +2063,32 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .side-nav-region {
     position: relative;
     border-top: 1px solid var(--color-outline);
+}
+/* Two-line trigger text for the home-world / price-zone rows (#1235): a
+   tiny purpose overline above the selected value, so the two rows read at
+   a glance. The wrapper also carries `.side-nav-label` so the collapsed
+   rail's existing `display: none` hides both lines and the rows fall back
+   to their purpose icons. Separate lines keep long locale strings from
+   fighting the value for width — each truncates on its own. */
+.side-nav-zone-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.side-nav-zone-overline {
+    font-size: 0.6rem;
+    line-height: 1.2;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.side-nav-zone-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 /* Row wrapper pairing a full-width select button with a square expand
    chevron. Two sibling buttons — a button nested in a button is invalid
@@ -2521,6 +2563,34 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 .tool-grid-row {
     min-width: var(--tool-row-min-width, 0px);
+}
+
+/* ----- routes/fc_crafting_analyzer.rs: one width for the header and the rows -----
+   Same shape and the same reason as `.tool-table` above: the analyzer's
+   `VirtualScroller` runs in *container* mode, so the scroller div is the
+   scrollport and the row spacer inside it has to be told how wide the grid
+   really is, or every row is clipped at the port width while the header — a
+   sibling outside that box — keeps painting.
+
+   `max-content` (what the recipe analyzer passes) is deliberately *not* used
+   here: this is the one caller with `variable_height=true`, whose rows carry
+   `content-visibility: auto`, and a skipped off-screen row gains size
+   containment and contributes nothing to an intrinsic measurement. The
+   resolved width would then wobble as rows are skipped and unskipped. An
+   explicit sum is deterministic.
+
+   The sum is the cell widths in the route, which are all `shrink-0`:
+   `w-84` (21rem) + four `w-30` (7.5rem each) = 51rem always on, plus a sixth
+   `w-30` that is `hidden md:block`, giving 58.5rem from `md` up. The media
+   query is Tailwind's `md` (48rem) verbatim, because that is the breakpoint
+   the cells' own `hidden md:block` uses. */
+.fc-craft-table {
+    --fc-craft-row-min-width: 51rem;
+}
+@media (min-width: 48rem) {
+    .fc-craft-table {
+        --fc-craft-row-min-width: 58.5rem;
+    }
 }
 
 /* ----- components/data_table.rs: derived grid template -----

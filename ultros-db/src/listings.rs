@@ -4,8 +4,8 @@ use itertools::Itertools;
 use metrics::{counter, histogram};
 use migration::DbErr;
 use sea_orm::{
-    ColumnTrait, DbBackend, DeleteMany, EntityTrait, ExprTrait, FromQueryResult, QueryFilter,
-    QuerySelect, Statement,
+    ColumnTrait, Condition, DbBackend, DeleteMany, EntityTrait, ExprTrait, FromQueryResult,
+    QueryFilter, QuerySelect, Statement,
 };
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
@@ -32,8 +32,8 @@ use crate::{
 /// simultaneous connections for a single item.
 ///
 /// The delete side needs no fan-out at all: both `update_listings` and
-/// `remove_listings` clear their rows with a single
-/// `DELETE … WHERE "id" IN (…)` — see [`delete_listings_by_id`].
+/// `remove_listings` clear their rows with a single statement. The websocket
+/// removal also guards the observed state — see [`delete_unchanged_listings`].
 ///
 /// That multiplies with the catch-up sweep, which drives items through
 /// `buffer_unordered(50)` (`item_update_service::check_items`). Unbounded, one
@@ -56,10 +56,11 @@ use crate::{
 const MAX_CONCURRENT_LISTING_WRITES: usize = 4;
 
 /// Run per-listing writes with at most [`MAX_CONCURRENT_LISTING_WRITES`] in
-/// flight, collecting every result in the order the writes were supplied.
+/// flight, collecting successful rows in the order the writes were supplied.
 ///
-/// Drop-in for `futures::future::join_all`: it does not short-circuit, so
-/// callers that inspect individual `Result`s still see one entry per write.
+/// Drain every write before propagating any error. Dropping the remaining
+/// futures on the first failure would leave an arbitrary part of the batch
+/// unattempted. An error must reach the caller before it stamps the board fresh.
 ///
 /// Deliberately a plain `fn` returning `impl Future`, mirroring `join_all`'s own
 /// shape rather than being an `async fn`. `buffered` is stricter than `join_all`
@@ -68,41 +69,46 @@ const MAX_CONCURRENT_LISTING_WRITES: usize = 4;
 /// this call then fails to compile with "implementation of `FnOnce`/`Send` is
 /// not general enough". For the same reason the call sites hand over futures
 /// that *own* their `ListingView` instead of borrowing one out of the diff.
-fn fan_out_listing_writes<I>(
-    writes: I,
-) -> impl std::future::Future<Output = Vec<<I::Item as std::future::Future>::Output>>
+fn fan_out_listing_writes<I, T>(writes: I) -> impl std::future::Future<Output = Result<Vec<T>>>
 where
     I: IntoIterator,
-    I::Item: std::future::Future,
+    I::Item: std::future::Future<Output = Result<T>>,
 {
-    use futures::stream::StreamExt;
+    use futures::{FutureExt, stream::StreamExt};
 
     futures::stream::iter(writes)
         .buffered(MAX_CONCURRENT_LISTING_WRITES)
-        .collect()
+        .collect::<Vec<_>>()
+        .map(|results| results.into_iter().collect())
 }
 
-/// The single `DELETE` that clears a whole batch of matched listing rows, or
-/// `None` when nothing matched.
-///
-/// Deleting by primary key one row at a time is the shape `remove_listings`
-/// used to have, and it is strictly worse than the `IN (…)` form
-/// `update_listings` has always used: N round trips instead of one, each
-/// taking its own pooled connection, against a table whose single-row
-/// `DELETE … WHERE "id" = $1` is regularly a 1.4s slow-statement in
-/// production. Bounding the fan-out (#1174) capped how many of those ran at
-/// once but not how many were issued — a 100-listing board still cost 100
-/// statements.
-fn delete_listings_by_id(
-    ids: impl IntoIterator<Item = i32>,
+/// Delete the selected rows only if their state still matches the earlier
+/// read. An add task can reprice a row after `listings_to_remove_with_identity`
+/// checks it; deleting by primary key alone would then erase the new listing.
+/// PostgreSQL rechecks this predicate after waiting for a concurrent update.
+/// Keep the whole batch in one statement to avoid a pool acquisition per row.
+fn delete_unchanged_listings(
+    listings: &[active_listing::Model],
 ) -> Option<DeleteMany<active_listing::Entity>> {
-    let ids: Vec<i32> = ids.into_iter().collect();
-    if ids.is_empty() {
+    use active_listing::Column;
+
+    if listings.is_empty() {
         // A no-op remove is the common case (the paired full-board update
         // already deleted the rows); it must not cost a round trip.
         return None;
     }
-    Some(active_listing::Entity::delete_many().filter(active_listing::Column::Id.is_in(ids)))
+    let matches = listings
+        .iter()
+        .fold(Condition::any(), |condition, listing| {
+            condition.add(
+                Condition::all()
+                    .add(Column::Id.eq(listing.id))
+                    .add(Column::PricePerUnit.eq(listing.price_per_unit))
+                    .add(Column::Quantity.eq(listing.quantity))
+                    .add(Column::Hq.eq(listing.hq)),
+            )
+        });
+    Some(active_listing::Entity::delete_many().filter(matches))
 }
 
 pub type ListingUpdate = (
@@ -563,19 +569,17 @@ impl UltrosDb {
                     .await
             }
         }))
-        .await;
+        .await?;
 
         let retainers_by_id: HashMap<i32, &retainer::Model> =
             retainers.values().map(|r| (r.id, r)).collect();
         let added: Vec<_> = added
             .into_iter()
-            .flat_map(|l| {
-                l.ok().map(|l| {
-                    let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
-                        .clone()
-                        .into();
-                    (l.into(), retainer)
-                })
+            .map(|l| {
+                let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
+                    .clone()
+                    .into();
+                (l.into(), retainer)
             })
             .collect();
 
@@ -606,9 +610,16 @@ impl UltrosDb {
             .flat_map(|(listing, retainer)| retainer.map(|r| (listing, r)))
             .collect();
 
-        let items = listings_to_remove_with_identity(db_listings, remove_listings);
-        if let Some(delete) = delete_listings_by_id(items.iter().map(|l| l.id)) {
-            delete.exec(&self.db).await?;
+        let candidates = listings_to_remove_with_identity(db_listings, remove_listings);
+        let Some(delete) = delete_unchanged_listings(&candidates) else {
+            return Ok(vec![]);
+        };
+        // Only publish rows actually deleted. A concurrent reprice can make a
+        // candidate fail the predicate; reporting it as removed would still
+        // evict the live listing from the analyzer even though the DB kept it.
+        let items = delete.exec_with_returning(&self.db).await?;
+        if items.is_empty() {
+            return Ok(vec![]);
         }
         let retainers = items.iter().map(|i| i.retainer_id).unique();
         let retainers: HashMap<i32, Retainer> = retainer::Entity::find()
@@ -815,7 +826,7 @@ impl UltrosDb {
                     .await
             }
         });
-        let (added, _removed_result) =
+        let (added, removed_result) =
             futures::future::join(fan_out_listing_writes(added), async move {
                 let ids_to_remove: Vec<i32> = remove_iter.map(|(l, _)| l.id).collect();
                 if ids_to_remove.is_empty() {
@@ -828,17 +839,19 @@ impl UltrosDb {
                 Result::<usize>::Ok(res.rows_affected as usize)
             })
             .await;
+        // Writes may have partially succeeded, but a failed insert or delete
+        // must not report a successful reconciliation or advance its marker.
+        let added = added?;
+        removed_result?;
         let retainers_by_id: HashMap<i32, &retainer::Model> =
             retainers.values().map(|r| (r.id, r)).collect();
         let added: Vec<_> = added
             .into_iter()
-            .flat_map(|l| {
-                l.ok().map(|l| {
-                    let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
-                        .clone()
-                        .into();
-                    (l.into(), retainer)
-                })
+            .map(|l| {
+                let retainer = (*retainers_by_id.get(&l.retainer_id).unwrap())
+                    .clone()
+                    .into();
+                (l.into(), retainer)
             })
             .collect();
         let removed: Vec<_> = removed
@@ -949,7 +962,7 @@ mod fan_out_tests {
     fn tracked_writes(
         in_flight: Arc<AtomicUsize>,
         peak: Arc<AtomicUsize>,
-    ) -> impl Iterator<Item = impl std::future::Future<Output = usize>> {
+    ) -> impl Iterator<Item = impl std::future::Future<Output = Result<usize>>> {
         (0..100usize).map(move |i| {
             let in_flight = in_flight.clone();
             let peak = peak.clone();
@@ -958,7 +971,7 @@ mod fan_out_tests {
                 peak.fetch_max(now, Ordering::SeqCst);
                 tokio::task::yield_now().await;
                 in_flight.fetch_sub(1, Ordering::SeqCst);
-                i
+                Ok(i)
             }
         })
     }
@@ -968,7 +981,9 @@ mod fan_out_tests {
         let in_flight = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
 
-        let results = fan_out_listing_writes(tracked_writes(in_flight, peak.clone())).await;
+        let results = fan_out_listing_writes(tracked_writes(in_flight, peak.clone()))
+            .await
+            .unwrap();
 
         assert!(
             peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_LISTING_WRITES,
@@ -978,6 +993,26 @@ mod fan_out_tests {
         // Every write still runs, and `buffered` keeps them in supplied order —
         // callers zip these results back against their input by position.
         assert_eq!(results, (0..100).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn failed_insert_is_reported_after_every_write_finishes() {
+        let completed = Arc::new(AtomicUsize::new(0));
+        let writes = (0..100usize).map(|i| {
+            let completed = completed.clone();
+            async move {
+                tokio::task::yield_now().await;
+                completed.fetch_add(1, Ordering::SeqCst);
+                if i == 1 {
+                    anyhow::bail!("injected pool timeout");
+                }
+                Ok(i)
+            }
+        });
+
+        let error = fan_out_listing_writes(writes).await.unwrap_err();
+        assert_eq!(error.to_string(), "injected pool timeout");
+        assert_eq!(completed.load(Ordering::SeqCst), 100);
     }
 }
 
@@ -993,16 +1028,31 @@ mod remove_listings_query_tests {
     use super::*;
     use sea_orm::QueryTrait;
 
-    fn built_sql(ids: impl IntoIterator<Item = i32>) -> Option<String> {
-        delete_listings_by_id(ids).map(|d| d.build(DbBackend::Postgres).to_string())
+    fn row(id: i32, price_per_unit: i32, quantity: i32, hq: bool) -> active_listing::Model {
+        active_listing::Model {
+            id,
+            price_per_unit,
+            quantity,
+            hq,
+            ..Default::default()
+        }
+    }
+
+    fn built_sql(rows: &[active_listing::Model]) -> Option<String> {
+        delete_unchanged_listings(rows).map(|d| d.build(DbBackend::Postgres).to_string())
     }
 
     #[test]
-    fn a_whole_batch_is_one_delete_statement() {
+    fn removal_rechecks_each_candidates_state_in_the_delete_statement() {
+        // The add task can change price or quantity AFTER the remove task
+        // reads this snapshot. Keep each id paired with its own old state;
+        // independent IN lists would also delete cross-matched new states.
         assert_eq!(
-            built_sql([7, 11, 13]).as_deref(),
-            Some(r#"DELETE FROM "active_listing" WHERE "active_listing"."id" IN (7, 11, 13)"#),
-            "the batch must clear in a single round trip, not one DELETE per id"
+            built_sql(&[row(7, 100, 2, false), row(11, 200, 5, true)]).as_deref(),
+            Some(concat!(
+                r#"DELETE FROM "active_listing" WHERE ("active_listing"."id" = 7 AND "active_listing"."price_per_unit" = 100 AND "active_listing"."quantity" = 2 AND "active_listing"."hq" = FALSE)"#,
+                r#" OR ("active_listing"."id" = 11 AND "active_listing"."price_per_unit" = 200 AND "active_listing"."quantity" = 5 AND "active_listing"."hq" = TRUE)"#,
+            )),
         );
     }
 
@@ -1010,20 +1060,25 @@ mod remove_listings_query_tests {
     fn a_full_market_board_is_still_one_delete_statement() {
         // 100 listings is the widest a single item can get. Row-by-row, this
         // was 100 statements and 100 pool acquisitions for one board update.
-        let sql = built_sql(1..=100).expect("100 ids must produce a statement");
+        let rows: Vec<_> = (1..=100).map(|id| row(id, 100, 1, false)).collect();
+        let sql = built_sql(&rows).expect("100 rows must produce a statement");
         assert_eq!(
             sql.matches("DELETE FROM").count(),
             1,
             "a full board must still be one statement, got: {sql}"
         );
-        assert!(sql.contains("IN (1, 2, 3,"), "unexpected shape: {sql}");
+        assert_eq!(
+            sql.matches(r#""active_listing"."price_per_unit" = 100"#)
+                .count(),
+            100
+        );
     }
 
     #[test]
     fn nothing_matched_costs_no_round_trip() {
         // The common case: the paired full-board update already deleted the
         // rows, so the diff matches nothing and we must not touch the pool.
-        assert_eq!(built_sql([]), None);
+        assert_eq!(built_sql(&[]), None);
     }
 }
 

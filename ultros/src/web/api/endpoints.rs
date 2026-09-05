@@ -142,15 +142,22 @@ pub(crate) async fn list_endpoints(
 }
 
 pub(crate) async fn list_discord_writable_guilds(
+    State(cache): State<crate::web::oauth::AuthUserCache>,
     user: AuthDiscordUser,
+    cookies: axum_extra::extract::PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordWritableGuild>>, ApiError> {
     let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
         ApiError::from(anyhow::anyhow!(
             "Discord bot is not connected; cannot load shared servers right now"
         ))
     })?;
-    let guilds =
-        crate::web::api::discord_lookup::writable_guilds_for_user(&ctx, user.id as i64).await?;
+    let guilds = crate::web::api::discord_lookup::writable_guilds_for_user(
+        &ctx,
+        user.id as i64,
+        &cookies,
+        &cache,
+    )
+    .await?;
     Ok(Json(guilds))
 }
 

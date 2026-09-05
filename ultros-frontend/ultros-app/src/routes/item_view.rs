@@ -341,7 +341,7 @@ pub fn DatacenterExclusionControls(
         let world_data = world_data.clone();
         move |_| {
             let world_name = Url::unescape(&world());
-            world_data
+            let mut datacenters = world_data
                 .lookup_world_by_name(&world_name)
                 .map(|result| {
                     world_data
@@ -350,53 +350,39 @@ pub fn DatacenterExclusionControls(
                         .cloned()
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_default()
-        }
-    });
-    let excluded_visible = Memo::new({
-        let world_data = world_data.clone();
-        move |_| {
+                .unwrap_or_default();
+
+            // Keep an exclusion from a previously selected scope removable,
+            // but render every datacenter exactly once.
             excluded_datacenters.with(|excluded| {
-                let mut datacenters = excluded
-                    .iter()
-                    .filter_map(|name| {
-                        world_data
+                for name in excluded {
+                    let already_visible = datacenters
+                        .iter()
+                        .any(|datacenter| datacenter.name == *name);
+                    if !already_visible
+                        && let Some(datacenter) = world_data
                             .lookup_world_by_name(name)
                             .and_then(|result| result.as_datacenter())
-                            .cloned()
-                    })
-                    .collect::<Vec<_>>();
-                datacenters.sort_by(|a, b| a.name.cmp(&b.name));
-                datacenters
-            })
+                    {
+                        datacenters.push(datacenter.clone());
+                    }
+                }
+            });
+            datacenters.sort_by(|a, b| a.name.cmp(&b.name));
+            datacenters
         }
     });
 
     view! {
         {move || {
-            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty())
-                || excluded_visible.with(|datacenters| !datacenters.is_empty());
+            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty());
             has_controls.then(|| {
                 view! {
-                    <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <h2 class="text-sm font-bold uppercase text-brand-200">
-                                {t!(i18n, item_view_exclude_datacenters)}
-                            </h2>
-                            <button
-                                type="button"
-                                class="btn-secondary h-8 px-2 text-xs"
-                                class:hidden=move || excluded_datacenters.with(|set| set.is_empty())
-                                on:click=move |_| {
-                                    excluded_datacenters.update(|set| set.clear());
-                                }
-                            >
-                                <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                {t!(i18n, clear_all)}
-                            </button>
-                        </div>
-
-                        <div class="mt-3 flex flex-wrap gap-2">
+                    <div
+                        class="flex flex-wrap items-center gap-2"
+                        role="group"
+                        aria-label=move || t_string!(i18n, item_view_exclude_datacenters).to_string()
+                    >
                             {move || {
                                 datacenters
                                     .get()
@@ -406,12 +392,14 @@ pub fn DatacenterExclusionControls(
                                         let label_name = name.clone();
                                         let state_name = name.clone();
                                         let click_name = name.clone();
+                                        let hook_name = name.clone();
                                         let is_excluded = Signal::derive(move || {
                                             excluded_datacenters.with(|set| set.contains(&state_name))
                                         });
                                         view! {
                                             <button
                                                 type="button"
+                                                data-datacenter=hook_name
                                                 aria-pressed=move || is_excluded().to_string()
                                                 aria-label=move || {
                                                     if is_excluded() {
@@ -422,11 +410,11 @@ pub fn DatacenterExclusionControls(
                                                 }
                                                 class=move || {
                                                     [
-                                                        "inline-flex min-h-9 items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors",
+                                                        "inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]",
                                                         if is_excluded() {
-                                                            "border-amber-300/60 bg-amber-500/10 text-amber-100"
+                                                            "border-brand-300/60 bg-[color:var(--brand-bg)] font-semibold text-[color:var(--brand-fg)]"
                                                         } else {
-                                                            "border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:border-brand-300/60"
+                                                            "border-[color:var(--color-outline)] bg-[color:var(--color-background-elevated)] text-[color:var(--color-text)] hover:border-brand-300/60"
                                                         },
                                                     ]
                                                         .join(" ")
@@ -441,7 +429,7 @@ pub fn DatacenterExclusionControls(
                                             >
                                                 {move || {
                                                     is_excluded()
-                                                        .then(|| view! { <Icon icon=icondata::BsCheck attr:class="text-sm" /> })
+                                                        .then(|| view! { <Icon icon=icondata::MdiClose attr:class="text-sm" /> })
                                                 }}
                                                 <span>{name.clone()}</span>
                                             </button>
@@ -449,43 +437,24 @@ pub fn DatacenterExclusionControls(
                                     })
                                     .collect_view()
                             }}
-                        </div>
-
-                        <div
-                            class="mt-3 flex flex-wrap gap-2"
-                            class:hidden=move || excluded_visible.with(|datacenters| datacenters.is_empty())
-                        >
                             {move || {
-                                excluded_visible
-                                    .get()
-                                    .into_iter()
-                                    .map(|datacenter: Datacenter| {
-                                        let name = datacenter.name.clone();
-                                        let label_name = name.clone();
-                                        let click_name = name.clone();
+                                (!excluded_datacenters.with(|set| set.is_empty()))
+                                    .then(|| {
                                         view! {
                                             <button
                                                 type="button"
-                                                class="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-100 transition-colors hover:border-amber-200/70"
-                                                aria-label=move || t_string!(
-                                                    i18n,
-                                                    item_view_include_datacenter_aria,
-                                                    datacenter = label_name.clone()
-                                                )
+                                                class="inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]"
+                                                data-testid="clear-datacenter-exclusions"
                                                 on:click=move |_| {
-                                                    excluded_datacenters.update(|set| {
-                                                        set.remove(&click_name);
-                                                    });
+                                                    excluded_datacenters.update(|set| set.clear());
                                                 }
                                             >
                                                 <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                                <span>{name.clone()}</span>
+                                                {t!(i18n, clear_all)}
                                             </button>
                                         }
                                     })
-                                    .collect_view()
                             }}
-                        </div>
                     </div>
                 }
             })
@@ -787,37 +756,6 @@ fn MarketStatsPanel(
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let cheapest_prices = use_context::<CheapestPrices>();
-
-    // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
-    // after hydration. The chip lives inside an inner `<Suspense>` in
-    // `source_callout`'s recipe branch and reads the resource via `.with()` —
-    // which (same gotcha as #719) does NOT subscribe the wrapping Suspense, so
-    // SSR proceeds with whatever state the resource happens to be in. When SSR
-    // renders the text branch (`{t!(i18n, craftable)}` / `{t!(i18n,
-    // used_in_crafting)}`) but the client-side serialised resource resolves to
-    // `Some(prices)` with `min_cost > 0`, the first CSR render swaps in
-    // `view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }`
-    // — an `<span>` element where the SSR'd DOM has a bare text node. tachys'
-    // walker then hits `failed_to_cast_text_node` at
-    // `tachys-0.2.15/src/hydration.rs:227` (the post-debug-strip `unreachable!()`
-    // — see GlitchTip cluster on `/item/<world>/<id>`: issues 5270/5269/5268/
-    // 5267/5266/…/5234 etc. on releases 51d31a9 and db795c3, plus the
-    // long-running `RuntimeError: unreachable` mirrors 4 and 5147). The
-    // wasm-bindgen-futures executor then cascades into `RefCell already
-    // borrowed` from the same trace.
-    //
-    // Same idiom as #725 (chart), #719 (item-explorer), #712 (home),
-    // #730 (relative-time): an `Effect`-driven `hydrated` flag (effects run
-    // client-only, after first render) so SSR and the initial CSR hydration
-    // render both treat prices as unavailable. Both sides emit the text
-    // branches, shapes match, and a frame later the effect fires, the closure
-    // re-runs with the real price map, and the chip reactively swaps to the
-    // `<span>` form.
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
 
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
@@ -893,171 +831,6 @@ fn MarketStatsPanel(
                                 t!(i18n, not_enough_data).into_any()
                             };
 
-                            let source_callout = {
-                                let game_data = tracked_data();
-                                let cheapest_prices = cheapest_prices.clone();
-                                let item_id = item_id();
-                                let vendor_exists = is_vendor_item(item_id);
-                                let exchange_exists = game_data
-                                    .special_shops
-                                    .values()
-                                    .any(|shop| special_shop_has_item(shop, item_id));
-                                let leve_exists = game_data.leves.values().any(|leve| {
-                                    leve_rewards_item(
-                                        leve,
-                                        item_id,
-                                        &game_data.leve_reward_items,
-                                        &game_data.leve_reward_item_groups,
-                                    )
-                                });
-                                let recipe_exists =
-                                    recipe_tree_iter(ItemId(item_id)).next().is_some();
-
-                                if vendor_exists || exchange_exists || recipe_exists || leve_exists {
-                                    let (title, summary, icon, href, accent_class): (
-                                        String,
-                                        AnyView,
-                                        icondata::Icon,
-                                        &str,
-                                        &str,
-                                    ) = if vendor_exists {
-                                        let price = game_data
-                                            .items
-                                            .get(&ItemId(item_id))
-                                            .map(|item| {
-                                                if item.price_mid > 0 {
-                                                    item.price_mid
-                                                } else {
-                                                    item.price_low
-                                                }
-                                            })
-                                            .unwrap_or(0);
-                                        (
-                                            t_string!(i18n, vendor_available).to_string(),
-                                            view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
-                                            icondata::FaShopSolid,
-                                            "#vendor-sources",
-                                            "text-amber-300 border-amber-400/40",
-                                        )
-                                    } else if exchange_exists {
-                                        (
-                                            t_string!(i18n, exchange_available).to_string(),
-                                            view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
-                                            icondata::BsArrowLeftRight,
-                                            "#exchange-sources",
-                                            "text-purple-300 border-purple-400/40",
-                                        )
-                                    } else if recipe_exists {
-                                        let summary_view = view! {
-                                            <Suspense fallback=move || t_string!(i18n, craftable).to_string()>
-                                                {move || {
-                                                    if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
-                                                        // Skip the price-aware branch entirely during the
-                                                        // first (SSR-matching) render so SSR and CSR both
-                                                        // pick the same text-only branches below. The effect
-                                                        // above flips `hydrated` to true a frame later and
-                                                        // the closure re-runs with the real price map.
-                                                        if hydrated.get()
-                                                            && let Some(prices) = cheapest_prices.as_ref()
-                                                        {
-                                                            prices.read_listings.with(|prices| {
-                                                                let prices = prices.as_ref().and_then(|prices| prices.as_ref().ok());
-                                                                if let Some(prices) = prices {
-                                                                    let prices = prices.clone();
-                                                                    let empty = crate::components::crafting_cost::EmptyOnHand;
-                                                                    let recipes_by_output = std::collections::HashMap::new();
-                                                                    // Read the user's shard preference so the chip stays
-                                                                    // consistent with the cost line in the recipe panel.
-                                                                    let opts_value = use_context::<crate::global_state::cookies::Cookies>()
-                                                                        .map(|c| c.use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(crate::global_state::craft_options::COOKIE_NAME).0.get().unwrap_or_default())
-                                                                        .unwrap_or_default();
-                                                                    let shards_mode = if opts_value.exclude_shards {
-                                                                        crate::components::crafting_cost::ShardsMode::ExcludeShards
-                                                                    } else {
-                                                                        crate::components::crafting_cost::ShardsMode::IncludeMarket
-                                                                    };
-                                                                    let lq_opts = crate::components::crafting_cost::CraftingCostOptions {
-                                                                        require_hq: false,
-                                                                        max_subcraft_depth: 0,
-                                                                        shards: shards_mode,
-                                                                        on_hand: &empty,
-                                                                        vendor_prices: Some(crate::components::crafting_cost::vendor_price_map()),
-                                                                    };
-                                                                    let hq_opts = crate::components::crafting_cost::CraftingCostOptions {
-                                                                        require_hq: true,
-                                                                        max_subcraft_depth: 0,
-                                                                        shards: shards_mode,
-                                                                        on_hand: &empty,
-                                                                        vendor_prices: Some(crate::components::crafting_cost::vendor_price_map()),
-                                                                    };
-                                                                    let is_shard = crate::components::related_items::is_shard_item;
-                                                                    let lq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &lq_opts, &is_shard).cost;
-                                                                    let hq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &hq_opts, &is_shard).cost;
-                                                                    let min_cost = if lq > 0 { lq } else { hq };
-                                                                    if min_cost > 0 && recipe.item_result == item_id {
-                                                                        view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }.into_any()
-                                                                    } else if recipe.item_result == item_id {
-                                                                        t!(i18n, craftable).into_any()
-                                                                    } else {
-                                                                        t!(i18n, used_in_crafting).into_any()
-                                                                    }
-                                                                } else if recipe.item_result == item_id {
-                                                                    t!(i18n, craftable).into_any()
-                                                                } else {
-                                                                    t!(i18n, used_in_crafting).into_any()
-                                                                }
-                                                            })
-                                                        } else if recipe.item_result == item_id {
-                                                            t!(i18n, craftable).into_any()
-                                                        } else {
-                                                            t!(i18n, used_in_crafting).into_any()
-                                                        }
-                                                    } else {
-                                                        t!(i18n, craftable).into_any()
-                                                    }
-                                                }}
-                                            </Suspense>
-                                        }
-                                        .into_any();
-                                        (
-                                            t_string!(i18n, crafting_recipe).to_string(),
-                                            summary_view,
-                                            icondata::FaHammerSolid,
-                                            "#crafting-recipes",
-                                            "text-orange-300 border-orange-400/40",
-                                        )
-                                    } else {
-                                        (
-                                            t_string!(i18n, levequest_reward).to_string(),
-                                            view! { t!(i18n, obtainable_via_levequest) }.into_any(),
-                                            icondata::FaScrollSolid,
-                                            "#leve-sources",
-                                            "text-pink-300 border-pink-400/40",
-                                        )
-                                    };
-
-                                    Some(
-                                        view! {
-                                            // Inline chip, not a block card — the callout is a
-                                            // pointer to another section, not a stat of its own.
-                                            <a
-                                                href=href
-                                                class=format!(
-                                                    "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors hover:border-[color:var(--brand-ring)] {}",
-                                                    accent_class,
-                                                )
-                                            >
-                                                <Icon icon=icon attr:class="shrink-0" />
-                                                <span class="font-semibold">{title}</span>
-                                                <span class="text-[color:var(--color-text)]">{summary}</span>
-                                            </a>
-                                        }
-                                        .into_any(),
-                                    )
-                                } else {
-                                    None
-                                }
-                            };
 
                             view! {
                                 <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
@@ -1188,8 +961,7 @@ fn MarketStatsPanel(
                                         </a>
                                     </div>
 
-                                    <div class="mt-2 flex flex-wrap items-center gap-2">
-                                        {source_callout}
+                                    <div class="mt-2 flex flex-wrap items-center gap-2" class:hidden={move || listings_count > 0}>
                                         {if listings_count == 0 {
                                             view! {
                                                 <div role="status" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
@@ -1683,7 +1455,11 @@ pub fn ChartWrapper(
                                         <a
                                             class="btn-primary text-sm"
                                             target="_blank"
-                                            href=move || format!("/itemcard/{}/{}", world(), item_id())
+                                            href=move || crate::social_meta::social_image_path(
+                                                i18n.get_locale(),
+                                                &crate::social_card::SocialCardKind::Item(item_id()),
+                                                Some(&world()),
+                                            )
                                         >
                                             {move || t_string!(i18n, download_png).to_string()}
                                         </a>
@@ -1766,17 +1542,11 @@ fn SalesDetails(
                 });
 
                 view! {
-                    <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 flex-1">
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, sale_history).to_string()}
-                            </h2>
-                            <SaleHistoryTable sales=sales.into() />
-                        </div>
-
-                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                            <SalesInsights sales=sales.into() />
-                        </div>
+                    <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
+                        <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
+                            {move || t_string!(i18n, sale_history).to_string()}
+                        </h2>
+                        <SaleHistoryTable sales=sales.into() />
                     </div>
                 }
                     .into_any()
@@ -1820,7 +1590,10 @@ fn ListingsContent(
                     // right to return, already logged with its status and path
                     // by the fetch layer -- re-reporting it here is what filled
                     // GlitchTip issue 2210. See `AppError::is_api_response`.
-                    if e.is_api_response() {
+                    // A loopback timeout is the same story one layer down:
+                    // already logged by the fetch layer, transient, and the
+                    // other half of GlitchTip issue 2210's volume.
+                    if e.is_api_response() || e.is_transient_transport() {
                         tracing::warn!(error = ?e, item_id, %world, "Error getting value");
                     } else {
                         tracing::error!(error = ?e, item_id, %world, "Error getting value");
@@ -1836,7 +1609,6 @@ fn ListingsContent(
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
     let filtered_listings = Memo::new({
-        let world_data = world_data.clone();
         // Every read in here goes through a `try_*` accessor. `ArcMemo` `take()`s
         // its cached value before running this closure, so a panic in the body
         // leaves the memo permanently holding `None` — every later read then dies
@@ -1857,11 +1629,14 @@ fn ListingsContent(
                 })
             })
             .unwrap_or_default();
+            // Datacenter exclusions belong to the Active Listings panel. Keeping
+            // them out of this page-wide dataset prevents a table preference from
+            // changing the price summary, chart, and per-world supply breakdown.
             filter_listing_rows(
                 listings,
-                Some(world_data.as_ref()),
+                None,
                 &get_or_default(&excluded_worlds),
-                &get_or_default(&excluded_datacenters),
+                &HashSet::new(),
             )
         }
     });
@@ -1948,21 +1723,25 @@ fn ListingsContent(
             </div>
             // Tables before the chart: the listings and recent sales are what
             // most visitors came for, so they come right after the overview.
-            // Side by side only from xl up — the sidebar makes a 1024px (lg)
-            // viewport no wider than 768px of content, and two half-width
-            // tables there would both scroll horizontally. `minmax(0,1fr)`
-            // keeps a wide table from blowing the grid past the viewport.
-            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 mt-6">
-                <div id="listings" class="scroll-mt-16 min-w-0">
-                    <ListingsPanel
-                        listing_resource
-                        filtered_listings
-                        world
-                        excluded_datacenters
-                    />
-                </div>
-                <div id="history" class="scroll-mt-16 min-w-0">
-                    <SalesDetails listing_resource />
+            // Both tables force `min-w-[720px]`, so two columns only fit when
+            // the content area is ~1500px wide — roughly a 1440p display once
+            // the sidebar and ad rail take their cut. Gating on the container
+            // (not the viewport) keeps this correct when the sidebar is
+            // collapsed or the ad rail is hidden. `minmax(0,1fr)` keeps a wide
+            // table from blowing the grid past the container.
+            <div class="@container">
+                <div class="grid grid-cols-1 @min-[94rem]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 mt-6">
+                    <div id="listings" class="scroll-mt-16 min-w-0">
+                        <ListingsPanel
+                            listing_resource
+                            filtered_listings
+                            world
+                            excluded_datacenters
+                        />
+                    </div>
+                    <div id="history" class="scroll-mt-16 min-w-0">
+                        <SalesDetails listing_resource />
+                    </div>
                 </div>
             </div>
 
@@ -2157,7 +1936,6 @@ fn ItemViewContent() -> impl IntoView {
             t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
         } />
         <MetaDescription text=description />
-        <MetaImage url=move || format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) />
         <Meta
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
@@ -2247,7 +2025,7 @@ fn ItemViewContent() -> impl IntoView {
 
             <WorldMenu world_name=world item_id />
 
-            <SectionNav>
+            <SectionNav item_id>
                 <span class="text-sm font-bold text-brand-200 whitespace-nowrap">
                     {move || Url::unescape(&world())}
                 </span>
@@ -2266,6 +2044,40 @@ fn ItemViewContent() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use leptos_i18n::context::init_i18n_context;
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+
+    fn world_data_for_exclusion_controls() -> LocalWorldData {
+        LocalWorldData(Ok(Arc::new(WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".to_string(),
+                datacenters: vec![
+                    Datacenter {
+                        id: 10,
+                        name: "Aether".to_string(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 100,
+                            name: "Gilgamesh".to_string(),
+                            datacenter_id: 10,
+                        }],
+                    },
+                    Datacenter {
+                        id: 20,
+                        name: "Primal".to_string(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 200,
+                            name: "Excalibur".to_string(),
+                            datacenter_id: 20,
+                        }],
+                    },
+                ],
+            }],
+        }))))
+    }
 
     fn listing(
         id: i32,
@@ -2319,6 +2131,37 @@ mod tests {
 
         assert_eq!(result.0.id, 2);
         assert_eq!(result.0.world_id, 200);
+    }
+
+    #[test]
+    fn datacenter_exclusion_controls_render_each_datacenter_once() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            provide_context(world_data_for_exclusion_controls());
+            let world = Memo::new(|_| "North-America".to_string());
+            let excluded_datacenters = RwSignal::new(HashSet::from(["Aether".to_string()]));
+
+            let html = view! {
+                <DatacenterExclusionControls world excluded_datacenters />
+            }
+            .to_html();
+
+            assert_eq!(
+                html.matches("data-datacenter=\"Aether\"").count(),
+                1,
+                "{html}"
+            );
+            assert_eq!(
+                html.matches("data-datacenter=\"Primal\"").count(),
+                1,
+                "{html}"
+            );
+            assert_eq!(html.matches("Clear all").count(), 1);
+            assert!(html.contains("aria-pressed=\"true\""));
+            assert!(!html.contains("<h2"));
+        });
     }
 
     fn zone_listing(price: i32, world_id: i32) -> CheapestListingData {

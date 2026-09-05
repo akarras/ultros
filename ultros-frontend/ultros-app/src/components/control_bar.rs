@@ -40,12 +40,38 @@ use icondata as i;
 /// not counted as visible, and is pinned by the bar's own `h-[76px]`.
 pub const STICKY_BAR_HEIGHT: f64 = 76.0;
 
+/// A group heading in the columns picker. Options carrying the same
+/// heading (by label) are rendered under one heading.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PickerHeading {
+    pub label: String,
+    /// Hover text on the heading ("Shows sale history for Aether (loads once)").
+    pub title: Option<String>,
+}
+
 /// One column the picker can turn on or off.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnOption {
     /// Stable token, as persisted in `?cols=`.
     pub id: &'static str,
     pub label: String,
+    /// `None` = the flat, ungrouped picker every page renders today.
+    pub group: Option<PickerHeading>,
+    /// Greyed out and not toggleable; `hint` says why.
+    pub disabled: bool,
+    pub hint: Option<String>,
+}
+
+impl ColumnOption {
+    pub fn new(id: &'static str, label: String) -> Self {
+        Self {
+            id,
+            label,
+            group: None,
+            disabled: false,
+            hint: None,
+        }
+    }
 }
 
 /// Handle on the bar's two popovers.
@@ -80,6 +106,38 @@ impl ControlBarPopovers {
     }
 }
 
+/// Parse a `?cols=` value into the visible-column set.
+///
+/// `None` (param absent) yields `default`; an explicit value — even the
+/// empty string — is respected verbatim, filtered to ids in `all` so a
+/// stale token from an old bookmark drops instead of lingering unrendered.
+pub fn parse_visible_cols(
+    raw: Option<&str>,
+    all: &'static [&'static str],
+    default: &'static [&'static str],
+) -> HashSet<&'static str> {
+    match raw {
+        None => default.iter().copied().collect(),
+        Some(s) => s
+            .split(',')
+            .filter_map(|tok| all.iter().find(|c| **c == tok).copied())
+            .collect(),
+    }
+}
+
+/// Serialize the visible set back to the `?cols=` value, in `all`'s order
+/// so the URL is stable regardless of toggle order.
+pub fn serialize_visible_cols(
+    visible: &HashSet<&'static str>,
+    all: &'static [&'static str],
+) -> String {
+    all.iter()
+        .filter(|c| visible.contains(*c))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// One filter the `+ Filter` menu can add.
 ///
 /// The label is the long, explanatory one — the menu is where a filter has to
@@ -89,6 +147,92 @@ impl ControlBarPopovers {
 pub struct FilterOption {
     pub id: &'static str,
     pub label: String,
+}
+
+/// The picker's option list. An option's `group` heading is rendered once,
+/// where it first differs from the previous option's, so a page that passes
+/// ungrouped options gets the flat list it always had. Options are a `Vec`
+/// in the page's order — nothing here iterates a map.
+#[component]
+pub fn ColumnsPickerList(
+    #[prop(into)] columns: Signal<Vec<ColumnOption>>,
+    #[prop(into)] visible_columns: Signal<HashSet<&'static str>>,
+    // `optional_no_strip`: `optional` on an `Option<T>` field strips the
+    // Option from the builder setter (leptos_macro `component.rs:1033`),
+    // which would reject both the bar's pass-through and the test's `None`.
+    #[prop(optional_no_strip)] on_toggle_column: Option<Callback<&'static str>>,
+) -> impl IntoView {
+    move || {
+        let mut out: Vec<AnyView> = Vec::new();
+        let mut last_heading: Option<String> = None;
+        for col in columns.get() {
+            if let Some(heading) = &col.group
+                && last_heading.as_deref() != Some(heading.label.as_str())
+            {
+                last_heading = Some(heading.label.clone());
+                let label = heading.label.clone();
+                out.push(match heading.title.clone() {
+                    Some(title) => view! {
+                        <span class="basis-full text-xs uppercase tracking-wide text-[color:var(--color-text-muted)] mt-1" title=title>{label}</span>
+                    }
+                    .into_any(),
+                    None => view! {
+                        <span class="basis-full text-xs uppercase tracking-wide text-[color:var(--color-text-muted)] mt-1">{label}</span>
+                    }
+                    .into_any(),
+                });
+            }
+            let id = col.id;
+            let toggle = move |_| {
+                if let Some(toggle) = on_toggle_column {
+                    toggle.run(id);
+                }
+            };
+            // A ticked column is never locked: the cap greys an unchecked
+            // capped entry, and only hints a checked one.
+            let disabled = col.disabled && !visible_columns.get().contains(id);
+            out.push(if disabled || col.hint.is_some() {
+                let hint = col.hint.clone().unwrap_or_default();
+                // The grey and the cursor follow `disabled`, not `hint`. A
+                // hint on a toggleable entry says why the column may look
+                // empty; rendering it as unavailable would be a lie, and
+                // the ticked-capped case above already relies on the entry
+                // staying usable.
+                let class = if disabled {
+                    "inline-flex items-center gap-2 cursor-not-allowed opacity-60 text-[color:var(--color-text)]"
+                } else {
+                    "inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]"
+                };
+                view! {
+                    <label class=class title=hint>
+                        <input
+                            type="checkbox"
+                            class="accent-brand-300"
+                            disabled=disabled
+                            prop:checked=move || visible_columns.get().contains(id)
+                            on:change=toggle
+                        />
+                        <span>{col.label.clone()}</span>
+                    </label>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
+                        <input
+                            type="checkbox"
+                            class="accent-brand-300"
+                            prop:checked=move || visible_columns.get().contains(id)
+                            on:change=toggle
+                        />
+                        <span>{col.label.clone()}</span>
+                    </label>
+                }
+                .into_any()
+            });
+        }
+        out
+    }
 }
 
 /// The sticky control bar.
@@ -291,30 +435,11 @@ pub fn ControlBar(
                                 <span class="font-semibold text-[color:var(--brand-fg)]">
                                     {t!(i18n, analyzer_columns_picker_label)}
                                 </span>
-                                {move || {
-                                    columns
-                                        .get()
-                                        .into_iter()
-                                        .map(|col| {
-                                            let id = col.id;
-                                            view! {
-                                                <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
-                                                    <input
-                                                        type="checkbox"
-                                                        class="accent-brand-300"
-                                                        prop:checked=move || visible_columns.get().contains(id)
-                                                        on:change=move |_| {
-                                                            if let Some(toggle) = on_toggle_column {
-                                                                toggle.run(id);
-                                                            }
-                                                        }
-                                                    />
-                                                    <span>{col.label.clone()}</span>
-                                                </label>
-                                            }
-                                        })
-                                        .collect_view()
-                                }}
+                                <ColumnsPickerList
+                                    columns=columns
+                                    visible_columns=visible_columns
+                                    on_toggle_column=on_toggle_column
+                                />
                                 {move || {
                                     on_reset_columns
                                         .map(|reset| {
@@ -334,5 +459,106 @@ pub fn ControlBar(
                     })
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use leptos_i18n::context::init_i18n_context;
+
+    fn render_list(cols: Vec<ColumnOption>) -> String {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            view! {
+                <ColumnsPickerList
+                    columns=Signal::derive(move || cols.clone())
+                    visible_columns=Signal::derive(HashSet::new)
+                    on_toggle_column=None
+                />
+            }
+            .to_html()
+        })
+    }
+
+    /// Ungrouped options render the flat list every page renders today:
+    /// no headings, no disabled inputs, no titles.
+    #[test]
+    fn picker_list_without_groups_is_the_flat_list() {
+        let html = render_list(vec![
+            ColumnOption::new("tax", "Tax".into()),
+            ColumnOption::new("vwap", "VWAP (7d)".into()),
+        ]);
+        assert_eq!(html.matches("<label").count(), 2, "{html}");
+        assert_eq!(
+            html.matches("<label class=\"inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]\"><input type=\"checkbox\" class=\"accent-brand-300\"").count(),
+            2,
+            "{html}"
+        );
+        assert!(html.contains("<span>Tax</span>"), "{html}");
+        assert!(!html.contains("basis-full"), "{html}");
+        assert!(!html.contains("disabled"), "{html}");
+        assert!(!html.contains("title="), "{html}");
+    }
+
+    #[test]
+    fn picker_list_renders_group_headings_once_and_disables_capped_options() {
+        let rev = PickerHeading {
+            label: "Revenue · Gilgamesh".into(),
+            title: None,
+        };
+        let cost = PickerHeading {
+            label: "Cost · Aether".into(),
+            title: Some("loads once".into()),
+        };
+        let html = render_list(vec![
+            ColumnOption {
+                group: Some(rev.clone()),
+                ..ColumnOption::new("rev-sale-min", "Sale minimum (7d)".into())
+            },
+            ColumnOption {
+                group: Some(rev),
+                ..ColumnOption::new("rev-sale-avg", "Sale average (7d)".into())
+            },
+            ColumnOption {
+                group: Some(cost.clone()),
+                ..ColumnOption::new("cost-sale-min", "Sale minimum (7d)".into())
+            },
+            ColumnOption {
+                group: Some(cost),
+                disabled: true,
+                hint: Some("capped".into()),
+                ..ColumnOption::new("cost-sale-avg", "Sale average (7d)".into())
+            },
+            // Hinted but perfectly toggleable — the recipe analyzer's
+            // "Needs a wider sell scope". It gets the title and NOT the
+            // lock, and the ticked-capped entry above relies on the same
+            // split (`disabled` is recomputed against the visible set, so
+            // a ticked capped column keeps its hint and loses its lock).
+            ColumnOption {
+                hint: Some("needs a wider scope".into()),
+                ..ColumnOption::new("scope-vs-home", "Scope vs home".into())
+            },
+        ]);
+        assert_eq!(html.matches("Revenue · Gilgamesh").count(), 1, "{html}");
+        assert_eq!(html.matches("Cost · Aether").count(), 1, "{html}");
+        assert!(html.contains("title=\"loads once\""), "{html}");
+        assert_eq!(html.matches("basis-full").count(), 2, "{html}");
+        assert_eq!(html.matches("disabled").count(), 1, "{html}");
+        assert!(html.contains("title=\"capped\""), "{html}");
+        // The grey and the cursor follow `disabled`, never `hint`: exactly
+        // one entry here is unavailable, so exactly one is drawn that way.
+        assert!(html.contains("title=\"needs a wider scope\""), "{html}");
+        assert_eq!(
+            html.matches("cursor-not-allowed").count(),
+            1,
+            "a hint explains an entry; it does not disable it: {html}"
+        );
+        // Headings precede their options.
+        let rev_at = html.find("Revenue · Gilgamesh").unwrap();
+        let first_opt = html.find("Sale minimum (7d)").unwrap();
+        assert!(rev_at < first_opt, "{html}");
     }
 }

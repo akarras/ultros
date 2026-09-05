@@ -273,13 +273,20 @@ pub fn SideNav() -> impl IntoView {
                 </SideNavItem>
             </nav>
 
-            // Footer sits ABOVE the home-world + region + account rows so
-            // those controls are bottom-most. Collapsed, the 56px sidebar has
-            // no room for the Discord + GitHub pair (GitHub was clipped by the
-            // right edge) and the version hash is hidden anyway, so the whole
-            // footer is hidden at that width — see
-            // `.app-shell-collapsed .side-nav-footer`. The home-world, region
-            // and account rows survive collapse as icon-only triggers.
+            <HomeWorldMenu />
+            <RegionMenu />
+            <AccountMenu />
+
+            // Footer sits BELOW the home-world + region + account rows —
+            // the social links and commit hash are ambient reference, not
+            // controls, so they anchor the very bottom (#1235). Collapsed,
+            // the 56px sidebar has no room for the Discord + GitHub pair
+            // (GitHub was clipped by the right edge) and the version hash is
+            // hidden anyway, so the whole footer is hidden at that width —
+            // see `.app-shell-collapsed .side-nav-footer`. The home-world,
+            // region and account rows survive collapse as icon-only
+            // triggers, and the collapsed account panel's fixed `bottom`
+            // still holds because the footer contributes no height there.
             <div class="side-nav-footer">
                 <a href=crate::DISCORD_INVITE class="side-nav-icon-link" aria-label="Discord">
                     <Icon icon=i::BsDiscord />
@@ -295,10 +302,6 @@ pub fn SideNav() -> impl IntoView {
                     {git_hash}
                 </a>
             </div>
-
-            <HomeWorldMenu />
-            <RegionMenu />
-            <AccountMenu />
         </aside>
     }
     .into_any()

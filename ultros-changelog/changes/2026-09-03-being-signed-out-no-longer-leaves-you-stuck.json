@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Being signed out no longer leaves you stuck",
+  "blurb": "When Discord expired or revoked your login, or when you deleted your account, Ultros often failed to finish signing you out: the site kept showing you as signed in while everything that needed your account quietly failed, and the only way out was clearing your browser's cookies by hand. You are now signed out properly the moment it happens, whatever page you were on.",
+  "importance": "medium"
+}

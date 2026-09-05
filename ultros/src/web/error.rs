@@ -4,10 +4,7 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use axum_extra::extract::{
-    PrivateCookieJar,
-    cookie::{Cookie, Key},
-};
+use axum_extra::extract::{PrivateCookieJar, cookie::Key};
 use hyper::StatusCode;
 use oauth2::{
     ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
@@ -26,6 +23,7 @@ use ultros_db::{
 use crate::{analyzer_service::AnalyzerError, event};
 
 use crate::character_claim::ClaimError;
+use crate::lodestone_profile::ProfileError;
 
 /// A ClickHouse call that failed, tagged with which query it was and why it
 /// failed.
@@ -149,6 +147,8 @@ define_error_enum!(ApiError {
     DiscordTokenInvalid(PrivateCookieJar<Key>),
     #[error("{0}")]
     Forbidden(&'static str),
+    #[error("{0}")]
+    BadRequest(&'static str),
 });
 
 impl ApiError {
@@ -167,6 +167,13 @@ impl ApiError {
             // failure at error level (the GlitchTip 2218/2210 lineage).
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            // A character id that the Lodestone doesn't know is a bad request
+            // parameter, not a server fault - answering 500 both lied to the
+            // caller and reported the typo to GlitchTip.
+            ApiError::CharacterClaimError(ClaimError::Lodestone(
+                ProfileError::CharacterNotFound(_),
+            )) => StatusCode::NOT_FOUND,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
                 Some(ListError::NotFound | ListError::InviteNotFound) => StatusCode::NOT_FOUND,
@@ -184,6 +191,12 @@ impl ApiError {
         match self {
             ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
+            ApiError::BadRequest(message) => {
+                ultros_api_types::result::ApiError::BadRequest((*message).into())
+            }
+            ApiError::CharacterClaimError(ClaimError::Lodestone(
+                ProfileError::CharacterNotFound(_),
+            )) => ultros_api_types::result::ApiError::NotFound,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => ultros_api_types::result::ApiError::Forbidden,
                 Some(ListError::NotFound | ListError::InviteNotFound) => {
@@ -251,7 +264,7 @@ impl IntoResponse for ApiError {
         if let ApiError::DiscordTokenInvalid(mut cookies) = self {
             // remove the discord user cookie
             info!("Removed invalid Discord token");
-            cookies = cookies.remove(Cookie::from("discord_auth"));
+            cookies = cookies.remove(super::oauth::discord_auth_removal_cookie());
             // An expired/revoked token is an auth failure like any other, so it
             // gets the same 401. Without an explicit status this tuple response
             // defaulted to `200`.
@@ -285,14 +298,12 @@ impl IntoResponse for ApiError {
 define_error_enum!(WebError {
     #[error("Not authorized to view this page")]
     NotAuthenticated,
-    #[error("Item id {0} is not valid")]
-    InvalidItemId(i32),
-    #[error("World not found {0}")]
-    WorldNotFound(String),
     #[error("Not found")]
     NotFound,
     #[error("Bad request")]
     BadRequest,
+    #[error("Service temporarily unavailable")]
+    TemporarilyUnavailable,
 });
 
 /// The title error reporting groups this error under.
@@ -321,7 +332,7 @@ impl WebError {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
             WebError::NotFound => StatusCode::NOT_FOUND,
             WebError::BadRequest => StatusCode::BAD_REQUEST,
-            WebError::InvalidItemId(_) | WebError::WorldNotFound(_) => StatusCode::BAD_REQUEST,
+            WebError::TemporarilyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             // Analyzer warm-up isn't a server bug — it's a transient state at
             // startup. 503 lets clients retry instead of treating it as fatal.
             WebError::AnalyzerError(AnalyzerError::Uninitialized) => {
@@ -338,14 +349,17 @@ impl WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         let status = self.as_status_code();
-        // Analyzer warm-up (503) is an expected transient state at startup, not
-        // a real server bug. Keep it out of `tracing::error!` so the
-        // `sentry_tracing` layer doesn't capture it as a GlitchTip issue
-        // (see issues 5033/5034 — e2e harness racing the warm-up window).
-        let is_transient_warmup =
-            matches!(self, WebError::AnalyzerError(AnalyzerError::Uninitialized));
+        // Expected 503s are transient states, not server bugs. Keep them out
+        // of `tracing::error!` so the `sentry_tracing` layer doesn't capture
+        // them as GlitchTip issues (see issues 5033/5034 for the analyzer
+        // warm-up case).
+        let is_expected_transient = matches!(
+            self,
+            WebError::AnalyzerError(AnalyzerError::Uninitialized)
+                | WebError::TemporarilyUnavailable
+        );
 
-        let message = if status.is_server_error() && !is_transient_warmup {
+        let message = if status.is_server_error() && !is_expected_transient {
             "Internal server error".to_string()
         } else {
             format!("{self}")
@@ -356,7 +370,7 @@ impl IntoResponse for WebError {
         // memory figures, the failing item id) can safely ride along here while
         // the title stays stable.
         let title = report_title(&self);
-        if status.is_server_error() && !is_transient_warmup {
+        if status.is_server_error() && !is_expected_transient {
             tracing::error!(error = %self, %status, "{title}");
         } else {
             tracing::debug!(error = %self, %status, "{title}");
@@ -368,6 +382,16 @@ impl IntoResponse for WebError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bad_request_preserves_client_error_message() {
+        let error = ApiError::BadRequest("unsupported push provider");
+        assert_eq!(
+            error.as_api_error(),
+            ultros_api_types::result::ApiError::BadRequest("unsupported push provider".into())
+        );
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
 
     /// An unauthenticated request must answer `401`, not `200`.
     ///
@@ -422,7 +446,7 @@ mod tests {
     /// The typed ClickHouse title only survives if the error stays a
     /// [`WebError::ClickHouse`] all the way to `into_response`.
     ///
-    /// Regression test for the 2026-08-23 outage: `item_card::generate_image`
+    /// Regression test for the 2026-08-23 outage: the item-card chart generator
     /// returned `anyhow::Result`, so `build_price_series`'s typed error was
     /// flattened into `AnyhowError` at the first `?`. Every item-card request
     /// during the outage reported as the generic "Returning web error" — the

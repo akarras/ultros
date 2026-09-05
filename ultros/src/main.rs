@@ -9,6 +9,7 @@ mod fd_limit;
 mod ingest_health;
 mod item_update_service;
 pub mod leptos;
+pub(crate) mod lodestone_profile;
 #[cfg(feature = "profiling")]
 pub mod profiling;
 pub(crate) mod resale_eligibility;
@@ -72,6 +73,131 @@ struct Config {
     discord_client_secret: String,
     key: String,
     discord_token: String,
+}
+
+/// Stable Postgres advisory-lock id for the ClickHouse rollup scheduler.
+/// Session locks are released automatically when a process or connection
+/// dies, so another replica takes over without two replicas scanning raw
+/// sales at the same time.
+const ROLLUP_SCHEDULER_LOCK_KEY: i64 = 0x55_4c_54_52_4f_53;
+
+fn spawn_rollup_scheduler(
+    ch: ultros_clickhouse::ClickHouseClient,
+    db: UltrosDb,
+    token: CancellationToken,
+    writer: ultros_clickhouse::writer::Writer,
+) {
+    tokio::spawn(async move {
+        // The writer owns migration retries. Rollups must wait for schema
+        // readiness too, without running a competing migration on startup.
+        tokio::select! {
+            _ = token.cancelled() => return,
+            ready = writer.wait_ready() => {
+                if !ready {
+                    return;
+                }
+            }
+        }
+        loop {
+            let pool = db.get_connection().get_postgres_connection_pool();
+            let mut connection = tokio::select! {
+                _ = token.cancelled() => return,
+                result = pool.acquire() => match result {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        warn!(?error, "could not acquire connection for rollup scheduler lease");
+                        tokio::select! {
+                            _ = token.cancelled() => return,
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                        }
+                        continue;
+                    }
+                }
+            };
+
+            let acquired =
+                sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+                    .bind(ROLLUP_SCHEDULER_LOCK_KEY)
+                    .fetch_one(&mut *connection)
+                    .await;
+            match acquired {
+                Ok(true) => {
+                    info!("acquired ClickHouse rollup scheduler lease");
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(1.0);
+                    let scheduler_token = token.child_token();
+                    let scheduler = ultros_clickhouse::rollups::run_scheduler(
+                        ch.clone(),
+                        scheduler_token.clone(),
+                    );
+                    tokio::pin!(scheduler);
+                    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
+                    // The lock-acquisition query already proved the connection
+                    // alive; do not immediately issue a redundant heartbeat.
+                    heartbeat.tick().await;
+
+                    let retry = loop {
+                        tokio::select! {
+                            _ = token.cancelled() => {
+                                scheduler_token.cancel();
+                                scheduler.await;
+                                break false;
+                            }
+                            _ = &mut scheduler => {
+                                // `run_scheduler` only returns after its token
+                                // is cancelled. If it ever exits independently,
+                                // release the lease and start a clean election.
+                                break true;
+                            }
+                            _ = heartbeat.tick() => {
+                                let alive = tokio::time::timeout(
+                                    std::time::Duration::from_secs(5),
+                                    sea_orm::sqlx::query_scalar::<_, i32>("SELECT 1")
+                                        .fetch_one(&mut *connection),
+                                )
+                                .await;
+                                match alive {
+                                    Ok(Ok(_)) => continue,
+                                    Ok(Err(error)) => warn!(
+                                        ?error,
+                                        "lost ClickHouse rollup scheduler lease connection"
+                                    ),
+                                    Err(_) => warn!(
+                                        "timed out checking ClickHouse rollup scheduler lease"
+                                    ),
+                                }
+                                scheduler_token.cancel();
+                                scheduler.await;
+                                break true;
+                            }
+                        }
+                    };
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
+                    let _ = sea_orm::sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+                        .bind(ROLLUP_SCHEDULER_LOCK_KEY)
+                        .fetch_one(&mut *connection)
+                        .await;
+                    if !retry {
+                        return;
+                    }
+                }
+                Ok(false) => {
+                    metrics::gauge!("ultros_rollup_scheduler_leader").set(0.0);
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "could not acquire ClickHouse rollup scheduler lease"
+                    );
+                }
+            }
+
+            drop(connection);
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+            }
+        }
+    });
 }
 
 async fn run_socket_listener(
@@ -446,36 +572,27 @@ async fn main() -> Result<()> {
     let world_cache = Arc::new(WorldCache::new(&db).await);
     let world_helper = Arc::new(WorldHelper::new(WorldData::from(world_cache.as_ref())));
 
-    // ClickHouse: analytical store. Migration is idempotent — re-running it on
-    // every startup is fine. We log-and-continue on failure because PG is the
-    // source of truth and the analyzer's RAM caches keep the snappy tools
-    // alive even if CH is unreachable. When migrate fails we wire a disabled
-    // writer (silently drops rows) and skip the rollup scheduler — otherwise
-    // the flush task would fire `ClickHouse flush failed` every 5s and the
-    // sentry-tracing layer would report each one as a separate issue (see
-    // GlitchTip #5080, ~1k events from a dev box without CH running).
+    // Migration retries in the writer so an outage at startup does not disable
+    // analytics for the lifetime of this process. Keep its cancellation separate
+    // so the analyzer can finish sending before the writer's final flush.
     let ch_client = ultros_clickhouse::ClickHouseClient::from_env();
-    let ch_writer = match ch_client.migrate().await {
-        Ok(()) => {
-            let writer = ultros_clickhouse::writer::Writer::spawn(ch_client.clone(), token.clone());
-            // Background scheduler that keeps item_stats_window +
-            // item_quality_score fresh. Runs an immediate seed pass on startup,
-            // then on independent cadences (1d every 15min, 7d hourly,
-            // 30d/90d every 6h, quality hourly).
-            ultros_clickhouse::rollups::spawn_scheduler(ch_client.clone(), token.clone());
-            writer
-        }
-        Err(e) => {
-            warn!("ClickHouse migrate failed; continuing without analytics writes: {e:?}");
-            ultros_clickhouse::writer::Writer::disabled()
-        }
-    };
+    let ch_writer = ultros_clickhouse::writer::Writer::spawn_recovering(
+        ch_client.clone(),
+        CancellationToken::new(),
+    );
+    // A Postgres advisory lock elects one web replica to refresh rollups.
+    spawn_rollup_scheduler(
+        ch_client.clone(),
+        db.clone(),
+        token.clone(),
+        ch_writer.clone(),
+    );
 
-    let analyzer_service = AnalyzerService::start_analyzer(
+    let (analyzer_service, analyzer_shutdown) = AnalyzerService::start_analyzer(
         db.clone(),
         receivers.clone(),
         world_cache.clone(),
-        ch_writer,
+        ch_writer.clone(),
         ch_client.clone(),
         token.clone(),
     )
@@ -488,6 +605,7 @@ async fn main() -> Result<()> {
         sales: senders.history.clone(),
         full_sweep_cooldowns: Default::default(),
         uncovered_worlds: Default::default(),
+        sweep_lock: Default::default(),
     });
     UpdateService::start_service(update_service.clone(), token.clone());
     // Exports `ultros_world_ingest_staleness_seconds`. Every silent ingest
@@ -570,7 +688,7 @@ async fn main() -> Result<()> {
             discord_client_id,
             discord_client_secret,
             format!("{}/redirect", hostname.trim_end_matches('/')),
-            HashSet::from_iter([OAuthScope::Identify]),
+            HashSet::from_iter([OAuthScope::Identify, OAuthScope::Guilds]),
         ),
         user_cache: AuthUserCache::new(),
         event_receivers: receivers,
@@ -583,19 +701,66 @@ async fn main() -> Result<()> {
         ch_client,
         universalis: universalis_client,
         price_series_cache: Default::default(),
+        sale_stats_cache: Default::default(),
     };
-    let web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("ctrl-c received");
+    let mut web_task = tokio::spawn(web::start_web(web_state, prometheus_handle));
+    let web_finished = tokio::select! {
+        _ = shutdown_signal() => {
+            info!("shutdown signal received");
+            false
         }
-        _ = web_task => {
-            info!("web task finished");
+        result = &mut web_task => {
+            if let Err(e) = result {
+                error!("Web task failed: {e:?}");
+            }
+            true
         }
-    }
+    };
     token.cancel();
+    let shutdown = async {
+        let drain_analytics = async {
+            if let Err(e) = analyzer_shutdown.await {
+                error!("Analyzer shutdown failed: {e:?}");
+            }
+            ch_writer.shutdown().await;
+        };
+        let drain_web = async {
+            if !web_finished && let Err(e) = web_task.await {
+                error!("Web shutdown failed: {e:?}");
+            }
+        };
+        tokio::join!(drain_analytics, drain_web);
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(30), shutdown)
+        .await
+        .is_err()
+    {
+        error!("Graceful shutdown exceeded 30 seconds; unfinished work may require recovery");
+    }
     info!("Exiting");
     Ok(())
+}
+
+/// Docker and service managers use SIGTERM rather than the interactive Ctrl-C
+/// signal. Both must run the same snapshot/flush shutdown path.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Unable to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(e) = result {
+                error!("Unable to listen for Ctrl-C: {e:?}");
+            }
+        }
+        _ = terminate => {}
+    }
 }
 
 #[cfg(test)]

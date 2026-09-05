@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Analytics recovers after temporary connection failures",
+  "blurb": "Market analytics now retries temporary connection failures, and repeated sales no longer inflate chart totals while the database catches up. During updates, Ultros gives pending analytics writes time to finish saving.",
+  "link": "/items"
+}

@@ -417,18 +417,23 @@ pub struct DeepScan {
     pub launder_suspicion_pct: f32,
 }
 
+/// Strongly-typed band from the raw enum string ClickHouse stores. Falls
+/// back to `Unknown` for unrecognized values (shouldn't happen but keeps
+/// callers resilient to schema drift).
+pub fn parse_confidence_band(raw: &str) -> ConfidenceBand {
+    match raw {
+        "high" => ConfidenceBand::High,
+        "medium" => ConfidenceBand::Medium,
+        "low" => ConfidenceBand::Low,
+        "unusable" => ConfidenceBand::Unusable,
+        _ => ConfidenceBand::Unknown,
+    }
+}
+
 impl DeepScan {
-    /// Strongly-typed band derived from the raw enum string. Falls back to
-    /// `Unknown` for unrecognized values (shouldn't happen but keeps the
-    /// analyzer resilient to schema drift).
+    /// See [`parse_confidence_band`].
     pub fn confidence_band(&self) -> ConfidenceBand {
-        match self.confidence_band_raw.as_str() {
-            "high" => ConfidenceBand::High,
-            "medium" => ConfidenceBand::Medium,
-            "low" => ConfidenceBand::Low,
-            "unusable" => ConfidenceBand::Unusable,
-            _ => ConfidenceBand::Unknown,
-        }
+        parse_confidence_band(&self.confidence_band_raw)
     }
 
     /// Where `current_price` falls in the cleaned 30-day distribution
@@ -746,10 +751,10 @@ fn window_predicate(
 /// `world_to_group` maps every world in scope to its series key at `group`;
 /// for `SeriesGroup::World` the mapped value is ignored.
 ///
-/// Deliberately no `FINAL`. `sales` is a `ReplacingMergeTree` whose duplicates
-/// are exact repeats of the same sale, and at aggregate scale an unmerged
-/// duplicate shifts a bucket's VWAP imperceptibly — whereas `FINAL` over a
-/// full-history scan is expensive. This is an accuracy-for-cost trade.
+/// `FINAL` deduplicates retries before aggregation. A temporarily ambiguous
+/// insert response can repeat an entire batch, so waiting for background
+/// merges would inflate counts, quantities, and gil. The item and time-window
+/// predicates keep this read scoped to the requested market.
 ///
 /// Deliberately no join: `item_id` is filtered first so the read stays on the
 /// table's `(item_id, hq, world_id, sold_date, pg_id)` prefix. See the comment
@@ -800,7 +805,7 @@ pub async fn price_series(
             toUInt32(quantileExact(0.25)(price_per_item)) AS p25,
             toUInt32(quantileExact(0.50)(price_per_item)) AS p50,
             toUInt32(quantileExact(0.75)(price_per_item)) AS p75
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         GROUP BY series_id, bucket
         ORDER BY series_id, bucket
@@ -843,9 +848,8 @@ pub struct RawSaleRow {
 /// `world_ids` is a plain list, not a `(world, group)` map: raw sales are
 /// never grouped, so there is no `transform()` here.
 ///
-/// Same conventions as `price_series`: deliberately no `FINAL` (an
-/// accuracy-for-cost trade against unmerged `ReplacingMergeTree`
-/// duplicates), no join, and only numeric interpolation into the SQL string
+/// Same conventions as `price_series`: `FINAL` deduplicates writer retries,
+/// no join, and only numeric interpolation into the SQL string
 /// (never string/user data) — see the doc comment on `price_series` for why.
 pub async fn raw_sales(
     ch: &ClickHouseClient,
@@ -874,7 +878,7 @@ pub async fn raw_sales(
             hq,
             sold_date,
             world_id
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         ORDER BY sold_date
         LIMIT {limit}
@@ -905,7 +909,7 @@ struct MinMaxRow {
 /// window holds no sales (ClickHouse `min`/`max` over zero rows return 0,
 /// which must not be mistaken for a real price of 0).
 ///
-/// Same conventions as [`price_series`]: no `FINAL`, no join, and only
+/// Same conventions as [`price_series`]: `FINAL`, no join, and only
 /// numeric interpolation into the SQL string via [`window_predicate`].
 pub async fn price_min_max(
     ch: &ClickHouseClient,
@@ -930,7 +934,7 @@ pub async fn price_min_max(
             toUInt64(count())             AS count,
             toUInt32(min(price_per_item)) AS lo,
             toUInt32(max(price_per_item)) AS hi
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         "#
     );
@@ -977,7 +981,7 @@ pub async fn price_density(
             toStartOfInterval(sold_date, INTERVAL {bucket_seconds} SECOND) AS bucket,
             toUInt16(least(greatest(floor((toFloat64(price_per_item) - {lo}) / {bin_width}), 0), {max_bin})) AS price_bin,
             toUInt64(count())                                              AS n
-        FROM sales
+        FROM sales FINAL
         WHERE {predicate}
         GROUP BY bucket, price_bin
         ORDER BY bucket, price_bin
@@ -1000,21 +1004,31 @@ pub struct BulkSaleStatsRow {
     pub median_price: i32,
     pub avg_price: i32,
     pub num_sold: i64,
+    /// Unix seconds of the newest sale in the window.
+    pub last_sold_unix: i64,
+    /// Units traded in the window (sum of quantities).
+    pub units_sold: u64,
+    /// Volume-weighted average per-unit price, rounded. Weighted by
+    /// quantity so stack trades count per unit, not per transaction.
+    pub vwap: i32,
 }
 
-/// Aggregate min / exact-median / mean per-unit sale price for **every**
+/// Aggregate min / median / mean per-unit sale price for **every**
 /// item with sales in the trailing `window_days`, across `world_ids`.
 ///
 /// Backs `GET /api/v1/sale_stats/{worldDcOrRegion}` — the recipe analyzer's
-/// selectable cost basis. This intentionally scans `sales` rather than
-/// folding the per-world `item_stats_window` rollup: medians don't compose
-/// across worlds, and a trailing-window scan bounded by `sold_date` is
-/// cheap at ClickHouse scale. The endpoint sets a multi-minute
-/// `Cache-Control`, so edge caching bounds how often the scan reruns.
+/// selectable cost basis. Reads the scheduled `sale_stats_window` snapshots,
+/// never raw `sales`: the stored t-digest state makes the median mergeable
+/// across worlds while sum/count, min, max, and volume fields compose exactly.
+/// `FINAL` is safe here because the world/window predicate matches the table's
+/// leading sort key and prunes the read before replacement merging.
 ///
-/// Same conventions as [`price_series`]: no `FINAL` (unmerged
-/// `ReplacingMergeTree` duplicates shift aggregates imperceptibly), no
-/// joins, and only numeric values are interpolated into the SQL string.
+/// VWAP is derived in an **outer** `SELECT` rather than beside the other
+/// aggregates. ClickHouse resolves an identifier to a same-scope alias in
+/// preference to a column, so writing `sum(units_sold)` next to
+/// `sum(units_sold) AS units_sold` expands to `sum(sum(units_sold))` and the
+/// whole query fails with `ILLEGAL_AGGREGATION` (error 184) at runtime —
+/// invisible to any test that only asserts on the SQL string.
 pub async fn bulk_sale_stats(
     ch: &ClickHouseClient,
     world_ids: &[i32],
@@ -1033,20 +1047,75 @@ pub async fn bulk_sale_stats(
         SELECT
             item_id,
             hq,
-            toInt32(min(price_per_item))                AS min_price,
-            toInt32(quantileExact(0.5)(price_per_item)) AS median_price,
-            toInt32(round(avg(price_per_item)))         AS avg_price,
-            toInt64(count())                            AS num_sold
-        FROM sales
-        WHERE world_id IN ({worlds})
-          AND sold_date >= now() - INTERVAL {window_days} DAY
-        GROUP BY item_id, hq
+            min_price,
+            median_price,
+            avg_price,
+            num_sold,
+            last_sold_unix,
+            units_sold,
+            toInt32(round(gil_volume_sum / greatest(units_sold, 1))) AS vwap
+        FROM
+        (
+            SELECT
+                item_id,
+                hq,
+                toInt32(min(min_price)) AS min_price,
+                toInt32(quantileTDigestMerge(0.5)(price_quantile)) AS median_price,
+                toInt32(round(sum(price_sum) / greatest(sum(sale_count), 1))) AS avg_price,
+                toInt64(sum(sale_count)) AS num_sold,
+                toInt64(max(last_sold_unix)) AS last_sold_unix,
+                toUInt64(sum(units_sold)) AS units_sold,
+                toUInt64(sum(gil_volume)) AS gil_volume_sum
+            FROM sale_stats_window FINAL
+            WHERE world_id IN ({worlds})
+              AND window_days = {window_days}
+            GROUP BY item_id, hq
+        )
         "#
     );
     Ok(ch
         .client()
         .query(&sql)
         .fetch_all::<BulkSaleStatsRow>()
+        .await?)
+}
+
+/// One row of [`bulk_confidence`]: the stored quality band for one
+/// `(item_id, hq)` on the requested world.
+#[derive(Debug, Clone, Row, Deserialize)]
+pub struct BulkConfidenceRow {
+    pub item_id: i32,
+    pub hq: u8,
+    pub confidence_band_raw: String,
+}
+
+impl BulkConfidenceRow {
+    /// See [`parse_confidence_band`].
+    pub fn confidence_band(&self) -> ConfidenceBand {
+        parse_confidence_band(&self.confidence_band_raw)
+    }
+}
+
+/// Per-(item, hq) confidence bands for **one** world.
+///
+/// The band is a stored per-world judgement (see
+/// [`aggregate_item_stats_variants`] for why it can't be recomputed across
+/// worlds), so multi-world scopes don't call this and report `Unknown`
+/// instead. The single-world predicate keeps the `FINAL` scan bounded — no
+/// unfiltered reads of `item_quality_score`.
+pub async fn bulk_confidence(
+    ch: &ClickHouseClient,
+    world_id: i32,
+) -> Result<Vec<BulkConfidenceRow>, ClickHouseError> {
+    let sql = format!(
+        "SELECT item_id, hq, toString(confidence_band) AS confidence_band_raw
+         FROM item_quality_score FINAL
+         WHERE world_id = {world_id}"
+    );
+    Ok(ch
+        .client()
+        .query(&sql)
+        .fetch_all::<BulkConfidenceRow>()
         .await?)
 }
 

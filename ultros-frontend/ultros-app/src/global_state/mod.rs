@@ -5,6 +5,7 @@ pub mod cookies;
 pub mod craft_options;
 pub mod crafter_levels;
 pub mod home_world;
+pub mod labs;
 pub(crate) mod local_world_data;
 pub mod platform;
 pub mod region_for_world;

@@ -3,6 +3,7 @@ use super::relative_time::*;
 use crate::components::app_link::AppLink;
 use crate::components::{datacenter_name::*, world_name::*};
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 use leptos::prelude::*;
 use std::sync::Arc;
 use ultros_api_types::{ActiveListing, retainer::Retainer, world_helper::AnySelector};
@@ -21,11 +22,21 @@ pub(crate) fn visible_listing_count(total: usize, show_more: bool) -> usize {
     }
 }
 
+/// Whether the collapsed preview has additional rows available.
+pub(crate) fn has_more_listings(total: usize, show_more: bool) -> bool {
+    !show_more && total > LISTING_PREVIEW_ROWS
+}
+
 #[component]
 pub fn ListingsTable(
     #[prop(into)] listings: Signal<Vec<(ActiveListing, Arc<Retainer>)>>,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    // Not `use_i18n()`: `ListingsPanel` builds this table inside a
+    // `<Transition>`, so on the server it can be constructed under the fresh,
+    // empty owner `ScopedFuture` substitutes when the request's owner was
+    // already disposed. The panicking accessor aborts the SSR response there
+    // (GlitchTip #7289); the default locale does not.
+    let i18n = use_i18n_or_default();
     let (show_more, set_show_more) = signal(false);
     let listing_count = move || listings.with(|l| l.len());
     // Optimization: Split sorting from slicing.
@@ -61,29 +72,9 @@ pub fn ListingsTable(
                 </tr>
             </thead>
             <tbody>
-                // #6831 — the largest GlitchTip issue by orders of magnitude —
-                // is a tachys hydration panic (`hydration.rs`
-                // `failed_to_cast_marker_node`: "expected a marker node, found
-                // <tr>") firing on essentially every `/item/*` page under
-                // production's out-of-order streaming SSR.
-                //
-                // Root cause: a `<For>` relies on its *following sibling* to
-                // supply a marker node so the hydration walk knows where the
-                // keyed list ends. A dynamic sibling (`{ move || … }`) emits that
-                // opening marker; a plain static element does not. This `<tbody>`
-                // placed a static `<tr>` (the "show more" row) directly after the
-                // `<For>`, leaving the list's trailing edge unbounded — the walker
-                // then reads that `<tr>` where it expected a marker and panics.
-                //
-                // (PR #933 removed a redundant `{ move || <For/> }` *wrapper* but
-                // left this static-`<tr>`-after-`<For>` adjacency intact, so the
-                // crash survived on the deployed fix build.)
-                //
-                // Fix: render `<For>` as a direct child and the "show more" row as
-                // a *dynamic* `{ move || … }` block, exactly like the sibling
-                // `SaleHistoryTable` — which reads the same resource in the same
-                // `<Transition>` on this page and never crashes. The dynamic block
-                // supplies the marker node that bounds the `<For>`.
+                // Keep the keyed list as the tbody's only dynamic child. This is
+                // the same hydration-safe shape as `SaleHistoryTable`; the footer
+                // action deliberately lives outside the table and its scrollport.
                 <For
                     each=listings
                     key=move |(listing, _retainer)| listing.id
@@ -117,26 +108,25 @@ pub fn ListingsTable(
                         }
                     }
                 />
-                {move || {
-                    (!show_more() && listing_count() >= 10)
-                        .then(|| {
-                            view! {
-                                <tr>
-                                    <td colspan=7>
-                                        <button
-                                            class="btn w-full"
-                                            on:click=move |_| set_show_more(true)
-                                        >
-                                            {t!(i18n, listings_show_more)}
-                                        </button>
-                                    </td>
-                                </tr>
-                            }
-                        })
-                }}
             </tbody>
             </table>
         </div>
+        // Match the sale-history footer: it stays full-width and visible even
+        // when the wide table itself scrolls horizontally.
+        {move || {
+            has_more_listings(listing_count(), show_more())
+                .then(|| {
+                    view! {
+                        <button
+                            class="btn btn-primary w-full mt-2"
+                            data-testid="listings-show-more"
+                            on:click=move |_| set_show_more(true)
+                        >
+                            {t!(i18n, listings_show_more)}
+                        </button>
+                    }
+                })
+        }}
     }
     .into_any()
 }
@@ -144,6 +134,41 @@ pub fn ListingsTable(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ultros_api_types::retainer::Retainer;
+
+    /// Reproduces GlitchTip #7289. `ListingsPanel` builds this table inside a
+    /// `<Transition>`, so on the server it is constructed when the resource
+    /// resolves — and if that request's owner was already disposed,
+    /// `ScopedFuture` hands the fragment a fresh, empty owner that never saw
+    /// `<I18nContextProvider>`. The panicking `use_i18n()` then aborts the
+    /// whole SSR response. Rendering under a bare owner is that situation.
+    #[test]
+    fn renders_without_an_i18n_context() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let rows = vec![(
+                ActiveListing {
+                    id: 1,
+                    world_id: 100,
+                    item_id: 1,
+                    retainer_id: 1,
+                    price_per_unit: 250,
+                    quantity: 2,
+                    hq: false,
+                    timestamp: chrono::Utc::now().naive_utc(),
+                },
+                Arc::new(Retainer {
+                    id: 1,
+                    world_id: 100,
+                    name: "Retainer 1".to_string(),
+                    retainer_city_id: 1,
+                }),
+            )];
+            let html = view! { <ListingsTable listings=Signal::stored(rows) /> }.to_html();
+            assert!(html.contains("250"), "{html}");
+        });
+    }
 
     #[test]
     fn collapsed_shows_at_most_the_preview_count() {
@@ -164,5 +189,13 @@ mod tests {
     fn empty_is_empty_either_way() {
         assert_eq!(visible_listing_count(0, false), 0);
         assert_eq!(visible_listing_count(0, true), 0);
+    }
+
+    #[test]
+    fn show_more_only_appears_when_the_preview_hides_rows() {
+        assert!(!has_more_listings(LISTING_PREVIEW_ROWS - 1, false));
+        assert!(!has_more_listings(LISTING_PREVIEW_ROWS, false));
+        assert!(has_more_listings(LISTING_PREVIEW_ROWS + 1, false));
+        assert!(!has_more_listings(LISTING_PREVIEW_ROWS + 1, true));
     }
 }

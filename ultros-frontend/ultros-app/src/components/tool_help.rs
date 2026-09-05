@@ -5,6 +5,27 @@ use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
 
+#[derive(Clone)]
+pub struct ToolCalculation {
+    title: String,
+    formula: Signal<String>,
+    details: Signal<String>,
+}
+
+impl ToolCalculation {
+    pub fn new(
+        title: impl Into<String>,
+        formula: impl Into<Signal<String>>,
+        details: impl Into<Signal<String>>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            formula: formula.into(),
+            details: details.into(),
+        }
+    }
+}
+
 /// Slim single-row tool header: the tool's `h1`, an icon-only About toggle,
 /// and an optional right-aligned slot for the page's controls (world picker,
 /// small filters). Pages pass controls as children so the title and controls
@@ -24,11 +45,18 @@ pub fn ToolHeader(
     /// Optional for the same reason as `help_href`.
     #[prop(optional, into)]
     help_body: Option<Oco<'static, str>>,
+    /// Optional calculation model and assumptions, shown only inside the
+    /// expanded info panel so analyzer results stay near the top of the page.
+    #[prop(optional, into)]
+    calculation: Option<ToolCalculation>,
+    #[prop(optional)] assumptions: Vec<String>,
     #[prop(optional)] children: Option<Children>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (is_open, set_is_open) = signal(false);
     let context_text = context.clone();
+    let calculation_details = calculation.clone();
+    let assumption_details = assumptions.clone();
     let help_link = help_href
         .clone()
         .zip(help_body.clone())
@@ -88,37 +116,39 @@ pub fn ToolHeader(
                             </AppLink>
                         })
                     }
+                    {
+                        let calculation_details = calculation_details.clone();
+                        move || calculation_details.clone().map(|calculation| view! {
+                            <div class="border-t border-[color:var(--color-outline)] pt-3 flex flex-col gap-2">
+                                <div class="flex items-center gap-2 text-[color:var(--brand-fg)] font-semibold">
+                                    <Icon icon=i::AiCalculatorOutlined width="1.1em" height="1.1em" />
+                                    <span>{calculation.title}</span>
+                                </div>
+                                <code class="text-sm text-brand-300 whitespace-normal break-words">
+                                    {calculation.formula}
+                                </code>
+                                <p class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">
+                                    {move || calculation.details.get()}
+                                </p>
+                            </div>
+                        })
+                    }
+                    {
+                        let assumption_details = assumption_details.clone();
+                        move || (!assumption_details.is_empty()).then(|| view! {
+                            <div class="flex flex-wrap gap-2">
+                                {assumption_details.clone().into_iter().map(|assumption| view! {
+                                    <span class="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]">
+                                        <Icon icon=i::BsCheck2Circle width="0.9em" height="0.9em" />
+                                        {assumption}
+                                    </span>
+                                }).collect_view()}
+                            </div>
+                        })
+                    }
                 </div>
             </Show>
         </section>
-    }
-}
-
-#[component]
-pub fn CalculationSummary(
-    #[prop(into)] title: Oco<'static, str>,
-    #[prop(into)] formula: Oco<'static, str>,
-    #[prop(into)] details: Oco<'static, str>,
-) -> impl IntoView {
-    view! {
-        <aside class="panel p-4 rounded-xl flex flex-col gap-2 border border-[color:var(--color-outline)]">
-            <div class="flex items-center gap-2 text-[color:var(--brand-fg)] font-semibold">
-                <Icon icon=i::AiCalculatorOutlined width="1.1em" height="1.1em" />
-                <span>{title}</span>
-            </div>
-            <code class="text-sm text-brand-300 whitespace-normal break-words">{formula}</code>
-            <p class="text-sm text-[color:var(--color-text-muted)] leading-relaxed">{details}</p>
-        </aside>
-    }
-}
-
-#[component]
-pub fn AssumptionBadge(#[prop(into)] text: Oco<'static, str>) -> impl IntoView {
-    view! {
-        <span class="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-outline)] bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]">
-            <Icon icon=i::BsCheck2Circle width="0.9em" height="0.9em" />
-            {text}
-        </span>
     }
 }
 

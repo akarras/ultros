@@ -517,28 +517,39 @@ fn gil_shop_to_npc(gil_shops: &[GilShopId]) -> Vec<(GilShopId, &'static ENpcBase
         .collect()
 }
 
-#[component]
-fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
-    let i18n = use_i18n();
+/// Resolved shop/NPC pairs, shared by the source panel and its navigation count.
+fn vendor_sources_for_item(item_id: i32) -> Vec<(GilShopId, &'static xiv_gen::ENpcResident)> {
     let data = tracked_data();
-    // lookup items
-    let npcs = Memo::new(move |_| {
-        let item_id = item_id();
-        let gil_shops = data
-            .gil_shop_items
-            .iter()
-            .filter(|(_shop_id, items)| items.iter().any(|shop_item| shop_item.item == item_id))
-            .flat_map(|(shop_id, _)| data.gil_shops.get(shop_id))
-            .collect::<Vec<_>>();
-        let shop_ids = gil_shops.iter().map(|shop| shop.key_id).collect::<Vec<_>>();
-        gil_shop_to_npc(&shop_ids)
-    });
-    let data = move || {
-        let items = npcs().into_iter().filter_map(|(shop_id, npc)| {
+    if !data.items.contains_key(&ItemId(item_id)) {
+        return Vec::new();
+    }
+    let shop_ids = data
+        .gil_shop_items
+        .iter()
+        .filter(|(_, items)| items.iter().any(|item| item.item == item_id))
+        .filter_map(|(shop_id, _)| data.gil_shops.get(shop_id))
+        .map(|shop| shop.key_id)
+        .collect::<Vec<_>>();
+    if shop_ids.is_empty() {
+        return Vec::new();
+    }
+    gil_shop_to_npc(&shop_ids)
+        .into_iter()
+        .filter_map(|(shop_id, npc)| {
             data.e_npc_residents
                 .get(&ENpcResidentId(npc.key_id.0))
                 .map(|resident| (shop_id, resident))
-        });
+        })
+        .collect()
+}
+
+#[component]
+fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
+    let i18n = use_i18n();
+    let npcs = Memo::new(move |_| vendor_sources_for_item(item_id()));
+    let data = move || {
+        let data = tracked_data();
+        let items = npcs();
         let item = data.items.get(&ItemId(item_id()))?;
         Some(
             items.into_iter()
@@ -564,12 +575,14 @@ fn VendorItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
     let empty = move || npcs.with(|n| n.is_empty());
     view! {
-        <div id="vendor-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
-            <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
-                <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
-                {t!(i18n, related_vendor_sources_title)}
-            </h3>
-            <div class="grid grid-cols-1 gap-3">{data}</div>
+        <div id="vendor-sources" class:hidden=empty class="scroll-mt-20 min-w-0">
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::FaShopSolid attr:class="text-brand-300" />
+                    {t!(i18n, related_vendor_sources_title)}
+                </h3>
+                <div class="grid grid-cols-1 gap-3">{data}</div>
+            </div>
         </div>
     }
     .into_any()
@@ -728,13 +741,15 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || exchanges.with(|e| e.is_empty());
 
     view! {
-        <div id="exchange-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
-            <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
-                <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
-                {t!(i18n, related_exchange_sources_title)}
-            </h3>
-            <div class="grid grid-cols-1 gap-3">
-                {view}
+        <div id="exchange-sources" class:hidden=empty class="scroll-mt-20 min-w-0">
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::BsArrowLeftRight attr:class="text-brand-300" />
+                    {t!(i18n, related_exchange_sources_title)}
+                </h3>
+                <div class="grid grid-cols-1 gap-3">
+                    {view}
+                </div>
             </div>
         </div>
     }
@@ -745,6 +760,63 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 mod tests {
     use super::*;
     use xiv_gen::SpecialShop;
+
+    #[test]
+    fn source_counts_hide_invalid_items() {
+        for item_id in [-1, 0, i32::MAX] {
+            assert_eq!(item_source_counts(item_id), ItemSourceCounts::default());
+        }
+    }
+
+    #[test]
+    fn source_counts_do_not_treat_ingredients_as_craftable() {
+        let data = tracked_data();
+        let outputs: HashSet<_> = data.recipes.values().map(|r| r.item_result).collect();
+        let ingredient = data
+            .recipes
+            .values()
+            .flat_map(IngredientsIter::new)
+            .map(|(id, _)| id.0)
+            .find(|id| *id > 0 && !outputs.contains(id))
+            .expect("game data has raw ingredients that cannot be crafted");
+        assert!(recipe_tree_iter(ItemId(ingredient)).next().is_some());
+        assert_eq!(item_source_counts(ingredient).craftable, 0);
+    }
+
+    #[test]
+    fn source_counts_include_every_available_type() {
+        let data = tracked_data();
+        // Sample deterministic item IDs spanning the recipe and vendor data.
+        let ids = data
+            .recipes
+            .values()
+            .map(|r| r.item_result)
+            .chain(data.gil_shop_items.values().flatten().map(|i| i.item))
+            .filter(|id| *id > 0)
+            .sorted()
+            .dedup()
+            .step_by(53)
+            .take(8);
+        for id in ids {
+            let counts = item_source_counts(id);
+            assert_eq!(
+                counts.craftable,
+                data.recipes
+                    .values()
+                    .filter(|r| r.item_result == id)
+                    .count()
+            );
+            assert_eq!(counts.vendor, vendor_sources_for_item(id).len());
+            assert_eq!(counts.levequest, leve_sources_for_item(id).len());
+            assert_eq!(
+                counts.exchange,
+                exchange_shops_for_item(&data.special_shops, id)
+                    .iter()
+                    .map(|shop| get_trade_costs(shop, id).len())
+                    .sum::<usize>()
+            );
+        }
+    }
 
     /// A spread of marketable items: gear (which has a class job category), plus
     /// consumables/materials (which do not, and are carried entirely by the name
@@ -849,6 +921,11 @@ mod tests {
         assert_eq!(costs_789.len(), 1);
         assert_eq!(costs_789[0].len(), 1);
         assert_eq!(costs_789[0][0], (ItemId(20), 200));
+
+        // Two offers in one shop are two exchange options, not one shop count.
+        let mut multiple_offers = shop;
+        multiple_offers.item_receive_0[1] = 123;
+        assert_eq!(get_trade_costs(&multiple_offers, 123).len(), 2);
     }
 
     /// Regression guard for #6831: the exchange-source shops must come out in a
@@ -941,27 +1018,59 @@ pub fn leve_rewards_item(
     false
 }
 
+fn leve_sources_for_item(item_id: i32) -> Vec<&'static Leve> {
+    let data = tracked_data();
+    data.leves
+        .values()
+        .filter(|leve| {
+            leve_rewards_item(
+                leve,
+                item_id,
+                &data.leve_reward_items,
+                &data.leve_reward_item_groups,
+            )
+        })
+        // Keep SSR and hydration order identical despite randomized HashMaps.
+        .sorted_by_key(|leve| leve.key_id.0)
+        .collect()
+}
+
+/// Counts describe available recipes, trade options, reward leves, and vendor
+/// shop/NPC pairs, not market listings. No market resource is needed during SSR.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ItemSourceCounts {
+    pub craftable: usize,
+    pub exchange: usize,
+    pub levequest: usize,
+    pub vendor: usize,
+}
+
+pub(crate) fn item_source_counts(item_id: i32) -> ItemSourceCounts {
+    let data = tracked_data();
+    if item_id <= 0 || !data.items.contains_key(&ItemId(item_id)) {
+        return ItemSourceCounts::default();
+    }
+    ItemSourceCounts {
+        // recipe_tree_iter also matches ingredients: those are not acquisition sources.
+        craftable: data
+            .recipes
+            .values()
+            .filter(|r| r.item_result == item_id)
+            .count(),
+        exchange: exchange_shops_for_item(&data.special_shops, item_id)
+            .iter()
+            .map(|shop| get_trade_costs(shop, item_id).len())
+            .sum(),
+        levequest: leve_sources_for_item(item_id).len(),
+        vendor: vendor_sources_for_item(item_id).len(),
+    }
+}
+
 #[component]
 fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let i18n = use_i18n();
     let data = tracked_data();
-    let leves = Memo::new(move |_| {
-        let item_id = item_id();
-        data.leves
-            .values()
-            .filter(|leve| {
-                leve_rewards_item(
-                    leve,
-                    item_id,
-                    &data.leve_reward_items,
-                    &data.leve_reward_item_groups,
-                )
-            })
-            // `leves` is a randomized std HashMap; sort by stable id so SSR and
-            // CSR render the levequest rows in the same order (#6831 hydration).
-            .sorted_by_key(|leve| leve.key_id.0)
-            .collect::<Vec<_>>()
-    });
+    let leves = Memo::new(move |_| leve_sources_for_item(item_id()));
 
     let view = move || {
         leves.with(|leves| {
@@ -991,12 +1100,14 @@ fn LeveSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     let empty = move || leves.with(|l| l.is_empty());
 
     view! {
-        <div id="leve-sources" class:hidden=empty class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
-            <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
-                <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
-                {t!(i18n, related_levequest_rewards_title)}
-            </h3>
-            <div class="grid grid-cols-1 gap-3">{view}</div>
+        <div id="leve-sources" class:hidden=empty class="scroll-mt-20 min-w-0">
+            <div class="panel p-4 sm:p-6 flex flex-col gap-4 max-h-[500px] overflow-y-auto">
+                <h3 class="text-lg font-bold text-brand-200 flex items-center gap-2">
+                    <Icon icon=icondata::FaScrollSolid attr:class="text-brand-300" />
+                    {t!(i18n, related_levequest_rewards_title)}
+                </h3>
+                <div class="grid grid-cols-1 gap-3">{view}</div>
+            </div>
         </div>
     }
     .into_any()
@@ -1065,9 +1176,16 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
     };
 
     let recipes = Memo::new(move |_| {
-        recipe_tree_iter(ItemId(item_id.get()))
-            .take(30)
-            .collect::<Vec<_>>()
+        let mut recipes = recipe_tree_iter(ItemId(item_id.get()))
+            // Acquisition recipes come first when jumping from "Craftable".
+            .sorted_by_key(|r| (r.item_result != item_id.get(), r.key_id.0))
+            .collect::<Vec<_>>();
+        let acquisition_count = recipes
+            .iter()
+            .take_while(|r| r.item_result == item_id.get())
+            .count();
+        recipes.truncate(30.max(acquisition_count));
+        recipes
     });
 
     let (show_more, set_show_more) = signal(false);
@@ -1124,7 +1242,7 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
             </div>
 
             // The inner #vendor-sources / #exchange-sources / #leve-sources ids
-            // stay — MarketStatsPanel's source callout links to them directly.
+            // stay — SectionNav's source shortcuts link to them directly.
             // This wrapper id is the jump-nav's coarser "Sources" destination.
             <div id="sources" class="scroll-mt-16 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 empty:hidden">
                 <VendorItems item_id />
@@ -1132,9 +1250,11 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                 <LeveSources item_id />
             </div>
 
+            // max-w on the panel, not the inner grid: capping only the grid
+            // left the full-width panel with a large empty region to its right.
             <div
                 id="crafting-recipes"
-                class="panel p-4 sm:p-6"
+                class="scroll-mt-20 panel p-4 sm:p-6 max-w-6xl"
                 class:hidden=move || recipes.with(|recipes| recipes.is_empty())
             >
                 <div class="flex flex-row items-center justify-between mb-3 flex-wrap gap-2">
@@ -1142,11 +1262,15 @@ pub fn RelatedItems(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
                     <CraftOptionsToggleRow />
                 </div>
                 <ActiveListBanner />
-                <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 max-w-6xl">
+                // auto-fit so a lone recipe spans the panel instead of
+                // occupying one of two fixed columns; two or more still split.
+                <div class="grid grid-cols-[repeat(auto-fit,minmax(min(30rem,100%),1fr))] gap-4">
                     <For
                         each=Signal::derive(move || {
                             let mut r = recipes();
-                            r.truncate(5);
+                            // Every acquisition recipe counted in the shortcut must be visible.
+                            let acquisition_count = r.iter().take_while(|r| r.item_result == item_id()).count();
+                            r.truncate(5.max(acquisition_count));
                             r
                         })
                         key=|recipe| recipe.key_id

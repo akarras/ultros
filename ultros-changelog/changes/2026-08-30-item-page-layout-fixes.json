@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Item page layout fixes",
+  "blurb": "Listings and sale history now sit side by side only on displays wide enough to show both tables in full (roughly 1440p and up) - everywhere else they stack, so neither table needs a horizontal scrollbar. The sale history's Show More button no longer scrolls out of view with the table, the Sales at a Glance tiles size themselves to the space they actually have instead of overlapping, the Crafting Recipes panel hugs its content instead of trailing empty space, and a sliver of page-wide horizontal scroll caused by the ad rail is gone.",
+  "importance": "medium"
+}

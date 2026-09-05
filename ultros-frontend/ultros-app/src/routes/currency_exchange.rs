@@ -699,22 +699,22 @@ fn ExchangeItemContent() -> impl IntoView {
     });
     let column_options = Memo::new(move |_| {
         vec![
-            ColumnOption {
-                id: COL_PRICE_PER_ITEM,
-                label: t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
-            },
-            ColumnOption {
-                id: COL_SHOPS,
-                label: t_string!(i18n, currency_exchange_table_shops).to_string(),
-            },
-            ColumnOption {
-                id: COL_COST,
-                label: t_string!(i18n, currency_exchange_table_cost).to_string(),
-            },
-            ColumnOption {
-                id: COL_HOURS,
-                label: t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
-            },
+            ColumnOption::new(
+                COL_PRICE_PER_ITEM,
+                t_string!(i18n, currency_exchange_table_price_per_item).to_string(),
+            ),
+            ColumnOption::new(
+                COL_SHOPS,
+                t_string!(i18n, currency_exchange_table_shops).to_string(),
+            ),
+            ColumnOption::new(
+                COL_COST,
+                t_string!(i18n, currency_exchange_table_cost).to_string(),
+            ),
+            ColumnOption::new(
+                COL_HOURS,
+                t_string!(i18n, currency_exchange_table_hours_per_sale).to_string(),
+            ),
         ]
     });
     let toggle_column = Callback::new(move |col: &'static str| {
@@ -1314,7 +1314,10 @@ pub fn CurrencySelection() -> impl IntoView {
                     children=|(item_id, item_name, category_name)| {
                         view! {
                             <AppLink
-                                href=item_id.to_string()
+                                // Absolute: `AppLink` is a plain anchor and
+                                // does not resolve hrefs against the matched
+                                // route. See `components::app_link`.
+                                href=format!("/currency-exchange/{item_id}")
                                 attr:class="card-link group flex items-center gap-2 px-3 py-2 rounded-lg border \
                                            border-white/5 bg-[color:var(--color-background-elevated)] \
                                            hover:bg-white/5 hover:border-brand-500/40 transition-colors"

@@ -3,6 +3,7 @@
 //! Tables defined here:
 //! - `sales` — raw mirror of `sale_history`
 //! - `item_stats_window` (Task 1.1) — multi-window aggregates
+//! - `sale_stats_window` — mergeable whole-market statistics by world/window
 //! - `item_quality_score` (Task 1.1) — trustworthiness per item
 //! - `_backfill_state` (Task 0.6) — resumable backfill cursor
 
@@ -17,6 +18,7 @@ pub async fn apply(client: &Client) -> Result<(), ClickHouseError> {
     apply_item_vendor_price(client).await?;
     apply_world_kpi_5min(client).await?;
     apply_sales_hourly(client).await?;
+    apply_sale_stats_window(client).await?;
     apply_item_category_map(client).await?;
     Ok(())
 }
@@ -190,6 +192,46 @@ async fn apply_sales_hourly(client: &Client) -> Result<(), ClickHouseError> {
             ENGINE = ReplacingMergeTree(computed_at)
             PARTITION BY toYYYYMM(bucket)
             ORDER BY (item_id, hq, world_id, bucket)
+            SETTINGS index_granularity = 8192
+            "#,
+        )
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Mergeable sale-price statistics for every `(world, window, item, hq)`.
+///
+/// The public bulk sale-stats endpoint reads an entire world, datacenter, or
+/// region at once, so the sorting key deliberately starts with `world_id` and
+/// `window_days`. This is the inverse of the raw `sales` table's item-first
+/// key and is what makes a whole-market read bounded.
+///
+/// `price_quantile` stores a t-digest state rather than a finalized per-world
+/// median. The endpoint can therefore merge the constituent worlds of a
+/// datacenter or region without returning to raw sales. `ReplacingMergeTree`
+/// keeps one scheduled snapshot per key; queries use `FINAL` only after their
+/// world/window predicate has pruned the table to a small slice.
+async fn apply_sale_stats_window(client: &Client) -> Result<(), ClickHouseError> {
+    client
+        .query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sale_stats_window (
+                world_id       Int32,
+                window_days    UInt16,
+                item_id        Int32,
+                hq             UInt8,
+                computed_at    DateTime,
+                min_price      UInt32,
+                price_quantile AggregateFunction(quantileTDigest(0.5), UInt32),
+                price_sum      UInt64,
+                sale_count     UInt64,
+                last_sold_unix Int64,
+                units_sold     UInt64,
+                gil_volume     UInt64
+            )
+            ENGINE = ReplacingMergeTree(computed_at)
+            ORDER BY (world_id, window_days, item_id, hq)
             SETTINGS index_granularity = 8192
             "#,
         )

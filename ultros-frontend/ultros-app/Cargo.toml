@@ -7,6 +7,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ultros-changelog = { path = "../../ultros-changelog" }
 leptos = { workspace = true, features = ["nightly"] }
 leptos_meta = { workspace = true }
 leptos_router = { workspace = true }
@@ -83,7 +84,6 @@ gloo-timers = { version = "0.4.0", features = ["futures"] }
 cfg-if.workspace = true
 paginate = "1.1.11"
 percent-encoding = "2.3.2"
-linregress = "0.5.4"
 field-iterator = { path = "../../field-iterator" }
 # leptos_animation = "0.5.0"
 leptos_hotkeys = { git = "https://github.com/slowtec/leptos-hotkeys.git", branch = "leptos-0.8" }
@@ -105,6 +105,11 @@ reqwest = { version = "0.12", default-features = false, features = [
     "deflate",
     "zstd"
 ]}
+
+# The transient-transport classifier is tested against real `reqwest` failures
+# (a socket that never answers, a closed port), which need a runtime.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

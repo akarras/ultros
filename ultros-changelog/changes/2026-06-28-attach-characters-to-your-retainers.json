@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "Attach characters to your retainers",
+  "blurb": "Verify a character and assign the retainers it owns, so undercut checks know which listings are yours.",
+  "link": "/retainers/listings",
+  "importance": "medium"
+}
