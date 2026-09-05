@@ -10,6 +10,7 @@ pub(crate) mod i18n_fallback;
 pub(crate) mod math;
 pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
+pub(crate) mod recipe_planner;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
 pub mod social_card;
@@ -55,6 +56,7 @@ use crate::{
         lists::*,
         not_found::NotFound,
         recipe_analyzer::*,
+        recipe_view::RecipeView,
         retainers::*,
         scrip_sources::*,
         settings::*,
@@ -569,6 +571,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("vendor-resale") view=VendorResale />
                         <Route path=path!("vendor-resale/:world") view=VendorWorldView />
                         <Route path=path!("recipe-analyzer") view=RecipeAnalyzer />
+                        <Route path=path!("recipe/:id") view=RecipeView />
                         <Route path=path!("fc-crafting-analyzer") view=FCCraftingAnalyzer />
                         <Route path=path!("fc-crafting-analyzer/:world") view=FCCraftingAnalyzer />
                         <Route path=path!("leve-analyzer") view=LeveAnalyzer />

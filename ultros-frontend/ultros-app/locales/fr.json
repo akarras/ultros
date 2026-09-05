@@ -1728,7 +1728,7 @@
     "history_resend_failed_toast": "Échec du renvoi",
     "side_nav_aria_primary": "Principale",
     "profile_login_button": "Connexion",
-    "related_items_aria_open_recipe": "Ouvrir cette recette dans l'analyseur",
+    "related_items_aria_open_recipe": "Voir la recette",
     "related_items_costs_label": "Coûts :",
     "related_items_heading": "Objets liés",
     "related_items_crafting_recipes_heading": "Recettes d'artisanat",
