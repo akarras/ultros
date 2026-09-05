@@ -2444,15 +2444,10 @@ fn test_auth_routes() -> Router<WebState> {
     Router::new()
 }
 
-pub(crate) async fn start_web(
-    state: WebState,
-    prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
-) {
-    // build our application with a route
-    let worlds = state.world_helper.clone();
-    let token = state.token.clone();
-    let app = Router::new()
-        .route("/alerts/websocket", get(connect_websocket))
+/// Shared API routes for public HTTP and in-process SSR dispatch.
+/// Application middleware belongs here; connection/page middleware stays outside.
+fn api_router() -> Router<WebState> {
+    Router::new()
         .route("/api/v1/search", get(search))
         .route("/api/v1/realtime/events", get(real_time_data))
         .route("/api/v1/cheapest/{world}", get(cheapest_per_world))
@@ -2585,16 +2580,30 @@ pub(crate) async fn start_web(
         .route("/api/v1/retainer/search/{query}", get(retainer_search))
         .route("/api/v1/retainer/claim/{id}", get(claim_retainer))
         .route("/api/v1/retainer/unclaim/{id}", get(unclaim_retainer))
-        .route(
-            "/item/refresh/{worldid}/{itemid}",
-            get(refresh_world_item_listings),
-        )
         .route("/api/v1/retainer/listings/{id}", get(retainer_listings))
         .route("/api/v1/characters/search/{name}", get(character_search))
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
         .route("/api/v1/characters", get(user_characters))
         .route("/api/v1/detectregion", get(detect_region))
+        .route("/api/v1/current_user", delete(delete_user))
+}
+
+pub(crate) async fn start_web(
+    state: WebState,
+    prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
+) {
+    // build our application with a route
+    let worlds = state.world_helper.clone();
+    let token = state.token.clone();
+    let api = api_router();
+    let ssr_api = ultros_app::ssr_api::SsrApi::new(api.clone().with_state(state.clone()));
+    let app = api
+        .route("/alerts/websocket", get(connect_websocket))
+        .route(
+            "/item/refresh/{worldid}/{itemid}",
+            get(refresh_world_item_listings),
+        )
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))
         .route("/static/{*path}", get(static_path))
@@ -2604,7 +2613,6 @@ pub(crate) async fn start_web(
         .route("/redirect", get(self::oauth::redirect))
         .route("/login", get(begin_login))
         .route("/logout", get(logout))
-        .route("/api/v1/current_user", delete(delete_user))
         .route("/invitebot", get(invite))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
@@ -2619,13 +2627,18 @@ pub(crate) async fn start_web(
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
         .route("/listings/{world}/{item}", get(listings_redirect))
         .merge(test_auth_routes())
-        .merge(create_leptos_app(state.world_helper.clone()).await.unwrap())
+        .merge(
+            create_leptos_app(state.world_helper.clone(), ssr_api.clone())
+                .await
+                .unwrap(),
+        )
         .fallback(leptos_axum::file_and_error_handler_with_context::<
             WebState,
             _,
         >(
             move || {
                 provide_context(LocalWorldData(Ok(worlds.clone())));
+                provide_context(ssr_api.clone());
             },
             // The file/404 fallback doesn't have per-request bootstrap data; an
             // empty script tag is harmless and the client falls back to HTTP.

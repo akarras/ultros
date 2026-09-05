@@ -129,7 +129,7 @@ fn flip_key((_, row): &(usize, CalculatedProfitData)) -> FlipKey {
 /// The hook's `fetch`: both ClickHouse feeds for one batch of keys on
 /// `world`, in parallel — a 30-day resale-quality window and a 168-hour
 /// sparkline. Client-only by construction: the hook calls it from an
-/// `Effect`, and `post_api`'s SSR arm is `unreachable!`.
+/// `Effect`, which does not run during SSR.
 async fn fetch_flip_enrichment(
     world: String,
     keys: Vec<FlipKey>,
