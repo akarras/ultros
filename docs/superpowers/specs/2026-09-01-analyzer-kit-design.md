@@ -476,11 +476,14 @@ and the token `scope-vs-home`; J adds `listing-age` and the key `max-listing-age
 and J each add a selection key, which the v1 spec's Decision 1 ruled out; both name that in
 their PR. `TaxPolicy` parses `false` as None and `true` or absent as MarketBoard. i18n: labels
 are function pointers resolved inside reactive closures, so headers become locale-reactive;
-new keys roughly C 22, D 26, E2 8, F 9 (estimated 6; the three extras were correctness fixes
-rather than scope creep — a per-cell blank-reason title, because the reused one named the
-wrong cause under the default signal, and two more failure-banner cases, because one string
-could not honestly describe all three ways a sell-scope body goes missing), G 3, H 3 to 5 per
-tool, J 6, K 5, each in all seven locales with real translations.
+new keys roughly C 22, D 26, E2 8, F 14 (estimated 6; the three extras from correctness were
+a per-cell blank-reason title, because the reused one named the wrong cause under the default
+signal, and two more failure-banner cases, because one string could not honestly describe all
+three ways a sell-scope body goes missing; the five extras from reachability were the sell-scope
+filter chip's label, an on-page line saying what a wider scope does to the numbers, a picker hint
+and an `Off`-dash title for Scope vs home, and a scoped Profit/day tooltip — all because the
+honest disclosures had lived only in a tooltip on a column that is off by default and hidden on
+phones), G 3, H 3 to 5 per tool, J 6, K 5, each in all seven locales with real translations.
 
 ## 10. Decision points for Aaron
 

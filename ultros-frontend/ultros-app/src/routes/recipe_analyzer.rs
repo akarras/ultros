@@ -4683,9 +4683,20 @@ pub fn RecipeAnalyzer() -> impl IntoView {
     // rendered — with the lab off and at the default scope, on the same
     // gate the live sentence uses, so it cannot say anything about a page
     // that did not widen its scope.
+    //
+    // Also `None` under a sale revenue signal. The sentence says the
+    // cheapest listing across a wider market "can only lower" the price,
+    // which is true of the listing signal and false of a sale statistic,
+    // where the delta goes either way — the column tooltip this line
+    // borrows from says both halves, and the first cut of this note took
+    // only the first. Gated on the CHOSEN signal, not the effective one: if
+    // the chosen sale signal degrades to a listing because its body
+    // failed, the amber banner already explains that, and a second line
+    // asserting the listing rule would be describing a fallback as a choice.
     let sell_scope_note = Signal::derive(move || {
         sell_scope_for(preview.get(), sell_scope())
             .filter(|s| s.scope() != Scope::World)
+            .filter(|_| formula_page.get().revenue_signal().sale_stat().is_none())
             .map(|_| {
                 t_string!(
                     i18n,
