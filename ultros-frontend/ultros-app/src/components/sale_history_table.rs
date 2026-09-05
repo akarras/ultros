@@ -23,9 +23,9 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
         })
     });
     view! {
-        <div class="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-lg">
-            <table class="w-full text-sm min-w-[720px]">
-            <thead class="text-xs uppercase">
+        <div class="max-h-[26rem] overflow-y-auto overflow-x-auto rounded-lg border border-[color:var(--color-outline)]">
+            <table class="w-full min-w-[720px]">
+            <thead class="sticky top-0 z-10 bg-[color:var(--color-background)]">
                 <tr>
                     <th scope="col">{t!(i18n, sale_history_col_hq)}</th>
                     <th scope="col">{t!(i18n, sale_history_col_price)}</th>
