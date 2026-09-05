@@ -169,7 +169,9 @@ async fn handle_list_event(
             "{title_hint}{body_hint}\nhttps://ultros.app/list/{}",
             rule.list_id
         );
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, db, ctx).await;
+        let click_url = format!("/list/{}", rule.list_id);
+        let delivery_result =
+            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 

@@ -29,13 +29,20 @@ where
     view! {
         <Portal>
             <div
-                class="fixed inset-0 z-40 bg-[color:color-mix(in_srgb,_var(--color-text)_40%,_var(--color-background))] flex items-start sm:items-center justify-center p-6
+                // `overflow-y-auto` + the panel's `m-auto` (rather than
+                // items-center) keep a modal taller than the viewport fully
+                // reachable: auto margins center a short panel, and a tall one
+                // scrolls with the overlay from its top edge — flex centering
+                // would push the top above the viewport with no way to reach
+                // it (the list settings drawer's Delete button was unclickable
+                // at 900px-tall windows).
+                class="fixed inset-0 z-40 bg-[color:color-mix(in_srgb,_var(--color-text)_40%,_var(--color-background))] flex justify-center overflow-y-auto p-6
                 transition-opacity duration-300 ease-in-out
                 animate-fade-in"
                 on:click=move |_| set_visible(false)
             >
                 <div
-                    class=format!("flex flex-col mx-auto {max_width}
+                    class=format!("flex flex-col m-auto h-fit {max_width}
                     panel rounded-2xl shadow-xl
                     backdrop-blur-md
                     p-6 z-50

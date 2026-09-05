@@ -111,6 +111,24 @@ const routes = ['/', '/items', '/flip-finder', '/flip-finder/Gilgamesh', '/analy
 
 Edit that array to add/remove pages you care about. Re-run `npm run test:desktop` or `npm run test:mobile` to generate fresh screenshots.
 
+## Horizontal-overflow guard
+
+Every route in both passes asserts that the page itself does not scroll sideways:
+
+```js
+document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1
+```
+
+`html` is `overflow-x: hidden`, so a document wider than the viewport is not merely ugly — the surplus is clipped with no scrollbar and no wrap, i.e. unreachable. That is how [#1055](https://github.com/akarras/ultros/issues/1055) presented: the Flip Finder's `Columns` and `Clear all` controls rendered outside the viewport.
+
+The assertion is on `documentElement`, never on descendants. Several surfaces are legitimately wider than the viewport and scroll inside their own scrollport — `.analyzer-hscroll` (the Flip Finder grid), `.filter-chip-row`, `.item-explorer-chip-row` — and measuring descendants would flag all of them. On failure the runner also lists the widest elements that are *not* inside a horizontal scrollport, so the message names the culprit rather than just a pixel count.
+
+**Known exceptions** live in `KNOWN_OVERFLOW` in `runner.cjs`, keyed by route, each naming the `devices` it applies to and a `reason`. They are not silent: a listed route that has *stopped* overflowing fails the run, so a fix cannot land without also deleting its exception. Scope `devices` as narrowly as the bug is — exempting a width where the route already fits would mask a future regression there.
+
+Set `SKIP_OVERFLOW=1` to disable the check.
+
+**What it does not cover:** headless Chrome uses overlay scrollbars, so `100vw === clientWidth` here. A page laid out against `100vw` while a real browser reserves a classic scrollbar gutter (the second half of PR #1082, which clipped ~15px off every desktop page) is invisible to this check. It guards content overflow, not viewport-unit mistakes.
+
 ## Changing viewport/device
 
 - Desktop: 1280×800

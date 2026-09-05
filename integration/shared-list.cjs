@@ -170,8 +170,24 @@ async function main() {
     // Manual invite redemption via UI
     console.log(`[step] manual user redeems invite via code input: ${inviteId}`);
     await manualPage.goto(`${BASE_URL}/list`, { waitUntil: "networkidle0" });
+    // The invite-code input lives inside the "Redeem invite" modal since the
+    // lists-index redesign — open it before typing.
+    await manualPage.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("button")).some((b) =>
+          (b.innerText || "").includes("Redeem invite"),
+        ),
+      { timeout: 15000 },
+    );
+    await manualPage.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll("button")).find((b) =>
+        (b.innerText || "").includes("Redeem invite"),
+      );
+      btn.click();
+    });
+    await manualPage.waitForSelector('input[placeholder="Invite code"]', { timeout: 10000 });
     await manualPage.type('input[placeholder="Invite code"]', inviteId);
-    await manualPage.click('button.btn-secondary ::-p-text(Redeem)');
+    await manualPage.click('button.btn-primary ::-p-text(Redeem)');
     await manualPage.waitForFunction(
       (expected) => window.location.pathname === expected,
       { timeout: 10000 },

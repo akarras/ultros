@@ -101,10 +101,16 @@ pub(crate) fn parse_endpoint_config(
 /// for endpoint test + alert-event resend. The `_db` arg is unused today but kept in the
 /// signature so future endpoint methods (e.g. ones that need to look up retainer info) can
 /// be added without rippling the call sites.
+///
+/// `click_url` is the in-app path a Web Push notification opens when clicked
+/// (e.g. `/retainers/undercuts` for undercut alerts); use `/alerts` when no
+/// more specific destination applies. Other endpoint methods ignore it — their
+/// bodies already carry full links.
 pub(crate) async fn deliver_to_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
@@ -118,7 +124,7 @@ pub(crate) async fn deliver_to_endpoint(
         EndpointConfig::WebPush { subscription_id } => {
             let cfg = get_web_push_config()
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
-            send_webpush(subscription_id, title, body, db, cfg).await
+            send_webpush(subscription_id, title, body, click_url, db, cfg).await
         }
     }
 }
@@ -131,6 +137,7 @@ pub(crate) async fn deliver_non_discord_endpoint(
     endpoint: &ultros_db::entity::notification_endpoint::Model,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
 ) -> Result<()> {
     let parsed = parse_endpoint_config(&endpoint.method, &endpoint.config)?;
@@ -142,8 +149,160 @@ pub(crate) async fn deliver_non_discord_endpoint(
         EndpointConfig::WebPush { subscription_id } => {
             let cfg = get_web_push_config()
                 .ok_or_else(|| anyhow!("web push not configured on this deployment"))?;
-            send_webpush(subscription_id, title, body, db, cfg).await
+            send_webpush(subscription_id, title, body, click_url, db, cfg).await
         }
+    }
+}
+
+/// Whether a Discord API rejection can ever succeed on a later retry.
+///
+/// Discord answers a failed REST call with an HTTP status plus a numeric JSON
+/// error code. A handful of those codes describe a destination that is simply
+/// *gone* — retrying them every time an alert fires produces nothing but error
+/// spam while the owner silently receives no alerts at all.
+///
+/// Codes (<https://discord.com/developers/docs/topics/opcodes-and-status-codes>):
+/// - `10003` Unknown Channel — the channel was deleted.
+/// - `10013` Unknown User — the DM target no longer exists.
+/// - `50001` Missing Access — the bot was removed from the guild/channel.
+/// - `50007` Cannot send messages to this user — DMs closed.
+/// - `50013` Missing Permissions — send permission revoked on the channel.
+///
+/// Everything else (rate limits, 5xx, transport errors) is treated as transient
+/// so a Discord outage never disables a working endpoint. `-1` is serenity's
+/// placeholder when the error body failed to decode, which tells us nothing —
+/// also transient.
+fn is_permanent_discord_failure(status: u16, discord_code: isize) -> bool {
+    // A 5xx is Discord's problem, never the destination's — regardless of the
+    // code it happens to carry.
+    if status >= 500 {
+        return false;
+    }
+    matches!(discord_code, 10003 | 10013 | 50001 | 50007 | 50013)
+}
+
+/// Pull a permanent-failure reason out of an error returned by
+/// [`deliver_to_endpoint`], if the underlying cause was Discord rejecting the
+/// destination for good.
+///
+/// The delivery helpers surface serenity errors through `anyhow`, so walk the
+/// source chain rather than matching only the top-level error.
+pub(crate) fn permanent_failure_reason(err: &anyhow::Error) -> Option<String> {
+    use poise::serenity_prelude::HttpError;
+
+    for cause in err.chain() {
+        let Some(serenity_prelude::Error::Http(HttpError::UnsuccessfulRequest(resp))) =
+            cause.downcast_ref::<serenity_prelude::Error>()
+        else {
+            continue;
+        };
+        if is_permanent_discord_failure(resp.status_code.as_u16(), resp.error.code) {
+            return Some(resp.error.message.clone());
+        }
+    }
+    None
+}
+
+/// Outcome of fanning an alert out across its notification endpoints.
+pub(crate) enum DispatchOutcome {
+    /// At least one endpoint accepted the message.
+    Delivered,
+    /// Nothing delivered, but the failures look transient — the caller should
+    /// still try any legacy fallback destinations.
+    TransientFailure(anyhow::Error),
+    /// Nothing delivered and every failure was permanent (or the alert has no
+    /// deliverable endpoints left because they were all disabled). Retrying —
+    /// including via the legacy fallback, which points at the same dead Discord
+    /// channels — is pointless, so the caller should record the reason quietly
+    /// rather than reporting a new error every fire.
+    PermanentFailure(String),
+}
+
+/// Look up all deliverable notification endpoints for an alert and dispatch the
+/// message via each.
+///
+/// Endpoints that Discord rejects permanently are disabled as a side effect, so
+/// the next fire skips them entirely. A successful delivery clears any
+/// previously recorded failure.
+pub(crate) async fn dispatch_alert_detailed(
+    alert_id: i32,
+    title: &str,
+    body: &str,
+    click_url: &str,
+    db: &UltrosDb,
+    ctx: &serenity_prelude::Context,
+) -> DispatchOutcome {
+    let endpoints = match db.get_notification_endpoints_for_alert(alert_id).await {
+        Ok(e) => e,
+        Err(e) => return DispatchOutcome::TransientFailure(e),
+    };
+
+    if endpoints.is_empty() {
+        // Either the alert never had rules, or every endpoint it had has been
+        // disabled for a permanent failure. Both are steady states that a retry
+        // cannot change, so don't keep raising them as errors.
+        return DispatchOutcome::PermanentFailure(format!(
+            "alert {alert_id} has no deliverable notification endpoints"
+        ));
+    }
+
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut permanent_reason: Option<String> = None;
+    let mut any_ok = false;
+    let mut any_transient = false;
+
+    for endpoint in endpoints {
+        match deliver_to_endpoint(&endpoint, title, body, click_url, db, ctx).await {
+            Ok(()) => {
+                any_ok = true;
+                // Only touch the DB when there is actually stale failure state
+                // to clear — the healthy path is the common one and shouldn't
+                // pay a write per alert fire.
+                if (endpoint.disabled_at.is_some() || endpoint.last_error.is_some())
+                    && let Err(e) = db.clear_endpoint_delivery_failure(endpoint.id).await
+                {
+                    error!(
+                        "failed to clear delivery failure for endpoint {}: {e}",
+                        endpoint.id
+                    );
+                }
+            }
+            Err(e) => {
+                match permanent_failure_reason(&e) {
+                    Some(reason) => {
+                        // Log at warn: this is an expected steady state we are
+                        // acting on, not an unhandled error, and it should stop
+                        // paging via the error reporter.
+                        tracing::warn!(
+                            "disabling endpoint {} for alert {alert_id}: {reason}",
+                            endpoint.id
+                        );
+                        if let Err(e) = db
+                            .disable_endpoint_for_delivery_failure(endpoint.id, &reason)
+                            .await
+                        {
+                            error!("failed to disable endpoint {}: {e}", endpoint.id);
+                        }
+                        permanent_reason.get_or_insert(reason);
+                    }
+                    None => {
+                        error!("delivery failed for alert {alert_id}: {e}");
+                        any_transient = true;
+                    }
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+
+    if any_ok {
+        DispatchOutcome::Delivered
+    } else if any_transient || permanent_reason.is_none() {
+        DispatchOutcome::TransientFailure(
+            last_err.unwrap_or_else(|| anyhow!("no deliveries succeeded")),
+        )
+    } else {
+        DispatchOutcome::PermanentFailure(permanent_reason.unwrap_or_default())
     }
 }
 
@@ -153,32 +312,14 @@ pub(crate) async fn dispatch_alert(
     alert_id: i32,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
 ) -> Result<()> {
-    let endpoints = db.get_notification_endpoints_for_alert(alert_id).await?;
-
-    if endpoints.is_empty() {
-        return Err(anyhow!("alert {alert_id} has no notification rules"));
-    }
-
-    let mut last_err: Option<anyhow::Error> = None;
-    let mut any_ok = false;
-
-    for endpoint in endpoints {
-        match deliver_to_endpoint(&endpoint, title, body, db, ctx).await {
-            Ok(()) => any_ok = true,
-            Err(e) => {
-                error!("delivery failed for alert {alert_id}: {e}");
-                last_err = Some(e);
-            }
-        }
-    }
-
-    if any_ok {
-        Ok(())
-    } else {
-        Err(last_err.unwrap_or_else(|| anyhow!("no deliveries succeeded")))
+    match dispatch_alert_detailed(alert_id, title, body, click_url, db, ctx).await {
+        DispatchOutcome::Delivered => Ok(()),
+        DispatchOutcome::TransientFailure(e) => Err(e),
+        DispatchOutcome::PermanentFailure(reason) => Err(anyhow!("{reason}")),
     }
 }
 
@@ -228,6 +369,50 @@ async fn send_dm(
     Ok(())
 }
 
+/// Build the JSON body the service worker reads out of `event.data.json()`.
+/// `click_url` becomes `data.url`, which `notificationclick` opens — an alert
+/// that hardcodes this loses the user's actual destination.
+fn build_push_payload(title: &str, body: &str, click_url: &str) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&serde_json::json!({
+        "title": title,
+        "body": body,
+        "url": click_url,
+    }))?)
+}
+
+/// A subscription is untrusted input, including subscriptions saved before this
+/// policy existed. Only browser push services may receive our signed requests.
+/// Keep paths and queries opaque: providers can change their token formats.
+/// See `docs/push.md` for the supported providers and the allowlist tradeoff.
+pub(crate) fn validate_web_push_endpoint(endpoint: &str) -> Result<url::Url, &'static str> {
+    let url = url::Url::parse(endpoint).map_err(|_| "invalid push endpoint URL")?;
+    if url.scheme() != "https" || url.port_or_known_default() != Some(443) {
+        return Err("push endpoint must use HTTPS on port 443");
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err("push endpoint must not contain credentials or a fragment");
+    }
+    let host = url.host_str().ok_or("push endpoint must have a host")?;
+    let supported = matches!(
+        host,
+        "fcm.googleapis.com" | "updates.push.services.mozilla.com"
+    ) || host.ends_with(".push.apple.com")
+        || host.ends_with(".notify.windows.com");
+    if !supported {
+        return Err("push endpoint must belong to a supported browser push service");
+    }
+    Ok(url)
+}
+
+fn web_push_http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        // Even a supported provider must not redirect our signed request to an
+        // arbitrary URL. A redirect is a delivery failure, never a new target.
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?)
+}
+
 /// Send a Web Push notification to a single subscription. Body is JSON-encoded
 /// `{title, body, url}` — the service worker decodes that in its `push` handler.
 ///
@@ -247,6 +432,7 @@ async fn send_webpush(
     subscription_id: i32,
     title: &str,
     body: &str,
+    click_url: &str,
     db: &UltrosDb,
     config: &WebPushConfig,
 ) -> Result<()> {
@@ -255,8 +441,8 @@ async fn send_webpush(
     };
 
     let sub = db.get_push_subscription_by_id(subscription_id).await?;
-
-    let info = SubscriptionInfo::new(&sub.endpoint, &sub.p256dh, &sub.auth);
+    let endpoint = validate_web_push_endpoint(&sub.endpoint).map_err(anyhow::Error::msg)?;
+    let info = SubscriptionInfo::new(endpoint.as_str(), &sub.p256dh, &sub.auth);
 
     // VAPID signature: parse the operator's private key, attach the `sub`
     // claim with their contact email, then sign.
@@ -266,12 +452,7 @@ async fn send_webpush(
         .build()
         .map_err(|e| anyhow!("VAPID build failed: {e:?}"))?;
 
-    // Payload is the JSON the service worker will see in `event.data.json()`.
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "title": title,
-        "body": body,
-        "url": "/alerts",
-    }))?;
+    let payload = build_push_payload(title, body, click_url)?;
 
     let mut builder = WebPushMessageBuilder::new(&info);
     builder.set_payload(ContentEncoding::Aes128Gcm, &payload);
@@ -284,9 +465,7 @@ async fn send_webpush(
     let req = reqwest::Request::try_from(http_req)
         .map_err(|e| anyhow!("push request convert failed: {e}"))?;
 
-    let resp = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?
+    let resp = web_push_http_client()?
         .execute(req)
         .await
         .map_err(|e| anyhow!("push send failed: {e}"))?;
@@ -360,6 +539,155 @@ async fn send_webhook(url: &str, title: &str, body: &str) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn push_endpoint_accepts_browser_providers_and_opaque_tokens() {
+        for endpoint in [
+            "https://fcm.googleapis.com/fcm/send/token",
+            "https://fcm.googleapis.com/wp/new-format?token=abc%2Fdef",
+            "https://updates.push.services.mozilla.com/wpush/v2/token",
+            "https://web.push.apple.com/Q/token",
+            "https://regional.push.apple.com/future-token-format",
+            "https://wns2-par02p.notify.windows.com/w/?token=abc%2Fdef",
+            "https://FCM.GOOGLEAPIS.COM:443/fcm/send/token",
+        ] {
+            assert!(validate_web_push_endpoint(endpoint).is_ok(), "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn push_endpoint_rejects_internal_destinations_and_host_spoofing() {
+        // Validation only: none of these URLs is ever resolved or contacted.
+        for endpoint in [
+            "https://127.0.0.1/push",
+            "https://2130706433/push",
+            "https://[::1]/push",
+            "https://[::ffff:127.0.0.1]/push",
+            "https://10.0.0.1/push",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://localhost/push",
+            "https://attacker.example/push",
+            "https://fcm.googleapis.com.attacker.example/push",
+            "https://attacker.example/fcm.googleapis.com/push",
+            "https://evilpush.apple.com/push",
+            "https://evilnotify.windows.com/push",
+            "https://web.push.apple.com.attacker.example/push",
+            "https://notify.windows.com.attacker.example/push",
+            "https://attacker.fcm.googleapis.com/push",
+            "https://attacker.updates.push.services.mozilla.com/push",
+            "https://fcm.googleapis.com@127.0.0.1/push",
+        ] {
+            assert!(validate_web_push_endpoint(endpoint).is_err(), "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn push_endpoint_rejects_unsafe_url_components() {
+        for endpoint in [
+            "not a URL",
+            "http://fcm.googleapis.com/fcm/send/token",
+            "ftp://fcm.googleapis.com/fcm/send/token",
+            "https://fcm.googleapis.com:8443/fcm/send/token",
+            "https://user@fcm.googleapis.com/fcm/send/token",
+            "https://user:password@fcm.googleapis.com/fcm/send/token",
+            "https://fcm.googleapis.com/fcm/send/token#fragment",
+            "https://fcm.googleapis.com./fcm/send/token",
+        ] {
+            assert!(validate_web_push_endpoint(endpoint).is_err(), "{endpoint}");
+        }
+    }
+
+    #[tokio::test]
+    async fn push_http_client_does_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A synthetic local HTTP server exercises the actual delivery client
+        // without push credentials or requests to any external service. The
+        // production send path separately requires a validated HTTPS endpoint.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let received = socket.read(&mut request).await.unwrap();
+            assert!(
+                received > 0,
+                "the client must send a request before redirecting"
+            );
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{address}/redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let response = web_push_http_client()
+            .unwrap()
+            .post(format!("http://{address}/original"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.url().path(), "/original");
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn dead_discord_destinations_are_permanent() {
+        // The exact pairs behind GlitchTip issues 6877/6878/6879/6885/6889
+        // ("Unknown Channel") and 6881/6882/6883/6884 ("Missing Access"),
+        // which retried forever and produced ~150 error events a day.
+        assert!(is_permanent_discord_failure(404, 10003)); // Unknown Channel
+        assert!(is_permanent_discord_failure(403, 50001)); // Missing Access
+        assert!(is_permanent_discord_failure(404, 10013)); // Unknown User
+        assert!(is_permanent_discord_failure(403, 50007)); // Cannot DM this user
+        assert!(is_permanent_discord_failure(403, 50013)); // Missing Permissions
+    }
+
+    #[test]
+    fn transient_discord_failures_do_not_disable() {
+        // Rate limiting is the whole point of retrying.
+        assert!(!is_permanent_discord_failure(429, 0));
+        // Discord-side outages must never disable a working destination.
+        assert!(!is_permanent_discord_failure(500, 0));
+        assert!(!is_permanent_discord_failure(503, 0));
+        // serenity uses -1 when it couldn't decode the error body — that tells
+        // us nothing, so it can't justify disabling anything.
+        assert!(!is_permanent_discord_failure(400, -1));
+        // An unrecognised 4xx code stays transient rather than guessing.
+        assert!(!is_permanent_discord_failure(400, 50035));
+    }
+
+    #[test]
+    fn a_5xx_never_counts_as_permanent_even_carrying_a_permanent_code() {
+        // Defensive: a gateway returning 502 with a stale body shouldn't take
+        // out every endpoint at once.
+        assert!(!is_permanent_discord_failure(502, 10003));
+        assert!(!is_permanent_discord_failure(500, 50001));
+    }
+
+    #[test]
+    fn non_discord_errors_are_never_permanent() {
+        // Webhook/WebPush failures surface as plain anyhow errors with no
+        // serenity cause in the chain, so they must not disable the endpoint.
+        let err = anyhow!("webhook returned 500: upstream exploded");
+        assert!(permanent_failure_reason(&err).is_none());
+
+        let nested = err.context("delivering to endpoint 3");
+        assert!(permanent_failure_reason(&nested).is_none());
+    }
+
+    #[test]
+    fn push_payload_carries_the_callers_click_url() {
+        let payload = build_push_payload("Undercut Alert", "body", "/retainers/undercuts").unwrap();
+        let decoded: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(decoded["url"], json!("/retainers/undercuts"));
+        assert_eq!(decoded["title"], json!("Undercut Alert"));
+        assert_eq!(decoded["body"], json!("body"));
+    }
 
     #[test]
     fn parses_discord_dm_from_method_plus_config() {

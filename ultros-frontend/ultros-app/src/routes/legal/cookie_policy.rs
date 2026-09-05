@@ -6,7 +6,7 @@ use leptos::prelude::*;
 pub fn CookiePolicy() -> impl IntoView {
     let i18n = use_i18n();
     view! {
-        <div class="container mx-auto max-w-3xl space-y-4 p-4">
+        <div class="main-content container mx-auto max-w-3xl space-y-4 p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, cookie_policy_title).to_string() />
             <MetaDescription text=move || {
                 t_string!(i18n, cookie_policy_meta_description).to_string()

@@ -33,6 +33,44 @@ pub enum Error {
     BadId(u32),
     #[error("No items were suggested")]
     NoItems,
+    /// Universalis answered with a non-success status. See [`check_status`] for why
+    /// this exists rather than letting the body fall through to the deserializer.
+    #[error("universalis returned HTTP {status} for {url}: {body}")]
+    Status {
+        status: u16,
+        url: String,
+        body: String,
+    },
+}
+
+impl Error {
+    /// True when Universalis answered `404 Not Found`.
+    ///
+    /// Every REST path in this client names an entity (a world, a datacenter, an
+    /// item list), so a 404 means "Universalis does not know that entity" — a
+    /// permanent condition callers should stop retrying, as opposed to the
+    /// transient 429/5xx failures that are worth another pass.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Error::Status { status: 404, .. })
+    }
+
+    /// True when the request failed for a reason that is expected to clear on
+    /// its own: Universalis rate-limiting us (`429`), a server-side failure or
+    /// gateway timeout (`5xx` — their aggregated cache in particular sheds load
+    /// with `502`/`504` under congestion), or the request never completing at
+    /// all (connect/timeout).
+    ///
+    /// Callers use this to decide whether a failure is worth reporting. Ultros
+    /// re-runs every catch-up path on a fixed cadence, so a transient failure
+    /// costs one skipped cycle and nothing more; treating it as an application
+    /// error just buries the real ones.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Error::Status { status, .. } => *status == 429 || (500..600).contains(status),
+            Error::HttpError(e) => e.is_timeout() || e.is_connect() || e.is_request(),
+            _ => false,
+        }
+    }
 }
 
 impl From<async_tungstenite::tungstenite::Error> for Error {
@@ -109,7 +147,12 @@ pub struct ListingView {
     pub creator_id: Option<String>,
     pub hq: bool,
     pub is_crafted: bool,
-    pub listing_id: Option<u32>,
+    /// Universalis' stable identity for a listing (a decimal string too large
+    /// for u32). Sent as `listingID` — the previous `listing_id: Option<u32>`
+    /// under `rename_all = "camelCase"` looked for `listingId` and silently
+    /// deserialized to `None` on every REST and websocket payload.
+    #[serde(rename = "listingID")]
+    pub listing_id: Option<String>,
     pub materia: Vec<MateriaView>,
     pub on_mannequin: bool,
     pub retainer_city: u32,
@@ -138,6 +181,67 @@ pub struct SaleView {
     pub world_id: Option<WorldId>,
     pub buyer_name: String,
     pub total: i32,
+}
+
+/// Response of `/api/v2/aggregated/{world}/{ids}` — Universalis' cached
+/// per-item market summary (served straight from their Redis, so it reflects
+/// the same state their listing boards are built from). Only the fields the
+/// drift probe needs are modeled; the endpoint also carries recent-purchase,
+/// average-price and sale-velocity blocks that are ignored here.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedView {
+    #[serde(default)]
+    pub results: Vec<AggregatedItemView>,
+    /// Item ids Universalis could not answer for (unknown/unmarketable items).
+    #[serde(default)]
+    pub failed_items: Vec<i32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedItemView {
+    pub item_id: i32,
+    #[serde(default)]
+    pub nq: AggregatedQualityView,
+    #[serde(default)]
+    pub hq: AggregatedQualityView,
+}
+
+/// A quality (NQ or HQ) block. When an item has no listings of that quality
+/// the block is present but empty (`"hq": {"minListing": {}}`), hence the
+/// defaults all the way down.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedQualityView {
+    #[serde(default)]
+    pub min_listing: AggregatedScopesView,
+}
+
+/// Scope breakdown of an aggregated statistic. Requests scoped to a world get
+/// a `world` entry only when that world has data; `dc`/`region` are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedScopesView {
+    #[serde(default)]
+    pub world: Option<AggregatedPriceView>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatedPriceView {
+    pub price: i64,
+}
+
+impl AggregatedItemView {
+    /// Cheapest listed price on the queried world as (nq, hq), `None` where
+    /// that quality has no listings.
+    pub fn world_min_prices(&self) -> (Option<i64>, Option<i64>) {
+        (
+            self.nq.min_listing.world.as_ref().map(|p| p.price),
+            self.hq.min_listing.world.as_ref().map(|p| p.price),
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -320,6 +424,52 @@ pub enum WorldOrDatacenter<'a> {
     Datacenter(&'a str),
 }
 
+/// How much of an error body to keep in [`Error::Status`]. Universalis' problem
+/// documents are ~160 bytes; the cap only matters if it ever returns an HTML
+/// error page from a proxy.
+const ERROR_BODY_SNIPPET_LEN: usize = 300;
+
+/// Reject non-success responses before anything tries to deserialize the body.
+///
+/// Universalis answers errors with an RFC 9457 problem document
+/// (`{"type":…,"title":"Not Found","status":404,"traceId":…}`), which has none of
+/// the fields of the success payloads. Calling `Response::json()` straight off the
+/// response therefore reports `missing field \`items\`` — a message that reads like
+/// upstream schema drift and completely hides the status. That is exactly what
+/// ultros' catch-up sweep logged for every world Universalis has since dropped.
+fn check_status(status: u16, url: &str, body: &[u8]) -> Result<(), Error> {
+    if (200..300).contains(&status) {
+        return Ok(());
+    }
+    let body = String::from_utf8_lossy(body);
+    let snippet = match body.char_indices().nth(ERROR_BODY_SNIPPET_LEN) {
+        Some((idx, _)) => format!("{}…", &body[..idx]),
+        None => body.into_owned(),
+    };
+    Err(Error::Status {
+        status,
+        url: url.to_string(),
+        body: snippet,
+    })
+}
+
+/// Read a response body, mapping a non-success status to [`Error::Status`].
+async fn checked_body(url: &str, response: reqwest::Response) -> Result<Vec<u8>, Error> {
+    let status = response.status().as_u16();
+    let body = response.bytes().await?.to_vec();
+    check_status(status, url, &body)?;
+    Ok(body)
+}
+
+/// [`checked_body`] plus deserialization, for the endpoints with a single response shape.
+async fn checked_json<T: serde::de::DeserializeOwned>(
+    url: &str,
+    response: reqwest::Response,
+) -> Result<T, Error> {
+    let body = checked_body(url, response).await?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
 impl UniversalisClient {
     const UNIVERSALIS_BASE_URL: &'static str = "https://universalis.app/api/v2";
 
@@ -333,19 +483,17 @@ impl UniversalisClient {
     }
 
     pub async fn get_data_centers(&self) -> Result<DataCentersView, Error> {
-        let data_centers = Request::new(
-            Method::GET,
-            Url::parse(&format!("{}/data-centers", Self::UNIVERSALIS_BASE_URL))?,
-        );
-        Ok(self.client.execute(data_centers).await?.json().await?)
+        let url = format!("{}/data-centers", Self::UNIVERSALIS_BASE_URL);
+        let data_centers = Request::new(Method::GET, Url::parse(&url)?);
+        let response = self.client.execute(data_centers).await?;
+        checked_json(&url, response).await
     }
 
     pub async fn get_worlds(&self) -> Result<WorldsView, Error> {
-        let data_centers = Request::new(
-            Method::GET,
-            Url::parse(&format!("{}/worlds", Self::UNIVERSALIS_BASE_URL))?,
-        );
-        Ok(self.client.execute(data_centers).await?.json().await?)
+        let url = format!("{}/worlds", Self::UNIVERSALIS_BASE_URL);
+        let worlds = Request::new(Method::GET, Url::parse(&url)?);
+        let response = self.client.execute(worlds).await?;
+        checked_json(&url, response).await
     }
 
     pub async fn marketboard_current_data(
@@ -357,21 +505,44 @@ impl UniversalisClient {
             return Err(Error::NoItems);
         }
         let id_str = Self::ids_to_string(item_ids);
-        let request = Request::new(
-            Method::GET,
-            Url::parse(&format!(
-                "{}/{world_or_datacenter}/{id_str}",
-                Self::UNIVERSALIS_BASE_URL
-            ))?,
+        let url = format!(
+            "{}/{world_or_datacenter}/{id_str}",
+            Self::UNIVERSALIS_BASE_URL
         );
+        let request = Request::new(Method::GET, Url::parse(&url)?);
         info!("Getting current marketboard data: {}", request.url());
         let response = self.client.execute(request).await?;
+        let body = checked_body(&url, response).await?;
         // serde struggles with this untagged enum so I just manually decide for it :)
         Ok(if item_ids.len() == 1 {
-            SingleView(response.json().await?)
+            SingleView(serde_json::from_slice(&body)?)
         } else {
-            MultiView(response.json().await?)
+            MultiView(serde_json::from_slice(&body)?)
         })
+    }
+
+    /// `/aggregated/{world_or_datacenter}/{ids}` — cached per-item min prices
+    /// and market stats. Far cheaper for Universalis to serve than the full
+    /// board endpoint (pure cache read), so it is the right primitive for
+    /// checking whether our stored boards have drifted from theirs. At most
+    /// 100 ids per request, like the other item-list endpoints.
+    pub async fn aggregated_market_data(
+        &self,
+        world_or_datacenter: &str,
+        item_ids: &[i32],
+    ) -> Result<AggregatedView, Error> {
+        if item_ids.is_empty() {
+            return Err(Error::NoItems);
+        }
+        let id_str = Self::ids_to_string(item_ids);
+        let url = format!(
+            "{}/aggregated/{world_or_datacenter}/{id_str}",
+            Self::UNIVERSALIS_BASE_URL
+        );
+        let request = Request::new(Method::GET, Url::parse(&url)?);
+        info!("Getting aggregated marketboard data: {}", request.url());
+        let response = self.client.execute(request).await?;
+        checked_json(&url, response).await
     }
 
     pub async fn get_item_history(
@@ -386,11 +557,12 @@ impl UniversalisClient {
             id_str
         );
         info!("getting historical marketboard data: {}", url);
-        let response = self.client.get(url).send().await?;
+        let response = self.client.get(&url).send().await?;
+        let body = checked_body(&url, response).await?;
         Ok(if item_ids.len() == 1 {
-            HistoryView::SingleView(response.json().await?)
+            HistoryView::SingleView(serde_json::from_slice(&body)?)
         } else {
-            HistoryView::MultiView(response.json().await?)
+            HistoryView::MultiView(serde_json::from_slice(&body)?)
         })
     }
 
@@ -408,12 +580,176 @@ impl UniversalisClient {
             Self::UNIVERSALIS_BASE_URL
         );
         info!("getting recently updated items {}", url);
-        Ok(self.client.get(url).send().await?.json().await?)
+        let response = self.client.get(&url).send().await?;
+        checked_json(&url, response).await
     }
 
     fn ids_to_string(item_ids: &[i32]) -> String {
         let id_strs: Vec<_> = item_ids.iter().map(|m| m.to_string()).collect();
         id_strs.join(",")
+    }
+}
+
+#[cfg(test)]
+mod aggregated_test {
+    use crate::AggregatedView;
+
+    /// Trimmed from a live `/api/v2/aggregated/Jenova/13708,4650,99999999`
+    /// response (2026-08-27): item 13708 has NQ listings only (empty `hq`
+    /// block), 4650 has both qualities, and the unknown id lands in
+    /// `failedItems`. The unmodeled blocks (recentPurchase etc.) stay in the
+    /// body to prove they are tolerated.
+    const BODY: &str = r#"{
+      "results": [
+        {
+          "itemId": 13708,
+          "nq": {
+            "minListing": {
+              "world": {"price": 33997},
+              "dc": {"price": 33997, "worldId": 40},
+              "region": {"price": 22222, "worldId": 78}
+            },
+            "recentPurchase": {"world": {"price": 33999, "timestamp": 1787889646000}},
+            "averageSalePrice": {"world": {"price": 30790.766169154227}},
+            "dailySaleVelocity": {"world": {"quantity": 62.58118970983941}}
+          },
+          "hq": {"minListing": {}, "recentPurchase": {}, "averageSalePrice": {}, "dailySaleVelocity": {}},
+          "worldUploadTimes": [{"worldId": 40, "timestamp": 1787892994191}]
+        },
+        {
+          "itemId": 4650,
+          "nq": {"minListing": {"world": {"price": 138}}},
+          "hq": {"minListing": {"world": {"price": 690420}}}
+        }
+      ],
+      "failedItems": [99999999]
+    }"#;
+
+    #[test]
+    fn parses_live_shape_and_reads_world_min_prices() {
+        let view: AggregatedView = serde_json::from_str(BODY).unwrap();
+        assert_eq!(view.failed_items, [99999999]);
+        assert_eq!(view.results.len(), 2);
+        assert_eq!(view.results[0].item_id, 13708);
+        assert_eq!(view.results[0].world_min_prices(), (Some(33997), None));
+        assert_eq!(
+            view.results[1].world_min_prices(),
+            (Some(138), Some(690420))
+        );
+    }
+
+    /// A world request for an item with no listings at all still returns the
+    /// item, with both quality blocks empty.
+    #[test]
+    fn empty_market_is_none_none() {
+        let body = r#"{"results": [{"itemId": 7, "nq": {"minListing": {}}, "hq": {"minListing": {}}}], "failedItems": []}"#;
+        let view: AggregatedView = serde_json::from_str(body).unwrap();
+        assert_eq!(view.results[0].world_min_prices(), (None, None));
+    }
+}
+
+#[cfg(test)]
+mod status_test {
+    use crate::{Error, MostRecentlyUpdatedItemsView, check_status};
+
+    /// Verbatim body Universalis returns for a world it does not know, e.g.
+    /// `/extra/stats/most-recently-updated?entries=200&world=Innocence`.
+    const NOT_FOUND_BODY: &[u8] = br#"{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-1046d7d509da111cf20beb46d99f08dc-5aaf766c058a47f2-01"}"#;
+
+    const URL: &str = "https://universalis.app/api/v2/extra/stats/most-recently-updated?entries=200&world=Innocence";
+
+    #[test]
+    fn not_found_is_reported_as_a_status_error_not_a_schema_error() {
+        let err = check_status(404, URL, NOT_FOUND_BODY).unwrap_err();
+        let rendered = err.to_string();
+        assert!(rendered.contains("404"), "{rendered}");
+        assert!(rendered.contains("world=Innocence"), "{rendered}");
+        // The old code deserialized this body as the success type and reported
+        // the resulting serde complaint instead of the status.
+        assert!(!rendered.contains("missing field"), "{rendered}");
+    }
+
+    #[test]
+    fn not_found_is_distinguishable_from_transient_failures() {
+        assert!(
+            check_status(404, URL, NOT_FOUND_BODY)
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert!(
+            !check_status(429, URL, b"slow down")
+                .unwrap_err()
+                .is_not_found()
+        );
+        assert!(
+            !check_status(503, URL, b"upstream down")
+                .unwrap_err()
+                .is_not_found()
+        );
+    }
+
+    /// The aggregated endpoint sheds load with `504` under congestion (issue
+    /// GlitchTip-7283: 115 reports in five hours, all upstream gateway
+    /// timeouts). Those must classify as transient so the caller can log
+    /// rather than report them.
+    #[test]
+    fn transient_statuses_are_recognized() {
+        for status in [429, 500, 502, 503, 504] {
+            let err = check_status(status, URL, b"upstream sad").unwrap_err();
+            assert!(err.is_transient(), "{status} should be transient: {err}");
+            assert!(!err.is_not_found(), "{status} is not a 404: {err}");
+        }
+    }
+
+    /// A permanent answer — the entity does not exist, or the body did not
+    /// parse — is not something another pass will fix.
+    #[test]
+    fn permanent_failures_are_not_transient() {
+        for status in [400, 404, 410, 422] {
+            let err = check_status(status, URL, NOT_FOUND_BODY).unwrap_err();
+            assert!(!err.is_transient(), "{status} should be permanent: {err}");
+        }
+        let schema_err: Error = serde_json::from_str::<MostRecentlyUpdatedItemsView>("{}")
+            .unwrap_err()
+            .into();
+        assert!(!schema_err.is_transient(), "{schema_err}");
+        assert!(!schema_err.is_not_found(), "{schema_err}");
+    }
+
+    #[test]
+    fn success_statuses_pass_through() {
+        assert!(check_status(200, URL, b"{}").is_ok());
+        assert!(check_status(204, URL, b"").is_ok());
+    }
+
+    #[test]
+    fn error_bodies_are_truncated_but_still_identify_the_status() {
+        let huge = vec![b'x'; 10_000];
+        let err = check_status(500, URL, &huge).unwrap_err();
+        match &err {
+            Error::Status { body, status, .. } => {
+                assert_eq!(*status, 500);
+                assert!(body.ends_with('…'), "{body}");
+                assert!(body.len() < 400, "body was {} bytes", body.len());
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn truncation_does_not_split_a_utf8_character() {
+        // A multi-byte body longer than the cap must not panic on a byte slice.
+        let body = "é".repeat(1_000).into_bytes();
+        let err = check_status(500, URL, &body).unwrap_err();
+        assert!(err.to_string().contains("500"));
+    }
+
+    #[test]
+    fn a_success_body_still_parses_after_the_status_check() {
+        let body = br#"{"items":[{"itemID":5,"lastUploadTime":1786194855389,"worldID":63,"worldName":"Gilgamesh"}]}"#;
+        check_status(200, URL, body).unwrap();
+        let parsed: MostRecentlyUpdatedItemsView = serde_json::from_slice(body).unwrap();
+        assert_eq!(parsed.items.len(), 1);
     }
 }
 
@@ -527,6 +863,38 @@ mod pure_tests {
             total: 100,
             tax: 0,
         }
+    }
+
+    /// The exact field shape Universalis sends on both REST and websocket:
+    /// `listingID` (capital D) carrying a decimal string too large for u32.
+    /// Regression: the old `Option<u32>` field under `rename_all = "camelCase"`
+    /// looked for `listingId`, so every payload deserialized to `None` and the
+    /// listing's stable identity was silently discarded.
+    #[test]
+    fn listing_view_parses_listing_id_from_the_wire_shape() {
+        let json = r#"{
+            "lastReviewTime": 1786225863,
+            "pricePerUnit": 1499999,
+            "quantity": 1,
+            "stainID": 0,
+            "creatorName": "",
+            "creatorID": null,
+            "hq": false,
+            "isCrafted": false,
+            "listingID": "21392098345024855",
+            "materia": [{"slotID": 0, "materiaID": 41}],
+            "onMannequin": false,
+            "retainerCity": 1,
+            "retainerID": "33777097243838095",
+            "retainerName": "Stinky'ra",
+            "sellerID": null,
+            "total": 1499999,
+            "tax": 74999
+        }"#;
+        let listing: ListingView = serde_json::from_str(json).unwrap();
+        assert_eq!(listing.listing_id.as_deref(), Some("21392098345024855"));
+        assert_eq!(listing.materia[0].materia_id, 41);
+        assert_eq!(listing.stain_id, Some(0));
     }
 
     #[test]

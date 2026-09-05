@@ -1,17 +1,23 @@
 #![recursion_limit = "256"]
 pub(crate) mod analysis;
+pub(crate) mod analyzer_kit;
 pub(crate) mod api;
 pub(crate) mod components;
 pub(crate) mod error;
 pub(crate) mod freshness;
 pub(crate) mod global_state;
+pub(crate) mod i18n_fallback;
 pub(crate) mod math;
+pub(crate) mod price_basis;
 pub(crate) mod query_defaults;
 pub(crate) mod routes;
 pub(crate) mod sales_cadence;
+pub mod social_card;
+pub(crate) mod social_meta;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
+use crate::components::app_link::AppLink;
 use i18n::*;
 
 use crate::components::icon::Icon;
@@ -19,19 +25,20 @@ use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
     cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    side_nav::provide_side_nav_settings, theme::provide_theme_settings,
-    toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
+    platform::provide_platform_hotkeys, side_nav::provide_side_nav_settings,
+    theme::provide_theme_settings, toasts::provide_toast_context,
+    xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
         app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
-        tooltip::*,
     },
     routes::{
         about::*,
         alerts::Alerts,
         analyzer::*,
         bot::BotGuide,
+        changelog::Changelog,
         currency_exchange::{CurrencyExchange, CurrencySelection, ExchangeItem},
         edit_retainers::*,
         fc_crafting_analyzer::*,
@@ -63,7 +70,7 @@ use leptos::prelude::*;
 #[cfg(feature = "hydrate")]
 use leptos_hotkeys::{provide_hotkeys_context, scopes};
 use leptos_meta::*;
-use leptos_router::components::{A, ParentRoute, Route, Router, Routes};
+use leptos_router::components::{ParentRoute, Route, Router, Routes};
 use leptos_router::{SsrMode, path};
 use log::info;
 
@@ -307,17 +314,13 @@ pub fn shell(options: LeptosOptions, bootstrap_script: String) -> impl IntoView 
                 <link id="leptos" rel="stylesheet" href=sheet_url />
                 <meta name="twitter:card" content="summary_large_image" />
                 <meta name="twitter:site" content="@ultros_app" />
-                <meta name="viewport" content="initial-scale=1.0,width=device-width" />
+                <meta
+                    name="viewport"
+                    content="initial-scale=1.0,width=device-width,viewport-fit=cover"
+                />
                 <meta name="theme-color" content="#0f0710" />
                 <meta name="application-name" content="Ultros" />
                 <meta property="og:type" content="website" />
-                <meta property="og:locale" content="en_US" />
-                <meta property="og:locale:alternate" content="ja_JP" />
-                <meta property="og:locale:alternate" content="fr_FR" />
-                <meta property="og:locale:alternate" content="de_DE" />
-                <meta property="og:locale:alternate" content="ko_KR" />
-                <meta property="og:locale:alternate" content="zh_CN" />
-                <meta property="og:locale:alternate" content="zh_TW" />
                 <meta property="og:site_name" content="Ultros" />
                 {error_reporting_script
                     .map(|script| {
@@ -361,7 +364,7 @@ pub fn Footer() -> impl IntoView {
     let git_hash = env!("GIT_HASH");
     let i18n = use_i18n();
     view! {
-        <footer class="bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
+        <footer class="site-footer bg-black/20 backdrop-blur-md border-t border-[color:var(--color-outline)] mt-12">
             <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
                 <div class="flex flex-wrap justify-center items-center gap-x-8 gap-y-4">
                     <a
@@ -382,18 +385,18 @@ pub fn Footer() -> impl IntoView {
                             <span>{t!(i18n, patreon)}</span>
                         </a>
                     </PatreonWrapper>
-                    <A
+                    <AppLink
                         href="/help"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsBook width="1.2em" height="1.2em" /><span>{t!(i18n, help_label)}</span>
-                    </A>
-                    <A
+                    </AppLink>
+                    <AppLink
                         href="/about"
                         attr:class="btn-ghost opacity-80 hover:opacity-100"
                     >
                         <Icon icon=i::BsInfoCircle width="1.2em" height="1.2em" /><span>{t!(i18n, about)}</span>
-                    </A>
+                    </AppLink>
                 </div>
                 <div class="divider opacity-50"></div>
                 <div class="text-center space-y-3 muted text-sm max-w-3xl mx-auto opacity-75 hover:opacity-100 transition-opacity">
@@ -435,7 +438,7 @@ pub fn App() -> impl IntoView {
     let cookies = Cookies::new();
     provide_meta_context();
     view! {
-        <I18nContextProvider>
+        <I18nContextProvider cookie_options=leptos_use::UseCookieOptions::default().path("/")>
             <AppInner cookies />
         </I18nContextProvider>
     }
@@ -444,12 +447,20 @@ pub fn App() -> impl IntoView {
 #[component]
 pub fn AppInner(cookies: Cookies) -> impl IntoView {
     let i18n = use_i18n();
+    let explicit_locale = social_meta::request_locale();
+    if let Some(locale) = explicit_locale {
+        i18n.set_locale(locale);
+    }
     let region = use_context::<GuessedRegion>();
     #[cfg(feature = "hydrate")]
     let region_for_tags = region.clone();
     Effect::new(move |_| {
-        if let Some(region) = region.as_ref() {
-            let current_locale = i18n.get_locale();
+        if explicit_locale.is_none()
+            && let Some(region) = region.as_ref()
+        {
+            // This is an initial guess only. Subscribing here would override
+            // a later explicit switch back to English in these regions.
+            let current_locale = i18n.get_locale_untracked();
             if current_locale == Locale::en {
                 let new_locale = match region.0.as_str() {
                     "Japan" => Some(Locale::ja),
@@ -459,6 +470,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                 };
                 if let Some(new_locale) = new_locale {
                     i18n.set_locale(new_locale);
+                    components::language_picker::reload_locale_data(new_locale);
                 }
             }
         }
@@ -469,6 +481,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_context(RecentItems::new());
     provide_theme_settings();
     provide_side_nav_settings();
+    provide_platform_hotkeys();
     provide_toast_context();
     provide_xiv_data_revision();
     provide_on_hand_context();
@@ -503,6 +516,8 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
             <ToastContainer />
             <Router>
                 <SentryRouteTag />
+                <social_meta::ShareLocale />
+                <social_meta::SocialMetadata />
                 <AppShell>
                     <Routes fallback=NotFound>
                         <Route path=path!("") view=HomePage />
@@ -515,6 +530,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         </ParentRoute>
                         <Route path=path!("alerts") view=Alerts />
                         <Route path=path!("groups") view=Groups />
+                        <Route path=path!("group/invite/:invite_id") view=GroupInviteAccept />
                         <ParentRoute path=path!("list") view=Lists>
                             <Route path=path!("invite/:invite_id") view=ListInviteAccept />
                             <Route path=path!(":id") view=ListView />
@@ -574,6 +590,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                         <Route path=path!("welcome") view=Welcome />
                         <Route path=path!("help") view=HelpIndex />
                         <Route path=path!("help/:topic") view=HelpArticle />
+                        <Route path=path!("changelog") view=Changelog />
                         <Route path=path!("profile") view=Profile />
                         <Route path=path!("privacy") view=PrivacyPolicy />
                         <Route path=path!("cookie-policy") view=CookiePolicy />
@@ -676,3 +693,4 @@ mod error_filter_wiring {
         assert!(FILTER_JS.contains("ULTROS_THIRD_PARTY_SCRIPT_HOST_RE"));
     }
 }
+pub mod script_escape;

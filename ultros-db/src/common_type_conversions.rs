@@ -1,7 +1,7 @@
 use crate::{
     entity::{
-        self, datacenter, discord_user, final_fantasy_character, list, list_activity, list_invite,
-        list_item, list_shared_group, list_shared_user, owned_retainers, region,
+        self, datacenter, discord_user, final_fantasy_character, group_invite, list, list_activity,
+        list_invite, list_item, list_shared_group, list_shared_user, owned_retainers, region,
         unknown_final_fantasy_character, user_group, user_group_member,
     },
     world_data::world_cache::WorldCache,
@@ -14,7 +14,7 @@ use ultros_api_types::{
     },
     retainer::Retainer,
     user::OwnedRetainer,
-    user::group::{UserGroup, UserGroupMember},
+    user::group::{GroupInvite, UserGroup, UserGroupMember},
     world::{Datacenter, Region, World, WorldData},
     world_helper::AnySelector,
 };
@@ -36,6 +36,9 @@ impl From<entity::active_listing::Model> for ActiveListing {
             quantity,
             hq,
             timestamp,
+            // identity/cosmetic columns (listing_id, materia, …) are not part
+            // of the public ActiveListing type yet
+            ..
         } = value;
         Self {
             id,
@@ -63,6 +66,23 @@ impl From<list_invite::Model> for ListInvite {
             id,
             list_id,
             permission: permission.into(),
+            max_uses,
+            uses,
+        }
+    }
+}
+
+impl From<group_invite::Model> for GroupInvite {
+    fn from(value: group_invite::Model) -> Self {
+        let group_invite::Model {
+            id,
+            group_id,
+            max_uses,
+            uses,
+        } = value;
+        Self {
+            id,
+            group_id,
             max_uses,
             uses,
         }
@@ -97,8 +117,22 @@ impl From<ListSharedGroupReturn> for ListSharedGroup {
 
 impl From<user_group::Model> for UserGroup {
     fn from(value: user_group::Model) -> Self {
-        let user_group::Model { id, name, owner_id } = value;
-        Self { id, name, owner_id }
+        let user_group::Model {
+            id,
+            name,
+            owner_id,
+            guild_id,
+            guild_icon_url,
+            source,
+        } = value;
+        Self {
+            id,
+            name,
+            owner_id,
+            guild_id,
+            guild_icon_url,
+            source: source.into(),
+        }
     }
 }
 

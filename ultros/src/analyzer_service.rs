@@ -3,7 +3,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     fmt::Display,
     io::{Read, Write},
     sync::{
@@ -24,9 +24,9 @@ use ultros_db::{
     UltrosDb,
     entity::{active_listing, sale_history},
 };
-use universalis::{ItemId, WorldId};
 
 use crate::event::{BusRecv, EventReceivers, handle_bus_recv};
+use crate::trend_candidates::{TrendCandidate, select_trend_candidates};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -277,51 +277,25 @@ impl CheapestListings {
         *entry = cheapest_listing.min(*entry);
     }
 
-    async fn remove_listing(
-        &mut self,
-        listing: &ActiveListing,
-        id: AnySelector,
-        world_cache: &WorldCache,
-        ultros_db: &UltrosDb,
-    ) {
-        // if this was the cheapest listing we need to ask the database for the new cheapest item
-        let key = listing.into();
+    /// Drops `listing` if it is at or below the stored cheapest price, returning
+    /// the key whose price now has to be re-read from the database.
+    ///
+    /// Deliberately synchronous and DB-free. This used to run the refill query
+    /// itself, which meant the caller held a write lock across a Postgres
+    /// round-trip — for the region selector, one lock covering every item in the
+    /// region, held across one query per removed listing. Splitting the decision
+    /// from the refill lets the caller batch the queries and issue them with no
+    /// lock held.
+    fn remove_if_cheapest(&mut self, listing: &ActiveListing) -> Option<ItemKey> {
+        let key = ItemKey::from(listing);
         match self.item_map.entry(key) {
-            Entry::Occupied(entry) => {
-                // only remove a listing if we see a lower price
-                if listing.price_per_unit <= entry.get().price {
-                    entry.remove();
-                    let Some(worlds) = world_cache
-                        .lookup_selector(&id)
-                        .map(|r| world_cache.get_all_worlds_in(&r))
-                        .ok()
-                        .flatten()
-                    else {
-                        // Same outcome as the DB query below failing: the entry
-                        // stays removed and the next listing event for this item
-                        // refills it.
-                        warn!(selector = ?id, "no worlds for selector, skipping cheapest-listing refill");
-                        skipped_event("remove_listing", "unknown_selector");
-                        return;
-                    };
-                    if let Ok(listings) = ultros_db
-                        .get_multiple_listings_for_worlds_hq_sensitive(
-                            worlds.iter().map(|w| WorldId(*w)),
-                            [ItemId(listing.item_id)].into_iter(),
-                            key.hq,
-                            1,
-                        )
-                        .await
-                    {
-                        for db_listing in &listings {
-                            if key == ItemKey::from(db_listing) {
-                                self.add_listing(db_listing);
-                            }
-                        }
-                    }
-                }
+            // Only drop the entry when the removed listing is the one the price
+            // came from; a dearer listing disappearing changes nothing.
+            Entry::Occupied(entry) if listing.price_per_unit <= entry.get().price => {
+                entry.remove();
+                Some(key)
             }
-            Entry::Vacant(_) => {}
+            _ => None,
         }
     }
 }
@@ -398,6 +372,12 @@ fn flip_profit_and_roi(est_sale_price: i32, cost: i32) -> Option<(i32, f32)> {
 /// `last_n_sales` stream, which is slow but correct.
 const MAX_SNAPSHOT_AGE: Duration = Duration::hours(3);
 
+/// Whether `file_name` is a finished snapshot, as opposed to the
+/// `.partial-snapshot-*` temp file `serialize_state` renames from.
+fn is_snapshot_name(file_name: &str) -> bool {
+    file_name.starts_with("snapshot-")
+}
+
 /// Age of a snapshot from its filename, which `serialize_state` writes as
 /// `snapshot-<unix seconds>.bin.gz`.
 ///
@@ -445,6 +425,12 @@ pub(crate) struct AnalyzerService {
     /// Cheapest items get stored as any anyselector. Currently exists for WorldID/RegionID, but not datacenter.
     cheapest_items: Arc<BTreeMap<AnySelector, RwLock<CheapestListings>>>,
     initiated: Arc<AtomicBool>,
+    /// Set while a bus-lag rebuild of [`Self::cheapest_items`] is running.
+    ///
+    /// Lag arrives in bursts — one overloaded moment yields many consecutive
+    /// `Lagged` results — and every one of them wants the same full rebuild. This
+    /// collapses a burst into a single pass instead of queueing one per drop.
+    cheapest_resync_in_flight: Arc<AtomicBool>,
     /// Dual-writes every observed sale into the ClickHouse `sales` table.
     /// Non-blocking, fire-and-forget — Postgres remains the source of truth so
     /// dropped rows are recoverable via the backfill binary.
@@ -468,7 +454,8 @@ impl std::fmt::Debug for AnalyzerService {
 }
 
 impl AnalyzerService {
-    /// Creates a task that will feed the analyzer and returns Self so that data can be read externally
+    /// Starts the analyzer and returns its shutdown completion handle. Await the
+    /// handle after cancellation to finish ingestion and persist the final snapshot.
     pub async fn start_analyzer(
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
@@ -476,7 +463,7 @@ impl AnalyzerService {
         ch_writer: ultros_clickhouse::writer::Writer,
         ch_client: ultros_clickhouse::ClickHouseClient,
         token: CancellationToken,
-    ) -> Self {
+    ) -> (Self, tokio::task::JoinHandle<()>) {
         tokio::fs::create_dir_all("analyzer-data")
             .await
             .expect("Unable to create directory for analyzer");
@@ -507,17 +494,31 @@ impl AnalyzerService {
             recent_sale_history,
             cheapest_items,
             initiated: Arc::default(),
+            cheapest_resync_in_flight: Arc::default(),
             ch_writer,
             ch_client,
         };
 
         let task_self = temp.clone();
-        let serialize_token = token.clone();
-        tokio::spawn(async move {
+        let worker_token = token.clone();
+        let worker = tokio::spawn(async move {
+            task_self
+                .run_worker(ultros_db, event_receivers, world_cache, worker_token)
+                .await;
+        });
+
+        let task_self = temp.clone();
+        let serialize_token = token;
+        let shutdown = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
             loop {
                 tokio::select! {
                     _ = serialize_token.cancelled() => {
+                        // The worker joins its history consumer before returning,
+                        // so the final snapshot includes any in-flight sale batch.
+                        if let Err(e) = worker.await {
+                            error!("Analyzer worker failed during shutdown: {e:?}");
+                        }
                         if let Err(e) = task_self.serialize_state(true).await {
                             error!("Error serializing state {e:?}");
                         }
@@ -532,13 +533,7 @@ impl AnalyzerService {
             }
         });
 
-        let task_self = temp.clone();
-        tokio::spawn(async move {
-            task_self
-                .run_worker(ultros_db, event_receivers, world_cache, token)
-                .await;
-        });
-        temp
+        (temp, shutdown)
     }
 
     async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
@@ -555,7 +550,24 @@ impl AnalyzerService {
 
         let timestamp = Utc::now().timestamp();
         let filename = format!("analyzer-data/snapshot-{}.bin.gz", timestamp);
-        fs::write(&filename, &compressed_bytes).await?;
+        // Write somewhere the restore path cannot see, then rename into place.
+        //
+        // `fs::write` straight to `filename` is not atomic, and the shutdown
+        // snapshot is written from a SIGTERM handler racing Docker's stop
+        // grace period: kill the process partway through and a half-written
+        // `snapshot-<ts>.bin.gz` is left on disk with a *newer* name than
+        // every good snapshot. The next boot picks it first and dies on
+        // `Error decompressing file ...: unexpected end of file` (GlitchTip
+        // #7217). A rename inside one directory is atomic, so a reader either
+        // sees the whole file or does not see it at all.
+        //
+        // The temp name deliberately does not start with `snapshot-`:
+        // `snapshot_age` parses everything up to the first `.`, so a
+        // `snapshot-<ts>.bin.gz.part` would still look like a legitimate,
+        // freshest-on-disk snapshot to the restore scan.
+        let temp_filename = format!("analyzer-data/.partial-snapshot-{}.bin.gz", timestamp);
+        fs::write(&temp_filename, &compressed_bytes).await?;
+        fs::rename(&temp_filename, &filename).await?;
         info!("Wrote snapshot to {}", filename);
         if !is_shutdown {
             let mut dir = fs::read_dir("analyzer-data").await?;
@@ -563,6 +575,10 @@ impl AnalyzerService {
             while let Ok(Some(entry)) = dir.next_entry().await {
                 entries.push(entry);
             }
+            // Only rotate real snapshots. Counting a leftover `.partial-*`
+            // (from a kill between the write and the rename) toward the
+            // keep-4 budget would evict a good snapshot in its place.
+            entries.retain(|e| is_snapshot_name(&e.file_name().to_string_lossy()));
             if entries.len() > 4 {
                 entries.sort_by_key(|x| x.file_name());
                 for entry in entries.iter().take(entries.len() - 4) {
@@ -602,7 +618,14 @@ impl AnalyzerService {
         };
         let mut entries = vec![];
         while let Ok(Some(entry)) = dir.next_entry().await {
-            entries.push(entry);
+            // A `.partial-snapshot-*` left over from a kill between the write
+            // and the rename is by definition incomplete. Skipping it here is
+            // belt-and-braces — `snapshot_age` would reject the name anyway —
+            // but it keeps a torn file from being logged as a mystery every
+            // boot.
+            if is_snapshot_name(&entry.file_name().to_string_lossy()) {
+                entries.push(entry);
+            }
         }
         entries.sort_by_key(|x| x.file_name());
         for entry in entries.iter().rev() {
@@ -667,6 +690,8 @@ impl AnalyzerService {
                 let mut s = Vec::new();
                 if let Err(e) = decoder.read_to_end(&mut s) {
                     error!("Error decompressing file {path:?}: {e}");
+                    metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "corrupt")
+                        .increment(1);
                     continue;
                 }
                 s
@@ -678,9 +703,22 @@ impl AnalyzerService {
                 Ok(s) => s,
                 Err(e) => {
                     error!("Error deserializing state {e}");
+                    metrics::counter!("ultros_analyzer_snapshot_rejected_total", "reason" => "corrupt")
+                        .increment(1);
                     continue;
                 }
             };
+            // Restoring the cheapest map no longer decides what the analyzer
+            // serves: `run_worker` now rebuilds it from Postgres on every boot and
+            // *replaces* each selector, so whatever is read back here is
+            // overwritten moments later. It is kept as a fallback for when that
+            // rebuild query fails — stale prices beat an empty map — and so the
+            // snapshot round-trip stays self-contained.
+            //
+            // What changed is that the restore is no longer the *only* source.
+            // The DB reload used to run only when no snapshot restored, so a
+            // phantom minimum was written into the snapshot every 15 minutes and
+            // read back on every restart, outliving the lag that created it.
             for (key, value) in state.cheapest_items {
                 if let Some(lock) = self.cheapest_items.get(&key) {
                     let mut write = lock.write().await;
@@ -704,6 +742,97 @@ impl AnalyzerService {
         false
     }
 
+    /// Rebuilds [`Self::cheapest_items`] from Postgres, replacing whatever is
+    /// there.
+    ///
+    /// **Replacing rather than merging is the whole point.** `add_listing` keeps
+    /// the `min` of the old and new price, so merging fresh data into a map
+    /// holding a phantom minimum leaves the phantom in place — the stored price
+    /// can only ever move down. Overwriting each selector wholesale is the only
+    /// thing that clears one.
+    ///
+    /// Phantoms arise because a dropped `listings/remove` event is unrecoverable:
+    /// `remove_listing` is the sole path that can raise a stored price, and it is
+    /// gated on the removed listing being at-or-below the stored minimum. Once a
+    /// too-low price is in the map, every later remove fails that gate. Bus lag
+    /// dropped ~99k listing events in one week, so this is routine, not exotic.
+    ///
+    /// The map is built into plain (unlocked) maps first, so no lock is held
+    /// across the DB stream and readers never observe a half-filled map.
+    async fn rebuild_cheapest_from_db(
+        &self,
+        ultros_db: &UltrosDb,
+        world_cache: &WorldCache,
+    ) -> Result<(), anyhow::Error> {
+        // Pre-seed every selector so one that has lost all of its listings is
+        // reset to empty rather than keeping stale entries.
+        let mut fresh: BTreeMap<AnySelector, CheapestListings> = self
+            .cheapest_items
+            .keys()
+            .map(|key| (*key, CheapestListings::default()))
+            .collect();
+
+        let mut listings = ultros_db.cheapest_listings().await?;
+        while let Some(Ok(value)) = listings.next().await {
+            // The database can hold listings for worlds this process'
+            // `WorldCache` never saw — skip them rather than fail the rebuild.
+            let Ok(world) = world_cache.lookup_selector(&AnySelector::World(value.world_id)) else {
+                skipped_event("db_reload_listing", "unknown_world");
+                continue;
+            };
+            let Some(region) = world_cache.get_region(&world) else {
+                skipped_event("db_reload_listing", "unknown_region");
+                continue;
+            };
+            if let Some(entry) = fresh.get_mut(&AnySelector::Region(region.id)) {
+                entry.add_listing(&value);
+            }
+            for dc in world_cache.get_datacenters(&world).unwrap_or_default() {
+                if let Some(entry) = fresh.get_mut(&AnySelector::Datacenter(dc.id)) {
+                    entry.add_listing(&value);
+                }
+            }
+            if let Some(entry) = fresh.get_mut(&AnySelector::World(value.world_id)) {
+                entry.add_listing(&value);
+            }
+        }
+
+        for (selector, listings) in fresh {
+            if let Some(lock) = self.cheapest_items.get(&selector) {
+                *lock.write().await = listings;
+            }
+        }
+        Ok(())
+    }
+
+    /// Kicks off a background [`Self::rebuild_cheapest_from_db`] after the bus
+    /// dropped events, unless one is already running.
+    ///
+    /// Recovery has to be asynchronous: the caller is the listings consumer, and
+    /// blocking it on a full rebuild would starve the very bus that just
+    /// overflowed.
+    fn schedule_cheapest_resync(&self, ultros_db: &UltrosDb, world_cache: &Arc<WorldCache>) {
+        if self.cheapest_resync_in_flight.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let this = self.clone();
+        let ultros_db = ultros_db.clone();
+        let world_cache = world_cache.clone();
+        tokio::spawn(async move {
+            warn!("listings bus lagged; rebuilding cheapest-listing map from the database");
+            metrics::counter!("ultros_analyzer_cheapest_resync_total", "trigger" => "bus_lag")
+                .increment(1);
+            if let Err(e) = this
+                .rebuild_cheapest_from_db(&ultros_db, &world_cache)
+                .await
+            {
+                error!(error = ?e, "cheapest-listing resync failed");
+            }
+            this.cheapest_resync_in_flight
+                .store(false, Ordering::Release);
+        });
+    }
+
     async fn run_worker(
         &self,
         ultros_db: UltrosDb,
@@ -712,55 +841,9 @@ impl AnalyzerService {
         token: CancellationToken,
     ) {
         if !self.try_restore_from_snapshot().await {
-            // on startup we should try to read through the database to get the spiciest of item listings
             info!("worker starting");
-            let (listings, sale_data) = futures::future::join(
-                ultros_db.cheapest_listings(),
-                ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32),
-            )
-            .await;
-            info!("starting item listings");
-            match listings {
-                Ok(mut listings) => {
-                    let writer = &self.cheapest_items;
-                    while let Some(Ok(value)) = listings.next().await {
-                        // The database can hold listings for worlds this process'
-                        // `WorldCache` never saw. Panicking here aborts the whole
-                        // worker before `initiated` is ever set, so the analyzer
-                        // both serves nothing and ingests nothing — forever.
-                        let Ok(world) =
-                            world_cache.lookup_selector(&AnySelector::World(value.world_id))
-                        else {
-                            skipped_event("db_reload_listing", "unknown_world");
-                            continue;
-                        };
-                        let Some(region) = world_cache.get_region(&world) else {
-                            skipped_event("db_reload_listing", "unknown_region");
-                            continue;
-                        };
-                        let datacenters = world_cache.get_datacenters(&world).unwrap_or_default();
-                        let (Some(region_listings), Some(world_listings)) = (
-                            writer.get(&AnySelector::Region(region.id)),
-                            writer.get(&AnySelector::World(value.world_id)),
-                        ) else {
-                            skipped_event("db_reload_listing", "unknown_selector");
-                            continue;
-                        };
-                        region_listings.write().await.add_listing(&value);
-                        for dc in datacenters {
-                            if let Some(dc_listings) = writer.get(&AnySelector::Datacenter(dc.id)) {
-                                dc_listings.write().await.add_listing(&value);
-                            }
-                        }
-                        world_listings.write().await.add_listing(&value);
-                    }
-                }
-                Err(e) => {
-                    error!("Streaming item listings failed {e:?}");
-                }
-            }
             info!("starting sale data");
-            match sale_data {
+            match ultros_db.last_n_sales(SALE_HISTORY_SIZE as i32).await {
                 Ok(mut history_stream) => {
                     while let Some(Ok(value)) = history_stream.next().await {
                         let Some(history) = self.recent_sale_history.get(&value.world_id) else {
@@ -771,15 +854,31 @@ impl AnalyzerService {
                     }
                 }
                 Err(e) => {
-                    error!("Streaming item listings failed {e:?}");
+                    error!("Streaming sale history failed {e:?}");
                 }
             }
+        }
+        // The cheapest map is rebuilt from Postgres on every boot, snapshot or
+        // not. The snapshot exists for `recent_sale_history`, which can only be
+        // reassembled by replaying sales; the cheapest map is one aggregate query.
+        // Restoring it instead used to make phantom minimums immortal — they were
+        // serialized every 15 minutes and read back on each deploy, so a price
+        // stranded by a lag burst days earlier survived indefinitely.
+        info!("rebuilding cheapest listings from the database");
+        metrics::counter!("ultros_analyzer_cheapest_resync_total", "trigger" => "boot")
+            .increment(1);
+        if let Err(e) = self
+            .rebuild_cheapest_from_db(&ultros_db, &world_cache)
+            .await
+        {
+            error!(error = ?e, "Streaming item listings failed");
         }
         self.initiated.store(true, Ordering::Relaxed);
         info!("worker primed, now using live data");
         let second_worker_instance = self.clone();
-        let history_token = token.clone();
-        tokio::spawn(async move {
+        let history_token = token.child_token();
+        let history_shutdown = history_token.clone();
+        let history_worker = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = history_token.cancelled() => {
@@ -803,8 +902,14 @@ impl AnalyzerService {
                                 }
                                 crate::event::EventType::Update(_) => {}
                             },
-                            // Still live, positioned at the oldest survivor.
-                            BusRecv::Lagged => {}
+                            // The surviving events continue, but neither RAM
+                            // history nor ClickHouse can reconstruct the gap
+                            // from this bus. Make the repair requirement explicit.
+                            BusRecv::Lagged => {
+                                metrics::counter!("ultros_analyzer_history_recovery_required_total")
+                                    .increment(1);
+                                warn!("sale history bus lagged; Postgres reconciliation required for analytics");
+                            }
                             // recv() on a closed bus returns instantly forever;
                             // looping here would hot-spin and emit one warn per
                             // iteration. Only happens at shutdown, when the
@@ -845,10 +950,19 @@ impl AnalyzerService {
                             crate::event::EventType::Add(add) => {
                                 self.add_listings(&add.listings, &world_cache).await;
                             }
-                            crate::event::EventType::Update(_) => todo!(),
+                            // Nothing publishes `Update` on the listings bus; the
+                            // sales arm treats it as a no-op and this used to be
+                            // `todo!()`, i.e. a panic that would take the whole
+                            // analyzer down if anything ever started to.
+                            crate::event::EventType::Update(_) => {}
                         },
-                        // Still live, positioned at the oldest survivor.
-                        BusRecv::Lagged => {}
+                        // Still live, positioned at the oldest survivor — but the
+                        // skipped events are gone for good. A dropped remove
+                        // strands a phantom minimum that no later event can clear,
+                        // so recover by rebuilding the map from Postgres.
+                        BusRecv::Lagged => {
+                            self.schedule_cheapest_resync(&ultros_db, &world_cache)
+                        }
                         // recv() on a closed bus returns instantly forever;
                         // looping here would hot-spin and emit one warn per
                         // iteration. Only happens at shutdown, when the
@@ -857,6 +971,10 @@ impl AnalyzerService {
                     }
                 }
             }
+        }
+        history_shutdown.cancel();
+        if let Err(error) = history_worker.await {
+            error!(?error, "sale history worker failed during shutdown");
         }
     }
 
@@ -1101,21 +1219,47 @@ impl AnalyzerService {
         if !self.initiated.load(Ordering::Relaxed) {
             return None;
         }
+        // Acquired in the same order as `get_trends` (sale history, then
+        // cheapest) so the two paths cannot deadlock against each other.
+        let sale_history = self.recent_sale_history.get(&world_id)?.read().await;
         let cheapest = self
             .cheapest_items
             .get(&AnySelector::World(world_id))?
             .read()
             .await;
 
-        // Build the request tuple list from every item the cheapest map
-        // knows about on this world. Cap to a sane upper bound so a fresh
-        // world with thousands of listings doesn't blow up the SQL.
+        // Build the request tuple list from the items the cheapest map
+        // knows about on this world, capped to a sane upper bound so a
+        // world with tens of thousands of listings doesn't blow up the
+        // SQL. Which items make the cut is a real decision rather than a
+        // truncation: the map is keyed on item id, so taking the first N
+        // would ask only about the N lowest ids in the game.
         const MAX_TUPLES: usize = 1500;
-        let mut requests: Vec<(i32, u8, i32)> = cheapest
-            .item_map
-            .iter()
-            .take(MAX_TUPLES)
-            .map(|(key, _)| (key.item_id, key.hq as u8, world_id))
+        let candidates = select_trend_candidates(
+            cheapest
+                .item_map
+                .keys()
+                .map(|key| {
+                    let buffered = sale_history.item_map.get(key);
+                    TrendCandidate {
+                        item_id: key.item_id,
+                        hq: key.hq,
+                        // `SaleHistory::add_sale` keeps the buffer sorted
+                        // newest-first, so the head is the latest sale.
+                        last_sale: buffered.and_then(|s| s.first()).map(|s| s.sale_date),
+                        buffered_sales: buffered.map_or(0, |s| s.len() as u8),
+                    }
+                })
+                .collect(),
+            MAX_TUPLES,
+        );
+        // Dropped before the ClickHouse round-trips below — live sale
+        // ingestion needs this lock to write, and a deep scan is slow.
+        drop(sale_history);
+
+        let mut requests: Vec<(i32, u8, i32)> = candidates
+            .into_iter()
+            .map(|c| (c.item_id, c.hq as u8, world_id))
             .collect();
         requests.sort_unstable();
         requests.dedup();
@@ -1554,6 +1698,12 @@ impl AnalyzerService {
     }
 
     /// remove listings in bulk. can handle multiple item types, but must have only one region.
+    ///
+    /// Every listing touches three levels of the map — its world, each datacenter
+    /// containing that world, and the region — so the work is grouped by selector
+    /// first and each selector is then handled in one pass. Previously each
+    /// (listing, level) pair was handled individually, and each one could issue
+    /// its own refill query while holding that level's write lock.
     async fn remove_listings(
         &self,
         region_id: i32,
@@ -1561,73 +1711,120 @@ impl AnalyzerService {
         world_cache: &WorldCache,
         ultros_db: &UltrosDb,
     ) {
-        // A missing region only costs us the region-level removal — keep going so
-        // the datacenter and world maps still drop the listing. Leaving a sold
-        // listing in place is what makes prices read as stale.
-        if let Some(entry) = self.cheapest_items.get(&AnySelector::Region(region_id)) {
-            let mut entry = entry.write().await;
-            for (listing, _) in listings.listings.iter() {
-                entry
-                    .remove_listing(
-                        listing,
-                        AnySelector::Region(region_id),
-                        world_cache,
-                        ultros_db,
-                    )
-                    .await;
-            }
-        } else {
-            warn!(
-                region_id,
-                "no cheapest-listing entry for region, skipping region-level removal"
-            );
-            skipped_event("remove_listings", "unknown_region");
-        }
+        let mut by_selector: BTreeMap<AnySelector, Vec<&ActiveListing>> = BTreeMap::new();
         for (listing, _) in listings.listings.iter() {
-            let world_result = world_cache.lookup_selector(&AnySelector::World(listing.world_id));
-            if let Ok(w) = world_result {
-                #[allow(clippy::collapsible_if)]
-                if let Some(dcs) = world_cache.get_datacenters(&w) {
-                    for dc in dcs {
-                        if let Some(entry) =
-                            self.cheapest_items.get(&AnySelector::Datacenter(dc.id))
-                        {
-                            entry
-                                .write()
-                                .await
-                                .remove_listing(
-                                    listing,
-                                    AnySelector::Datacenter(dc.id),
-                                    world_cache,
-                                    ultros_db,
-                                )
-                                .await;
-                        }
+            // A missing region only costs us the region-level removal — keep going
+            // so the datacenter and world maps still drop the listing. Leaving a
+            // sold listing in place is what makes prices read as stale.
+            by_selector
+                .entry(AnySelector::Region(region_id))
+                .or_default()
+                .push(listing);
+            by_selector
+                .entry(AnySelector::World(listing.world_id))
+                .or_default()
+                .push(listing);
+            match world_cache.lookup_selector(&AnySelector::World(listing.world_id)) {
+                Ok(world) => {
+                    for dc in world_cache.get_datacenters(&world).unwrap_or_default() {
+                        by_selector
+                            .entry(AnySelector::Datacenter(dc.id))
+                            .or_default()
+                            .push(listing);
                     }
                 }
+                Err(_) => {
+                    warn!(
+                        world_id = listing.world_id,
+                        item_id = listing.item_id,
+                        "unknown world, skipping datacenter-level removal"
+                    );
+                    skipped_event("remove_listings", "unknown_world");
+                }
             }
-            let Some(world) = self
-                .cheapest_items
-                .get(&AnySelector::World(listing.world_id))
-            else {
-                warn!(
-                    world_id = listing.world_id,
-                    item_id = listing.item_id,
-                    "no cheapest-listing entry for world, skipping world-level removal"
-                );
-                skipped_event("remove_listings", "unknown_world");
-                continue;
-            };
-            world
-                .write()
-                .await
-                .remove_listing(
-                    listing,
-                    AnySelector::World(listing.world_id),
-                    world_cache,
-                    ultros_db,
-                )
+        }
+
+        for (selector, listings) in by_selector {
+            self.remove_from_selector(selector, &listings, world_cache, ultros_db)
                 .await;
+        }
+    }
+
+    /// Drops the given listings from one selector's map and refills any price
+    /// they were the source of.
+    ///
+    /// Structured in three phases so that **no lock is ever held across a
+    /// database round-trip**:
+    ///
+    /// 1. under the write lock, purely in memory, work out which keys went stale;
+    /// 2. with the lock released, fetch their real cheapest prices in one query;
+    /// 3. re-acquire and apply.
+    ///
+    /// The old shape held the region's write lock — one lock covering every item
+    /// in the region — across a sequence of queries, one per removed listing, and
+    /// each of those was itself a (world × item) fan-out. An 18-listing removal on
+    /// an 8-world region meant ~144 sequential round-trips under that lock, which
+    /// is what let the consumer fall behind the listings bus.
+    async fn remove_from_selector(
+        &self,
+        selector: AnySelector,
+        listings: &[&ActiveListing],
+        world_cache: &WorldCache,
+        ultros_db: &UltrosDb,
+    ) {
+        let Some(lock) = self.cheapest_items.get(&selector) else {
+            warn!(
+                ?selector,
+                "no cheapest-listing entry for selector, skipping removal"
+            );
+            skipped_event("remove_listings", "unknown_selector");
+            return;
+        };
+
+        // Phase 1: in-memory only. The lock is held for microseconds.
+        let stale: BTreeSet<i32> = {
+            let mut map = lock.write().await;
+            listings
+                .iter()
+                .filter_map(|listing| map.remove_if_cheapest(listing))
+                .map(|key| key.item_id)
+                .collect()
+        };
+        if stale.is_empty() {
+            return;
+        }
+
+        // Phase 2: the refill, with no lock held.
+        let Some(worlds) = world_cache
+            .lookup_selector(&selector)
+            .map(|r| world_cache.get_all_worlds_in(&r))
+            .ok()
+            .flatten()
+        else {
+            // Same outcome as the query failing: the entries stay removed and the
+            // next listing event for those items refills them.
+            warn!(
+                ?selector,
+                "no worlds for selector, skipping cheapest-listing refill"
+            );
+            skipped_event("remove_listing", "unknown_selector");
+            return;
+        };
+        let items: Vec<i32> = stale.into_iter().collect();
+        let refill = match ultros_db.cheapest_listings_for_items(&worlds, &items).await {
+            Ok(refill) => refill,
+            Err(e) => {
+                error!(error = ?e, ?selector, "cheapest-listing refill query failed");
+                skipped_event("remove_listing", "refill_query_failed");
+                return;
+            }
+        };
+
+        // Phase 3: apply. `add_listing` keys on (item, hq), so both qualities from
+        // the one query land on the right entries.
+        let mut map = lock.write().await;
+        for summary in &refill {
+            map.add_listing(summary);
         }
     }
 
@@ -1911,6 +2108,119 @@ mod test {
     use super::{
         SaleHistory, SaleSummary, SoldAmount, SoldWithin, estimate_sale_price, flip_profit_and_roi,
     };
+    use ultros_api_types::ActiveListing;
+    use ultros_db::listings::ListingSummary;
+
+    fn active_listing(item_id: i32, price: i32, hq: bool) -> ActiveListing {
+        ActiveListing {
+            id: 1,
+            world_id: 54,
+            item_id,
+            retainer_id: 1,
+            price_per_unit: price,
+            quantity: 1,
+            hq,
+            timestamp: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+        }
+    }
+
+    /// `remove_if_cheapest` decides, without touching the database, whether a
+    /// removed listing invalidates the stored price. The caller batches the refill
+    /// for whatever it reports, so this gate has to stay exact: reporting too
+    /// little strands a sold-out price, reporting too much costs a query.
+    #[test]
+    fn remove_if_cheapest_only_reports_keys_whose_price_actually_went_stale() {
+        let mut map = CheapestListings::default();
+        map.add_listing(&active_listing(1, 100, false));
+        map.add_listing(&active_listing(2, 500, false));
+        // Same item, different quality — a distinct key.
+        map.add_listing(&active_listing(1, 900, true));
+
+        // A dearer listing disappearing leaves the stored price alone.
+        assert_eq!(map.remove_if_cheapest(&active_listing(1, 250, false)), None);
+        assert_eq!(
+            map.item_map
+                .get(&ItemKey {
+                    item_id: 1,
+                    hq: false
+                })
+                .unwrap()
+                .price,
+            100
+        );
+
+        // Removing the listing the price came from invalidates that key only.
+        assert_eq!(
+            map.remove_if_cheapest(&active_listing(1, 100, false)),
+            Some(ItemKey {
+                item_id: 1,
+                hq: false
+            })
+        );
+        assert!(!map.item_map.contains_key(&ItemKey {
+            item_id: 1,
+            hq: false
+        }));
+        // The HQ entry for the same item is untouched.
+        assert_eq!(
+            map.item_map
+                .get(&ItemKey {
+                    item_id: 1,
+                    hq: true
+                })
+                .unwrap()
+                .price,
+            900
+        );
+
+        // An item we never stored reports nothing rather than a spurious refill.
+        assert_eq!(map.remove_if_cheapest(&active_listing(99, 1, false)), None);
+    }
+
+    /// `add_listing` stores the `min` of the existing and incoming price, so a
+    /// stranded low price survives any amount of fresh data merged on top of it.
+    ///
+    /// That asymmetry is why `rebuild_cheapest_from_db` overwrites each selector
+    /// wholesale instead of merging, and why the cheapest map is no longer
+    /// restored from the snapshot: a phantom written into the snapshot would be
+    /// read back on every restart and no later event could ever raise it, because
+    /// `remove_listing` — the only path that can — is itself gated on the removed
+    /// listing being at-or-below the stored price.
+    #[test]
+    fn merging_fresh_data_cannot_clear_a_phantom_minimum_but_replacing_does() {
+        let summary = |price| ListingSummary {
+            item_id: 52267,
+            hq: false,
+            price_per_unit: price,
+            world_id: 54,
+        };
+        let key = ItemKey {
+            item_id: 52267,
+            hq: false,
+        };
+
+        // A price left behind by a dropped `listings/remove`: the listing is long
+        // gone from the board, but the map still believes in it.
+        let mut stranded = CheapestListings::default();
+        stranded.add_listing(&summary(6_769));
+
+        // Merging in what the database actually holds changes nothing.
+        stranded.add_listing(&summary(379_996));
+        assert_eq!(
+            stranded.item_map.get(&key).unwrap().price,
+            6_769,
+            "merging cannot raise a stored price, so the phantom survives"
+        );
+
+        // Rebuilding the selector from scratch is what clears it.
+        let mut rebuilt = CheapestListings::default();
+        rebuilt.add_listing(&summary(379_996));
+        assert_eq!(
+            rebuilt.item_map.get(&key).unwrap().price,
+            379_996,
+            "a wholesale replace reflects the real cheapest listing"
+        );
+    }
 
     /// The formula here must stay identical to the Flip Finder's
     /// `estimated_sale_price` in `ultros-app/src/routes/analyzer.rs`, which is
@@ -2441,6 +2751,7 @@ mod tests {
             recent_sale_history: Arc::new(recent_sale_history),
             cheapest_items: Arc::new(cheapest_items),
             initiated: Arc::new(AtomicBool::new(false)),
+            cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -2487,6 +2798,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: new_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
+            cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -2518,6 +2830,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(true)),
+            cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -2534,6 +2847,7 @@ mod tests {
             recent_sale_history: new_recent_sale_history.clone(),
             cheapest_items: restore_dc_cheapest_items.clone(),
             initiated: Arc::new(AtomicBool::new(false)),
+            cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -2585,6 +2899,7 @@ mod tests {
                 .collect(),
             ),
             initiated: Arc::new(AtomicBool::new(false)),
+            cheapest_resync_in_flight: Arc::default(),
             ch_writer: ultros_clickhouse::writer::Writer::disabled(),
             ch_client: ultros_clickhouse::ClickHouseClient::from_env(),
         };
@@ -2608,6 +2923,79 @@ mod tests {
                 .await,
             "a future-dated snapshot (clock skew / copied file) must be rejected, \
              not treated as fresh because its negative age passes the max-age check"
+        );
+
+        // Part 4: Torn writes (GlitchTip #7217).
+        //
+        // `serialize_state` must leave nothing behind that the restore scan
+        // could mistake for a snapshot, and a truncated file that predates
+        // this fix must be stepped over rather than taken as the newest.
+        let leftovers: Vec<String> = {
+            let mut dir = tokio::fs::read_dir("analyzer-data").await.unwrap();
+            let mut names = vec![];
+            while let Ok(Some(e)) = dir.next_entry().await {
+                names.push(e.file_name().to_string_lossy().into_owned());
+            }
+            names
+        };
+        assert!(
+            leftovers.iter().all(|n| is_snapshot_name(n)),
+            "serialize_state left a temp file behind: {leftovers:?}"
+        );
+
+        // Plant a torn gzip under a name *newer* than every good snapshot —
+        // exactly what a SIGKILL partway through the shutdown write produced.
+        let torn = format!(
+            "analyzer-data/snapshot-{}.bin.gz",
+            Utc::now().timestamp() + 1
+        );
+        tokio::fs::write(&torn, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
+            .await
+            .unwrap();
+        assert!(
+            restore_target
+                .try_restore_from_snapshot_at(Utc::now() + chrono::Duration::seconds(2))
+                .await,
+            "a truncated newest snapshot must be skipped, not abort the restore"
+        );
+        tokio::fs::remove_file(&torn).await.unwrap();
+
+        // A leftover partial must never be picked up as the freshest snapshot,
+        // which is why the temp name does not start with `snapshot-`: the
+        // extension-stripping in `snapshot_age` would happily parse it.
+        let partial = format!(
+            "analyzer-data/.partial-snapshot-{}.bin.gz",
+            Utc::now().timestamp() + 1
+        );
+        tokio::fs::write(&partial, &[0x1f, 0x8b, 0x08, 0x00, 0x00])
+            .await
+            .unwrap();
+        assert!(
+            restore_target
+                .try_restore_from_snapshot_at(Utc::now() + chrono::Duration::seconds(2))
+                .await,
+            "a leftover partial write must be invisible to the restore scan"
+        );
+        tokio::fs::remove_file(&partial).await.unwrap();
+    }
+
+    #[test]
+    fn partial_writes_are_not_mistaken_for_snapshots() {
+        assert!(is_snapshot_name("snapshot-1787249095.bin.gz"));
+        assert!(!is_snapshot_name(".partial-snapshot-1787249095.bin.gz"));
+
+        // The reason the temp file is not named `snapshot-<ts>.bin.gz.part`:
+        // `snapshot_age` stops at the first `.`, so such a name would parse as
+        // a perfectly fresh snapshot and sort newest.
+        let now = chrono::DateTime::from_timestamp(1_787_249_100, 0).unwrap();
+        assert_eq!(
+            snapshot_age("snapshot-1787249095.bin.gz.part", now),
+            Some(chrono::Duration::seconds(5)),
+            "the age parser cannot be relied on to reject a partial name"
+        );
+        assert_eq!(
+            snapshot_age(".partial-snapshot-1787249095.bin.gz", now),
+            None
         );
     }
 

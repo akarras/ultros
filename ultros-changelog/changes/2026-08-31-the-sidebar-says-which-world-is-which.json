@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "The sidebar says which world is which",
+  "blurb": "The home-world and price-zone rows in the sidebar looked identical whenever the price zone was set to a world. Each row now carries a small label saying what it is, plus its own icon - a house for your home world, a price tag for where prices are read from. The Discord and GitHub links moved back to the very bottom, below the controls.",
+  "importance": "medium"
+}

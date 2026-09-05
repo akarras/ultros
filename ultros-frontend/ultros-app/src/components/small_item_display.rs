@@ -1,10 +1,11 @@
+use crate::components::app_link::AppLink;
 use leptos::{either::Either, prelude::*};
 use xiv_gen::Item;
 
 use crate::global_state::home_world::get_price_zone;
 
 use super::item_icon::*;
-use leptos_router::components::A;
+use super::item_tooltip::ItemTooltip;
 
 #[component]
 fn ItemDetails(item: &'static Item) -> impl IntoView {
@@ -24,14 +25,17 @@ fn ItemDetails(item: &'static Item) -> impl IntoView {
 pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
     let (price_zone, _) = get_price_zone();
     view! {
-        <div class="flex flex-row items-center gap-2 min-w-0">
+        <ItemTooltip
+            item_id=item.key_id.0
+            class="flex flex-row items-center gap-2 min-w-0"
+        >
             // If the item isn't marketable then do not display a market link
             {if item.item_search_category == 0 {
                 Either::Left(view! { <ItemDetails item /> })
             } else {
                 Either::Right(
                     view! {
-                        <A
+                        <AppLink
                             attr:class="flex flex-row items-center gap-2 min-w-0"
                             exact=true
                             href=move || {
@@ -46,12 +50,12 @@ pub fn SmallItemDisplay(item: &'static Item) -> impl IntoView {
                             }
                         >
                             <ItemDetails item />
-                        </A>
+                        </AppLink>
                     },
                 )
             }}
 
-        </div>
+        </ItemTooltip>
     }
     .into_any()
 }

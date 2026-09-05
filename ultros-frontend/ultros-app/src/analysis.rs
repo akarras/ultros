@@ -300,6 +300,20 @@ pub const MIN_VELOCITY_SPAN_DAYS: f32 = 1.0 / 24.0;
 /// for tiny buy prices (a 2-gil buy against a laundered sale price).
 pub const ROI_DISPLAY_CEILING: i32 = 100_000;
 
+/// Display ceiling for the Price column's "vs median" tell, in percent.
+/// Same rationale as [`ROI_DISPLAY_CEILING`]: past this the exact figure
+/// carries no decision value — "+1,000%" and "+4,000%" both say "this price
+/// is nothing like what the item trades for" — and the digit string crowds a
+/// 10px sub-line (prod rendered "+399900%" before the tell was fixed to
+/// compare like qualities).
+///
+/// One-sided by construction: `delta_pct` divides a positive price by a
+/// positive median, so the tell can never fall below -100% and needs no
+/// floor. It sits below `TROLL_MULTIPLE`'s +4,900%, so the clamp is what the
+/// reader sees for prices between roughly 11x and 50x the median — past that
+/// the troll tell takes over from the percentage entirely.
+pub const VS_MEDIAN_DISPLAY_CEILING_PCT: f32 = 999.0;
+
 /// Recent sales per day, derived from the bounded `RecentSales` buffer.
 ///
 /// `avg_sale_duration` is `(now - oldest_sale) / num_sold`, so the total
@@ -314,6 +328,25 @@ pub fn velocity_per_day(summary: &SaleSummary) -> Option<f32> {
     let avg = summary.avg_sale_duration?;
     let span_days = (avg.num_seconds() as f32 * summary.num_sold as f32) / 86_400.0;
     Some(summary.num_sold as f32 / span_days.max(MIN_VELOCITY_SPAN_DAYS))
+}
+
+/// Expected gil per day from repeating one trade: per-trade profit times a
+/// sales-per-day rate. Truncates (a float→int cast, which saturates rather
+/// than wrapping). The rate's provenance is the caller's: the flip finder
+/// passes [`velocity_per_day`] off its six-sale buffer, the recipe analyzer
+/// passes the 7-day rollup's `num_sold / 7`.
+pub fn profit_per_day_from_rate(profit: i32, rate: f32) -> i32 {
+    (profit as f64 * rate as f64) as i32
+}
+
+/// Expected gil per day from flipping one item repeatedly: per-flip profit
+/// times [`velocity_per_day`]. Items that sell faster than daily earn more
+/// than one flip's profit per day; slow movers earn a fraction of it.
+/// Returns 0 when there is no sale history to rate the item with.
+pub fn profit_per_day(profit: i32, summary: &SaleSummary) -> i32 {
+    velocity_per_day(summary)
+        .map(|v| profit_per_day_from_rate(profit, v))
+        .unwrap_or(0)
 }
 
 /// Percent change between the mean of the newest samples and the mean of
@@ -337,6 +370,34 @@ pub fn price_drift_pct(prices: &[i32]) -> Option<f32> {
         return None;
     }
     Some(((newest - oldest) as f32 / oldest as f32) * 100.0)
+}
+
+/// The noise floor a signed percent must clear before it is coloured.
+/// Origin: the flip finder's Drift cell, where ±1% inside a six-sale window
+/// is noise wearing a percentage sign. Reused by the recipe analyzer's
+/// Drift column and its Price "vs median" tell, which read the same kind of
+/// small, sample-limited percentage.
+pub const DELTA_DEAD_BAND_PCT: f32 = 1.0;
+
+/// The colour class for a signed percentage: green above `+dead_band`, red
+/// below `-dead_band`, muted inside the band and when there is no figure.
+/// `dead_band` is the caller's noise floor (0.0 colours every non-zero
+/// sign). A NaN falls through both comparisons and reads neutral.
+pub fn signed_delta_class(pct: Option<f32>, dead_band: f32) -> &'static str {
+    match pct {
+        Some(p) if p > dead_band => "text-emerald-300",
+        Some(p) if p < -dead_band => "text-red-300",
+        _ => "text-[color:var(--color-text-muted)]",
+    }
+}
+
+/// Percent change across a sparkline window, from its first traded price to
+/// its last. The server sends the first and last *non-zero* points
+/// (`arrayFilter(x -> x > 0, points)`, `ultros-clickhouse/src/queries.rs:158-167`),
+/// so `first == 0` means nothing traded anywhere in the window: no baseline
+/// exists, and 0 is not a price.
+pub fn first_to_last_pct(first: u32, last: u32) -> Option<f32> {
+    (first > 0).then(|| (last as f32 - first as f32) / first as f32 * 100.0)
 }
 
 /// Return on investment as a percentage, computed in f64 and clamped to
@@ -372,11 +433,193 @@ pub fn derived_confidence(summary: &SaleSummary) -> DerivedConfidence {
     }
 }
 
+/// Sniper-clamp threshold: drop any sale priced below this fraction of the raw median.
+const SNIPER_FRACTION: f64 = 0.1;
+
+pub fn median_in_place_i32(sorted: &mut [i32]) -> i32 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let n = sorted.len();
+    if n % 2 == 1 {
+        let (_, &mut val, _) = sorted.select_nth_unstable(n / 2);
+        val
+    } else {
+        let (left, &mut right, _) = sorted.select_nth_unstable(n / 2);
+        let left_max = *left.iter().max().unwrap();
+        ((left_max as i64 + right as i64) / 2) as i32
+    }
+}
+
+/// Listings whose price is at least this multiple of the row's median sale are treated as troll
+/// listings and ignored when picking the world floor.
+const TROLL_MULTIPLE: i64 = 50;
+
+pub fn is_troll_listing(price: i32, median: i32) -> bool {
+    median > 0 && (price as i64) > (median as i64).saturating_mul(TROLL_MULTIPLE)
+}
+
+/// Sniper-clamped price set: drops sales priced below `SNIPER_FRACTION` of the
+/// raw median. If the clamp would remove everything, the raw set is kept.
+/// Shared by the analyzer's `compute_summary` and the item-page flip card.
+///
+/// # Note
+/// The clamp runs in-place, so the order of the returned elements is
+/// **undefined** — neither the input order nor sorted. Every caller feeds the
+/// result straight into `median_in_place_i32`, a min/max/sum, or
+/// `filter_outliers_iqr_in_place`, all of which are order-independent. Sort the
+/// result yourself if you ever need a stable order.
+pub fn sniper_clamp(mut prices: Vec<i32>) -> Vec<i32> {
+    if prices.is_empty() {
+        return prices;
+    }
+    let raw_median = median_in_place_i32(&mut prices);
+    let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
+
+    let has_valid = prices.iter().any(|&p| p >= floor);
+    if has_valid {
+        prices.retain(|&p| p >= floor);
+    }
+    prices
+}
+
+/// Flip estimate shared by the flip-finder table and the item-page flip card:
+/// median of recent sales, capped by the sell world's current floor. A floor
+/// more than `TROLL_MULTIPLE`× the median is a troll listing and is ignored.
+pub fn flip_estimated_sale_price(median_price: i32, world_floor: Option<i32>) -> i32 {
+    match world_floor.filter(|floor| !is_troll_listing(*floor, median_price)) {
+        Some(floor) => median_price.min(floor),
+        None => median_price,
+    }
+}
+
+/// Per-unit flip profit. The 5% market-board tax comes off the sale, not the buy.
+pub fn flip_profit(estimated_sale_price: i32, buy_price: i32, include_tax: bool) -> i32 {
+    let estimated = if include_tax {
+        (estimated_sale_price as f32 * 0.95) as i32
+    } else {
+        estimated_sale_price
+    };
+    estimated - buy_price
+}
+
+/// Gil the 5% market-board tax takes off a sale at this price. Shares
+/// `flip_profit`'s truncating math so `buy + profit + tax == sale` exactly.
+pub fn sale_tax(estimated_sale_price: i32) -> i32 {
+    estimated_sale_price - (estimated_sale_price as f32 * 0.95) as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use ultros_api_types::recent_sales::{SaleData, Sales};
+
+    /// `sniper_clamp` returns its survivors in an undefined order, so compare
+    /// the multiset rather than pinning whatever `select_nth_unstable` happened
+    /// to leave behind.
+    fn sorted_clamp(prices: Vec<i32>) -> Vec<i32> {
+        let mut out = sniper_clamp(prices);
+        out.sort_unstable();
+        out
+    }
+
+    #[test]
+    fn sniper_clamp_drops_prices_below_ten_percent_of_median() {
+        // raw median of [10, 1000, 1100, 1200, 1300] is 1100; floor = 110 → 10 dropped
+        assert_eq!(
+            sorted_clamp(vec![10, 1000, 1100, 1200, 1300]),
+            vec![1000, 1100, 1200, 1300]
+        );
+    }
+
+    #[test]
+    fn sniper_clamp_keeps_raw_set_when_clamp_would_empty_it() {
+        // all equal → floor = 100 * 0.1 = 10, nothing dropped; and empty stays empty
+        assert_eq!(sniper_clamp(vec![100]), vec![100]);
+        assert_eq!(sniper_clamp(Vec::new()), Vec::<i32>::new());
+    }
+
+    /// The in-place clamp must keep the same survivors as the straightforward
+    /// clone-and-filter it replaced. Sizes here straddle 20, the length at
+    /// which `select_nth_unstable` stops insertion-sorting the whole slice and
+    /// starts leaving the input genuinely unordered.
+    #[test]
+    fn sniper_clamp_matches_clone_and_filter_reference() {
+        fn reference(prices: Vec<i32>) -> Vec<i32> {
+            if prices.is_empty() {
+                return prices;
+            }
+            let mut raw = prices.clone();
+            let raw_median = median_in_place_i32(&mut raw);
+            let floor = (raw_median as f64 * SNIPER_FRACTION) as i32;
+            let clamped: Vec<i32> = prices.iter().copied().filter(|p| *p >= floor).collect();
+            if clamped.is_empty() { prices } else { clamped }
+        }
+
+        // Deterministic LCG — no rand dependency in this crate's test deps.
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % 5000) as i32 + 1
+        };
+
+        for len in [1usize, 2, 3, 5, 19, 20, 21, 64, 257] {
+            for _ in 0..40 {
+                let prices: Vec<i32> = (0..len).map(|_| next()).collect();
+                let mut expected = reference(prices.clone());
+                expected.sort_unstable();
+                assert_eq!(
+                    sorted_clamp(prices.clone()),
+                    expected,
+                    "len {len} diverged for {prices:?}"
+                );
+            }
+        }
+    }
+
+    /// A lone snipe among realistic prices is dropped even once the input is
+    /// long enough that the clamp no longer leaves it sorted.
+    #[test]
+    fn sniper_clamp_drops_snipes_in_a_large_unsorted_set() {
+        let mut prices: Vec<i32> = (0..64).map(|i| 1000 + (i * 37) % 400).collect();
+        prices.insert(31, 5); // one snipe, well below 10% of the ~1200 median
+        let clamped = sorted_clamp(prices);
+        assert_eq!(clamped.len(), 64);
+        assert!(!clamped.contains(&5));
+    }
+
+    #[test]
+    fn flip_estimate_caps_median_by_world_floor() {
+        assert_eq!(flip_estimated_sale_price(1000, Some(800)), 800);
+        assert_eq!(flip_estimated_sale_price(1000, Some(1200)), 1000);
+        assert_eq!(flip_estimated_sale_price(1000, None), 1000);
+    }
+
+    #[test]
+    fn flip_estimate_ignores_troll_floor() {
+        // floor 60_000 vs median 1_000 exceeds TROLL_MULTIPLE (50x) → ignored
+        assert_eq!(flip_estimated_sale_price(1000, Some(60_000)), 1000);
+    }
+
+    #[test]
+    fn flip_profit_applies_five_percent_tax() {
+        assert_eq!(flip_profit(1000, 500, true), 450); // 950 - 500
+        assert_eq!(flip_profit(1000, 500, false), 500);
+    }
+
+    #[test]
+    fn sale_tax_reconciles_with_flip_profit() {
+        assert_eq!(sale_tax(100_000), 5_000);
+        // Truncation must land on the same side as flip_profit's, so the
+        // three columns always sum back to the sale price.
+        for sale in [999, 1000, 1001, 12_345, i32::MAX] {
+            let buy = sale / 2;
+            assert_eq!(buy + flip_profit(sale, buy, true) + sale_tax(sale), sale);
+        }
+    }
 
     #[test]
     fn test_format_duration_short() {
@@ -616,6 +859,99 @@ mod tests {
         let s = summary_with(6, 94_041 * 3600 / 6);
         let v = velocity_per_day(&s).unwrap();
         assert!(v < 0.01, "expected near-zero velocity, got {v}");
+    }
+
+    #[test]
+    fn profit_per_day_scales_up_for_fast_sellers() {
+        // 6 sales, avg gap 6h => 4 sales/day. 100 gil profit => 400/day,
+        // not clamped down to the flat profit figure.
+        let s = summary_with(6, 6 * 3600);
+        assert_eq!(profit_per_day(100, &s), 400);
+    }
+
+    #[test]
+    fn profit_per_day_scales_down_for_slow_sellers() {
+        // avg gap 2 days => 0.5 sales/day => half the profit per day.
+        let s = summary_with(2, 2 * 86_400);
+        assert_eq!(profit_per_day(100, &s), 50);
+    }
+
+    #[test]
+    fn profit_per_day_zero_without_sale_history() {
+        let mut s = summary_with(0, 0);
+        s.avg_sale_duration = None;
+        assert_eq!(profit_per_day(100, &s), 0);
+    }
+
+    #[test]
+    fn profit_per_day_from_rate_is_the_shared_form() {
+        // The flip finder's buffer velocity and the recipe's rollup rate
+        // feed the same arithmetic.
+        assert_eq!(profit_per_day_from_rate(1_000, 2.5), 2_500);
+        assert_eq!(profit_per_day_from_rate(1_000, 0.25), 250);
+        assert_eq!(profit_per_day_from_rate(-300, 3.0), -900);
+        assert_eq!(profit_per_day_from_rate(1_000, 0.0), 0);
+        // Truncation, not rounding: 999 * 1.5 = 1498.5.
+        assert_eq!(profit_per_day_from_rate(999, 1.5), 1_498);
+        // A float -> int cast saturates rather than wrapping.
+        assert_eq!(profit_per_day_from_rate(i32::MAX, 1_000.0), i32::MAX);
+    }
+
+    #[test]
+    fn signed_delta_class_has_a_dead_band() {
+        assert_eq!(signed_delta_class(Some(4.0), 1.0), "text-emerald-300");
+        assert_eq!(signed_delta_class(Some(-4.0), 1.0), "text-red-300");
+        // Inside the band, and exactly on it, read neutral.
+        let muted = "text-[color:var(--color-text-muted)]";
+        assert_eq!(signed_delta_class(Some(0.4), 1.0), muted);
+        assert_eq!(signed_delta_class(Some(1.0), 1.0), muted);
+        assert_eq!(signed_delta_class(Some(-1.0), 1.0), muted);
+        assert_eq!(signed_delta_class(None, 1.0), muted);
+        // A zero dead band colours any non-zero sign (the movers' rule).
+        assert_eq!(signed_delta_class(Some(0.2), 0.0), "text-emerald-300");
+        // NaN is neither above nor below: neutral, never a panic.
+        assert_eq!(signed_delta_class(Some(f32::NAN), 1.0), muted);
+    }
+
+    /// `analyzer.rs`'s three Drift arms cut at ±1.0 with `text-emerald-300`
+    /// / `text-red-300` / muted; the new const and fn must reproduce exactly
+    /// those thresholds (`signed_delta_class_has_a_dead_band` passes `1.0`
+    /// by hand and so cannot pin the const). The cell's *text* is unchanged
+    /// by construction — the fold touches only the class, and `+{d:.0}%`
+    /// and `{d:.0}%` are `{d:+.0}%` over the ranges the old arms guarded, a
+    /// property of the `+` flag rather than of this code — so the byte
+    /// identity of `/flip-finder` rides on `routes::analyzer`'s 69 existing
+    /// tests plus manual check 9 in the PR body.
+    #[test]
+    fn signed_delta_class_reproduces_the_flip_finders_drift_arms() {
+        for d in [1.4f32, 4.6, 12.5, 99.5, 100.4] {
+            assert_eq!(
+                signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
+                "text-emerald-300"
+            );
+        }
+        for d in [-1.4f32, -3.6, -50.0] {
+            assert_eq!(
+                signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
+                "text-red-300"
+            );
+        }
+        for d in [0.0f32, 0.9, -0.9] {
+            assert_eq!(
+                signed_delta_class(Some(d), DELTA_DEAD_BAND_PCT),
+                "text-[color:var(--color-text-muted)]"
+            );
+        }
+    }
+
+    #[test]
+    fn first_to_last_pct_needs_a_first_trade() {
+        assert_eq!(first_to_last_pct(100, 150), Some(50.0));
+        assert_eq!(first_to_last_pct(100, 50), Some(-50.0));
+        assert_eq!(first_to_last_pct(100, 100), Some(0.0));
+        // No trade in the window's first bucket: no percentage exists.
+        assert_eq!(first_to_last_pct(0, 150), None);
+        assert_eq!(first_to_last_pct(0, 0), None);
     }
 
     #[test]

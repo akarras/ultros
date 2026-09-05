@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use std::collections::{HashMap, VecDeque};
 
 use crate::api::post_sparklines;
@@ -6,7 +7,6 @@ use crate::global_state::xiv_data::tracked_data;
 use codee::string::JsonSerdeCodec;
 use leptos::leptos_dom::helpers::set_timeout;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use ultros_api_types::icon_size::IconSize;
 use ultros_api_types::sparklines::{SparklineSeries, SparklinesRequest};
@@ -125,7 +125,7 @@ fn TrackedRow(item_id: i32, world_name: String, series: Option<SparklineSeries>)
     };
 
     view! {
-        <A href=href>
+        <AppLink href=href>
             <div class="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2 px-1 py-2 border-b border-[color:var(--line)] hover:bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)] transition-colors rounded">
                 <ItemIcon item_id icon_size=IconSize::Small />
                 <div class="min-w-0">
@@ -141,7 +141,7 @@ fn TrackedRow(item_id: i32, world_name: String, series: Option<SparklineSeries>)
                     <Sparkline points pct_change=pct_change.unwrap_or(0.0) />
                 })}
             </div>
-        </A>
+        </AppLink>
     }
 }
 
@@ -195,6 +195,7 @@ pub fn RecentlyViewed() -> impl IntoView {
                         <h4 class="dashboard-section-title">{t!(i18n, recently_viewed_title)}</h4>
                         <button
                             class="text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)] rounded px-1"
+                            aria-live="polite"
                             on:click=move |_| {
                                 if confirm_clear.get_untracked() {
                                     item_data.clear_items();

@@ -1,5 +1,5 @@
 use crate::analysis::SalesCadence;
-use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 use crate::sales_cadence::get_sales_cadence_display;
 use leptos::prelude::*;
 
@@ -9,7 +9,7 @@ pub fn SalesCadenceBadge(
     sales_per_day: f32,
     #[prop(optional)] compact: bool,
 ) -> impl IntoView {
-    let i18n = use_i18n();
+    let i18n = use_i18n_or_default();
     let display = get_sales_cadence_display(cadence, sales_per_day);
     let full_label = display.format_label(i18n);
     let text = if compact {

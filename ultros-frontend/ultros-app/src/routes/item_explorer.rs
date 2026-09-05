@@ -1,34 +1,118 @@
+use crate::components::app_link::AppLink;
 use std::fmt::Display;
 use std::{collections::HashSet, str::FromStr};
 
 use crate::CheapestPrices;
 use crate::components::clipboard::Clipboard;
+use crate::components::data_table::{Column, ColumnHeader, DataTableGrid, TrackWidths};
 use crate::components::gil::Gil;
 use crate::components::icon::Icon;
+use crate::components::item_tooltip::ItemTooltip;
 use crate::components::job_set_card::JobSetCard;
 use crate::components::job_set_grouping::{GroupableItem, group_into_sets};
 use crate::components::loading::Loading;
 use crate::components::query_button::QueryButton;
+use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::toggle::Toggle;
 use crate::components::world_name::WorldName;
 use crate::components::{add_to_list::*, cheapest_price::*, item_icon::*, meta::*};
 use crate::global_state::xiv_data::tracked_data;
 use crate::i18n::*;
 use crate::routes::item_explorer_scope::{ExplorerPriceScope, use_explorer_price_scope};
+use crate::routes::item_explorer_toolbar::jobset_display_label;
 use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::SignalSetter;
-use leptos_router::components::A;
 use leptos_router::components::Outlet;
-use leptos_router::hooks::{query_signal, use_location, use_params_map};
-use leptos_router::location::Location;
+use leptos_router::hooks::{query_signal, use_params_map};
 use paginate::Pages;
 use percent_encoding::percent_decode_str;
 use ultros_api_types::world_helper::AnySelector;
 use xiv_gen::{
-    ClassJobCategory, ClassJobCategoryId, Item, ItemId, ItemSearchCategory, ItemSearchCategoryId,
+    ClassJobCategory, ClassJobCategoryId, ClassJobId, Item, ItemId, ItemSearchCategory,
+    ItemSearchCategoryId,
 };
+
+/// Canonical, locale-independent acronym for a `ClassJob`, keyed on its id.
+///
+/// `ClassJob::abbreviation` is a *localized display string*: German calls
+/// Pugilist "FST" (Faustkämpfer) and French "PUG", while `ClassJobCategory`'s
+/// columns — the flags [`job_category_lookup`] matches on — are English
+/// acronyms baked into the sheet schema and therefore identical in every
+/// locale. Anything that uses an abbreviation as a *key* (a route param, a
+/// role bucket, an href) must go through this table instead of reading
+/// `abbreviation`, or it resolves on English data and nowhere else.
+///
+/// The ids are the `ClassJob` sheet's row ids and the order matches
+/// [`job_category_lookup`]'s destructure exactly, because the
+/// `ClassJobCategory` sheet's per-job columns are laid out in `ClassJob` id
+/// order. `canonical_acronym_matches_english_abbreviation` pins the table
+/// against the shipped English pack, so a game-data bump that renumbers or
+/// adds a job fails the test rather than silently emptying a route.
+pub(crate) fn canonical_job_acronym(id: ClassJobId) -> Option<&'static str> {
+    // Ids 0..=42 line up with `ClassJobCategory`'s columns. "BST" (43) has a
+    // `ClassJob` row but no category column in the shipped pack — it still
+    // belongs here so role grouping and display resolve, even though nothing
+    // can select its gear (see `only_beastmaster_lacks_a_category_column`).
+    const ACRONYMS: [&str; 44] = [
+        "ADV", "GLA", "PGL", "MRD", "LNC", "ARC", "CNJ", "THM", "CRP", "BSM", "ARM", "GSM", "LTW",
+        "WVR", "ALC", "CUL", "MIN", "BTN", "FSH", "PLD", "MNK", "WAR", "DRG", "BRD", "WHM", "BLM",
+        "ACN", "SMN", "SCH", "ROG", "NIN", "MCH", "DRK", "AST", "SAM", "RDM", "BLU", "GNB", "DNC",
+        "RPR", "SGE", "VPR", "PCT", "BST",
+    ];
+    usize::try_from(id.0)
+        .ok()
+        .and_then(|i| ACRONYMS.get(i))
+        .copied()
+}
+
+/// Resolve the `/items/jobset/:jobset` route param to a canonical,
+/// locale-independent job acronym suitable for [`job_category_lookup`].
+///
+/// The canonical param is the **English acronym**, for the same reason
+/// `/items/category/:category` is keyed on a numeric id (see
+/// [`resolve_category_param`]): the server initializes `xiv_gen_db` to
+/// `Language::En` and never swaps it, while the client `try_init`s the
+/// visitor's locale *before* hydrating. A param keyed on the localized
+/// `abbreviation` resolves on at most one of the two sides.
+///
+/// Matching the acronym table first means the canonical form resolves
+/// identically in both processes regardless of which locale each loaded. The
+/// localized `abbreviation`/`name` match is kept as a fallback so links minted
+/// before this change (and the English full names in the search index) keep
+/// resolving; it carries exactly the locale caveat it always had, the same
+/// tradeoff `resolve_category_param` makes for legacy name-keyed category
+/// links.
+pub(crate) fn resolve_jobset_param(data: &xiv_gen::Data, raw_param: &str) -> Option<String> {
+    let decoded = percent_decode_str(raw_param)
+        .decode_utf8()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| raw_param.to_string());
+
+    // Locale-independent path: the param already is a canonical acronym.
+    if let Some(canonical) = data
+        .class_jobs
+        .keys()
+        .filter_map(|id| canonical_job_acronym(*id))
+        .find(|acronym| acronym.eq_ignore_ascii_case(&decoded))
+    {
+        return Some(canonical.to_string());
+    }
+
+    // Legacy fallback: a localized abbreviation or a full job name. Resolves
+    // against whichever locale *this* process loaded, so it is inherently
+    // one-sided for non-English visitors — but it only ever fires for
+    // non-canonical URLs, which today resolve to nothing at all.
+    data.class_jobs
+        .iter()
+        .find(|(_id, job)| {
+            job.abbreviation.eq_ignore_ascii_case(&decoded)
+                || job.name.eq_ignore_ascii_case(&decoded)
+        })
+        .and_then(|(id, _job)| canonical_job_acronym(*id))
+        .map(|acronym| acronym.to_string())
+}
 
 /// Return true if the given acronym is in the given class job category
 pub(crate) fn job_category_lookup(
@@ -274,40 +358,36 @@ pub fn JobItems() -> impl IntoView {
     let set_market_only =
         SignalSetter::map(move |market: bool| set_non_market((!market).then_some(true)));
     let items = Memo::new(move |_| {
-        // decode, normalize, and map to a known job abbreviation if possible
+        // Resolve to the canonical English acronym. Reading `abbreviation`
+        // straight off the matched job would hand `job_category_lookup` a
+        // localized string it cannot match — see `resolve_jobset_param`.
         let raw = match params().get("jobset") {
             Some(p) => p.clone(),
             None => return vec![],
         };
-        let decoded = percent_encoding::percent_decode_str(&raw)
-            .decode_utf8()
-            .map(|s| s.to_string())
-            .unwrap_or(raw.clone());
-        let lower = decoded.to_lowercase();
-
-        // try to resolve to a canonical abbreviation (fallback: decoded input)
-        let canonical_abbr = data
-            .class_jobs
-            .iter()
-            .find_map(|(_id, job)| {
-                let abbr = job.abbreviation.as_str();
-                let name = job.name.as_str();
-                if abbr.eq_ignore_ascii_case(&lower) || name.eq_ignore_ascii_case(&lower) {
-                    Some(abbr.to_string())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(decoded.clone());
+        let canonical_abbr = match resolve_jobset_param(data, &raw) {
+            Some(abbr) => abbr,
+            None => return vec![],
+        };
 
         collect_job_items_sorted(data, &canonical_abbr, market_only())
     });
+    // Heading/meta text: the param is a canonical English acronym, so resolve
+    // it back to the visitor's localized label the way `CategoryItems` does
+    // with its numeric category id. Falls through to the raw param so an
+    // unrecognised jobset still names itself.
     let job_set = Memo::new(move |_| {
         params()
             .get("jobset")
             .as_ref()
-            .and_then(|s| percent_encoding::percent_decode_str(s).decode_utf8().ok())
-            .map(|s| s.to_string())
+            .and_then(|raw| {
+                jobset_display_label(data, raw).or_else(|| {
+                    percent_decode_str(raw)
+                        .decode_utf8()
+                        .ok()
+                        .map(|s| s.to_string())
+                })
+            })
             .unwrap_or_else(|| crate::i18n::t_string!(i18n, job_set_default).to_string())
     });
 
@@ -359,9 +439,17 @@ pub fn JobItems() -> impl IntoView {
     // `?show-non-market=` genuinely changes the item set, but the default
     // (marketable items only) is the representative view; canonicalising to it
     // keeps the toggled variant from being crawled as thin duplicate content.
-    // The param is already percent-encoded in the URL, so it is passed through
-    // rather than re-encoded.
-    let canonical_href = move || format!("https://ultros.app/items/jobset/{}", jobset_param.get());
+    // Legacy name-keyed and localized-abbreviation links still resolve (see
+    // `resolve_jobset_param`), so one job is reachable under several URLs —
+    // point them all at the canonical acronym so the duplicates consolidate
+    // instead of competing, exactly as `CategoryItems` does with its id.
+    let canonical_href = move || {
+        let raw = jobset_param.get();
+        match resolve_jobset_param(data, &raw) {
+            Some(acronym) => format!("https://ultros.app/items/jobset/{acronym}"),
+            None => format!("https://ultros.app/items/jobset/{raw}"),
+        }
+    };
 
     view! {
         <MetaCanonical href=canonical_href />
@@ -458,106 +546,75 @@ impl Display for ItemSortOption {
     }
 }
 
-#[derive(PartialEq, PartialOrd, Copy, Clone)]
-enum SortDirection {
-    Asc,
-    Desc,
-}
-
-impl FromStr for SortDirection {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "asc" => SortDirection::Asc,
-            "dsc" => SortDirection::Desc,
-            _ => return Err(()),
-        })
+/// The Item Explorer's list is item-level-descending until the visitor says
+/// otherwise; every column here reads best-first descending, so the shared
+/// default direction applies unchanged.
+impl SortColumn for ItemSortOption {
+    fn fallback() -> Self {
+        ItemSortOption::ItemLevel
     }
 }
 
-impl Display for SortDirection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let val = match self {
-            SortDirection::Asc => "asc",
-            SortDirection::Desc => "desc",
-        };
-        f.write_str(val)
-    }
-}
+/// Re-sorting has to return to page 1: page 7 of a different ordering is a
+/// different set of items, and an out-of-range page is what
+/// `?page=35&sort=ilvl` deep-links used to hydrate-crash on.
+const RESET_ON_SORT: &[&str] = &["page"];
 
-/// Sortable column header for the results list. Clicking sets `sort` to
-/// `value` and resets the page; clicking the already-active column
-/// toggles between descending (the default — `dir` removed) and
-/// ascending. Href construction mirrors `QueryButton` so all other query
-/// params (`world`, `per_page`, ...) survive.
-#[component]
-fn SortHeader(
-    /// value written to the `sort` query key
-    value: &'static str,
-    /// active when no `sort` param is present
-    #[prop(optional)]
-    default: bool,
-    children: Children,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let is_active = Signal::derive(move || {
-        query.with(|q| {
-            let current = q.get_str("sort");
-            current == Some(value) || (default && current.is_none())
-        })
-    });
-    let is_asc = Signal::derive(move || query.with(|q| q.get_str("dir") == Some("asc")));
-    let href = move || {
-        let mut query = query();
-        query.remove("page");
-        query.remove("sort");
-        query.insert("sort".to_string(), value.to_string());
-        let flip_to_asc = is_active.get() && !is_asc.get();
-        query.remove("dir");
-        if flip_to_asc {
-            query.insert("dir".to_string(), "asc".to_string());
-        }
-        format!("{}{}", pathname(), query.to_query_string())
-    };
-    view! {
-        <div
-            role="columnheader"
-            aria-sort=move || {
-                if is_active() {
-                    if is_asc() { "ascending" } else { "descending" }
-                } else {
-                    "none"
-                }
-            }
-        >
-            <a
-                href=href
-                class="flex items-center gap-1 hover:text-brand-300 transition-colors"
-            >
-                {children()}
-                <span class="w-3 inline-block">
-                    {move || {
-                        if is_active() {
-                            if is_asc() { "↑" } else { "↓" }
-                        } else {
-                            ""
-                        }
-                    }}
-                </span>
-            </a>
-        </div>
-    }
-    .into_any()
-}
+/// One row of the explorer's table.
+type ExplorerRow = (&'static ItemId, &'static Item);
+
+/// Grid tracks and header-cell classes for the explorer's nine columns, in
+/// DOM order.
+///
+/// Kept as plain data, and read by both the column list below and
+/// `header_classes_match_their_tracks`, so the two can never drift: a header
+/// cell that is visible at a breakpoint where its column owns no track pushes
+/// every header to its right one track over and wraps the last one onto an
+/// implicit second row, with the body rows still correct. The `xl`-only
+/// columns are exactly where that is easy to get wrong.
+type ExplorerColumn = (TrackWidths, &'static str);
+
+const COL_ICON: ExplorerColumn = (TrackWidths::everywhere("2.5rem"), "");
+const COL_NAME: ExplorerColumn = (
+    TrackWidths::responsive(
+        Some("minmax(0,1fr)"),
+        Some("minmax(6rem,1fr)"),
+        Some("minmax(6rem,1fr)"),
+    ),
+    "",
+);
+const COL_ITEM_LEVEL: ExplorerColumn = (TrackWidths::from_lg("3.5rem"), "");
+const COL_EQUIP_LEVEL: ExplorerColumn = (TrackWidths::from_lg("3rem"), "");
+const COL_NQ: ExplorerColumn = (
+    TrackWidths::responsive(Some("auto"), Some("6.5rem"), Some("6.5rem")),
+    "",
+);
+const COL_HQ: ExplorerColumn = (TrackWidths::from_lg("6.5rem"), "");
+const COL_VENDOR: ExplorerColumn = (TrackWidths::from_xl("6rem"), "hidden xl:block");
+const COL_WORLD: ExplorerColumn = (TrackWidths::from_xl("6.5rem"), "hidden xl:block");
+const COL_ACTIONS: ExplorerColumn = (
+    TrackWidths::responsive(Some("auto"), Some("5rem"), Some("5rem")),
+    "",
+);
+
+#[cfg(test)]
+const EXPLORER_COLUMNS: [ExplorerColumn; 9] = [
+    COL_ICON,
+    COL_NAME,
+    COL_ITEM_LEVEL,
+    COL_EQUIP_LEVEL,
+    COL_NQ,
+    COL_HQ,
+    COL_VENDOR,
+    COL_WORLD,
+    COL_ACTIONS,
+];
 
 #[component]
-fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView {
+fn ItemList(items: Memo<Vec<ExplorerRow>>) -> impl IntoView {
     let i18n = use_i18n();
     let (page, _set_page) = query_signal::<i32>("page");
-    let (direction, _set_direction) = query_signal::<SortDirection>("dir");
+    let (direction, _set_direction) = query_signal::<SortDir>("dir");
     let (sort, _set_sort) = query_signal::<ItemSortOption>("sort");
 
     let cheapest_prices = use_context::<CheapestPrices>().unwrap();
@@ -601,8 +658,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
     });
 
     let sorted_items = Memo::new(move |_| {
-        let direction = direction().unwrap_or(SortDirection::Desc);
-        let item_property = sort().unwrap_or(ItemSortOption::ItemLevel);
+        let item_property = sort().unwrap_or_else(ItemSortOption::fallback);
+        let direction = direction().unwrap_or_else(|| item_property.default_dir());
         let price_map = if hydrated.get() {
             listings_resource.get().and_then(|r| r.ok())
         } else {
@@ -623,8 +680,8 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             })
             .sorted_by(|a, b| {
                 let ((_, item_a), (_, item_b)) = match direction {
-                    SortDirection::Asc => (a, b),
-                    SortDirection::Desc => (b, a),
+                    SortDir::Asc => (a, b),
+                    SortDir::Desc => (b, a),
                 };
                 match item_property {
                     ItemSortOption::ItemLevel => item_a.level_item.cmp(&item_b.level_item),
@@ -687,6 +744,277 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
         })
     });
 
+    // The nine columns, described once, in DOM order. This list replaces the
+    // four hand-copied `grid-cols-[…]` class strings the table used to carry
+    // — a header and a body copy in a single-world and a multi-world variant,
+    // which had to stay character-identical with nothing to catch a drift
+    // (issue #1080). `components/data_table.rs` derives all of them from
+    // these tracks.
+    //
+    // Every explorer-specific context read stays here, in the page's own cell
+    // closures: `listings_resource` (from `CheapestPrices`) and the price
+    // scope's `scope_name` / `is_single_world`. The shared table knows about
+    // none of them and cannot panic on a missing one.
+    let columns: Vec<Column<ExplorerRow>> = vec![
+        // Item icon.
+        Column::new(
+            COL_ICON.0,
+            ColumnHeader::Empty,
+            move |(id, _item): &ExplorerRow| {
+                let item_id = id.0;
+                view! {
+                    <ItemTooltip item_id=item_id>
+                        <AppLink href=move || format!("/item/{}/{}", scope_name.get(), item_id)>
+                            <ItemIcon item_id=item_id icon_size=IconSize::Small />
+                        </AppLink>
+                    </ItemTooltip>
+                }
+                .into_any()
+            },
+        ),
+        // Name, plus the compact metadata line that stands in for the
+        // iLvl/Lv columns below `lg`.
+        Column::new(
+            COL_NAME.0,
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::Name
+                        label=t_string!(i18n, item_explorer_name).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
+            }),
+            move |(_id, item): &ExplorerRow| {
+                let item = *item;
+                view! {
+                    <div class="flex flex-col min-w-0">
+                        <AppLink href=move || format!("/item/{}/{}",
+                            scope_name.get(),
+                            item.key_id.0)
+                            attr:class="font-medium leading-snug text-[color:var(--color-text)] truncate \
+                                       hover:text-brand-300 transition-colors \
+                                       hover:underline decoration-brand-300/30 underline-offset-4"
+                        >
+                            {item.name.as_str()}
+                        </AppLink>
+                        // Compact metadata, only below `lg` where the
+                        // dedicated columns are hidden.
+                        <div class="flex lg:hidden items-center gap-2 text-xs text-[color:var(--color-text-muted)]">
+                            <span>{t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}</span>
+                            <div>
+                                {if item.level_equip > 1 {
+                                    view! {
+                                        <span>{t!(i18n, item_explorer_lv_prefix)} " "{item.level_equip}</span>
+                                    }.into_any()
+                                } else {
+                                    ().into_any()
+                                }}
+                            </div>
+                        </div>
+                    </div>
+                }
+                .into_any()
+            },
+        ),
+        // Item level.
+        Column::new(
+            COL_ITEM_LEVEL.0,
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::ItemLevel
+                        label=t_string!(i18n, item_explorer_ilvl).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
+            }),
+            move |(_id, item): &ExplorerRow| {
+                let level_item = item.level_item;
+                view! {
+                    <div role="cell" class="hidden lg:block text-sm text-[color:var(--color-text-muted)]">
+                        {level_item}
+                    </div>
+                }
+                .into_any()
+            },
+        ),
+        // Equip level.
+        Column::new(
+            COL_EQUIP_LEVEL.0,
+            ColumnHeader::content(move || {
+                view! { {t!(i18n, item_explorer_col_equip_level)} }.into_any()
+            }),
+            move |(_id, item): &ExplorerRow| {
+                let level_equip = item.level_equip;
+                view! {
+                    <div role="cell" class="hidden lg:block text-sm text-[color:var(--color-text-muted)]">
+                        {if level_equip > 1 {
+                            view! { <span>{level_equip}</span> }.into_any()
+                        } else {
+                            view! { <span>"—"</span> }.into_any()
+                        }}
+                    </div>
+                }
+                .into_any()
+            },
+        ),
+        // Cheapest NQ price.
+        Column::new(
+            COL_NQ.0,
+            ColumnHeader::cell(move |class| {
+                view! {
+                    <SortableHeaderCell
+                        mode=ItemSortOption::Price
+                        label=t_string!(i18n, nq).to_string()
+                        class=class.unwrap_or_default()
+                        sort_mode=sort
+                        sort_dir=direction
+                        reset_keys=RESET_ON_SORT
+                    />
+                }
+                .into_any()
+            }),
+            move |(id, _item): &ExplorerRow| {
+                let id = **id;
+                view! {
+                    <div role="cell" class="text-sm">
+                        <CheapestPrice item_id=id show_hq=false show_world=false />
+                    </div>
+                }
+                .into_any()
+            },
+        ),
+        // Cheapest HQ price. Always emits a stable wrapper div so the SSR and
+        // CSR view trees agree on element shape/count for this slot (same
+        // tachys-hydration reasoning as the old card layout).
+        Column::new(
+            COL_HQ.0,
+            ColumnHeader::content(move || view! { {t!(i18n, hq)} }.into_any()),
+            move |(id, item): &ExplorerRow| {
+                let id = **id;
+                let can_be_hq = item.can_be_hq;
+                view! {
+                    <div role="cell" class="hidden lg:block text-sm">
+                        {if can_be_hq {
+                            view! {
+                                <CheapestPrice item_id=id show_hq=true show_world=false />
+                            }.into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                    </div>
+                }
+                .into_any()
+            },
+        ),
+        // Vendor price.
+        Column::new(
+            COL_VENDOR.0,
+            ColumnHeader::content(move || view! { {t!(i18n, item_explorer_vendor)} }.into_any()),
+            move |(id, _item): &ExplorerRow| {
+                let item_id = id.0;
+                view! {
+                    <div role="cell" class="hidden xl:block text-sm">
+                        {if let Some(price) = crate::components::related_items::get_vendor_price(item_id) {
+                            view! { <Gil amount=price as i32 /> }.into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                    </div>
+                }
+                .into_any()
+            },
+        )
+        .header_class(COL_VENDOR.1),
+        // World holding the cheapest listing. Only exists when the scope
+        // spans more than one world; when it doesn't, the cell stays in the
+        // DOM as `hidden` and the column simply drops out of the derived
+        // template, exactly as the two class-string variants did.
+        Column::new(
+            COL_WORLD.0,
+            ColumnHeader::content(move || view! { {t!(i18n, item_explorer_col_world)} }.into_any()),
+            move |(id, _item): &ExplorerRow| {
+                let item_id = id.0;
+                view! {
+                    <div
+                        role="cell"
+                        class=move || {
+                            if is_single_world.get() {
+                                "hidden"
+                            } else {
+                                "hidden xl:block truncate text-sm text-[color:var(--color-text-muted)]"
+                            }
+                        }
+                    >
+                        // Gated behind the same `hydrated` flag as the price
+                        // sort — SSR and the first CSR render both show
+                        // nothing, keeping shapes in sync (see the comment on
+                        // `hydrated` above).
+                        {move || {
+                            if !hydrated.get() {
+                                return ().into_any();
+                            }
+                            listings_resource
+                                .with(|data| {
+                                    data.as_ref().and_then(|result| {
+                                        result.as_ref().ok().and_then(|map| {
+                                            let summary = map.find_matching_listings(item_id);
+                                            let best = match (summary.lq, summary.hq) {
+                                                (Some(lq), Some(hq)) => {
+                                                    Some(if hq.price < lq.price { hq } else { lq })
+                                                }
+                                                (lq, hq) => lq.or(hq),
+                                            };
+                                            best.map(|listing| {
+                                                view! {
+                                                    <WorldName id=AnySelector::World(listing.world_id) />
+                                                }
+                                                .into_any()
+                                            })
+                                        })
+                                    })
+                                })
+                                .unwrap_or_else(|| ().into_any())
+                        }}
+                    </div>
+                }
+                .into_any()
+            },
+        )
+        .header_class(COL_WORLD.1)
+        .visible(Signal::derive(move || !is_single_world.get())),
+        // Row actions.
+        Column::new(
+            COL_ACTIONS.0,
+            ColumnHeader::Empty,
+            move |(id, item): &ExplorerRow| {
+                let item_id = id.0;
+                let name = item.name.clone();
+                view! {
+                    <div role="cell" class="flex items-center justify-end gap-1">
+                        <AddToList
+                            item_id=item_id
+                            class="flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
+                        />
+                        <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title=t_string!(i18n, item_explorer_copy_name).to_string()>
+                            <Clipboard clipboard_text=name />
+                        </div>
+                    </div>
+                }
+                .into_any()
+            },
+        ),
+    ];
+
     view! {
         <Suspense fallback=move || view! { <div class="flex justify-center p-10"><Loading /></div> }>
         <div class="flex flex-col gap-6">
@@ -695,6 +1023,10 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             // offset for chrome that is not there — the app shell's top bar
             // scrolls away with the page — so it pinned the toolbar with a
             // 72px strip of content scrolling above it.
+            //
+            // Kept alongside the sortable column headers: the header row is
+            // `hidden lg:grid`, so below `lg` this bar is the only sort
+            // control, and "Added" has no column of its own at any width.
             <div class="flex flex-col sm:flex-row justify-between gap-4 p-4 rounded-xl panel items-center sticky top-4 z-20 backdrop-blur-md bg-[color:var(--bg-panel)]/90 border border-white/5 shadow-lg">
                 <div class="flex flex-row flex-wrap gap-2 items-center">
                     <span class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)] mr-2">{t!(i18n, item_explorer_sort_by)}</span>
@@ -761,171 +1093,14 @@ fn ItemList(items: Memo<Vec<(&'static ItemId, &'static Item)>>) -> impl IntoView
             // in earlier than `xl` — the fixed columns plus the app
             // sidebar leave `1fr` with no room and the item name
             // collapses to zero width.
-            <div role="table" class="panel rounded-xl border border-white/5 divide-y divide-white/5 overflow-hidden">
-                <div
-                    role="row"
-                    class=move || {
-                        if is_single_world.get() {
-                            "hidden lg:grid lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_5rem] items-center gap-x-3 px-3 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]"
-                        } else {
-                            "hidden lg:grid lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_6.5rem_5rem] items-center gap-x-3 px-3 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]"
-                        }
-                    }
-                >
-                    <div role="columnheader"></div>
-                    <SortHeader value="name">{t!(i18n, item_explorer_name)}</SortHeader>
-                    <SortHeader value="ilvl" default=true>{t!(i18n, item_explorer_ilvl)}</SortHeader>
-                    <div role="columnheader">{t!(i18n, item_explorer_col_equip_level)}</div>
-                    <SortHeader value="price">{t!(i18n, nq)}</SortHeader>
-                    <div role="columnheader">{t!(i18n, hq)}</div>
-                    <div role="columnheader" class="hidden xl:block">
-                        {t!(i18n, item_explorer_vendor)}
-                    </div>
-                    <div
-                        role="columnheader"
-                        class=move || {
-                            if is_single_world.get() { "hidden" } else { "hidden xl:block" }
-                        }
-                    >
-                        {t!(i18n, item_explorer_col_world)}
-                    </div>
-                    <div role="columnheader"></div>
-                </div>
-                <For
-                    each=move || filtered_items.get()
-                    key=|(id, item)| (id.0, item.name.clone())
-                    children=move |(id, item)| {
-                        let item_id = id.0;
-                        view! {
-                            <div
-                                role="row"
-                                class=move || {
-                                    if is_single_world.get() {
-                                        "grid grid-cols-[2.5rem_minmax(0,1fr)_auto_auto] lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_5rem] items-center gap-x-3 px-3 py-2 hover:bg-white/5 transition-colors"
-                                    } else {
-                                        "grid grid-cols-[2.5rem_minmax(0,1fr)_auto_auto] lg:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_5rem] xl:grid-cols-[2.5rem_minmax(6rem,1fr)_3.5rem_3rem_6.5rem_6.5rem_6rem_6.5rem_5rem] items-center gap-x-3 px-3 py-2 hover:bg-white/5 transition-colors"
-                                    }
-                                }
-                            >
-                                <A href=move || format!("/item/{}/{}",
-                                    scope_name.get(),
-                                    item.key_id.0)
-                                >
-                                    <ItemIcon item_id=item.key_id.0 icon_size=IconSize::Small />
-                                </A>
-                                <div class="flex flex-col min-w-0">
-                                    <A href=move || format!("/item/{}/{}",
-                                        scope_name.get(),
-                                        item.key_id.0)
-                                        attr:class="font-medium leading-snug text-[color:var(--color-text)] truncate \
-                                                   hover:text-brand-300 transition-colors \
-                                                   hover:underline decoration-brand-300/30 underline-offset-4"
-                                    >
-                                        {item.name.as_str()}
-                                    </A>
-                                    // Compact metadata, only below `lg` where the
-                                    // dedicated columns are hidden.
-                                    <div class="flex lg:hidden items-center gap-2 text-xs text-[color:var(--color-text-muted)]">
-                                        <span>{t!(i18n, item_explorer_ilvl_prefix)} " "{item.level_item}</span>
-                                        <div>
-                                            {if item.level_equip > 1 {
-                                                view! {
-                                                    <span>{t!(i18n, item_explorer_lv_prefix)} " "{item.level_equip}</span>
-                                                }.into_any()
-                                            } else {
-                                                ().into_any()
-                                            }}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div role="cell" class="hidden lg:block text-sm text-[color:var(--color-text-muted)]">
-                                    {item.level_item}
-                                </div>
-                                <div role="cell" class="hidden lg:block text-sm text-[color:var(--color-text-muted)]">
-                                    {if item.level_equip > 1 {
-                                        view! { <span>{item.level_equip}</span> }.into_any()
-                                    } else {
-                                        view! { <span>"—"</span> }.into_any()
-                                    }}
-                                </div>
-                                <div role="cell" class="text-sm">
-                                    <CheapestPrice item_id=*id show_hq=false show_world=false />
-                                </div>
-                                // Always emit a stable wrapper div so the SSR and CSR view
-                                // trees agree on element shape/count for this slot (same
-                                // tachys-hydration reasoning as the old card layout).
-                                <div role="cell" class="hidden lg:block text-sm">
-                                    {if item.can_be_hq {
-                                        view! {
-                                            <CheapestPrice item_id=*id show_hq=true show_world=false />
-                                        }.into_any()
-                                    } else {
-                                        ().into_any()
-                                    }}
-                                </div>
-                                <div role="cell" class="hidden xl:block text-sm">
-                                    {if let Some(price) = crate::components::related_items::get_vendor_price(item_id) {
-                                        view! { <Gil amount=price as i32 /> }.into_any()
-                                    } else {
-                                        ().into_any()
-                                    }}
-                                </div>
-                                // World holding the cheapest listing. Gated behind the
-                                // same `hydrated` flag as the price sort — SSR and the
-                                // first CSR render both show nothing, keeping shapes
-                                // in sync (see comment on `hydrated` above).
-                                <div
-                                    role="cell"
-                                    class=move || {
-                                        if is_single_world.get() {
-                                            "hidden"
-                                        } else {
-                                            "hidden xl:block truncate text-sm text-[color:var(--color-text-muted)]"
-                                        }
-                                    }
-                                >
-                                    {move || {
-                                        if !hydrated.get() {
-                                            return ().into_any();
-                                        }
-                                        listings_resource
-                                            .with(|data| {
-                                                data.as_ref().and_then(|result| {
-                                                    result.as_ref().ok().and_then(|map| {
-                                                        let summary = map.find_matching_listings(item_id);
-                                                        let best = match (summary.lq, summary.hq) {
-                                                            (Some(lq), Some(hq)) => {
-                                                                Some(if hq.price < lq.price { hq } else { lq })
-                                                            }
-                                                            (lq, hq) => lq.or(hq),
-                                                        };
-                                                        best.map(|listing| {
-                                                            view! {
-                                                                <WorldName id=AnySelector::World(listing.world_id) />
-                                                            }
-                                                            .into_any()
-                                                        })
-                                                    })
-                                                })
-                                            })
-                                            .unwrap_or_else(|| ().into_any())
-                                    }}
-                                </div>
-                                <div role="cell" class="flex items-center justify-end gap-1">
-                                    <AddToList
-                                        item_id=item_id
-                                        class="flex items-center justify-center p-2 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors"
-                                    />
-                                    <div class="p-1 rounded hover:bg-white/10 text-[color:var(--color-text-muted)] cursor-pointer" title=t_string!(i18n, item_explorer_copy_name).to_string()>
-                                        <Clipboard clipboard_text=item.name.clone() />
-                                    </div>
-                                </div>
-                            </div>
-                        }
-                        .into_any()
-                    }
-                />
-            </div>
+            <DataTableGrid
+                columns=columns
+                rows=filtered_items
+                key=|(id, item): &ExplorerRow| (id.0, item.name.clone())
+                class="panel rounded-xl border border-white/5 divide-y divide-white/5 overflow-hidden"
+                header_class="text-xs font-bold uppercase tracking-wider text-[color:var(--color-text-muted)]"
+                row_class="hover:bg-white/5 transition-colors"
+            />
 
             // Pagination + rows per page
             <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6">
@@ -1055,8 +1230,8 @@ pub fn ItemExplorer() -> impl IntoView {
     provide_context(CheapestPrices { read_listings });
     provide_context(scope);
     view! {
-        <div class="flex flex-col min-h-[calc(100vh-56px)]">
-            <div class="p-4 lg:p-8 max-w-[1600px] mx-auto w-full">
+        <div class="flex flex-col min-h-screen">
+            <div class="main-content p-2 sm:p-6 w-full">
                 <crate::routes::item_explorer_toolbar::ItemExplorerToolbar />
                 <Outlet />
             </div>
@@ -1067,9 +1242,172 @@ pub fn ItemExplorer() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_job_items_sorted, resolve_category_param};
+    use super::{
+        EXPLORER_COLUMNS, canonical_job_acronym, collect_job_items_sorted, resolve_category_param,
+        resolve_jobset_param,
+    };
+    use crate::components::data_table::check_header_class;
+    use crate::routes::item_explorer_toolbar::{job_chip_slug, job_chips_sorted_in};
     use paginate::Pages;
     use xiv_gen::Language;
+
+    /// Every header cell must be visible at exactly the breakpoints where its
+    /// column owns a grid track.
+    ///
+    /// Counting tracks is not enough: the vendor column shipped for one commit
+    /// with its tracks right (`xl` only) and its header class dropped, so at
+    /// `lg` the header row had seven tracks and eight unhidden cells. VENDOR
+    /// took the actions track, the actions header wrapped to an implicit
+    /// second row, and the body rows — whose cells carry their own
+    /// `hidden xl:block` — stayed correct, so header and body disagreed with
+    /// nothing to catch it.
+    #[test]
+    fn header_classes_match_their_tracks() {
+        for (index, (widths, header_class)) in EXPLORER_COLUMNS.iter().enumerate() {
+            if let Err(problem) = check_header_class(widths, header_class) {
+                panic!("column {index}: {problem}");
+            }
+        }
+    }
+
+    const ALL_LOCALES: [Language; 7] = [
+        Language::En,
+        Language::Ja,
+        Language::De,
+        Language::Fr,
+        Language::Cn,
+        Language::Ko,
+        Language::Tc,
+    ];
+
+    /// Pins the hardcoded acronym table against the shipped English pack. A
+    /// game-data bump that renumbers, adds, or removes a job fails here
+    /// instead of silently emptying `/items/jobset/*`.
+    #[test]
+    fn canonical_acronym_matches_english_abbreviation() {
+        let en = xiv_gen_db::data_for(Language::En);
+        for job in job_chips_sorted_in(en) {
+            assert_eq!(
+                canonical_job_acronym(job.key_id),
+                Some(job.abbreviation.as_str()),
+                "job id {} ({}) is missing or wrong in the acronym table",
+                job.key_id.0,
+                job.name,
+            );
+        }
+    }
+
+    /// The bug. `ClassJobCategory`'s columns are English acronyms baked into
+    /// the sheet schema, but `ClassJob::abbreviation` is a localized display
+    /// string — so a German client's own "FST" chip is a key that
+    /// `job_category_lookup` matches nothing against, on *either* side of the
+    /// SSR/CSR split. The result was a nav link to a permanently empty page.
+    #[test]
+    fn a_localized_job_abbreviation_is_not_a_usable_category_key() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let de = xiv_gen_db::data_for(Language::De);
+
+        // Find a job German actually renames, so the assertion is not vacuous.
+        let (localized, canonical) = job_chips_sorted_in(de)
+            .into_iter()
+            .find_map(|job| {
+                let canonical = canonical_job_acronym(job.key_id)?;
+                (job.abbreviation != canonical)
+                    .then(|| (job.abbreviation.clone(), canonical.to_string()))
+            })
+            .expect("German renames at least one job abbreviation");
+
+        assert!(
+            collect_job_items_sorted(de, &localized, false).is_empty(),
+            "the localized abbreviation {localized:?} must not resolve — it is \
+             the dead-link bug, and if it ever does the acronym table is moot",
+        );
+        assert!(
+            !collect_job_items_sorted(de, &canonical, false).is_empty(),
+            "the canonical acronym {canonical:?} resolves against German data",
+        );
+        // Same key, same items, either side of the SSR/CSR locale split.
+        assert_eq!(
+            collect_job_items_sorted(de, &canonical, false)
+                .iter()
+                .map(|(id, _)| id.0)
+                .collect::<Vec<_>>(),
+            collect_job_items_sorted(en, &canonical, false)
+                .iter()
+                .map(|(id, _)| id.0)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// Jobs that no `ClassJobCategory` row can select, because the sheet has
+    /// no column for them. These render an empty `/items/jobset/*` page in
+    /// *every* locale, English included — a gap in the shipped game-data pack
+    /// (`ClassJobCategory` predates Beastmaster), not something the acronym
+    /// table can repair. Pinned so a data bump that widens or closes the gap
+    /// surfaces in review instead of quietly changing which pages are dead.
+    #[test]
+    fn only_beastmaster_lacks_a_category_column() {
+        let en = xiv_gen_db::data_for(Language::En);
+        let unselectable: Vec<&str> = job_chips_sorted_in(en)
+            .into_iter()
+            .filter_map(|job| canonical_job_acronym(job.key_id))
+            .filter(|acronym| {
+                !en.class_job_categorys
+                    .values()
+                    .any(|c| super::job_category_lookup(c, acronym))
+            })
+            .collect();
+        assert_eq!(unselectable, vec!["BST"]);
+    }
+
+    /// The fix, end to end: the href the job nav actually mints resolves to a
+    /// non-empty item list in every locale. Pre-fix this minted the localized
+    /// abbreviation and failed for German and French.
+    #[test]
+    fn every_job_chip_link_resolves_to_items_in_every_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        for lang in ALL_LOCALES {
+            let data = xiv_gen_db::data_for(lang);
+            for job in job_chips_sorted_in(data) {
+                // Dead for everyone regardless of locale keying — covered by
+                // `only_beastmaster_lacks_a_category_column`. Keyed on the id
+                // so the exclusion is itself locale-independent.
+                if canonical_job_acronym(job.key_id) == Some("BST") {
+                    continue;
+                }
+                let slug = job_chip_slug(job);
+                let resolved = resolve_jobset_param(data, &slug).unwrap_or_else(|| {
+                    panic!("{lang:?}: chip link /items/jobset/{slug} resolves to no job")
+                });
+                // The URL is a key, so every locale must read it as the same
+                // job. Item *sets* are deliberately not compared across
+                // locales: the CN/KO/TC packs track an older game version and
+                // genuinely hold different items — a separate and far broader
+                // SSR-locale issue that a route key cannot address.
+                assert_eq!(
+                    Some(resolved.as_str()),
+                    canonical_job_acronym(job.key_id),
+                    "{lang:?}: /items/jobset/{slug} resolves to the wrong job",
+                );
+                assert!(
+                    !collect_job_items_sorted(data, &resolved, false).is_empty(),
+                    "{lang:?}: /items/jobset/{slug} ({}) renders zero items",
+                    job.name,
+                );
+            }
+        }
+        // English is the SSR locale, so it must resolve every slug a client of
+        // any locale can mint — that is the pairing that actually hydrates.
+        for lang in ALL_LOCALES {
+            for job in job_chips_sorted_in(xiv_gen_db::data_for(lang)) {
+                let slug = job_chip_slug(job);
+                assert!(
+                    resolve_jobset_param(en, &slug).is_some(),
+                    "English SSR cannot resolve {slug}, minted by a {lang:?} client",
+                );
+            }
+        }
+    }
 
     /// Lowest-id category that the toolbar actually links to (`category`
     /// 1..=4), so the locale tests below key off a real navigable page

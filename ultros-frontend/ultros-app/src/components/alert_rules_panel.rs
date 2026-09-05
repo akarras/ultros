@@ -4,13 +4,139 @@ use ultros_api_types::alert::{Alert, AlertTrigger, Endpoint, UpdateAlertRequest}
 use xiv_gen::ItemId;
 
 use crate::api::{delete_alert, get_alerts, list_endpoints, patch_alert};
-use crate::components::create_alert_drawer::CreateAlertDrawer;
+use crate::components::alert_drawer::AlertDrawer;
+use crate::components::data_table::{Column, ColumnHeader, TrackWidths, body_cells, header_cells};
 use crate::components::icon::Icon;
-use crate::components::undercut_alert_drawer::UndercutAlertDrawer;
-use crate::global_state::home_world::use_home_world;
+use crate::components::skeleton::{SkeletonCell, SkeletonColumn, TableSkeleton};
 use crate::global_state::toasts::use_toast;
 use crate::global_state::xiv_data::tracked_data;
-use crate::i18n::{t, t_string, use_i18n};
+use crate::i18n::{Locale, t, t_string, use_i18n};
+use leptos_i18n::I18nContext;
+
+/// Shared header-cell classes for the alert rules `<table>` substrate — same
+/// content-sized-columns case as the retainer tables in `routes/retainers.rs`
+/// (see the substrate note in `components/data_table.rs`): no responsive
+/// column set to express, so a real `<table>` beats `DataTableGrid`'s div
+/// grid here too.
+const TH: &str = "text-left p-1 font-bold whitespace-nowrap";
+
+/// One row of the alert rules table, flattened out of the display strings an
+/// [`Alert`] needs per trigger variant plus the resolved endpoint names and
+/// the row's own actions.
+struct AlertRow {
+    alert: Alert,
+    item_name: String,
+    threshold_str: String,
+    world_str: String,
+    hq_str: String,
+    endpoints_str: String,
+}
+
+/// Skeleton columns matching [`alert_rules_columns`]'s seven columns, in the
+/// same order, so the loading state has the real table's rhythm.
+fn alert_rules_skeleton_columns() -> Vec<SkeletonColumn> {
+    vec![
+        SkeletonColumn::new("flex-1 min-w-32 p-1", SkeletonCell::IconText),
+        SkeletonColumn::new("w-24 p-1", SkeletonCell::Text),
+        SkeletonColumn::new("w-20 p-1", SkeletonCell::Text),
+        SkeletonColumn::new("w-12 p-1", SkeletonCell::Text),
+        SkeletonColumn::new("w-32 p-1", SkeletonCell::Text),
+        SkeletonColumn::new("w-20 p-1", SkeletonCell::Badge),
+        SkeletonColumn::new("w-20 p-1", SkeletonCell::Blank),
+    ]
+}
+
+/// The seven columns the alert rules table shows, in DOM order — one list
+/// driving the header, the body rows and the empty state's `colspan`, same
+/// pattern as #1080's item explorer / currency exchange and the retainer
+/// tables above.
+fn alert_rules_columns(
+    i18n: I18nContext<Locale, crate::i18n::I18nKeys>,
+    toggle: impl Fn(Alert) + Copy + Send + Sync + 'static,
+    remove: impl Fn(i32) + Copy + Send + Sync + 'static,
+) -> Vec<Column<AlertRow>> {
+    vec![
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, item)} }.into_any()),
+            |row: &AlertRow| view! { <td class="p-1">{row.item_name.clone()}</td> }.into_any(),
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || {
+                view! { {t!(i18n, alert_rules_col_threshold)} }.into_any()
+            }),
+            |row: &AlertRow| view! { <td class="p-1">{row.threshold_str.clone()}</td> }.into_any(),
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, world)} }.into_any()),
+            |row: &AlertRow| view! { <td class="p-1">{row.world_str.clone()}</td> }.into_any(),
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, hq)} }.into_any()),
+            |row: &AlertRow| view! { <td class="p-1">{row.hq_str.clone()}</td> }.into_any(),
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, endpoints_heading)} }.into_any()),
+            |row: &AlertRow| view! { <td class="p-1">{row.endpoints_str.clone()}</td> }.into_any(),
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, status_label)} }.into_any()),
+            move |row: &AlertRow| {
+                let enabled = row.alert.enabled;
+                view! {
+                    <td class="p-1">
+                        {if enabled {
+                            t_string!(i18n, alerts_status_enabled).to_string()
+                        } else {
+                            t_string!(i18n, alerts_status_disabled).to_string()
+                        }}
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH),
+        Column::new(
+            TrackWidths::default(),
+            ColumnHeader::content(move || view! { {t!(i18n, actions)} }.into_any()),
+            move |row: &AlertRow| {
+                let enabled = row.alert.enabled;
+                let alert = row.alert.clone();
+                let id = row.alert.id;
+                view! {
+                    <td class="p-1 flex gap-1">
+                        <button
+                            class="btn-ghost"
+                            aria-label=t_string!(i18n, alert_rules_aria_toggle_enabled)
+                            on:click=move |_| toggle(alert.clone())
+                        >
+                            <Icon icon=if enabled { i::BsPauseFill } else { i::BsPlayFill } />
+                        </button>
+                        <button
+                            class="btn-ghost text-red-400"
+                            aria-label=t_string!(i18n, alert_rules_aria_delete_alert)
+                            on:click=move |_| remove(id)
+                        >
+                            <Icon icon=i::BiTrashSolid />
+                        </button>
+                    </td>
+                }
+                .into_any()
+            },
+        )
+        .header_class(TH),
+    ]
+}
 
 #[component]
 pub fn AlertRulesPanel() -> impl IntoView {
@@ -20,15 +146,6 @@ pub fn AlertRulesPanel() -> impl IntoView {
     let endpoints = Resource::new(move || version.get(), move |_| list_endpoints());
     let toasts = use_toast();
     let (drawer_visible, set_drawer_visible) = signal(false);
-    let (undercut_drawer_visible, set_undercut_drawer_visible) = signal(false);
-    // Default the world picker in the create drawer to the user's home world
-    // (when set), mirroring how AlertConfigDrawer is opened from item pages.
-    let (home_world, _) = use_home_world();
-    let default_world = Signal::derive(move || {
-        home_world
-            .get()
-            .map(|w| ultros_api_types::world_helper::AnySelector::World(w.id))
-    });
 
     // Refresh the alerts list when the drawer closes (best-effort: we can't tell if
     // the user actually saved without threading a callback, so we just bump the
@@ -57,9 +174,9 @@ pub fn AlertRulesPanel() -> impl IntoView {
                 Ok(()) => {
                     if let Some(t) = toasts {
                         t.success(if new_enabled {
-                            "Alert enabled"
+                            t_string!(i18n, alerts_alert_enabled).to_string()
                         } else {
-                            "Alert disabled"
+                            t_string!(i18n, alerts_alert_disabled).to_string()
                         });
                     }
                     version.update(|v| *v += 1);
@@ -78,7 +195,7 @@ pub fn AlertRulesPanel() -> impl IntoView {
             match delete_alert(id).await {
                 Ok(()) => {
                     if let Some(t) = toasts {
-                        t.success("Alert deleted");
+                        t.success(t_string!(i18n, alerts_alert_deleted).to_string());
                     }
                     version.update(|v| *v += 1);
                 }
@@ -94,25 +211,17 @@ pub fn AlertRulesPanel() -> impl IntoView {
     view! {
         <div class="space-y-3">
             <div class="flex justify-end gap-2">
-                <button class="btn" on:click=move |_| set_undercut_drawer_visible.set(true)>
-                    <Icon icon=i::BsBell />
-                    <span class="ml-1">{t!(i18n, undercut_alert_open_button)}</span>
-                </button>
                 <button class="btn" on:click=move |_| set_drawer_visible.set(true)>
                     <Icon icon=i::BsBell />
-                    <span class="ml-1">{t!(i18n, create_alert_button)}</span>
+                    <span class="ml-1">{t!(i18n, add_alert_button)}</span>
                 </button>
             </div>
             <Show when=move || drawer_visible.get()>
-                <CreateAlertDrawer
-                    default_world=default_world
-                    set_visible=set_drawer_visible.into()
-                />
+                <AlertDrawer set_visible=set_drawer_visible.into() />
             </Show>
-            <Show when=move || undercut_drawer_visible.get()>
-                <UndercutAlertDrawer set_visible=set_undercut_drawer_visible.into() />
-            </Show>
-            <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
+            <Suspense fallback=move || {
+                view! { <TableSkeleton columns=alert_rules_skeleton_columns() rows=4 /> }
+            }>
             {move || {
                 let endpoint_list: Vec<Endpoint> = endpoints
                     .get()
@@ -131,129 +240,105 @@ pub fn AlertRulesPanel() -> impl IntoView {
                         Ok(rows) if rows.is_empty() => {
                             view! {
                                 <p class="opacity-70">
-                                    "No alerts yet. Add one from any item on a list."
+                                    {t!(i18n, alerts_empty_state)}
                                 </p>
                             }
                                 .into_any()
                         }
                         Ok(rows) => {
+                            let columns = alert_rules_columns(i18n, toggle, remove);
+                            let rows: Vec<AlertRow> = rows
+                                .into_iter()
+                                .map(|a: Alert| {
+                                    // Display strings differ per trigger variant. List-scoped alerts
+                                    // don't carry a single item/world/hq — render those columns with
+                                    // the list id and "—" placeholders so the table stays uniform.
+                                    let (item_name, threshold_str, world_str, hq_str): (
+                                        String,
+                                        String,
+                                        String,
+                                        String,
+                                    ) = match a.trigger.clone() {
+                                        AlertTrigger::BelowThreshold {
+                                            item_id,
+                                            price_threshold,
+                                            hq_only,
+                                            world_selector,
+                                        } => {
+                                            let name = tracked_data()
+                                                .items
+                                                .get(&ItemId(item_id))
+                                                .map(|it| it.name.as_str().to_string())
+                                                .unwrap_or_else(|| format!("Item {item_id}"));
+                                            let threshold = format!("≤ {price_threshold} gil");
+                                            let world = match world_selector {
+                                                ultros_api_types::world_helper::AnySelector::World(id) => {
+                                                    format!("World({id})")
+                                                }
+                                                ultros_api_types::world_helper::AnySelector::Datacenter(id) => {
+                                                    format!("DC({id})")
+                                                }
+                                                ultros_api_types::world_helper::AnySelector::Region(id) => {
+                                                    format!("Region({id})")
+                                                }
+                                            };
+                                            let hq = if hq_only {
+                                                t_string!(i18n, alerts_hq_any).to_string()
+                                            } else {
+                                                t_string!(i18n, alerts_any).to_string()
+                                            };
+                                            (name, threshold, world, hq)
+                                        }
+                                        AlertTrigger::ListItemThreshold { list_id } => (
+                                            format!("List #{list_id}"),
+                                            t_string!(i18n, alerts_list_price_target).to_string(),
+                                            t_string!(i18n, alerts_list_defined_world).to_string(),
+                                            "—".to_string(),
+                                        ),
+                                        AlertTrigger::RetainerUndercut { margin_percent } => (
+                                            t_string!(i18n, alerts_retainer_undercut_rule).to_string(),
+                                            t_string!(i18n, alerts_margin_percent, margin = margin_percent).to_string(),
+                                            "—".to_string(),
+                                            "—".to_string(),
+                                        ),
+                                        AlertTrigger::ListUpdate { list_id } => (
+                                            format!("List #{list_id}"),
+                                            t_string!(i18n, alerts_list_update_rule).to_string(),
+                                            "—".to_string(),
+                                            "—".to_string(),
+                                        ),
+                                    };
+                                    let endpoints_str = a
+                                        .endpoint_ids
+                                        .iter()
+                                        .map(|id| ep_name(*id))
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    AlertRow {
+                                        alert: a,
+                                        item_name,
+                                        threshold_str,
+                                        world_str,
+                                        hq_str,
+                                        endpoints_str,
+                                    }
+                                })
+                                .collect();
                             view! {
                                 <div class="overflow-x-auto">
-                                    <table class="w-full text-sm">
+                                    <table class="w-full text-sm text-left">
                                         <thead>
-                                            <tr>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, item)}</th>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, alert_rules_col_threshold)}</th>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, world)}</th>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, hq)}</th>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, endpoints_heading)}</th>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, status_label)}</th>
-                                                <th scope="col" class="text-left p-1">{t!(i18n, actions)}</th>
-                                            </tr>
+                                            <tr>{header_cells(&columns)}</tr>
                                         </thead>
                                         <tbody>
-                                            // ⚡ Bolt Optimization: Using collect_view() instead of <For> to prevent unnecessary cloning of rows inside a conditional block that completely recreates the view.
-                                            {rows.into_iter().map(|a: Alert| {
-                                                    // Display strings differ per trigger variant. List-scoped alerts
-                                                    // don't carry a single item/world/hq — render those columns with
-                                                    // the list id and "—" placeholders so the table stays uniform.
-                                                    let (item_name, threshold_str, world_str, hq_str): (
-                                                        String,
-                                                        String,
-                                                        String,
-                                                        String,
-                                                    ) = match a.trigger.clone() {
-                                                        AlertTrigger::BelowThreshold {
-                                                            item_id,
-                                                            price_threshold,
-                                                            hq_only,
-                                                            world_selector,
-                                                        } => {
-                                                            let name = tracked_data()
-                                                                .items
-                                                                .get(&ItemId(item_id))
-                                                                .map(|it| it.name.as_str().to_string())
-                                                                .unwrap_or_else(|| format!("Item {item_id}"));
-                                                            let threshold = format!("≤ {price_threshold} gil");
-                                                            let world = match world_selector {
-                                                                ultros_api_types::world_helper::AnySelector::World(id) => {
-                                                                    format!("World({id})")
-                                                                }
-                                                                ultros_api_types::world_helper::AnySelector::Datacenter(id) => {
-                                                                    format!("DC({id})")
-                                                                }
-                                                                ultros_api_types::world_helper::AnySelector::Region(id) => {
-                                                                    format!("Region({id})")
-                                                                }
-                                                            };
-                                                            let hq = if hq_only {
-                                                                t_string!(i18n, alerts_hq_any).to_string()
-                                                            } else {
-                                                                t_string!(i18n, alerts_any).to_string()
-                                                            };
-                                                            (name, threshold, world, hq)
-                                                        }
-                                                        AlertTrigger::ListItemThreshold { list_id } => (
-                                                            format!("List #{list_id}"),
-                                                            t_string!(i18n, alerts_list_price_target).to_string(),
-                                                            t_string!(i18n, alerts_list_defined_world).to_string(),
-                                                            "—".to_string(),
-                                                        ),
-                                                        AlertTrigger::RetainerUndercut { margin_percent } => (
-                                                            t_string!(i18n, alerts_retainer_undercut_rule).to_string(),
-                                                            t_string!(i18n, alerts_margin_percent, margin = margin_percent).to_string(),
-                                                            "—".to_string(),
-                                                            "—".to_string(),
-                                                        ),
-                                                        AlertTrigger::ListUpdate { list_id } => (
-                                                            format!("List #{list_id}"),
-                                                            t_string!(i18n, alerts_list_update_rule).to_string(),
-                                                            "—".to_string(),
-                                                            "—".to_string(),
-                                                        ),
-                                                    };
-                                                    let endpoints_str = a
-                                                        .endpoint_ids
-                                                        .iter()
-                                                        .map(|id| ep_name(*id))
-                                                        .collect::<Vec<_>>()
-                                                        .join(", ");
-                                                    let enabled = a.enabled;
-                                                    let a_clone = a.clone();
-                                                    let id = a.id;
+                                            {rows
+                                                .into_iter()
+                                                .map(|row| {
                                                     view! {
-                                                        <tr class="border-t">
-                                                            <td class="p-1">{item_name}</td>
-                                                            <td class="p-1">{threshold_str}</td>
-                                                            <td class="p-1">{world_str}</td>
-                                                            <td class="p-1">{hq_str}</td>
-                                                            <td class="p-1">{endpoints_str}</td>
-                                                            <td class="p-1">
-                                                                {if enabled { "enabled" } else { "disabled" }}
-                                                            </td>
-                                                            <td class="p-1 flex gap-1">
-                                                                <button
-                                                                    class="btn-ghost"
-                                                                    aria-label=t_string!(i18n, alert_rules_aria_toggle_enabled)
-                                                                    on:click=move |_| toggle(a_clone.clone())
-                                                                >
-                                                                    <Icon icon=if enabled {
-                                                                        i::BsPauseFill
-                                                                    } else {
-                                                                        i::BsPlayFill
-                                                                    } />
-                                                                </button>
-                                                                <button
-                                                                    class="btn-ghost text-red-400"
-                                                                    aria-label=t_string!(i18n, alert_rules_aria_delete_alert)
-                                                                    on:click=move |_| remove(id)
-                                                                >
-                                                                    <Icon icon=i::BiTrashSolid />
-                                                                </button>
-                                                            </td>
-                                                        </tr>
+                                                        <tr class="border-t">{body_cells(&columns, &row)}</tr>
                                                     }
-                                            }).collect_view()}
+                                                })
+                                                .collect::<Vec<_>>()}
                                         </tbody>
                                     </table>
                                 </div>

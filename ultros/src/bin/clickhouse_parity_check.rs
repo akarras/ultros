@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
         .query(
             "SELECT world_id, toYYYYMM(sold_date) AS ym, count() AS sale_count, \
              sum(quantity) AS qty_sum \
-             FROM sales WHERE toYYYYMM(sold_date) >= ? \
+             FROM sales FINAL WHERE toYYYYMM(sold_date) >= ? \
              GROUP BY world_id, ym ORDER BY world_id, ym",
         )
         .bind(start_ym as u32)

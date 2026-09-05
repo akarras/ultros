@@ -1,7 +1,7 @@
 use crate::analysis::{SalesStats, analyze_sales, roi_badge_class};
 use crate::components::crafting_cost::{
     CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, OnHand, ShardsMode,
-    compute_ingredient_cost,
+    compute_ingredient_cost, vendor_price_map,
 };
 use crate::components::on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap};
 use crate::global_state::cookies::Cookies;
@@ -13,13 +13,14 @@ use crate::ws::realtime::use_realtime;
 use crate::{
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
-        skeleton::BoxSkeleton,
+        skeleton::{BoxSkeleton, InlineStatusSkeleton},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField, ToolbarPills, ToolbarSpacer},
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
@@ -28,7 +29,7 @@ use crate::{
 use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
 use leptos_router::hooks::{query_signal, use_params_map};
-use std::{cmp::Reverse, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -66,6 +67,8 @@ enum SortMode {
     Roi,
     Profit,
     Velocity,
+    TotalCost,
+    MarketPrice,
 }
 
 impl FromStr for SortMode {
@@ -76,6 +79,8 @@ impl FromStr for SortMode {
             "roi" => Ok(SortMode::Roi),
             "profit" => Ok(SortMode::Profit),
             "velocity" => Ok(SortMode::Velocity),
+            "cost" => Ok(SortMode::TotalCost),
+            "price" => Ok(SortMode::MarketPrice),
             _ => Err(()),
         }
     }
@@ -87,8 +92,82 @@ impl Display for SortMode {
             SortMode::Roi => "roi",
             SortMode::Profit => "profit",
             SortMode::Velocity => "velocity",
+            SortMode::TotalCost => "cost",
+            SortMode::MarketPrice => "price",
         };
         f.write_str(val)
+    }
+}
+
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+
+    /// Total cost reads best-first ascending — the cheapest project is the
+    /// interesting one. Everything else is a biggest-first metric.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::TotalCost => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_ROI: &str = "roi";
+const FILTER_MIN_SALES: &str = "min-sales";
+const FILTER_EXCLUDE_SHARDS: &str = "shards-exclude";
+const FILTER_USE_ON_HAND: &str = "on-hand";
+
+/// Filters the `+ Filter` menu can add, in menu order.
+const ADDABLE_FILTERS: &[&str] = &[
+    FILTER_PROFIT,
+    FILTER_ROI,
+    FILTER_MIN_SALES,
+    FILTER_EXCLUDE_SHARDS,
+    FILTER_USE_ON_HAND,
+];
+
+/// The `VirtualScroller` here runs in **container** mode, where the scroller
+/// div is the scrollport and the row spacer inside it carries no width of its
+/// own. Left unsized it resolves to the port width, so every row is clipped
+/// there while the header — a sibling outside that box — keeps painting the
+/// full grid: the right-hand columns render over blank rows on any viewport
+/// narrower than the grid (~816px below `md`, ~936px from `md` up).
+///
+/// The width comes from the stylesheet rather than `max-content` (what the
+/// recipe analyzer passes) because this is the one caller with
+/// `variable_height=true`: its rows carry `content-visibility: auto`, and a
+/// skipped off-screen row gains size containment and contributes nothing to an
+/// intrinsic measurement, so a `max-content` spacer would wobble as rows are
+/// skipped and unskipped. `.fc-craft-table` in `style/tailwind.css` defines
+/// the value, with the sixth column's `md` breakpoint mirrored there.
+const FC_ROW_MIN_WIDTH: &str = "var(--fc-craft-row-min-width, 0px)";
+
+/// Wrapper that scopes `--fc-craft-row-min-width` to this grid. It has to sit
+/// on an *ancestor* of the scroller, because the spacer that consumes the
+/// variable is rendered by `VirtualScroller`, not by this route.
+const FC_TABLE_CLASS: &str = "fc-craft-table rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer";
+
+/// `min-w-max` so the header's tint band spans the whole scrolled width
+/// instead of stopping at the viewport edge; the cells are all `shrink-0`, so
+/// its max-content width is exactly the sum `--fc-craft-row-min-width` states.
+const FC_HEADER_CLASS: &str = "min-w-max flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]";
+
+fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitData) -> Ordering {
+    match mode {
+        SortMode::Roi => a.return_on_investment.cmp(&b.return_on_investment),
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Velocity => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
+        SortMode::TotalCost => a.cost.cmp(&b.cost),
+        SortMode::MarketPrice => a.market_price.cmp(&b.market_price),
     }
 }
 
@@ -211,14 +290,20 @@ fn FCCraftingAnalyzerTable(
     let sequences = &data.company_craft_sequences;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (minimum_roi, set_minimum_roi) = query_signal::<i32>("roi");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // editing a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
+    let (minimum_roi, set_minimum_roi) = filter_query_signal::<i32>(FILTER_ROI);
     // Seeded by FCCraftingAnalyzer so a first-time visitor isn't shown recipes
     // whose output sells once a month. Same velocity floor as the analyzer's
     // 1d default.
-    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>("min-sales");
-    let (exclude_shards_url, set_exclude_shards) = query_signal::<bool>("shards-exclude");
-    let (use_on_hand_url, set_use_on_hand) = query_signal::<bool>("on-hand");
+    let (min_daily_sales, set_min_daily_sales) = filter_query_signal::<f32>(FILTER_MIN_SALES);
+    let (exclude_shards_url, set_exclude_shards) =
+        filter_query_signal::<bool>(FILTER_EXCLUDE_SHARDS);
+    let (use_on_hand_url, set_use_on_hand) = filter_query_signal::<bool>(FILTER_USE_ON_HAND);
     let cookies = use_context::<Cookies>().unwrap();
     let (craft_options, _) =
         cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
@@ -229,6 +314,12 @@ fn FCCraftingAnalyzerTable(
     let use_on_hand_enabled = move || {
         use_on_hand_url().unwrap_or_else(|| craft_options.get().unwrap_or_default().use_on_hand)
     };
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). The two on/off toggles commit immediately on add
+    // instead, so this only ever holds a numeric filter id.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let computed_data = Memo::new(move |_| {
         let sales_map: HashMap<i32, Vec<&SaleData>> = if let Some(ref sales) = recent_sales {
@@ -309,6 +400,7 @@ fn FCCraftingAnalyzerTable(
                 max_subcraft_depth: 0,
                 shards,
                 on_hand: active.as_ref(),
+                vendor_prices: Some(vendor_price_map()),
             };
 
             let (cost, materials, shard_cost, on_hand_savings) =
@@ -359,35 +451,9 @@ fn FCCraftingAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Roi => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.return_on_investment));
-                }
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Velocity => {
-                    results.select_nth_unstable_by(limit, |a, b| {
-                        b.daily_sales
-                            .partial_cmp(&a.daily_sales)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Roi => results.sort_unstable_by_key(|d| Reverse(d.return_on_investment)),
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Velocity => results.sort_unstable_by(|a, b| {
-                b.daily_sales
-                    .partial_cmp(&a.daily_sales)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_fc_crafts(mode, a, b));
 
         results
             .into_iter()
@@ -396,149 +462,259 @@ fn FCCraftingAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
+            active.push(FILTER_PROFIT);
+        }
+        if minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI) {
+            active.push(FILTER_ROI);
+        }
+        if min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES) {
+            active.push(FILTER_MIN_SALES);
+        }
+        // These two only show a chip once the URL explicitly overrides the
+        // cookie default — otherwise the page is silently using the user's
+        // saved crafting-cost preference, not filtering anything.
+        if exclude_shards_url().is_some() {
+            active.push(FILTER_EXCLUDE_SHARDS);
+        }
+        if use_on_hand_url().is_some() {
+            active.push(FILTER_USE_ON_HAND);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, fc_crafting_filter_profit_min_label).to_string(),
+            FILTER_ROI => t_string!(i18n, fc_crafting_filter_roi_min_label).to_string(),
+            FILTER_MIN_SALES => {
+                t_string!(i18n, fc_crafting_filter_daily_sales_min_label).to_string()
+            }
+            FILTER_EXCLUDE_SHARDS => {
+                t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()
+            }
+            FILTER_USE_ON_HAND => t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let on_off_options = move || {
+        vec![
+            ("true", t_string!(i18n, toolbar_pill_on).to_string()),
+            ("false", t_string!(i18n, toolbar_pill_off).to_string()),
+        ]
+    };
+
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
+        FILTER_ROI => pending_filter.set(Some(FILTER_ROI)),
+        FILTER_MIN_SALES => pending_filter.set(Some(FILTER_MIN_SALES)),
+        // On/off toggles: seed to the "On" state, same as the pill's
+        // affirmative side — the user flips or clears it from there.
+        FILTER_EXCLUDE_SHARDS => set_exclude_shards(Some(true)),
+        FILTER_USE_ON_HAND => set_use_on_hand(Some(true)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_minimum_profit(None);
+        set_minimum_roi(None);
+        set_min_daily_sales(None);
+        set_exclude_shards(None);
+        set_use_on_hand(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
             <ActiveListBanner />
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        step=100000
-                        type="number"
-                        placeholder=t_string!(i18n, placeholder_eg_100000)
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit))
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, fc_crafting_result_count, n = move || computed_data().len())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, fc_crafting_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, fc_crafting_chip_profit_min).to_string()
+                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="100000"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_roi_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        min=0
-                        step=10
-                        type="number"
-                        placeholder=t_string!(i18n, placeholder_eg_50)
-                        prop:value=minimum_roi
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(roi) = value.parse::<i32>() {
-                                set_minimum_roi(Some(roi));
-                            } else if value.is_empty() {
-                                set_minimum_roi(None);
+                        })
+                }}
+                {move || {
+                    (minimum_roi().is_some() || pending_filter.get() == Some(FILTER_ROI))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_ROI);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, fc_crafting_chip_roi_min).to_string()
+                                    value=Signal::derive(move || minimum_roi().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="10"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_roi(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_ROI) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_daily_sales_min_label).to_string()>
-                    <input
-                        class="input input-sm w-28"
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        placeholder=t_string!(i18n, fc_crafting_placeholder_0_1)
-                        prop:value=min_daily_sales
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(s) = value.parse::<f32>() {
-                                set_min_daily_sales(Some(s));
-                            } else if value.is_empty() {
-                                set_min_daily_sales(None);
+                        })
+                }}
+                {move || {
+                    (min_daily_sales().is_some() || pending_filter.get() == Some(FILTER_MIN_SALES))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked()
+                                == Some(FILTER_MIN_SALES);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, fc_crafting_chip_daily_sales_min).to_string()
+                                    value=Signal::derive(move || min_daily_sales().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="0.1"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_min_daily_sales(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_MIN_SALES) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if exclude_shards_enabled() { "false" } else { "true" }
-                            title=t_string!(i18n, tooltip_exclude_shards)
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if exclude_shards_enabled() { "true" } else { "false" }
-                            title=t_string!(i18n, tooltip_exclude_shards)
-                            on:click=move |_| set_exclude_shards(Some(!exclude_shards_enabled()))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string()>
-                    <ToolbarPills>
-                        <button
-                            aria-pressed=move || if use_on_hand_enabled() { "false" } else { "true" }
-                            title=t_string!(i18n, tooltip_use_on_hand)
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
-                        >
-                            "Off"
-                        </button>
-                        <button
-                            aria-pressed=move || if use_on_hand_enabled() { "true" } else { "false" }
-                            title=t_string!(i18n, tooltip_use_on_hand)
-                            on:click=move |_| set_use_on_hand(Some(!use_on_hand_enabled()))
-                        >
-                            "On"
-                        </button>
-                    </ToolbarPills>
-                </ToolbarField>
-                <ToolbarSpacer />
-                <RealtimeStatus
-                    status=realtime_status
-                    last_update=last_update
-                />
-            </Toolbar>
+                        })
+                }}
+                {move || {
+                    exclude_shards_url()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, fc_crafting_filter_exclude_shards_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=on_off_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_exclude_shards(v.and_then(|v| v.parse().ok()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+                {move || {
+                    use_on_hand_url()
+                        .map(|current| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, fc_crafting_filter_use_on_hand_label).to_string()
+                                    value=Signal::derive(move || Some(current.to_string()))
+                                    options=on_off_options()
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_use_on_hand(v.and_then(|v| v.parse().ok()));
+                                    })
+                                />
+                            }
+                        })
+                }}
+            </ControlBar>
 
-            <div class="rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            <div class=FC_TABLE_CLASS>
                  <VirtualScroller
                     viewport_height=720.0
                     row_height=60.0
                     overscan=8
                     header_height=64.0
                     variable_height=true
+                    row_min_width=FC_ROW_MIN_WIDTH
                      header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
+                        <div class=FC_HEADER_CLASS role="rowgroup">
                              <div role="columnheader" class="w-84 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="roi"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_roi)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_total_cost)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_market_price)}</div>
-                             <div role="columnheader" class="w-30 shrink-0 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="velocity"
-                                >
-                                    {t!(i18n, fc_crafting_analyzer_col_daily_sales)}
-                                </QueryButton>
-                             </div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, fc_crafting_analyzer_col_profit).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Roi
+                                label=t_string!(i18n, fc_crafting_analyzer_col_roi).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::TotalCost
+                                label=t_string!(i18n, fc_crafting_analyzer_col_total_cost).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::MarketPrice
+                                label=t_string!(i18n, fc_crafting_analyzer_col_market_price).to_string()
+                                class="w-30 shrink-0 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Velocity
+                                label=t_string!(i18n, fc_crafting_analyzer_col_daily_sales).to_string()
+                                class="w-30 shrink-0 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -681,42 +857,33 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, fc_crafting_tool_context).to_string()
                     help_href="/help/fc-crafting"
                     help_body=t_string!(i18n, fc_crafting_tool_help).to_string()
-                />
-                 <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, fc_crafting_analyzer_loading_sales)}</div> }>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-
-                <Show when=move || selected_world.get().is_some()>
-                    <div class="flex flex-col md:flex-row items-center gap-2">
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, fc_crafting_calc_title).to_string(),
+                        t_string!(i18n, fc_crafting_calc_formula).to_string(),
+                        t_string!(i18n, fc_crafting_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, fc_crafting_assumption_market_prices).to_string(),
+                        t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string(),
+                        t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string(),
+                    ]
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, fc_crafting_analyzer_error_sales)}</div> })
+                        }}
+                    </Suspense>
+                    <Show when=move || selected_world.get().is_some()>
                         <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, fc_crafting_analyzer_select_world)}</label>
-                        <div class="w-full md:w-auto">
-                            <WorldOnlyPicker
-                                current_world=selected_world.into()
-                                set_current_world=set_selected_world.into()
-                            />
-                        </div>
-                    </div>
-                </Show>
-                <CalculationSummary
-                    title=t_string!(i18n, fc_crafting_calc_title).to_string()
-                    formula=t_string!(i18n, fc_crafting_calc_formula).to_string()
-                    details=t_string!(i18n, fc_crafting_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_market_prices).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_sparse_sales).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, fc_crafting_assumption_labor_not_priced).to_string() />
-                </div>
-
+                        <WorldOnlyPicker
+                            current_world=selected_world.into()
+                            set_current_world=set_selected_world.into()
+                        />
+                    </Show>
+                </ToolHeader>
                  <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
@@ -755,5 +922,68 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
                  </Suspense>
              </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// The same wiring check the recipe analyzer carries, plus the half that
+    /// is unique to the stylesheet approach: `var(--x, 0px)` degrades
+    /// *silently* to a 0px spacer if the definition is missing or renamed,
+    /// which is indistinguishable from the bug. So the variable name, both
+    /// measured widths, and the three props are all pinned together.
+    #[test]
+    fn the_scroller_call_opts_into_a_sized_row_spacer() {
+        const SRC: &str = include_str!("fc_crafting_analyzer.rs");
+        const CSS: &str = include_str!("../../../../style/tailwind.css");
+        // Assembled at run time: `include_str!` pulls in this test's own
+        // source too, so a literal needle would satisfy itself.
+        let passes = |prop: &str, konst: &str| SRC.contains(&format!("{prop}={konst}"));
+
+        assert!(
+            passes("row_min_width", "FC_ROW_MIN_WIDTH"),
+            "the <VirtualScroller> call must pass row_min_width, or the spacer resolves to the port width and clips every row"
+        );
+        assert!(
+            passes("class", "FC_TABLE_CLASS") && FC_TABLE_CLASS.contains("fc-craft-table"),
+            "the wrapper must scope the width variable to this grid"
+        );
+        assert!(
+            passes("class", "FC_HEADER_CLASS") && FC_HEADER_CLASS.contains("min-w-max"),
+            "the header band must span the scrolled width: {FC_HEADER_CLASS}"
+        );
+
+        let var_name = FC_ROW_MIN_WIDTH
+            .trim_start_matches("var(")
+            .split(',')
+            .next()
+            .expect("FC_ROW_MIN_WIDTH is a var() reference");
+        assert_eq!(var_name, "--fc-craft-row-min-width");
+        // 21rem (w-84) + 4 x 7.5rem (w-30), and the sixth w-30 column that is
+        // `hidden md:block` on both the header cell and the body cell.
+        for width in ["51rem", "58.5rem"] {
+            assert!(
+                CSS.contains(&format!("{var_name}: {width}")),
+                "style/tailwind.css must define {var_name} as {width}"
+            );
+        }
+    }
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Roi,
+            SortMode::Profit,
+            SortMode::Velocity,
+            SortMode::TotalCost,
+            SortMode::MarketPrice,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
     }
 }

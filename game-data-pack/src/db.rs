@@ -31,26 +31,25 @@ pub struct PackStats {
 
 pub struct DbOutput {
     pub packs: Vec<PackStats>,
-    /// Ascending ids of the *named* items in the `en` data — the missing-icon
-    /// report checks these against the icons that exist upstream.
-    pub en_named_item_ids: Vec<i32>,
+    /// `(item id, icon id)` of the *named* items in the `en` data, ascending by
+    /// item id — the icon extraction reads exactly these out of the game files.
+    pub en_named_items: Vec<(i32, i32)>,
 }
 
-/// Item ids worth checking for a missing icon: the rows that actually have a
-/// name, sorted ascending.
+/// Items worth extracting an icon for: the rows that actually have a name, as
+/// `(item id, icon id)` sorted ascending by item id.
 ///
-/// Measured against 7.55: 52,801 item rows of which 50,773 are named. Dropping
-/// the 2,028 unnamed placeholder rows keeps rows that can never have an icon out
-/// of the report, but it does not make the report small — see
-/// `main::report_missing_icons` for why the count is inherently large.
-fn named_item_ids<'a>(items: impl IntoIterator<Item = (i32, &'a str)>) -> Vec<i32> {
-    let mut ids: Vec<i32> = items
+/// Measured against 7.55: 52,801 item rows of which 50,773 are named. The
+/// 2,028 unnamed placeholder rows are dropped because they can never render
+/// anywhere an icon is wanted.
+fn named_items<'a>(items: impl IntoIterator<Item = (i32, &'a str, i32)>) -> Vec<(i32, i32)> {
+    let mut named: Vec<(i32, i32)> = items
         .into_iter()
-        .filter(|(_, name)| !name.trim().is_empty())
-        .map(|(id, _)| id)
+        .filter(|(_, name, _)| !name.trim().is_empty())
+        .map(|(id, _, icon)| (id, icon))
         .collect();
-    ids.sort_unstable();
-    ids
+    named.sort_unstable();
+    named
 }
 
 /// Reads every language out of `datamining_root` and writes one pack per
@@ -59,14 +58,14 @@ pub fn build_packs(datamining_root: &Path, out_dir: &Path) -> anyhow::Result<DbO
     std::fs::create_dir_all(out_dir).with_context(|| format!("creating {}", out_dir.display()))?;
 
     let mut packs = Vec::with_capacity(LANGUAGES.len());
-    let mut en_named_item_ids = Vec::new();
+    let mut en_named_items = Vec::new();
     for lang in LANGUAGES {
         let data = read_data_from(datamining_root, lang);
         if lang == Language::En {
-            en_named_item_ids = named_item_ids(
+            en_named_items = named_items(
                 data.items
                     .iter()
-                    .map(|(id, item)| (id.0, item.name.as_str())),
+                    .map(|(id, item)| (id.0, item.name.as_str(), item.icon)),
             );
         }
         let items = data.items.len();
@@ -108,7 +107,7 @@ pub fn build_packs(datamining_root: &Path, out_dir: &Path) -> anyhow::Result<DbO
     }
     Ok(DbOutput {
         packs,
-        en_named_item_ids,
+        en_named_items,
     })
 }
 
@@ -124,19 +123,22 @@ mod tests {
     }
 
     #[test]
-    fn named_item_ids_drops_unnamed_rows_and_sorts() {
+    fn named_items_drops_unnamed_rows_and_sorts_by_id() {
         let rows = vec![
-            (30, "Iron Ingot"),
-            (10, ""),
-            (44_000, "Grade 2 Gemdraught of Mind"),
-            (20, "   "),
-            (5, "Cotton"),
+            (30, "Iron Ingot", 20801),
+            (10, "", 999),
+            (44_000, "Grade 2 Gemdraught of Mind", 20872),
+            (20, "   ", 998),
+            (5, "Cotton", 21_001),
         ];
-        assert_eq!(named_item_ids(rows), vec![5, 30, 44_000]);
+        assert_eq!(
+            named_items(rows),
+            vec![(5, 21_001), (30, 20801), (44_000, 20872)]
+        );
     }
 
     #[test]
-    fn named_item_ids_is_empty_when_nothing_is_named() {
-        assert!(named_item_ids(vec![(1, ""), (2, " ")]).is_empty());
+    fn named_items_is_empty_when_nothing_is_named() {
+        assert!(named_items(vec![(1, "", 5), (2, " ", 6)]).is_empty());
     }
 }

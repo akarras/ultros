@@ -21,37 +21,20 @@ pub fn next_theme_mode(mode: ThemeMode) -> ThemeMode {
     }
 }
 
+/// The brand palette radiogroup on its own, so it can be dropped into the
+/// settings page and the welcome flow without dragging the mode toggle along.
 #[component]
-pub fn ThemePicker() -> impl IntoView {
+pub fn PalettePicker(
+    /// Render the "Palette" heading above the swatches. Off when the
+    /// surrounding step already says what this is.
+    #[prop(default = true)]
+    show_label: bool,
+) -> impl IntoView {
     let i18n = use_i18n();
-    // ensure settings exist in context
     let settings = provide_theme_settings();
-
-    let mode = settings.mode;
     let palette = settings.palette;
 
-    let set_mode = move |m: ThemeMode| mode.set(m);
     let set_palette = move |p: ThemePalette| palette.set(p);
-
-    let mode_button = move |label: Signal<String>, val: ThemeMode| {
-        let is_active = Signal::derive(move || mode.get() == val);
-        view! {
-            <button
-                role="radio"
-                class=move || {
-                    if is_active() {
-                        "btn-primary"
-                    } else {
-                        "btn-secondary"
-                    }
-                }
-                aria-checked=move || is_active().to_string()
-                on:click=move |_| set_mode(val)
-            >
-                {move || label.get()}
-            </button>
-        }
-    };
 
     let palette_button = move |label: &'static str, val: ThemePalette| {
         let is_active = Signal::derive(move || palette.get() == val);
@@ -74,6 +57,79 @@ pub fn ThemePicker() -> impl IntoView {
     };
 
     view! {
+        <div class="space-y-2">
+            {show_label
+                .then(|| {
+                    view! {
+                        <div class="text-[color:var(--brand-fg)] font-semibold">
+                            {t!(i18n, theme_palette_label)}
+                        </div>
+                    }
+                })}
+            <div
+                class="flex flex-wrap gap-2"
+                role="radiogroup"
+                aria-label=move || t_string!(i18n, theme_palette_label).to_string()
+            >
+                // The six plain-colour palettes come first because `Violet` is
+                // `ThemePalette::default()`. Without a button for it, anyone
+                // who has never changed palette — i.e. every visitor to the
+                // welcome flow — sees a radiogroup with nothing checked.
+                {palette_button("Violet", ThemePalette::Violet)}
+                {palette_button("Teal", ThemePalette::Teal)}
+                {palette_button("Emerald", ThemePalette::Emerald)}
+                {palette_button("Amber", ThemePalette::Amber)}
+                {palette_button("Rose", ThemePalette::Rose)}
+                {palette_button("Sky", ThemePalette::Sky)}
+                {palette_button("Ultros", ThemePalette::Ultros)}
+                {palette_button("Maelstrom", ThemePalette::Maelstrom)}
+                {palette_button("Twin Adder", ThemePalette::TwinAdder)}
+                {palette_button("Ascian", ThemePalette::Ascian)}
+                {palette_button("Ishgard", ThemePalette::Ishgard)}
+                {palette_button("Crystarium", ThemePalette::Crystarium)}
+                {palette_button("Sharlayan", ThemePalette::Sharlayan)}
+                {palette_button("Tuliyollal", ThemePalette::Tuliyollal)}
+                {palette_button("Immortal Flames", ThemePalette::ImmortalFlames)}
+                {palette_button("Ul'dah", ThemePalette::Uldah)}
+                {palette_button("Limsa", ThemePalette::Limsa)}
+                {palette_button("Garlemald", ThemePalette::Garlemald)}
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+#[component]
+pub fn ThemePicker() -> impl IntoView {
+    let i18n = use_i18n();
+    // ensure settings exist in context
+    let settings = provide_theme_settings();
+
+    let mode = settings.mode;
+
+    let set_mode = move |m: ThemeMode| mode.set(m);
+
+    let mode_button = move |label: Signal<String>, val: ThemeMode| {
+        let is_active = Signal::derive(move || mode.get() == val);
+        view! {
+            <button
+                role="radio"
+                class=move || {
+                    if is_active() {
+                        "btn-primary"
+                    } else {
+                        "btn-secondary"
+                    }
+                }
+                aria-checked=move || is_active().to_string()
+                on:click=move |_| set_mode(val)
+            >
+                {move || label.get()}
+            </button>
+        }
+    };
+
+    view! {
         <div class="panel p-6 rounded-xl space-y-6">
             <div class="space-y-2">
                 <h3 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, theme_title)}</h3>
@@ -90,23 +146,7 @@ pub fn ThemePicker() -> impl IntoView {
                     </div>
                 </div>
 
-                <div class="space-y-2">
-                    <div class="text-[color:var(--brand-fg)] font-semibold" id="theme-palette-label">{t!(i18n, theme_palette_label)}</div>
-                    <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="theme-palette-label">
-                        {palette_button("Ultros", ThemePalette::Ultros)}
-                        {palette_button("Maelstrom", ThemePalette::Maelstrom)}
-                        {palette_button("Twin Adder", ThemePalette::TwinAdder)}
-                        {palette_button("Ascian", ThemePalette::Ascian)}
-                        {palette_button("Ishgard", ThemePalette::Ishgard)}
-                        {palette_button("Crystarium", ThemePalette::Crystarium)}
-                        {palette_button("Sharlayan", ThemePalette::Sharlayan)}
-                        {palette_button("Tuliyollal", ThemePalette::Tuliyollal)}
-                        {palette_button("Immortal Flames", ThemePalette::ImmortalFlames)}
-                        {palette_button("Ul'dah", ThemePalette::Uldah)}
-                        {palette_button("Limsa", ThemePalette::Limsa)}
-                        {palette_button("Garlemald", ThemePalette::Garlemald)}
-                    </div>
-                </div>
+                <PalettePicker />
             </div>
 
             <div class="divider"></div>
@@ -124,7 +164,7 @@ pub fn ThemePicker() -> impl IntoView {
 
 /// A compact button for the navbar that cycles theme mode Dark -> Light -> System
 #[component]
-pub fn QuickThemeToggle() -> impl IntoView {
+pub fn QuickThemeToggle(#[prop(optional)] menu_item: bool) -> impl IntoView {
     let i18n = use_i18n();
     let settings = provide_theme_settings();
     let mode = settings.mode;
@@ -143,13 +183,13 @@ pub fn QuickThemeToggle() -> impl IntoView {
 
     view! {
         <button
-            class="nav-link"
+            class=move || if menu_item { "menu-item" } else { "nav-link" }
             title=move || t_string!(i18n, theme_toggle_title).to_string()
             aria-label=move || t_string!(i18n, theme_toggle_aria, theme = label.get()).to_string()
             on:click=move |_| cycle()
         >
             <Icon icon=icon />
-            <span class="hidden lg:inline">{label}</span>
+            <span class=move || if menu_item { "ml-2" } else { "hidden lg:inline" }>{label}</span>
         </button>
     }
 }

@@ -9,9 +9,42 @@
 use leptos::prelude::*;
 use ultros_api_types::world_helper::AnyResult;
 
-use crate::global_state::{LocalWorldData, home_world::use_home_world};
+use crate::error::AppError;
+use crate::global_state::{
+    LocalWorldData, home_world::use_home_world, local_world_data::world_helper_from_context,
+    use_world_helper,
+};
 
 const DEFAULT_REGION: &str = "North-America";
+
+/// Resolves the region owning `world_name`, reporting failure instead of falling back.
+///
+/// The counterpart to [`use_region_for_world`], for callers that must not silently
+/// substitute another region's prices — the Flip Finder keys its region-wide board off the
+/// `:world` route param, so guessing would show one region's numbers under another's name.
+/// Those callers want the page's existing error state instead.
+///
+/// Takes its inputs by value rather than reading context itself, so the resolution is a
+/// plain function: no reactive runtime needed to test it, and every failure mode is a
+/// return value. That matters because the only caller runs this inside a `Memo`, where a
+/// panic is unusually destructive — `reactive_graph` *takes* a memo's cached value before
+/// running the body, so an unwind leaves the memo permanently `None` and every subsequent
+/// read panics in `try_read_untracked` (`arc_memo.rs:334`) rather than at the original
+/// fault. One bad unwrap here takes down the whole page, repeatedly.
+pub fn region_for_world_name(
+    world_data: Option<LocalWorldData>,
+    world_name: Option<String>,
+) -> Result<String, AppError> {
+    let worlds = world_helper_from_context(world_data)?;
+    let world_name = world_name.ok_or(AppError::ParamMissing)?;
+    worlds
+        .lookup_world_by_name(&world_name)
+        .map(|world| {
+            let region = worlds.get_region(world);
+            AnyResult::Region(region).get_name().to_string()
+        })
+        .ok_or(AppError::ParamMissing)
+}
 
 /// Returns a reactive `Memo<String>` of the region name for `world_name_source`.
 ///
@@ -26,7 +59,7 @@ where
 {
     let (home_world, _) = use_home_world();
     Memo::new(move |_| {
-        let Some(worlds) = use_context::<LocalWorldData>().and_then(|d| d.0.ok()) else {
+        let Ok(worlds) = use_world_helper() else {
             return DEFAULT_REGION.to_string();
         };
 
@@ -42,4 +75,161 @@ where
             })
             .unwrap_or_else(|| DEFAULT_REGION.to_string())
     })
+}
+
+/// Resolves the datacenter owning `world_name`, or `None` when the name
+/// doesn't resolve down to a datacenter (an unknown name, or a region —
+/// regions have no single datacenter).
+///
+/// Same plain-function shape as [`region_for_world_name`], for the same
+/// reason: every failure mode is a return value, never a panic inside a
+/// memo.
+pub fn datacenter_for_world_name(
+    world_data: Option<LocalWorldData>,
+    world_name: Option<String>,
+) -> Option<String> {
+    let worlds = world_helper_from_context(world_data).ok()?;
+    let world_name = world_name?;
+    let found = worlds.lookup_world_by_name(&world_name)?;
+    let datacenter_id = match found {
+        AnyResult::World(world) => world.datacenter_id,
+        AnyResult::Datacenter(dc) => return Some(dc.name.clone()),
+        AnyResult::Region(_) => return None,
+    };
+    worlds
+        .lookup_selector(ultros_api_types::world_helper::AnySelector::Datacenter(
+            datacenter_id,
+        ))
+        .and_then(|dc| dc.as_datacenter().map(|dc| dc.name.clone()))
+}
+
+/// Returns a reactive `Memo<Option<String>>` of the datacenter name for
+/// `world_name_source`, with the same home-world fallback as
+/// [`use_region_for_world`]. Yields `None` when the name can't be narrowed
+/// to a datacenter, so callers can fall back to their region scope.
+pub fn use_datacenter_for_world<F>(world_name_source: F) -> Memo<Option<String>>
+where
+    F: Fn() -> Option<String> + 'static + Send + Sync,
+{
+    let (home_world, _) = use_home_world();
+    Memo::new(move |_| {
+        let world_data = use_context::<LocalWorldData>();
+        let world_name = world_name_source().or_else(|| home_world.get().map(|w| w.name));
+        datacenter_for_world_name(world_data, world_name)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+
+    fn worlds() -> LocalWorldData {
+        LocalWorldData(Ok(Arc::new(WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".to_string(),
+                datacenters: vec![Datacenter {
+                    id: 10,
+                    name: "Aether".to_string(),
+                    region_id: 1,
+                    worlds: vec![World {
+                        id: 100,
+                        name: "Gilgamesh".to_string(),
+                        datacenter_id: 10,
+                    }],
+                }],
+            }],
+        }))))
+    }
+
+    #[test]
+    fn resolves_the_region_owning_a_known_world() {
+        assert_eq!(
+            region_for_world_name(Some(worlds()), Some("Gilgamesh".to_string())),
+            Ok("North-America".to_string())
+        );
+    }
+
+    /// A failed `/api/v1/world_data` fetch stores `LocalWorldData(Err(_))`. This used to be
+    /// `.0.unwrap()` inside the Flip Finder's `region` memo, so the fetch failing took the
+    /// page's wasm bundle down instead of showing its error state.
+    #[test]
+    fn failed_world_data_is_an_error_not_a_panic() {
+        assert_eq!(
+            region_for_world_name(
+                Some(LocalWorldData::failed("world data fetch failed")),
+                Some("Gilgamesh".to_string())
+            ),
+            Err(AppError::WorldDataUnavailable)
+        );
+    }
+
+    /// Likewise `use_context::<LocalWorldData>()` returning `None` — previously an
+    /// `.expect("Worlds should always be populated here")`.
+    #[test]
+    fn missing_world_data_context_is_an_error_not_a_panic() {
+        assert_eq!(
+            region_for_world_name(None, Some("Gilgamesh".to_string())),
+            Err(AppError::WorldDataUnavailable)
+        );
+    }
+
+    #[test]
+    fn a_missing_world_param_is_reported() {
+        assert_eq!(
+            region_for_world_name(Some(worlds()), None),
+            Err(AppError::ParamMissing)
+        );
+    }
+
+    /// An unknown world name stays an error rather than falling back to a default region:
+    /// showing another region's prices under this one's name would be worse than an error.
+    #[test]
+    fn an_unknown_world_is_reported_rather_than_defaulted() {
+        assert_eq!(
+            region_for_world_name(Some(worlds()), Some("Nonexistent".to_string())),
+            Err(AppError::ParamMissing)
+        );
+    }
+
+    #[test]
+    fn datacenter_resolves_for_a_world_or_datacenter_name() {
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("Gilgamesh".to_string())),
+            Some("Aether".to_string())
+        );
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("Aether".to_string())),
+            Some("Aether".to_string())
+        );
+    }
+
+    /// A region has no single datacenter, and every failure mode is `None`
+    /// (never a panic) — this feeds a memo, same as `region_for_world_name`.
+    #[test]
+    fn datacenter_is_none_for_regions_unknowns_and_missing_data() {
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("North-America".to_string())),
+            None
+        );
+        assert_eq!(
+            datacenter_for_world_name(Some(worlds()), Some("Nonexistent".to_string())),
+            None
+        );
+        assert_eq!(datacenter_for_world_name(Some(worlds()), None), None);
+        assert_eq!(
+            datacenter_for_world_name(
+                Some(LocalWorldData::failed("world data fetch failed")),
+                Some("Gilgamesh".to_string())
+            ),
+            None
+        );
+        assert_eq!(
+            datacenter_for_world_name(None, Some("Gilgamesh".to_string())),
+            None
+        );
+    }
 }

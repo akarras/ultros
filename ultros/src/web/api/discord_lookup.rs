@@ -9,12 +9,15 @@
 //! guilds the bot has just joined or for users who haven't appeared in any
 //! gateway event yet.
 
+use axum_extra::extract::PrivateCookieJar;
 use poise::serenity_prelude::{
-    self as serenity, ChannelId, ChannelType, GuildId, Permissions, UserId,
+    self as serenity, ChannelId, ChannelType, GuildId, GuildPagination, Http, Permissions, UserId,
 };
+use std::collections::HashSet;
 use ultros_api_types::alert::{DiscordWritableChannel, DiscordWritableGuild};
 
 use crate::web::error::ApiError;
+use crate::web::oauth::AuthUserCache;
 
 /// Resolved metadata for a Discord channel that is bound to a notification
 /// endpoint. Channel-name and guild-name are display-only; `guild_id` is also
@@ -77,8 +80,8 @@ pub(crate) async fn resolve_channel(
 /// message otherwise (member not in the guild, missing perms, Discord HTTP
 /// failure).
 ///
-/// Computation is intentionally manual — we fetch the guild + member and walk
-/// the role list because serenity's cache-based [`serenity::Member::permissions`]
+/// Fetch the guild and member to compute permissions from their current roles,
+/// because serenity's cache-based [`serenity::Member::permissions`]
 /// requires a populated cache, which is not guaranteed for the user's guild
 /// when they are creating an endpoint via the web UI.
 pub(crate) async fn require_user_is_guild_admin(
@@ -86,6 +89,19 @@ pub(crate) async fn require_user_is_guild_admin(
     guild_id: i64,
     user_id: i64,
 ) -> Result<(), ApiError> {
+    require_manageable_guild(ctx, guild_id, user_id)
+        .await
+        .map(|_| ())
+}
+
+/// As [`require_user_is_guild_admin`], but hands back the guild it already had
+/// to fetch, so callers that need the guild's name or icon don't pay for a
+/// second round trip.
+pub(crate) async fn require_manageable_guild(
+    ctx: &serenity::Context,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<serenity::PartialGuild, ApiError> {
     let guild_id =
         u64::try_from(guild_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid guild_id")))?;
     let user_id =
@@ -102,7 +118,7 @@ pub(crate) async fn require_user_is_guild_admin(
         ))
     })?;
     if partial.owner_id == UserId::new(user_id) {
-        return Ok(());
+        return Ok(partial);
     }
 
     let member = guild
@@ -114,44 +130,25 @@ pub(crate) async fn require_user_is_guild_admin(
             ))
         })?;
 
-    let mut perms = Permissions::empty();
-    for role_id in member.roles.iter() {
-        if let Some(role) = partial.roles.get(role_id) {
-            perms |= role.permissions;
-        }
-    }
+    // Includes @everyone as well as the member's explicit roles.
+    let perms = partial.member_permissions(&member);
 
     if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-        Ok(())
+        Ok(partial)
     } else {
         Err(ApiError::from(anyhow::anyhow!(
-            "you must have Administrator or Manage Server permission in that Discord \
-             server to bind alerts to its channels"
+            "you must have Administrator or Manage Server permission in that Discord server"
         )))
     }
 }
 
-/// Return guilds that:
-///
-/// - the bot is in,
-/// - the authenticated web user is a member of,
-/// - the authenticated web user can administer or manage,
-/// - and the bot can post embeds into at least one text/news channel.
-///
-/// This powers the web "Discord channel" endpoint picker. It intentionally
-/// uses the bot token only: the user's OAuth session currently has `identify`,
-/// not `guilds`, and the bot can answer the shared-guild question by probing
-/// its own guilds for the user member.
-pub(crate) async fn writable_guilds_for_user(
+/// Compatibility for sessions issued before we requested the `guilds` scope.
+/// Keep this bot-wide scan only for Discord's explicit missing-access response.
+async fn legacy_guilds_user_manages(
     ctx: &serenity::Context,
-    user_id: i64,
-) -> Result<Vec<DiscordWritableGuild>, ApiError> {
-    let user_id =
-        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
-    let user_id = UserId::new(user_id);
-    let bot_user_id = ctx.cache.current_user().id;
+    user_id: UserId,
+) -> Vec<serenity::PartialGuild> {
     let mut guilds = Vec::new();
-
     for guild_id in ctx.cache.guilds() {
         let partial = match guild_id.to_partial_guild(&ctx.http).await {
             Ok(guild) => guild,
@@ -164,6 +161,8 @@ pub(crate) async fn writable_guilds_for_user(
             }
         };
 
+        // A miss here is the overwhelmingly common case (the user is not in
+        // most of the bot's guilds), so it is not worth logging.
         let user_member = match partial.member(&ctx.http, user_id).await {
             Ok(member) => member,
             Err(_) => continue,
@@ -174,7 +173,153 @@ pub(crate) async fn writable_guilds_for_user(
         {
             continue;
         }
+        guilds.push(partial);
+    }
+    guilds
+}
 
+fn shared_manageable_guild(guild: &serenity::GuildInfo, bot_guilds: &HashSet<GuildId>) -> bool {
+    bot_guilds.contains(&guild.id)
+        && (guild.owner
+            || guild
+                .permissions
+                .intersects(Permissions::ADMINISTRATOR | Permissions::MANAGE_GUILD))
+}
+
+/// Discover via the user's OAuth grant and intersect with the bot's guilds.
+/// Guild mutations still independently check live bot-side permissions.
+async fn guilds_user_manages(
+    ctx: &serenity::Context,
+    user_id: UserId,
+    cookies: &PrivateCookieJar,
+    cache: &AuthUserCache,
+) -> Result<Vec<serenity::PartialGuild>, ApiError> {
+    let token = cookies
+        .get(crate::web::oauth::DISCORD_AUTH_COOKIE)
+        .ok_or(ApiError::NoAuthCookie)?;
+    let http = Http::new(&format!("Bearer {}", token.value()));
+    let bot_guilds: HashSet<_> = ctx.cache.guilds().into_iter().collect();
+    let Some(candidates) = oauth_manageable_guild_ids(&http, cookies, &bot_guilds, cache).await?
+    else {
+        return Ok(legacy_guilds_user_manages(ctx, user_id).await);
+    };
+    let mut guilds = Vec::new();
+    for id in candidates {
+        match id.to_partial_guild(&ctx.http).await {
+            Ok(guild) => guilds.push(guild),
+            Err(error) => {
+                tracing::warn!(guild_id = id.get(), "failed to load Discord guild: {error}")
+            }
+        }
+    }
+    Ok(guilds)
+}
+
+/// `None` requests the compatibility path for grants without `guilds`.
+async fn oauth_manageable_guild_ids(
+    http: &Http,
+    cookies: &PrivateCookieJar,
+    bot_guilds: &HashSet<GuildId>,
+    cache: &AuthUserCache,
+) -> Result<Option<HashSet<GuildId>>, ApiError> {
+    let mut after = None;
+    let mut candidates = HashSet::new();
+    loop {
+        let page = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            http.get_guilds(after.map(GuildPagination::After), Some(200)),
+        )
+        .await
+        {
+            Ok(Ok(page)) => page,
+            Ok(Err(serenity::Error::Http(error)))
+                if error
+                    .status_code()
+                    .is_some_and(|status| status.as_u16() == 403) =>
+            {
+                return Ok(None);
+            }
+            Ok(Err(serenity::Error::Http(error)))
+                if error
+                    .status_code()
+                    .is_some_and(|status| status.as_u16() == 401) =>
+            {
+                if let Some(token) = cookies.get(crate::web::oauth::DISCORD_AUTH_COOKIE) {
+                    cache.remove_token(token.value()).await;
+                }
+                return Err(ApiError::DiscordTokenInvalid(cookies.clone()));
+            }
+            Ok(Err(error)) => return Err(anyhow::anyhow!(error).into()),
+            Err(_) => return Err(anyhow::anyhow!("Discord guild discovery timed out").into()),
+        };
+        candidates.extend(
+            page.iter()
+                .filter(|guild| shared_manageable_guild(guild, bot_guilds))
+                .map(|guild| guild.id),
+        );
+        if page.len() < 200 {
+            break;
+        }
+        let next = page.iter().map(|guild| guild.id).max();
+        if next <= after {
+            return Err(anyhow::anyhow!("Discord guild pagination did not advance").into());
+        }
+        after = next;
+    }
+
+    Ok(Some(candidates))
+}
+
+/// Guilds the user may turn into an Ultros group: the bot is in them and the
+/// user can manage them. Unlike [`writable_guilds_for_user`] this does not
+/// probe channels — a group has nothing to post, so requiring a bot-writable
+/// channel would wrongly exclude valid servers (and the channel fetch is the
+/// expensive part of that function).
+pub(crate) async fn manageable_guilds_for_user(
+    ctx: &serenity::Context,
+    user_id: i64,
+    cookies: &PrivateCookieJar,
+    cache: &AuthUserCache,
+) -> Result<Vec<(i64, String, Option<String>)>, ApiError> {
+    let user_id =
+        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
+    let mut guilds = guilds_user_manages(ctx, UserId::new(user_id), cookies, cache)
+        .await?
+        .into_iter()
+        .map(|partial| {
+            (
+                partial.id.get() as i64,
+                partial.name.clone(),
+                partial.icon_url(),
+            )
+        })
+        .collect::<Vec<_>>();
+    guilds.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    Ok(guilds)
+}
+
+/// Return guilds that:
+///
+/// - the bot is in,
+/// - the authenticated web user is a member of,
+/// - the authenticated web user can administer or manage,
+/// - and the bot can post embeds into at least one text/news channel.
+///
+/// This powers the web "Discord channel" endpoint picker.
+pub(crate) async fn writable_guilds_for_user(
+    ctx: &serenity::Context,
+    user_id: i64,
+    cookies: &PrivateCookieJar,
+    cache: &AuthUserCache,
+) -> Result<Vec<DiscordWritableGuild>, ApiError> {
+    let user_id =
+        u64::try_from(user_id).map_err(|_| ApiError::from(anyhow::anyhow!("invalid user_id")))?;
+    let user_id = UserId::new(user_id);
+    let bot_user_id = ctx.cache.current_user().id;
+    let mut guilds = Vec::new();
+
+    for partial in guilds_user_manages(ctx, user_id, cookies, cache).await? {
+        let guild_id = partial.id;
         let bot_member = match partial.member(&ctx.http, bot_user_id).await {
             Ok(member) => member,
             Err(e) => {
@@ -220,4 +365,122 @@ pub(crate) async fn writable_guilds_for_user(
 
     guilds.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(guilds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn mock_discord(app: axum::Router) -> (Http, tokio::task::JoinHandle<()>) {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = serenity::HttpBuilder::new("Bearer test-token")
+            .proxy(format!("http://{address}"))
+            .ratelimiter_disabled(true)
+            .build();
+        (http, server)
+    }
+
+    #[tokio::test]
+    async fn only_missing_scope_uses_legacy_discovery() {
+        for status in [401, 403, 429, 500] {
+            let app = axum::Router::new().fallback(move || async move {
+                (
+                    axum::http::StatusCode::from_u16(status).unwrap(),
+                    axum::Json(serde_json::json!({"code": 0, "message": "test response"})),
+                )
+            });
+            let (http, server) = mock_discord(app).await;
+            let cookies = PrivateCookieJar::new(axum_extra::extract::cookie::Key::generate())
+                .add(crate::web::oauth::discord_auth_cookie("test-token".into()));
+            let cache = AuthUserCache::new();
+            cache
+                .store_user(
+                    "test-token",
+                    crate::web::oauth::AuthDiscordUser {
+                        id: 1,
+                        name: "test".into(),
+                        avatar_url: String::new(),
+                    },
+                )
+                .await;
+            let result = oauth_manageable_guild_ids(&http, &cookies, &HashSet::new(), &cache).await;
+            server.abort();
+            assert_eq!(
+                cache.get_user("test-token").await.is_none(),
+                status == 401,
+                "only a confirmed invalid token should evict cached authentication"
+            );
+            match status {
+                403 => assert!(matches!(result, Ok(None))),
+                401 => assert!(matches!(result, Err(ApiError::DiscordTokenInvalid(_)))),
+                _ => assert!(result.is_err()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth_discovery_paginates_before_intersecting_bot_guilds() {
+        let app = axum::Router::new().fallback(
+            |axum::extract::Query(query): axum::extract::Query<
+                std::collections::HashMap<String, String>,
+            >| async move {
+                assert_eq!(query.get("limit").map(String::as_str), Some("200"));
+                let ids = match query.get("after").map(String::as_str) {
+                    None => 1..=200,
+                    Some("200") => 201..=201,
+                    other => panic!("unexpected cursor {other:?}"),
+                };
+                axum::Json(
+                    ids.map(|id| guild(id, false, Permissions::MANAGE_GUILD))
+                        .collect::<Vec<_>>(),
+                )
+            },
+        );
+        let (http, server) = mock_discord(app).await;
+        let cookies = PrivateCookieJar::new(axum_extra::extract::cookie::Key::generate());
+        let bot_guilds = HashSet::from([GuildId::new(2), GuildId::new(201), GuildId::new(999)]);
+        let result =
+            oauth_manageable_guild_ids(&http, &cookies, &bot_guilds, &AuthUserCache::new()).await;
+        server.abort();
+        assert_eq!(
+            result.unwrap().unwrap(),
+            HashSet::from([GuildId::new(2), GuildId::new(201)])
+        );
+    }
+
+    fn guild(id: u64, owner: bool, permissions: Permissions) -> serenity::GuildInfo {
+        serde_json::from_value(serde_json::json!({
+            "id": id.to_string(), "name": "A server", "icon": null,
+            "owner": owner, "permissions": permissions.bits().to_string(), "features": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn discovery_requires_bot_membership_and_server_management_rights() {
+        let bot_guilds = HashSet::from([GuildId::new(1)]);
+        assert!(shared_manageable_guild(
+            &guild(1, true, Permissions::empty()),
+            &bot_guilds
+        ));
+        assert!(shared_manageable_guild(
+            &guild(1, false, Permissions::ADMINISTRATOR),
+            &bot_guilds
+        ));
+        assert!(shared_manageable_guild(
+            &guild(1, false, Permissions::MANAGE_GUILD),
+            &bot_guilds
+        ));
+        assert!(!shared_manageable_guild(
+            &guild(1, false, Permissions::MANAGE_CHANNELS),
+            &bot_guilds
+        ));
+        assert!(!shared_manageable_guild(
+            &guild(2, true, Permissions::ADMINISTRATOR),
+            &bot_guilds
+        ));
+    }
 }

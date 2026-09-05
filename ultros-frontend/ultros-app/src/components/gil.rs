@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use thousands::Separable;
 
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 
 #[cfg(feature = "hydrate")]
 fn spawn_gil_party(mut x: f64, mut y: f64) {
@@ -78,7 +79,10 @@ fn spawn_gil_party(mut x: f64, mut y: f64) {
 
 #[component]
 pub fn GilIcon() -> impl IntoView {
-    let i18n = use_i18n();
+    // Reached from the item page's suspended tables, so this can render under
+    // the empty owner `ScopedFuture` substitutes for a disposed one. See
+    // `crate::i18n_fallback`.
+    let i18n = use_i18n_or_default();
     view! {
         <button
             type="button"
@@ -114,6 +118,28 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
     }
 }
 
+/// Visibility class for the gil icon. The icon is hidden rather than
+/// removed so the element shape stays constant - see [`GilOrDash`].
+fn get_gil_or_dash_icon_class(has_amount: bool) -> &'static str {
+    if has_amount { "inline-flex" } else { "hidden" }
+}
+
+/// Class for the value slot - muted while the amount is unknown.
+fn get_gil_or_dash_value_class(has_amount: bool) -> &'static str {
+    if has_amount {
+        ""
+    } else {
+        "text-[color:var(--color-text-muted)]"
+    }
+}
+
+/// The gil amount with thousands separators, or the placeholder.
+fn format_gil_or_dash(amount: Option<i32>) -> String {
+    amount
+        .map(|t| t.separate_with_commas())
+        .unwrap_or_else(|| "—".to_string())
+}
+
 /// Render a gil amount when present, falling back to an em-dash placeholder
 /// when `amount` is `None` — without changing the element shape.
 ///
@@ -129,45 +155,44 @@ pub fn Gil(#[prop(into)] amount: Signal<i32>) -> impl IntoView {
 /// element types/positions regardless of resource state.
 #[component]
 pub fn GilOrDash(#[prop(into)] amount: Signal<Option<i32>>) -> impl IntoView {
-    let icon_class = move || {
-        if amount().is_some() {
-            "inline-flex"
-        } else {
-            "hidden"
-        }
-    };
-    let value_class = move || {
-        if amount().is_some() {
-            ""
-        } else {
-            "text-[color:var(--color-text-muted)]"
-        }
-    };
+    let icon_class = move || get_gil_or_dash_icon_class(amount().is_some());
+    let value_class = move || get_gil_or_dash_value_class(amount().is_some());
     view! {
         <div class="flex flex-row items-center">
             <span class=icon_class>
                 <GilIcon />
             </span>
             <div class=value_class>
-                {move || amount()
-                    .map(|t| t.separate_with_commas())
-                    .unwrap_or_else(|| "—".to_string())
-                }
+                {move || format_gil_or_dash(amount())}
             </div>
         </div>
     }
 }
 
-#[component]
-pub fn GenericGil<T>(#[prop(into)] amount: Signal<T>) -> impl IntoView
-where
-    T: Separable + 'static + Copy + Send + Sync,
-{
-    view! {
-        <div class="flex flex-row items-center">
-            <GilIcon />
-            <div>{move || amount().separate_with_commas()}</div>
-        </div>
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_gil_or_dash_icon_class() {
+        assert_eq!(get_gil_or_dash_icon_class(true), "inline-flex");
+        assert_eq!(get_gil_or_dash_icon_class(false), "hidden");
     }
-    .into_any()
+
+    #[test]
+    fn test_get_gil_or_dash_value_class() {
+        assert_eq!(get_gil_or_dash_value_class(true), "");
+        assert_eq!(
+            get_gil_or_dash_value_class(false),
+            "text-[color:var(--color-text-muted)]"
+        );
+    }
+
+    #[test]
+    fn test_format_gil_or_dash() {
+        assert_eq!(format_gil_or_dash(Some(1234)), "1,234");
+        assert_eq!(format_gil_or_dash(None), "—");
+        assert_eq!(format_gil_or_dash(Some(0)), "0");
+        assert_eq!(format_gil_or_dash(Some(-50)), "-50");
+    }
 }

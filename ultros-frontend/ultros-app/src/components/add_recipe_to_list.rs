@@ -33,6 +33,7 @@ pub fn AddRecipeToList(recipe: &'static Recipe) -> impl IntoView {
     view! {
         <Tooltip tooltip_text=t_string!(i18n, add_recipe_tooltip).to_string()>
             <button
+                type="button"
                 class="btn-primary"
                 attr:aria-label=move || {
                     result_item
@@ -129,7 +130,7 @@ fn AddRecipeToListModal(
                             {move || result_item().map(|i| i.name.to_string()).unwrap_or_else(|| t_string!(i18n, add_recipe_unknown_item).to_string())}
                         </div>
                     </div>
-                    <button class="btn-secondary" on:click=move |_| set_visible(false)>
+                    <button type="button" class="btn-secondary" on:click=move |_| set_visible(false)>
                         {t!(i18n, add_recipe_close)}
                     </button>
                 </div>

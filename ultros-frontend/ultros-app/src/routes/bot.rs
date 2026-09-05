@@ -8,7 +8,7 @@ pub fn BotGuide() -> impl IntoView {
     view! {
         <MetaTitle title=t_string!(i18n, bot_meta_title).to_string() />
         <MetaDescription text=t_string!(i18n, bot_meta_desc).to_string() />
-        <div class="container mx-auto max-w-4xl px-4 py-8 flex flex-col gap-12">
+        <div class="main-content container mx-auto max-w-4xl p-2 sm:p-6 flex flex-col gap-12">
             <header class="flex flex-col gap-3">
                 <h1 class="text-4xl font-bold text-brand-200">{t!(i18n, bot_heading)}</h1>
                 <p class="text-lg text-[color:var(--color-text-muted)]">
@@ -35,7 +35,7 @@ pub fn BotGuide() -> impl IntoView {
             <section id="getting-started" class="flex flex-col gap-3">
                 <h2 class="text-2xl font-semibold text-brand-300">{t!(i18n, bot_section_getting_started_heading)}</h2>
                 <ol class="list-decimal list-inside flex flex-col gap-2">
-                    <li>{t!(i18n, bot_setup_step_verify)}</li>
+                    <li>{t!(i18n, bot_setup_step_add_character)}</li>
                     <li>{t!(i18n, bot_setup_step_discord_run_prefix)} <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add"</code> {t!(i18n, bot_setup_step_discord_run_suffix)}</li>
                     <li>{t!(i18n, bot_setup_step_run_in_channel_prefix)} <code class="rounded bg-black/40 px-1.5 py-0.5">"/ffxiv retainer add_undercut_alert margin_percent:0"</code> {t!(i18n, bot_setup_step_run_in_channel_suffix)}</li>
                 </ol>

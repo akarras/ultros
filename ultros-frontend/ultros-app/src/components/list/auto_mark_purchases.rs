@@ -1,5 +1,6 @@
 use crate::api::edit_list_item;
 use crate::components::icon::Icon;
+use crate::components::modal::Modal;
 use crate::i18n::{t, t_string, use_i18n};
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use icondata as i;
@@ -49,44 +50,88 @@ pub fn AutoMarkPurchases(list_view: Resource<ListViewResult>) -> impl IntoView {
         purchase_subscription.update_value(|sub| *sub = None);
     });
 
+    let (modal_open, set_modal_open) = signal(false);
+    let can_write = Signal::derive(move || {
+        list_view
+            .get()
+            .and_then(Result::ok)
+            .map(|(list, _)| ListCapabilities::from(list.permission).can_write)
+            .unwrap_or(false)
+    });
+
     view! {
-        <details class="panel group rounded-lg">
-            <summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
-                <div class="flex min-w-0 items-center gap-2">
-                    <Icon icon=i::BiPurchaseTagSolid />
-                    <span class="font-bold">{t!(i18n, list_auto_mark_title)}</span>
-                    <span class="rounded-md border border-[color:var(--color-outline)] px-2 py-0.5 text-xs text-[color:var(--color-text-muted)]">
-                        {t!(i18n, list_auto_mark_experimental_badge)}
-                    </span>
-                </div>
-                <Icon icon=i::BiChevronDownRegular attr:class="shrink-0 transition-transform group-open:rotate-180" />
-            </summary>
-            <div class="border-t border-[color:var(--color-outline)] p-3">
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <input
-                        class="input flex-1"
-                        placeholder=t_string!(i18n, list_auto_mark_character_name_placeholder)
-                        prop:value=watch_character_name
-                        on:input=move |e| set_watch_character_name(event_target_value(&e))
-                        disabled=move || is_watching.get()
-                    />
-                    <button
-                        class="btn-secondary sm:w-40"
-                        class:bg-brand-900=move || is_watching.get()
-                        disabled=move || {
-                            list_view
-                                .get()
-                                .and_then(Result::ok)
-                                .map(|(list, _)| !ListCapabilities::from(list.permission).can_write)
-                                .unwrap_or(true)
-                        }
-                        on:click=move |_| set_is_watching.update(|w| *w = !*w)
-                    >
-                        {move || if is_watching.get() { t_string!(i18n, list_auto_mark_watching) } else { t_string!(i18n, list_auto_mark_start_watching) }}
-                    </button>
-                </div>
+        <button
+            class="sticky-bar-button sticky-bar-button-shrink"
+            class:bg-brand-900=is_watching
+            class:border-brand-500=is_watching
+            data-testid="list-auto-mark-btn"
+            aria-label=t_string!(i18n, list_auto_mark_title)
+            on:click=move |_| set_modal_open(true)
+        >
+            <Icon icon=i::BiPurchaseTagSolid />
+            <span class="sticky-bar-button-label">{t!(i18n, list_auto_mark_title)}</span>
+        </button>
+        <Show when=modal_open>
+            <Modal set_visible=set_modal_open>
+                <AutoMarkModalContent
+                    watch_character_name=watch_character_name
+                    set_watch_character_name=Callback::new(move |name| {
+                        set_watch_character_name(name)
+                    })
+                    is_watching=is_watching
+                    can_write=can_write
+                    on_toggle=Callback::new(move |()| set_is_watching.update(|w| *w = !*w))
+                />
+            </Modal>
+        </Show>
+    }
+}
+
+/// The body of the auto-mark modal, split out from [`AutoMarkPurchases`] so
+/// it can be SSR-rendered in a snapshot test with plain signal props — the
+/// parent owns the realtime subscription and the `Resource`, neither of
+/// which can be stood up outside a running app.
+#[component]
+pub(crate) fn AutoMarkModalContent(
+    #[prop(into)] watch_character_name: Signal<String>,
+    #[prop(into)] set_watch_character_name: Callback<String>,
+    #[prop(into)] is_watching: Signal<bool>,
+    #[prop(into)] can_write: Signal<bool>,
+    #[prop(into)] on_toggle: Callback<()>,
+) -> impl IntoView {
+    let i18n = use_i18n();
+    view! {
+        <div class="flex flex-col gap-4">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
+                <Icon icon=i::BiPurchaseTagSolid />
+                <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">
+                    {t!(i18n, list_auto_mark_title)}
+                </h2>
+                <span class="rounded-md border border-[color:var(--color-outline)] px-2 py-0.5 text-xs text-[color:var(--color-text-muted)]">
+                    {t!(i18n, list_auto_mark_experimental_badge)}
+                </span>
             </div>
-        </details>
+            <p class="text-sm text-[color:var(--color-text-muted)]">
+                {t!(i18n, list_auto_mark_description)}
+            </p>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                    class="input flex-1"
+                    placeholder=t_string!(i18n, list_auto_mark_character_name_placeholder)
+                    prop:value=watch_character_name
+                    on:input=move |e| set_watch_character_name.run(event_target_value(&e))
+                    disabled=move || is_watching.get()
+                />
+                <button
+                    class="btn-secondary sm:w-40"
+                    class:bg-brand-900=is_watching
+                    disabled=move || !can_write.get()
+                    on:click=move |_| on_toggle.run(())
+                >
+                    {move || if is_watching.get() { t_string!(i18n, list_auto_mark_watching) } else { t_string!(i18n, list_auto_mark_start_watching) }}
+                </button>
+            </div>
+        </div>
     }
 }
 
@@ -129,6 +174,29 @@ fn mark_item_purchased(list_view: Resource<ListViewResult>, item_id: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use leptos_i18n::context::init_i18n_context;
+
+    /// The modal body's SSR markup, pinned — title + experimental badge,
+    /// description, character-name input, and the start/stop button.
+    #[test]
+    fn auto_mark_modal_content_renders() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            let html = view! {
+                <AutoMarkModalContent
+                    watch_character_name=Signal::derive(String::new)
+                    set_watch_character_name=Callback::new(|_| {})
+                    is_watching=Signal::derive(|| false)
+                    can_write=Signal::derive(|| true)
+                    on_toggle=Callback::new(|_| {})
+                />
+            }
+            .to_html();
+            insta::assert_snapshot!(html);
+        });
+    }
 
     #[test]
     fn test_apply_purchase_increment() {

@@ -1,0 +1,6 @@
+{
+  "category": "improvements",
+  "title": "Slimmer tool headers",
+  "blurb": "Every analyzer's big title card is now a single compact row: the tool name, an info icon, and the world picker sit together, so the results start higher on the page. The tool description that used to be behind the About this tool button now lives behind the info icon.",
+  "importance": "medium"
+}

@@ -2,11 +2,11 @@ use crate::components::icon::Icon;
 use crate::components::loading::Loading;
 use crate::components::tooltip::Tooltip;
 use crate::components::virtual_scroller::*;
+use crate::global_state::platform::use_platform_hotkeys;
 use crate::i18n::*;
 use gloo_timers::future::TimeoutFuture;
 use icondata as i;
 use leptos::{html::Input, prelude::*, task::spawn_local};
-use leptos_hotkeys::use_hotkeys;
 use leptos_router::{NavigateOptions, hooks::use_navigate};
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -131,9 +131,38 @@ fn get_static_pages() -> &'static [SearchResult] {
     &STATIC_PAGES
 }
 
+/// What an in-flight search should do once its request comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchOutcome {
+    /// Still the newest search — commit its results.
+    Commit,
+    /// A newer keystroke started another search — drop these results.
+    Superseded,
+    /// The search box was unmounted while the request was in flight.
+    Cancelled,
+}
+
+/// Decide the fate of the search that started as `started_id`.
+///
+/// Reading through `try_get_untracked` rather than `get_untracked` is
+/// load-bearing. [`SearchOverlay`](crate::components::search_overlay) closes
+/// itself on every navigation, and its `<Show>` disposes this component's
+/// signals when it does — so selecting a search result routes away and drops
+/// `search_id` while the `/api/v1/search` request it started is still in
+/// flight. `get_untracked` panics on a disposed signal, which took the whole
+/// wasm bundle down on search-then-navigate (GlitchTip #6874).
+fn search_outcome(search_id: ReadSignal<usize>, started_id: usize) -> SearchOutcome {
+    match search_id.try_get_untracked() {
+        None => SearchOutcome::Cancelled,
+        Some(id) if id == started_id => SearchOutcome::Commit,
+        Some(_) => SearchOutcome::Superseded,
+    }
+}
+
 #[component]
-pub fn SearchBox() -> impl IntoView {
+pub fn SearchBox(#[prop(optional)] autofocus: bool) -> impl IntoView {
     let i18n = use_i18n();
+    let apple_hotkeys = use_platform_hotkeys().apple;
     let text_input = NodeRef::<Input>::new();
     let (search, set_search) = signal(String::new());
     let navigate = use_navigate();
@@ -181,7 +210,7 @@ pub fn SearchBox() -> impl IntoView {
         spawn_local(async move {
             TimeoutFuture::new(300).await;
 
-            if search_id.get_untracked() != current_id {
+            if search_outcome(search_id, current_id) != SearchOutcome::Commit {
                 return;
             }
 
@@ -207,7 +236,7 @@ pub fn SearchBox() -> impl IntoView {
             set_loading.set(true);
             match api_search(&s).await {
                 Ok(mut results) => {
-                    if search_id.get_untracked() == current_id {
+                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
                         // Prepend static pages to the backend results
                         let mut final_results = matched_pages;
                         final_results.append(&mut results);
@@ -218,7 +247,7 @@ pub fn SearchBox() -> impl IntoView {
                     }
                 }
                 Err(e) => {
-                    if search_id.get_untracked() == current_id {
+                    if search_outcome(search_id, current_id) == SearchOutcome::Commit {
                         log::error!("Search failed: {}", e);
                         // Even if backend fails, show matched static pages
                         let results = matched_pages.into_iter().map(Arc::new).collect();
@@ -228,14 +257,6 @@ pub fn SearchBox() -> impl IntoView {
                 }
             }
         });
-    });
-
-    // Hotkey to focus search (Cmd+K / Ctrl+K)
-    use_hotkeys!(("MetaLeft+KeyK,ControlLeft+KeyK", "*") => move |_| {
-        set_active(true);
-        if let Some(input) = text_input.get() {
-            let _ = input.focus();
-        }
     });
 
     // Escape binding on the input (kept as-is)
@@ -325,6 +346,18 @@ pub fn SearchBox() -> impl IntoView {
         }
     };
 
+    // When mounted inside the overlay we want the caret in the field
+    // immediately — the user pressed a key to get here. Effect, not a
+    // render-time call: the input doesn't exist until after mount.
+    if autofocus {
+        Effect::new(move |_| {
+            if let Some(input) = text_input.get() {
+                let _ = input.focus();
+                set_active(true);
+            }
+        });
+    }
+
     view! {
         <div class="relative w-full">
             <div class="relative">
@@ -334,7 +367,14 @@ pub fn SearchBox() -> impl IntoView {
                     on:input=on_input
                     on:focusin=focus_in
                     on:focusout=focus_out
-                    placeholder=t_string!(i18n, search_box_placeholder)
+                    placeholder=move || {
+                        let hotkey = if apple_hotkeys.get() {
+                            "⌘K".to_string()
+                        } else {
+                            t_string!(i18n, hotkey_ctrl_k).to_string()
+                        };
+                        t_string!(i18n, search_box_placeholder).replace("%hotkey%", &hotkey)
+                    }
                     class="input w-full pl-10 pr-10"
                     type="text"
                     prop:value=search
@@ -363,6 +403,7 @@ pub fn SearchBox() -> impl IntoView {
                     <Show when=move || !search.get().is_empty()>
                         <Tooltip tooltip_text=t_string!(i18n, search_box_clear_tooltip)>
                             <button
+                                type="button"
                                 class="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none rounded-full"
                                 // Keep focus on the input so the focusout timer
                                 // never fires and collapses the panel mid-click.
@@ -401,6 +442,7 @@ pub fn SearchBox() -> impl IntoView {
                         .map(|job| {
                             view! {
                                 <button
+                                    type="button"
                                     class="px-2 py-0.5 rounded-full text-xs border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] hover:border-[color:var(--brand-ring)] transition-colors focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)] focus:outline-none"
                                     on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
                                     on:click=move |_| {
@@ -574,4 +616,37 @@ pub fn SearchBox() -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commits_the_newest_search() {
+        let owner = Owner::new();
+        let (search_id, _set) = owner.with(|| signal(7usize));
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Commit);
+    }
+
+    #[test]
+    fn drops_a_search_a_later_keystroke_superseded() {
+        let owner = Owner::new();
+        let (search_id, set_search_id) = owner.with(|| signal(7usize));
+        set_search_id.set(8);
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Superseded);
+    }
+
+    /// Selecting a result navigates, `SearchOverlay`'s location effect closes
+    /// the overlay, and its `<Show>` disposes the search box — all while the
+    /// request is still in flight. Reading `search_id` here used to panic
+    /// ("Tried to access a reactive value that has already been disposed"),
+    /// killing the wasm bundle on the page just navigated to (#6874).
+    #[test]
+    fn cancels_a_search_whose_component_was_disposed_mid_flight() {
+        let owner = Owner::new();
+        let (search_id, _set) = owner.with(|| signal(7usize));
+        owner.cleanup();
+        assert_eq!(search_outcome(search_id, 7), SearchOutcome::Cancelled);
+    }
 }

@@ -1,13 +1,13 @@
 use super::gil::*;
 use super::item_icon::*;
 use super::relative_time::RelativeToNow;
+use crate::components::app_link::AppLink;
 use crate::components::icon::Icon;
 use crate::global_state::xiv_data::tracked_data;
 use chrono::NaiveDateTime;
 use icondata as i;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_router::components::A;
 use std::collections::VecDeque;
 use xiv_gen::ItemId;
 
@@ -89,9 +89,11 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                     hq: sale.hq,
                                 });
                             }
+                            // ⚡ Bolt Optimization: Use sort_unstable_by_key to avoid auxiliary memory allocation.
+                            // Stability is not required for chronological sorting here.
                             sales
                                 .make_contiguous()
-                                .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
+                                .sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
 
                             // ⚡ Bolt Optimization: Filter duplicates and truncate in-place
                             // to avoid allocating a new VecDeque and cloning items on every websocket event.
@@ -116,11 +118,10 @@ pub fn LiveSaleTicker() -> impl IntoView {
             if let Some(world) = hw_2.map(|h| h.name) {
                 #[allow(clippy::collapsible_if)]
                 if let Ok(recent_sales) = crate::api::get_recent_sales_for_world(&world).await {
-                    use itertools::Itertools;
-                    let first_sales = recent_sales
+                    let mut first_sales = recent_sales
                         .sales
                         .into_iter()
-                        .flat_map(|sale| {
+                        .filter_map(|sale| {
                             sale.sales.first().map(|sale_data| SaleView {
                                 item_id: sale.item_id,
                                 price: sale_data.price_per_unit,
@@ -128,8 +129,15 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                 hq: sale.hq,
                             })
                         })
-                        .sorted_by_key(|s| std::cmp::Reverse(s.sold_date))
-                        .take(8);
+                        .collect::<Vec<_>>();
+
+                    // ⚡ Bolt: Optimization: Use linear time select_nth_unstable_by_key instead of O(N log N) full sort
+                    if first_sales.len() > 8 {
+                        first_sales
+                            .select_nth_unstable_by_key(8, |s| std::cmp::Reverse(s.sold_date));
+                        first_sales.truncate(8);
+                    }
+                    first_sales.sort_unstable_by_key(|s| std::cmp::Reverse(s.sold_date));
 
                     sales.update(|s| {
                         for sale in first_sales {
@@ -154,12 +162,12 @@ pub fn LiveSaleTicker() -> impl IntoView {
                 <h3 class="dashboard-section-title">{t!(i18n, live_sale_no_homeworld_title)}</h3>
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, live_sale_no_homeworld_prefix)}
-                    <A
+                    <AppLink
                         href="/settings"
                         attr:class="text-[color:var(--accent)] hover:underline transition-colors"
                     >
                         {t!(i18n, settings)}
-                    </A>
+                    </AppLink>
                     {t!(i18n, live_sale_no_homeworld_suffix)}
                 </div>
             </div>
@@ -208,7 +216,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                         }
                     >
                         <For each=sales key=|sale| sale.sold_date let:sale>
-                            <A href=move || {
+                            <AppLink href=move || {
                                 format!(
                                     "/item/{}/{}",
                                     homeworld().map(|world| world.name).unwrap_or_default(),
@@ -243,7 +251,7 @@ pub fn LiveSaleTicker() -> impl IntoView {
                                         </div>
                                     </div>
                                 </div>
-                            </A>
+                            </AppLink>
                         </For>
                     </Show>
                 </div>

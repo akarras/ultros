@@ -1,4 +1,8 @@
 use crate::api::{get_item_stats, get_listings, get_price_density, get_price_series};
+use crate::components::app_link::AppLink;
+use crate::components::chart_query::{
+    RangeDecision, RangePreset, SaleProbe, decide_range, effective_preset,
+};
 use crate::components::confidence_badge::ConfidenceBadge;
 use crate::components::freshness_badge::FreshnessBadge;
 use crate::components::gil::Gil;
@@ -8,10 +12,10 @@ use crate::components::price_history_chart::PriceHistoryChart;
 use crate::components::sales_cadence_badge::SalesCadenceBadge;
 use crate::components::world_name::WorldName;
 use crate::components::{
-    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, listings_panel::ListingsPanel,
-    meta::*, realtime_status::RealtimeStatus, recently_viewed::RecentItems, related_items::*,
-    sale_history_table::*, section_nav::SectionNav, skeleton::BoxSkeleton, stats_display::*,
-    toggle::Toggle, ui_text::*,
+    ad::Ad, add_to_list::AddToList, clipboard::*, item_icon::*, item_tooltip::ItemTooltip,
+    listings_panel::ListingsPanel, meta::*, realtime_status::RealtimeStatus,
+    recently_viewed::RecentItems, related_items::*, sale_history_table::*, section_nav::SectionNav,
+    skeleton::BoxSkeleton, stats_display::*, toggle::Toggle,
 };
 use crate::error::AppError;
 use crate::global_state::LocalWorldData;
@@ -19,12 +23,13 @@ use crate::global_state::cheapest_prices::CheapestPrices;
 use crate::global_state::home_world::{get_price_zone, locale_preferred_region, use_home_world};
 use crate::global_state::xiv_data::{resolve_item_id, tracked_data};
 use crate::i18n::{t, t_string};
-use crate::routes::item_view_scope::item_href;
+use crate::query_defaults::filter_query_signal;
+use crate::routes::item_view_scope::{COMPARE_BUY_FROM_PARAM, item_href};
 use crate::routes::not_found::NotFound;
+use crate::script_escape::escape_for_script_tag;
 use crate::ws::realtime::{RealtimeSubscription, use_realtime};
 use leptos::prelude::*;
 use leptos_meta::Meta;
-use leptos_router::components::A;
 use leptos_router::hooks::{use_params_map, use_query_map};
 use leptos_router::location::Url;
 use leptos_use::signal_debounced;
@@ -32,6 +37,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use ultros_api_types::cheapest_listings::{CheapestListingData, PriceSummary};
 use ultros_api_types::price_series::{HqFilter, SeriesGroup};
 use ultros_api_types::websocket::{FilterPredicate, ServerClient, SocketMessageType};
 use ultros_api_types::world::Datacenter;
@@ -39,7 +45,7 @@ use ultros_api_types::world_helper::AnySelector;
 use ultros_api_types::world_helper::{AnyResult, OwnedResult};
 use ultros_api_types::{ActiveListing, CurrentlyShownItem, Retainer};
 use ultros_charts::charts::ChartMode;
-use ultros_charts::data::grouping::GroupLevel;
+use ultros_charts::data::grouping::{GroupLevel, default_group_level};
 use xiv_gen::{ItemId, ItemSearchCategoryId, ItemUiCategoryId};
 
 type ListingRows = Vec<(ActiveListing, Arc<Retainer>)>;
@@ -60,7 +66,7 @@ const MEANINGFUL_CROSS_WORLD_SAVINGS_GIL: i32 = 1_000;
 /// DOM — the tachys `unreachable!()` flood in GlitchTip #6831. The request is
 /// already being torn down whenever this fires, so degrading to `fallback`
 /// costs nothing user-visible and keeps the response whole.
-fn with_or<S, U>(signal: &S, fallback: U, fun: impl FnOnce(&S::Value) -> U) -> U
+pub(crate) fn with_or<S, U>(signal: &S, fallback: U, fun: impl FnOnce(&S::Value) -> U) -> U
 where
     S: With,
 {
@@ -76,38 +82,6 @@ where
     signal.try_get().unwrap_or_default()
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct SavingsVerdict {
-    cheapest_listing: ActiveListing,
-    current_world_listing: ActiveListing,
-    savings: i32,
-    savings_percent: f64,
-}
-
-impl SavingsVerdict {
-    fn new(cheapest_listing: ActiveListing, current_world_listing: ActiveListing) -> Option<Self> {
-        if cheapest_listing.hq != current_world_listing.hq
-            || cheapest_listing.world_id == current_world_listing.world_id
-            || cheapest_listing.price_per_unit <= 0
-            || current_world_listing.price_per_unit <= 0
-        {
-            return None;
-        }
-
-        let savings = current_world_listing.price_per_unit - cheapest_listing.price_per_unit;
-        if savings < MEANINGFUL_CROSS_WORLD_SAVINGS_GIL {
-            return None;
-        }
-
-        Some(Self {
-            cheapest_listing,
-            current_world_listing: current_world_listing.clone(),
-            savings,
-            savings_percent: (savings as f64 / current_world_listing.price_per_unit as f64) * 100.0,
-        })
-    }
-}
-
 #[component]
 fn WorldButton(
     current_world: Memo<String>,
@@ -121,11 +95,11 @@ fn WorldButton(
     // Only the params this route actually owns are carried forward, so a
     // stale or hostile query key can't be reflected back into a link.
     let search = Signal::derive(move || {
-        query.with(|query| match query.get("exclude-worlds") {
-            Some(worlds) if !worlds.is_empty() => {
-                format!("exclude-worlds={}", Url::escape(&worlds))
-            }
-            _ => String::new(),
+        query.with(|query| {
+            carried_world_switch_query(
+                query.get("exclude-worlds").as_deref(),
+                query.get(COMPARE_BUY_FROM_PARAM).as_deref(),
+            )
         })
     });
     let world_2 = world_name.clone();
@@ -155,7 +129,7 @@ fn WorldButton(
         })
     };
     view! {
-        <A
+        <AppLink
             attr:class=move || {
                 [
                     "rounded-md flex items-center gap-1.5 transition-colors duration-150 whitespace-nowrap border border-transparent",
@@ -195,7 +169,7 @@ fn WorldButton(
                         })
                 }}
                 {label}
-            </A>
+            </AppLink>
     }.into_any()
 }
 
@@ -367,7 +341,7 @@ pub fn DatacenterExclusionControls(
         let world_data = world_data.clone();
         move |_| {
             let world_name = Url::unescape(&world());
-            world_data
+            let mut datacenters = world_data
                 .lookup_world_by_name(&world_name)
                 .map(|result| {
                     world_data
@@ -376,53 +350,39 @@ pub fn DatacenterExclusionControls(
                         .cloned()
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_default()
-        }
-    });
-    let excluded_visible = Memo::new({
-        let world_data = world_data.clone();
-        move |_| {
+                .unwrap_or_default();
+
+            // Keep an exclusion from a previously selected scope removable,
+            // but render every datacenter exactly once.
             excluded_datacenters.with(|excluded| {
-                let mut datacenters = excluded
-                    .iter()
-                    .filter_map(|name| {
-                        world_data
+                for name in excluded {
+                    let already_visible = datacenters
+                        .iter()
+                        .any(|datacenter| datacenter.name == *name);
+                    if !already_visible
+                        && let Some(datacenter) = world_data
                             .lookup_world_by_name(name)
                             .and_then(|result| result.as_datacenter())
-                            .cloned()
-                    })
-                    .collect::<Vec<_>>();
-                datacenters.sort_by(|a, b| a.name.cmp(&b.name));
-                datacenters
-            })
+                    {
+                        datacenters.push(datacenter.clone());
+                    }
+                }
+            });
+            datacenters.sort_by(|a, b| a.name.cmp(&b.name));
+            datacenters
         }
     });
 
     view! {
         {move || {
-            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty())
-                || excluded_visible.with(|datacenters| !datacenters.is_empty());
+            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty());
             has_controls.then(|| {
                 view! {
-                    <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <h2 class="text-sm font-bold uppercase text-brand-200">
-                                {t!(i18n, item_view_exclude_datacenters)}
-                            </h2>
-                            <button
-                                type="button"
-                                class="btn-secondary h-8 px-2 text-xs"
-                                class:hidden=move || excluded_datacenters.with(|set| set.is_empty())
-                                on:click=move |_| {
-                                    excluded_datacenters.update(|set| set.clear());
-                                }
-                            >
-                                <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                {t!(i18n, clear_all)}
-                            </button>
-                        </div>
-
-                        <div class="mt-3 flex flex-wrap gap-2">
+                    <div
+                        class="flex flex-wrap items-center gap-2"
+                        role="group"
+                        aria-label=move || t_string!(i18n, item_view_exclude_datacenters).to_string()
+                    >
                             {move || {
                                 datacenters
                                     .get()
@@ -432,12 +392,14 @@ pub fn DatacenterExclusionControls(
                                         let label_name = name.clone();
                                         let state_name = name.clone();
                                         let click_name = name.clone();
+                                        let hook_name = name.clone();
                                         let is_excluded = Signal::derive(move || {
                                             excluded_datacenters.with(|set| set.contains(&state_name))
                                         });
                                         view! {
                                             <button
                                                 type="button"
+                                                data-datacenter=hook_name
                                                 aria-pressed=move || is_excluded().to_string()
                                                 aria-label=move || {
                                                     if is_excluded() {
@@ -448,11 +410,11 @@ pub fn DatacenterExclusionControls(
                                                 }
                                                 class=move || {
                                                     [
-                                                        "inline-flex min-h-9 items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors",
+                                                        "inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]",
                                                         if is_excluded() {
-                                                            "border-amber-300/60 bg-amber-500/10 text-amber-100"
+                                                            "border-brand-300/60 bg-[color:var(--brand-bg)] font-semibold text-[color:var(--brand-fg)]"
                                                         } else {
-                                                            "border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:border-brand-300/60"
+                                                            "border-[color:var(--color-outline)] bg-[color:var(--color-background-elevated)] text-[color:var(--color-text)] hover:border-brand-300/60"
                                                         },
                                                     ]
                                                         .join(" ")
@@ -467,7 +429,7 @@ pub fn DatacenterExclusionControls(
                                             >
                                                 {move || {
                                                     is_excluded()
-                                                        .then(|| view! { <Icon icon=icondata::BsCheck attr:class="text-sm" /> })
+                                                        .then(|| view! { <Icon icon=icondata::MdiClose attr:class="text-sm" /> })
                                                 }}
                                                 <span>{name.clone()}</span>
                                             </button>
@@ -475,43 +437,24 @@ pub fn DatacenterExclusionControls(
                                     })
                                     .collect_view()
                             }}
-                        </div>
-
-                        <div
-                            class="mt-3 flex flex-wrap gap-2"
-                            class:hidden=move || excluded_visible.with(|datacenters| datacenters.is_empty())
-                        >
                             {move || {
-                                excluded_visible
-                                    .get()
-                                    .into_iter()
-                                    .map(|datacenter: Datacenter| {
-                                        let name = datacenter.name.clone();
-                                        let label_name = name.clone();
-                                        let click_name = name.clone();
+                                (!excluded_datacenters.with(|set| set.is_empty()))
+                                    .then(|| {
                                         view! {
                                             <button
                                                 type="button"
-                                                class="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-100 transition-colors hover:border-amber-200/70"
-                                                aria-label=move || t_string!(
-                                                    i18n,
-                                                    item_view_include_datacenter_aria,
-                                                    datacenter = label_name.clone()
-                                                )
+                                                class="inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]"
+                                                data-testid="clear-datacenter-exclusions"
                                                 on:click=move |_| {
-                                                    excluded_datacenters.update(|set| {
-                                                        set.remove(&click_name);
-                                                    });
+                                                    excluded_datacenters.update(|set| set.clear());
                                                 }
                                             >
                                                 <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                                <span>{name.clone()}</span>
+                                                {t!(i18n, clear_all)}
                                             </button>
                                         }
                                     })
-                                    .collect_view()
                             }}
-                        </div>
                     </div>
                 }
             })
@@ -531,38 +474,55 @@ fn cheapest_listing_for_quality(
         .cloned()
 }
 
-fn savings_verdict_for_quality(
-    listings: &ListingRows,
-    current_world_id: i32,
+/// Cross-world savings hint derived from the zone-wide cheapest map.
+///
+/// Replaces the listings-payload `SavingsVerdict`: a world-scoped listings
+/// request only contains that world (world_cache.rs `get_all_worlds_in`),
+/// so the old cross-world comparison could never fire.
+#[derive(Clone, Debug, PartialEq)]
+struct ZoneSavings {
+    cheapest: CheapestListingData,
     hq: bool,
-) -> Option<SavingsVerdict> {
-    let (cheapest_listing, _) = cheapest_listing_for_quality(listings, hq)?;
-    let current_world_listing = listings
-        .iter()
-        .filter(|(listing, _)| listing.hq == hq && listing.world_id == current_world_id)
-        .min_by_key(|(listing, _)| listing.price_per_unit)
-        .map(|(listing, _)| listing.clone())?;
-
-    SavingsVerdict::new(cheapest_listing, current_world_listing)
+    savings: i32,
+    savings_percent: f64,
 }
 
-fn cheapest_savings_verdict(
-    listings: &ListingRows,
+fn zone_savings_for_quality(
+    local_floor: Option<i32>,
+    zone_cheapest: Option<CheapestListingData>,
+    hq: bool,
     current_world_id: i32,
-) -> Option<SavingsVerdict> {
-    [false, true]
-        .into_iter()
-        .filter_map(|hq| savings_verdict_for_quality(listings, current_world_id, hq))
-        .max_by(|left, right| {
-            left.savings
-                .cmp(&right.savings)
-                .then_with(|| {
-                    left.current_world_listing
-                        .price_per_unit
-                        .cmp(&right.current_world_listing.price_per_unit)
-                })
-                .then_with(|| left.cheapest_listing.hq.cmp(&right.cheapest_listing.hq))
-        })
+) -> Option<ZoneSavings> {
+    let local = local_floor?;
+    let cheapest = zone_cheapest?;
+    if cheapest.world_id == current_world_id || cheapest.price <= 0 || local <= 0 {
+        return None;
+    }
+    let savings = local - cheapest.price;
+    if savings < MEANINGFUL_CROSS_WORLD_SAVINGS_GIL {
+        return None;
+    }
+    Some(ZoneSavings {
+        cheapest,
+        hq,
+        savings,
+        savings_percent: (savings as f64 / local as f64) * 100.0,
+    })
+}
+
+fn zone_savings(
+    local_floor_nq: Option<i32>,
+    local_floor_hq: Option<i32>,
+    summary: &PriceSummary,
+    current_world_id: i32,
+) -> Option<ZoneSavings> {
+    [
+        zone_savings_for_quality(local_floor_nq, summary.lq, false, current_world_id),
+        zone_savings_for_quality(local_floor_hq, summary.hq, true, current_world_id),
+    ]
+    .into_iter()
+    .flatten()
+    .max_by_key(|savings| savings.savings)
 }
 
 fn format_savings_percent(percent: f64) -> String {
@@ -571,6 +531,33 @@ fn format_savings_percent(percent: f64) -> String {
     } else {
         format!("{percent:.1}")
     }
+}
+
+/// Builds the query string a world-switch link carries forward: only the
+/// params this route owns are allowed through, so a stale or hostile query
+/// key can't be reflected back into a link (same allowlist idiom as
+/// `parse_excluded_world_ids`). `compare-buy-from` is included so clicking a
+/// world button doesn't silently dismiss an open flip-verification card —
+/// the spec requires "changing the sell world keeps the comparison alive".
+fn carried_world_switch_query(
+    exclude_worlds: Option<&str>,
+    compare_buy_from: Option<&str>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(worlds) = exclude_worlds
+        && !worlds.is_empty()
+    {
+        parts.push(format!("exclude-worlds={}", Url::escape(worlds)));
+    }
+    if let Some(buy_from) = compare_buy_from
+        && !buy_from.is_empty()
+    {
+        parts.push(format!(
+            "{COMPARE_BUY_FROM_PARAM}={}",
+            Url::escape(buy_from)
+        ));
+    }
+    parts.join("&")
 }
 
 fn parse_excluded_world_ids(raw: Option<&str>) -> HashSet<i32> {
@@ -585,9 +572,21 @@ fn DecisionHeader(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
     #[prop(into)] filtered_listings: Signal<ListingRows>,
     world: Memo<String>,
+    item_id: Memo<i32>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    let cheapest_prices = use_context::<CheapestPrices>();
+    let (compare_world, set_compare_world) = filter_query_signal::<String>(COMPARE_BUY_FROM_PARAM);
+
+    // Same idiom as `MarketStatsPanel` (see the long comment above it): the
+    // zone-cheapest resource must read as unavailable during SSR and the
+    // initial hydration render, or the SSR/CSR DOM shapes mismatch and
+    // tachys panics.
+    let hydrated = RwSignal::new(false);
+    Effect::new(move |_| {
+        hydrated.set(true);
+    });
 
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
@@ -609,8 +608,30 @@ fn DecisionHeader(
                                 .as_ref()
                                 .map(|result| result.all_worlds().count())
                                 .unwrap_or(1);
-                            let savings_verdict = current_world_id
-                                .and_then(|world_id| cheapest_savings_verdict(&listings, world_id));
+                            let savings = current_world_id.and_then(|world_id| {
+                                let local_floor = |hq: bool| {
+                                    listings
+                                        .iter()
+                                        .filter(|(listing, _)| {
+                                            listing.hq == hq && listing.world_id == world_id
+                                        })
+                                        .map(|(listing, _)| listing.price_per_unit)
+                                        .min()
+                                };
+                                let summary = if hydrated.get() {
+                                    cheapest_prices.as_ref().and_then(|prices| {
+                                        prices.read_listings.with(|r| {
+                                            let map = r.as_ref().and_then(|r| r.as_ref().ok());
+                                            map.map(|map| map.find_matching_listings(item_id()))
+                                        })
+                                    })
+                                } else {
+                                    None
+                                };
+                                summary.and_then(|summary| {
+                                    zone_savings(local_floor(false), local_floor(true), &summary, world_id)
+                                })
+                            });
                             let recent_sales = &data.sales;
 
                             // Freshness is judged on when Ultros last ingested the
@@ -647,42 +668,68 @@ fn DecisionHeader(
                                             sales_per_day=scope_sales_per_day
                                         />
                                     </div>
-                                    {savings_verdict
-                                        .map(|verdict| {
-                                            let quality_label = if verdict.cheapest_listing.hq {
+                                    {savings
+                                        .and_then(|savings| {
+                                            let buy_world_name = world_data
+                                                .lookup_selector(AnySelector::World(savings.cheapest.world_id))
+                                                .map(|w| w.get_name().to_string())?;
+                                            // Don't advertise the Compare card when it's
+                                            // already open for this world.
+                                            let already_open = compare_world
+                                                .get()
+                                                .map(|raw| Url::unescape(&raw))
+                                                .is_some_and(|current| {
+                                                    current.eq_ignore_ascii_case(&buy_world_name)
+                                                });
+                                            if already_open {
+                                                return None;
+                                            }
+                                            Some((savings, buy_world_name))
+                                        })
+                                        .map(|(savings, buy_world_name)| {
+                                            let quality_label = if savings.hq {
                                                 t_string!(i18n, hq).to_string()
                                             } else {
                                                 t_string!(i18n, nq).to_string()
                                             };
-                                            let percent = format_savings_percent(verdict.savings_percent);
+                                            let percent = format_savings_percent(savings.savings_percent);
+                                            let cheapest_world_id = savings.cheapest.world_id;
+                                            let cheapest_price = savings.cheapest.price;
+                                            let saved_amount = savings.savings;
                                             view! {
-                                                <a
-                                                    href="#listings"
+                                                <button
+                                                    type="button"
                                                     class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 transition-colors hover:border-emerald-300/70"
+                                                    on:click=move |_| {
+                                                        set_compare_world.set(Some(buy_world_name.clone()));
+                                                    }
                                                 >
                                                     <Icon icon=icondata::FaGlobeSolid attr:class="text-sm shrink-0" />
                                                     <span class="font-semibold">
                                                         {t!(i18n, item_view_savings_cheapest_on)}
                                                     </span>
                                                     <span class="inline-flex items-center gap-1">
-                                                        <WorldName id=AnySelector::World(verdict.cheapest_listing.world_id) />
+                                                        <WorldName id=AnySelector::World(cheapest_world_id) />
                                                         <span class="rounded border border-emerald-300/40 px-1 text-[10px] font-bold leading-4 text-emerald-100">
                                                             {quality_label}
                                                         </span>
                                                     </span>
                                                     <span class="text-[color:var(--color-text-muted)]">":"</span>
                                                     <div class="font-bold text-[color:var(--color-text)]">
-                                                        <Gil amount=verdict.cheapest_listing.price_per_unit />
+                                                        <Gil amount=cheapest_price />
                                                     </div>
                                                     <span class="text-[color:var(--color-text-muted)]">"-"</span>
                                                     <span>{t!(i18n, item_view_savings_save)}</span>
                                                     <div class="font-bold text-[color:var(--color-text)]">
-                                                        <Gil amount=verdict.savings />
+                                                        <Gil amount=saved_amount />
                                                     </div>
                                                     <span class="text-[color:var(--color-text-muted)]">
                                                         "("{percent}"%)"
                                                     </span>
-                                                </a>
+                                                    <span class="font-semibold underline">
+                                                        {t!(i18n, item_compare_action)}
+                                                    </span>
+                                                </button>
                                             }
                                             .into_any()
                                         })
@@ -709,37 +756,6 @@ fn MarketStatsPanel(
     last_update_at: Signal<Option<chrono::DateTime<chrono::Utc>>>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let cheapest_prices = use_context::<CheapestPrices>();
-
-    // Defer the `cheapest_prices.read_listings`-driven recipe-cost chip until
-    // after hydration. The chip lives inside an inner `<Suspense>` in
-    // `source_callout`'s recipe branch and reads the resource via `.with()` —
-    // which (same gotcha as #719) does NOT subscribe the wrapping Suspense, so
-    // SSR proceeds with whatever state the resource happens to be in. When SSR
-    // renders the text branch (`{t!(i18n, craftable)}` / `{t!(i18n,
-    // used_in_crafting)}`) but the client-side serialised resource resolves to
-    // `Some(prices)` with `min_cost > 0`, the first CSR render swaps in
-    // `view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }`
-    // — an `<span>` element where the SSR'd DOM has a bare text node. tachys'
-    // walker then hits `failed_to_cast_text_node` at
-    // `tachys-0.2.15/src/hydration.rs:227` (the post-debug-strip `unreachable!()`
-    // — see GlitchTip cluster on `/item/<world>/<id>`: issues 5270/5269/5268/
-    // 5267/5266/…/5234 etc. on releases 51d31a9 and db795c3, plus the
-    // long-running `RuntimeError: unreachable` mirrors 4 and 5147). The
-    // wasm-bindgen-futures executor then cascades into `RefCell already
-    // borrowed` from the same trace.
-    //
-    // Same idiom as #725 (chart), #719 (item-explorer), #712 (home),
-    // #730 (relative-time): an `Effect`-driven `hydrated` flag (effects run
-    // client-only, after first render) so SSR and the initial CSR hydration
-    // render both treat prices as unavailable. Both sides emit the text
-    // branches, shapes match, and a frame later the effect fires, the closure
-    // re-runs with the real price map, and the chip reactively swaps to the
-    // `<span>` form.
-    let hydrated = RwSignal::new(false);
-    Effect::new(move |_| {
-        hydrated.set(true);
-    });
 
     view! {
         <Transition fallback=move || view! { <BoxSkeleton /> }>
@@ -815,173 +831,10 @@ fn MarketStatsPanel(
                                 t!(i18n, not_enough_data).into_any()
                             };
 
-                            let source_callout = {
-                                let game_data = tracked_data();
-                                let cheapest_prices = cheapest_prices.clone();
-                                let item_id = item_id();
-                                let vendor_exists = is_vendor_item(item_id);
-                                let exchange_exists = game_data
-                                    .special_shops
-                                    .values()
-                                    .any(|shop| special_shop_has_item(shop, item_id));
-                                let leve_exists = game_data.leves.values().any(|leve| {
-                                    leve_rewards_item(
-                                        leve,
-                                        item_id,
-                                        &game_data.leve_reward_items,
-                                        &game_data.leve_reward_item_groups,
-                                    )
-                                });
-                                let recipe_exists =
-                                    recipe_tree_iter(ItemId(item_id)).next().is_some();
-
-                                if vendor_exists || exchange_exists || recipe_exists || leve_exists {
-                                    let (title, summary, icon, href, accent_class): (
-                                        String,
-                                        AnyView,
-                                        icondata::Icon,
-                                        &str,
-                                        &str,
-                                    ) = if vendor_exists {
-                                        let price = game_data
-                                            .items
-                                            .get(&ItemId(item_id))
-                                            .map(|item| {
-                                                if item.price_mid > 0 {
-                                                    item.price_mid
-                                                } else {
-                                                    item.price_low
-                                                }
-                                            })
-                                            .unwrap_or(0);
-                                        (
-                                            t_string!(i18n, vendor_available).to_string(),
-                                            view! { <span>{t!(i18n, sells_for)} <Gil amount=price as i32 /></span> }.into_any(),
-                                            icondata::FaShopSolid,
-                                            "#vendor-sources",
-                                            "text-amber-300 border-amber-400/40",
-                                        )
-                                    } else if exchange_exists {
-                                        (
-                                            t_string!(i18n, exchange_available).to_string(),
-                                            view! { <span>{t!(i18n, exchange_available)}</span> }.into_any(),
-                                            icondata::BsArrowLeftRight,
-                                            "#exchange-sources",
-                                            "text-purple-300 border-purple-400/40",
-                                        )
-                                    } else if recipe_exists {
-                                        let summary_view = view! {
-                                            <Suspense fallback=move || t_string!(i18n, craftable).to_string()>
-                                                {move || {
-                                                    if let Some(recipe) = recipe_tree_iter(ItemId(item_id)).next() {
-                                                        // Skip the price-aware branch entirely during the
-                                                        // first (SSR-matching) render so SSR and CSR both
-                                                        // pick the same text-only branches below. The effect
-                                                        // above flips `hydrated` to true a frame later and
-                                                        // the closure re-runs with the real price map.
-                                                        if hydrated.get()
-                                                            && let Some(prices) = cheapest_prices.as_ref()
-                                                        {
-                                                            prices.read_listings.with(|prices| {
-                                                                let prices = prices.as_ref().and_then(|prices| prices.as_ref().ok());
-                                                                if let Some(prices) = prices {
-                                                                    let prices = prices.clone();
-                                                                    let empty = crate::components::crafting_cost::EmptyOnHand;
-                                                                    let recipes_by_output = std::collections::HashMap::new();
-                                                                    // Read the user's shard preference so the chip stays
-                                                                    // consistent with the cost line in the recipe panel.
-                                                                    let opts_value = use_context::<crate::global_state::cookies::Cookies>()
-                                                                        .map(|c| c.use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(crate::global_state::craft_options::COOKIE_NAME).0.get().unwrap_or_default())
-                                                                        .unwrap_or_default();
-                                                                    let shards_mode = if opts_value.exclude_shards {
-                                                                        crate::components::crafting_cost::ShardsMode::ExcludeShards
-                                                                    } else {
-                                                                        crate::components::crafting_cost::ShardsMode::IncludeMarket
-                                                                    };
-                                                                    let lq_opts = crate::components::crafting_cost::CraftingCostOptions {
-                                                                        require_hq: false,
-                                                                        max_subcraft_depth: 0,
-                                                                        shards: shards_mode,
-                                                                        on_hand: &empty,
-                                                                    };
-                                                                    let hq_opts = crate::components::crafting_cost::CraftingCostOptions {
-                                                                        require_hq: true,
-                                                                        max_subcraft_depth: 0,
-                                                                        shards: shards_mode,
-                                                                        on_hand: &empty,
-                                                                    };
-                                                                    let is_shard = crate::components::related_items::is_shard_item;
-                                                                    let lq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &lq_opts, &is_shard).cost;
-                                                                    let hq = crate::components::crafting_cost::compute_cost(recipe, &prices, &recipes_by_output, &hq_opts, &is_shard).cost;
-                                                                    let min_cost = if lq > 0 { lq } else { hq };
-                                                                    if min_cost > 0 && recipe.item_result == item_id {
-                                                                        view! { <span>{t!(i18n, craft_for)} " ~" <Gil amount=min_cost /></span> }.into_any()
-                                                                    } else if recipe.item_result == item_id {
-                                                                        t!(i18n, craftable).into_any()
-                                                                    } else {
-                                                                        t!(i18n, used_in_crafting).into_any()
-                                                                    }
-                                                                } else if recipe.item_result == item_id {
-                                                                    t!(i18n, craftable).into_any()
-                                                                } else {
-                                                                    t!(i18n, used_in_crafting).into_any()
-                                                                }
-                                                            })
-                                                        } else if recipe.item_result == item_id {
-                                                            t!(i18n, craftable).into_any()
-                                                        } else {
-                                                            t!(i18n, used_in_crafting).into_any()
-                                                        }
-                                                    } else {
-                                                        t!(i18n, craftable).into_any()
-                                                    }
-                                                }}
-                                            </Suspense>
-                                        }
-                                        .into_any();
-                                        (
-                                            t_string!(i18n, crafting_recipe).to_string(),
-                                            summary_view,
-                                            icondata::FaHammerSolid,
-                                            "#crafting-recipes",
-                                            "text-orange-300 border-orange-400/40",
-                                        )
-                                    } else {
-                                        (
-                                            t_string!(i18n, levequest_reward).to_string(),
-                                            view! { t!(i18n, obtainable_via_levequest) }.into_any(),
-                                            icondata::FaScrollSolid,
-                                            "#leve-sources",
-                                            "text-pink-300 border-pink-400/40",
-                                        )
-                                    };
-
-                                    Some(
-                                        view! {
-                                            <a
-                                                href=href
-                                                class=format!(
-                                                    "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors hover:border-[color:var(--brand-ring)] {}",
-                                                    accent_class,
-                                                )
-                                            >
-                                                <Icon icon=icon attr:class="text-lg shrink-0" />
-                                                <span class="min-w-0">
-                                                    <span class="block font-semibold leading-tight">{title}</span>
-                                                    <span class="block text-[color:var(--color-text)] leading-tight">{summary}</span>
-                                                </span>
-                                            </a>
-                                        }
-                                        .into_any(),
-                                    )
-                                } else {
-                                    None
-                                }
-                            };
 
                             view! {
                                 <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                                    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2 sm:mb-3">
+                                    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
                                         <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                             {t!(i18n, cheapest_found)}
                                         </h2>
@@ -997,13 +850,13 @@ fn MarketStatsPanel(
                                     // Flat stat strip: 2x2 grid with hairline separators on
                                     // mobile, one row of 4 with left dividers at lg+.
                                     <div class="grid grid-cols-2 lg:grid-cols-4 [&>a]:border-[color:var(--color-outline)] [&>a:nth-child(even)]:border-l lg:[&>a:not(:first-child)]:border-l [&>a:nth-child(n+3)]:border-t lg:[&>a]:border-t-0">
-                                        <a href="#listings" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-brand-300 mb-1">{t!(i18n, nq)}</div>
                                             {if let Some((listing, _)) = cheapest_nq.clone() {
                                                 view! {
                                                     <div>
-                                                        <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-2 flex items-center gap-1">
+                                                        <div class="text-lg sm:text-xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
                                                             <WorldName id=AnySelector::World(listing.world_id) />
                                                         </div>
@@ -1015,7 +868,7 @@ fn MarketStatsPanel(
                                             }}
                                         </a>
 
-                                        <a href="#listings" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-[#95c521] mb-1 flex items-center gap-1">
                                                 <Icon icon=icondata::FaStarSolid attr:class="text-[10px]" />
                                                 {t!(i18n, hq)}
@@ -1023,8 +876,8 @@ fn MarketStatsPanel(
                                             {if let Some((listing, _)) = cheapest_hq.clone() {
                                                 view! {
                                                     <div>
-                                                        <div class="text-xl sm:text-2xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
-                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-2 flex items-center gap-1">
+                                                        <div class="text-lg sm:text-xl font-bold leading-none"><Gil amount=listing.price_per_unit /></div>
+                                                        <div class="text-xs text-[color:var(--color-text-muted)] mt-1 flex items-center gap-1">
                                                             <Icon icon=icondata::FaGlobeSolid attr:class="text-[10px]" />
                                                             <WorldName id=AnySelector::World(listing.world_id) />
                                                         </div>
@@ -1036,7 +889,7 @@ fn MarketStatsPanel(
                                             }}
                                         </a>
 
-                                        <a href="#history" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#history" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-blue-300 mb-1 flex items-center gap-1">
                                                 {t!(i18n, real_price)}
                                                 {real_primary
@@ -1049,7 +902,7 @@ fn MarketStatsPanel(
                                                     })
                                                     .unwrap_or_else(|| ().into_any())}
                                             </div>
-                                            <div class="text-xl sm:text-2xl font-bold leading-none">
+                                            <div class="text-lg sm:text-xl font-bold leading-none">
                                                 {match real_primary {
                                                     Some((_, est)) => view! { <Gil amount=est.value /> }.into_any(),
                                                     None => view! { <span class="text-[color:var(--color-text-muted)]">{t!(i18n, no_data)}</span> }.into_any(),
@@ -1099,17 +952,16 @@ fn MarketStatsPanel(
                                             </div>
                                         </a>
 
-                                        <a href="#listings" class="px-3 py-2 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
+                                        <a href="#listings" class="px-3 py-1.5 sm:px-4 transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)]">
                                             <div class="text-xs font-bold uppercase text-emerald-300 mb-1">{t!(i18n, active_listings)}</div>
-                                            <div class="text-xl sm:text-2xl font-bold leading-none">{listings_count}</div>
-                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-2">
+                                            <div class="text-lg sm:text-xl font-bold leading-none">{listings_count}</div>
+                                            <div class="text-xs text-[color:var(--color-text-muted)] mt-1">
                                                 {sales_cadence}
                                             </div>
                                         </a>
                                     </div>
 
-                                    <div class="mt-3 sm:mt-4 space-y-2">
-                                        {source_callout}
+                                    <div class="mt-2 flex flex-wrap items-center gap-2" class:hidden={move || listings_count > 0}>
                                         {if listings_count == 0 {
                                             view! {
                                                 <div role="status" class="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
@@ -1184,7 +1036,7 @@ fn WorldMarketShare(
                         class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4"
                         class:hidden=move || shares.with(|s| s.is_empty())
                     >
-                        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2 sm:mb-3">
+                        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1.5">
                             <h2 class="text-lg sm:text-xl font-bold text-[color:var(--color-text)] leading-tight">
                                 {t!(i18n, market_share_title)}
                             </h2>
@@ -1228,6 +1080,38 @@ fn WorldMarketShare(
     .into_any()
 }
 
+/// The sale-history panel's loading state: a placeholder title/badge row, a
+/// toggle+button row, and a large block standing in for the price chart.
+///
+/// Mirrors the panel `ChartWrapper` renders once its data arrives — same
+/// `panel h-[26rem]` frame — so the swap from loading to loaded is a content
+/// change, not a layout jump.
+#[component]
+fn ChartWrapperSkeleton() -> impl IntoView {
+    let i18n = crate::i18n::use_i18n();
+    view! {
+        <div class="panel h-[26rem] flex flex-col gap-3 p-3 sm:p-4" role="status">
+            <div class="skeleton-shimmer flex flex-col gap-3 h-full flex-1 min-h-0" aria-hidden="true">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="flex flex-col gap-2">
+                        <div class="flex items-center gap-2">
+                            <div class="skeleton-block h-5 w-32 rounded"></div>
+                            <div class="skeleton-block h-4 w-16 rounded-full"></div>
+                        </div>
+                        <div class="skeleton-block h-3 w-40 rounded"></div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="skeleton-block h-6 w-24 rounded-lg"></div>
+                        <div class="skeleton-block h-6 w-20 rounded-lg"></div>
+                    </div>
+                </div>
+                <div class="skeleton-block flex-1 w-full rounded-lg"></div>
+            </div>
+            <span class="sr-only">{t!(i18n, loading)}</span>
+        </div>
+    }
+}
+
 #[component]
 pub fn ChartWrapper(
     listing_resource: Resource<Result<Arc<CurrentlyShownItem>, AppError>>,
@@ -1236,7 +1120,14 @@ pub fn ChartWrapper(
     world: Memo<String>,
 ) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
-    let (hq_only, set_hq_only) = signal(false);
+    let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
+    // `?hq=true`, absent means off. Only written when true, so the default
+    // never appears in the URL.
+    let (hq_param, set_hq_param) = filter_query_signal::<bool>("hq");
+    let hq_only = Signal::derive(move || hq_param.get().unwrap_or(false));
+    let set_hq_only = SignalSetter::map(move |on: bool| {
+        set_hq_param.set(on.then_some(true));
+    });
 
     // Per-item analyzer stats (ClickHouse-backed). LocalResource = client-
     // only — the badge isn't part of SSR output, so we avoid a hydration
@@ -1254,12 +1145,43 @@ pub fn ChartWrapper(
     // doc comment). `group`/`hq` mirror the chart's own controls so the
     // request always matches what's on screen; `selected_range` is the
     // timeline slicer's committed selection (`None` = full history).
-    let (group, set_group) = signal(GroupLevel::World);
-    // Deliberately resets to Price per visit (no persistence) so a shared
+    // Grouping is a derived read over `?group=`, not a signal: an absent
+    // param means "the broadest level this scope offers", computed at read
+    // time. That gives a region page region lines instead of ~70 world lines
+    // (it used to hardcode World, which is valid at every scope, so the
+    // corrective Effect in the chart never fired).
+    //
+    // Filtering by the scope's available levels means a shared `?group=region`
+    // link opened on a *world* page degrades to World rather than requesting
+    // a grouping the scope cannot serve. Deriving rather than seeding also
+    // means navigating region -> world needs no write and cannot lose a race
+    // with the world picker's mount-time rebuild.
+    let (group_param, set_group_param) = filter_query_signal::<GroupLevel>("group");
+    let group_helper = world_data.clone();
+    let group_default_helper = world_data.clone();
+    let group = Signal::derive(move || {
+        let scope = world.get();
+        group_param
+            .get()
+            .filter(|level| {
+                ultros_charts::data::grouping::available_group_levels(&group_helper, &scope)
+                    .contains(level)
+            })
+            .unwrap_or_else(|| default_group_level(&group_default_helper, &scope))
+    });
+    let set_group = SignalSetter::map(move |level: GroupLevel| {
+        set_group_param.set(Some(level));
+    });
+    // `?mode=`, absent means Price. Deriving rather than seeding keeps the
+    // URL clean until the user actually picks a mode, and means a shared
     // link and a fresh visit agree on what the chart shows. Mode switches
-    // never touch `selected_range` or `group` — spec: "switching mode
+    // never touch the time window or grouping -- spec: "switching mode
     // preserves the time window and grouping".
-    let (mode, set_mode) = signal(ChartMode::Price);
+    let (mode_param, set_mode_param) = filter_query_signal::<ChartMode>("mode");
+    let mode = Signal::derive(move || mode_param.get().unwrap_or_default());
+    let set_mode = SignalSetter::map(move |next: ChartMode| {
+        set_mode_param.set(Some(next));
+    });
     let hq = Signal::derive(move || {
         if hq_only.get() {
             HqFilter::Hq
@@ -1267,35 +1189,167 @@ pub fn ChartWrapper(
             HqFilter::Any
         }
     });
-    let (selected_range, set_selected_range) = signal::<Option<(i64, i64)>>(None);
+    // The time window has two URL shapes. A preset click writes `?range=1mo`,
+    // so the link keeps meaning "the last month" indefinitely; a slicer drag
+    // has no relative meaning, so it writes absolute `?from=&to=` epoch
+    // seconds. `decide_range` applies the precedence, and with neither
+    // shape present the window defaults dynamically from the item's newest
+    // sale (see `sale_probe_state` below).
+    let (range_param, set_range_param) = filter_query_signal::<RangePreset>("range");
+    let (from_param, set_from_param) = filter_query_signal::<i64>("from");
+    let (to_param, set_to_param) = filter_query_signal::<i64>("to");
+
+    // Resolved once per mount rather than continuously: a chart does not
+    // need to slide in real time, and re-resolving on every tick would
+    // refetch. Computed during SSR too (this is just a component body), but
+    // nothing SSR-rendered ever consumes it: `selected_range` only reaches
+    // `debounced_decision` -> a client-only `LocalResource`, and
+    // `selected_domain`, which short-circuits on `available_domain` --
+    // itself derived from a client-only `LocalResource` and additionally
+    // gated behind `<Show when=available_domain.is_some()>`.
+    let now = StoredValue::new(chrono::Utc::now().timestamp());
+
+    // Newest-sale probe for the dynamic default range: with no range params
+    // in the URL, a hot item (sold within the last week) defaults to the
+    // week window instead of full history. The probe reads the listings
+    // payload the page already fetches, so deciding costs no extra request.
+    //
+    // Latched per (item, world): once the first payload answers, realtime
+    // sale events prepended into `listing_resource` must not re-run the
+    // decision — a live sale on a rarely-traded item would otherwise
+    // suddenly narrow a full-history chart to one week mid-view. The
+    // latched arm reads only the identity signals, so later resource
+    // updates don't even re-run the memo until the identity changes.
+    let sale_probe_state = Memo::new(move |prev: Option<&(i32, String, SaleProbe)>| {
+        let key = (item_id.get(), world.get());
+        if let Some((prev_item, prev_world, SaleProbe::Known(newest))) = prev
+            && *prev_item == key.0
+            && *prev_world == key.1
+        {
+            return (key.0, key.1, SaleProbe::Known(*newest));
+        }
+        // `with_or`, not `with`: this memo is created during SSR too, and
+        // `With::with` panics on a disposed signal — the truncated-response
+        // failure the helper's own docs describe. `Pending` is the right
+        // degradation, since nothing SSR-rendered consumes the probe.
+        let probe = with_or(&listing_resource, SaleProbe::Pending, |value| match value {
+            Some(Ok(data)) => SaleProbe::Known(
+                data.sales
+                    .iter()
+                    .map(|sale| sale.sold_date.and_utc().timestamp())
+                    .max(),
+            ),
+            // A failed listings fetch must not leave the chart waiting
+            // forever — fall back to the full-history default.
+            Some(Err(_)) => SaleProbe::Known(None),
+            None => SaleProbe::Pending,
+        });
+        (key.0, key.1, probe)
+    });
+    let sale_probe = Signal::derive(move || sale_probe_state.get().2);
+
+    // What the chart should fetch: explicit URL params win, the dynamic
+    // default fills their absence, and `Pending` holds the fetch until the
+    // probe answers — fetching full history first and narrowing after would
+    // flash exactly the misleading view this default exists to avoid.
+    let range_decision = Signal::derive(move || {
+        let from_to = from_param.get().zip(to_param.get());
+        decide_range(
+            range_param.get(),
+            from_to,
+            sale_probe.get(),
+            now.get_value(),
+        )
+    });
+    let selected_range = Signal::derive(move || match range_decision.get() {
+        RangeDecision::Resolved(range) => range,
+        RangeDecision::Pending => None,
+    });
+    // The preset button that should render pressed — `?range=` when set,
+    // else whatever the dynamic default landed on.
+    let chart_preset = Signal::derive(move || {
+        let from_to = from_param.get().zip(to_param.get());
+        effective_preset(
+            range_param.get(),
+            from_to,
+            sale_probe.get(),
+            now.get_value(),
+        )
+    });
+
+    // A drag commits absolute bounds and clears any preset. Writing all
+    // three together keeps the two shapes from coexisting in one URL.
+    // ("All" no longer comes through here — it is an explicit preset now,
+    // so it goes through `set_range_preset` below.)
+    let set_selected_range = Callback::new(move |next: Option<(i64, i64)>| {
+        set_range_param.set(None);
+        match next {
+            Some((from, to)) => {
+                set_from_param.set(Some(from));
+                set_to_param.set(Some(to));
+            }
+            None => {
+                set_from_param.set(None);
+                set_to_param.set(None);
+            }
+        }
+    });
+
+    // Selecting a preset clears the absolute bounds for the same reason.
+    let set_range_preset = Callback::new(move |preset: Option<RangePreset>| {
+        set_from_param.set(None);
+        set_to_param.set(None);
+        set_range_param.set(preset);
+    });
+
     // A different item/world makes any absolute-timestamp selection from the
     // previous item meaningless (and possibly outside the new item's data
     // entirely) — drop back to full range before the next request goes out.
-    // Deliberately does *not* track `group`/`hq`: changing those shouldn't
-    // discard an in-progress zoom.
-    Effect::new(move |_| {
-        item_id.track();
-        world.track();
-        set_selected_range.set(None);
+    // `range` deliberately survives: a relative preset like `?range=1mo`
+    // means "the last month" and stays just as meaningful on the new
+    // item/world, so clearing it here would silently downgrade a scope
+    // switch into a full-history refetch. Also does *not* track
+    // `group`/`hq`: changing those shouldn't discard an in-progress zoom.
+    //
+    // Guarded on an actual change (not just the first run): `Effect::new`
+    // fires unconditionally on mount, and now that these setters write
+    // straight to the URL, an unguarded first run would strip `from`/`to`
+    // out of a freshly-loaded shared link before its first fetch even
+    // finishes.
+    Effect::new(move |prev: Option<(i32, String)>| {
+        let key = (item_id.get(), world.get());
+        if prev.is_some_and(|p| p != key) {
+            set_from_param.set(None);
+            set_to_param.set(None);
+        }
+        key
     });
     // Debounce so dragging a slicer handle fires one request after the drag
     // settles rather than one per pointer move; the slicer's own handle
     // rendering reads the undebounced `selected_range` so it still tracks
     // the pointer at full rate.
-    let debounced_range = signal_debounced(selected_range, 300.0);
+    let debounced_decision = signal_debounced(range_decision, 300.0);
 
     // LocalResource = client-only, same rationale as `item_stats_resource`
     // above: avoids a hydration mismatch when the fetch resolves at
-    // different times on server vs. client.
+    // different times on server vs. client. Resolves to `None` (no request
+    // sent) while the range decision is still pending on the sale probe.
     let series_resource = LocalResource::new(move || {
         let id = item_id.get();
         let world_name = world.get();
         let series_group = SeriesGroup::from(group.get());
         let hq_filter = hq.get();
-        let range = debounced_range.get();
-        async move { get_price_series(id, &world_name, series_group, hq_filter, range).await }
+        let decision = debounced_decision.get();
+        async move {
+            match decision {
+                RangeDecision::Pending => None,
+                RangeDecision::Resolved(range) => {
+                    Some(get_price_series(id, &world_name, series_group, hq_filter, range).await)
+                }
+            }
+        }
     });
-    let series = Signal::derive(move || series_resource.get().and_then(|r| r.ok()));
+    let series = Signal::derive(move || series_resource.get().flatten().and_then(|r| r.ok()));
 
     // Fetched only while density mode is active — the mode is the gate, so
     // flipping to Density triggers the fetch and every other mode costs
@@ -1305,9 +1359,29 @@ pub fn ChartWrapper(
         let id = item_id.get();
         let world_name = world.get();
         let hq_filter = hq.get();
-        let range = debounced_range.get();
+        // With no slicer selection, bound the request to the domain the
+        // series response reported (its `to` is the last bucket's *start*,
+        // so extend one bucket width to keep the newest sales). An unbounded
+        // request would make the server derive its bucket from the default
+        // multi-year window, yielding a couple of month-wide columns no
+        // matter how little history actually exists — the same
+        // one-data-point failure the price series had, so keep both charts
+        // on the same window.
+        let decision = debounced_decision.get();
+        let range = match decision {
+            RangeDecision::Resolved(range) => range.or_else(|| {
+                series.get().filter(|s| !s.is_empty()).map(|s| {
+                    (
+                        s.from.and_utc().timestamp(),
+                        s.to.and_utc().timestamp() + s.bucket_seconds,
+                    )
+                })
+            }),
+            // Still waiting on the sale probe — don't fetch (guard below).
+            RangeDecision::Pending => None,
+        };
         async move {
-            if !active {
+            if !active || decision == RangeDecision::Pending {
                 return None;
             }
             get_price_density(id, &world_name, hq_filter, range, 32)
@@ -1318,15 +1392,7 @@ pub fn ChartWrapper(
     let density = Signal::derive(move || density_resource.get().flatten());
 
     view! {
-        <Transition fallback=move || {
-            view! {
-                <div class="animate-pulse panel h-[26rem] text-[color:var(--color-text)]">
-                    <div class="h-full w-full flex items-center justify-center">
-                        <div class="w-16 h-16 border-4 border-brand-400/40 border-t-transparent rounded-full animate-spin" />
-                    </div>
-                </div>
-            }
-        }>
+        <Transition fallback=ChartWrapperSkeleton>
             {move || {
                 let error = listing_resource
                     .with(|l| l.as_ref().and_then(|r| r.as_ref().err()).map(|e| e.to_string()));
@@ -1389,7 +1455,11 @@ pub fn ChartWrapper(
                                         <a
                                             class="btn-primary text-sm"
                                             target="_blank"
-                                            href=move || format!("/itemcard/{}/{}", world(), item_id())
+                                            href=move || crate::social_meta::social_image_path(
+                                                i18n.get_locale(),
+                                                &crate::social_card::SocialCardKind::Item(item_id()),
+                                                Some(&world()),
+                                            )
                                         >
                                             {move || t_string!(i18n, download_png).to_string()}
                                         </a>
@@ -1399,6 +1469,7 @@ pub fn ChartWrapper(
                                 {move || {
                                     series_resource
                                         .get()
+                                        .flatten()
                                         .and_then(|r| r.err())
                                         .map(|e| view! {
                                             <div role="alert" class="bg-red-900/30 text-red-200 border border-red-700/40 rounded-xl px-3 py-2 text-sm">
@@ -1424,7 +1495,10 @@ pub fn ChartWrapper(
                                     set_mode=set_mode
                                     group=group
                                     set_group=set_group
-                                    on_range_change=Callback::new(move |r| set_selected_range.set(r))
+                                    selected_range=selected_range
+                                    on_range_change=set_selected_range
+                                    range_preset=chart_preset
+                                    set_range_preset=set_range_preset
                                 />
 
                                 {move || {
@@ -1468,17 +1542,11 @@ fn SalesDetails(
                 });
 
                 view! {
-                    <div class="flex flex-col gap-6 h-full"> // Use flex col to stack table and insights
-                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 flex-1">
-                            <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
-                                {move || t_string!(i18n, sale_history).to_string()}
-                            </h2>
-                            <SaleHistoryTable sales=sales.into() />
-                        </div>
-
-                        <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                            <SalesInsights sales=sales.into() />
-                        </div>
+                    <div class="flex flex-col rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4 h-full">
+                        <h2 class="text-xl font-bold text-center mb-4 text-brand-200">
+                            {move || t_string!(i18n, sale_history).to_string()}
+                        </h2>
+                        <SaleHistoryTable sales=sales.into() />
                     </div>
                 }
                     .into_any()
@@ -1516,7 +1584,21 @@ fn ListingsContent(
             get_listings(item_id, world.as_str())
                 .await
                 .map(Arc::new) // Keep large listing payloads cheap to share across page sections.
-                .inspect_err(|e| tracing::error!(error = ?e, "Error getting value"))
+                .inspect_err(|e| {
+                    // Only *our* side breaking is worth error-level reporting.
+                    // A world segment the API can't resolve is a 404 it is
+                    // right to return, already logged with its status and path
+                    // by the fetch layer -- re-reporting it here is what filled
+                    // GlitchTip issue 2210. See `AppError::is_api_response`.
+                    // A loopback timeout is the same story one layer down:
+                    // already logged by the fetch layer, transient, and the
+                    // other half of GlitchTip issue 2210's volume.
+                    if e.is_api_response() || e.is_transient_transport() {
+                        tracing::warn!(error = ?e, item_id, %world, "Error getting value");
+                    } else {
+                        tracing::error!(error = ?e, item_id, %world, "Error getting value");
+                    }
+                })
         },
     );
     Effect::new(move |_| {
@@ -1527,7 +1609,6 @@ fn ListingsContent(
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
     let filtered_listings = Memo::new({
-        let world_data = world_data.clone();
         // Every read in here goes through a `try_*` accessor. `ArcMemo` `take()`s
         // its cached value before running this closure, so a panic in the body
         // leaves the memo permanently holding `None` — every later read then dies
@@ -1548,11 +1629,14 @@ fn ListingsContent(
                 })
             })
             .unwrap_or_default();
+            // Datacenter exclusions belong to the Active Listings panel. Keeping
+            // them out of this page-wide dataset prevents a table preference from
+            // changing the price summary, chart, and per-world supply breakdown.
             filter_listing_rows(
                 listings,
-                Some(world_data.as_ref()),
+                None,
                 &get_or_default(&excluded_worlds),
-                &get_or_default(&excluded_datacenters),
+                &HashSet::new(),
             )
         }
     });
@@ -1627,7 +1711,8 @@ fn ListingsContent(
     view! {
         <div class="w-full py-4 sm:py-6 text-[color:var(--color-text)]">
             <div id="overview" class="scroll-mt-16">
-                <DecisionHeader listing_resource filtered_listings world />
+                <crate::routes::item_compare::FlipRouteCard item_id world listing_resource />
+                <DecisionHeader listing_resource filtered_listings world item_id />
                 <MarketStatsPanel
                     listing_resource
                     filtered_listings
@@ -1636,20 +1721,32 @@ fn ListingsContent(
                     last_update_at=last_update_at.into()
                 />
             </div>
-            <div id="history" class="scroll-mt-16 mt-4 sm:mt-6">
-                <ChartWrapper listing_resource filtered_listings item_id world />
-            </div>
-            <div id="listings" class="scroll-mt-16 mt-6">
-                <ListingsPanel
-                    listing_resource
-                    filtered_listings
-                    world
-                    excluded_datacenters
-                />
+            // Tables before the chart: the listings and recent sales are what
+            // most visitors came for, so they come right after the overview.
+            // Both tables force `min-w-[720px]`, so two columns only fit when
+            // the content area is ~1500px wide — roughly a 1440p display once
+            // the sidebar and ad rail take their cut. Gating on the container
+            // (not the viewport) keeps this correct when the sidebar is
+            // collapsed or the ad rail is hidden. `minmax(0,1fr)` keeps a wide
+            // table from blowing the grid past the container.
+            <div class="@container">
+                <div class="grid grid-cols-1 @min-[94rem]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 mt-6">
+                    <div id="listings" class="scroll-mt-16 min-w-0">
+                        <ListingsPanel
+                            listing_resource
+                            filtered_listings
+                            world
+                            excluded_datacenters
+                        />
+                    </div>
+                    <div id="history" class="scroll-mt-16 min-w-0">
+                        <SalesDetails listing_resource />
+                    </div>
+                </div>
             </div>
 
-            <div class="grid grid-cols-1 gap-6 mt-8">
-                <SalesDetails listing_resource />
+            <div class="mt-6">
+                <ChartWrapper listing_resource filtered_listings item_id world />
             </div>
 
             // Per-world supply distribution answers a research question, not
@@ -1665,39 +1762,6 @@ fn ListingsContent(
         </div>
     }
     .into_any()
-}
-
-#[component]
-fn DiscordCommandChip(
-    #[prop(into)] item_name: Signal<String>,
-    #[prop(into)] item_id: Signal<i32>,
-    #[prop(into)] world_name: Signal<String>,
-) -> impl IntoView {
-    let i18n = crate::i18n::use_i18n();
-    // The `item` slash-command parameter is typed as an INTEGER on the Discord side,
-    // so a pasted command needs the item id, not a name. We show the name in the chip
-    // for human readability and put the id in the clipboard payload.
-    let display_command = Signal::derive(move || {
-        format!(
-            "/ffxiv prices current item:{} world:{}",
-            item_name.get(),
-            world_name.get(),
-        )
-    });
-    let clipboard_command = Signal::derive(move || {
-        format!(
-            "/ffxiv prices current item:{} world:{}",
-            item_id.get(),
-            world_name.get(),
-        )
-    });
-    view! {
-        <div class="inline-flex items-center gap-2 rounded-md border border-brand-500/30 bg-black/30 px-2.5 py-1 text-xs">
-            <span class="text-[color:var(--color-text-muted)]">{t!(i18n, item_view_discord_label)}</span>
-            <code class="font-mono">{move || display_command.get()}</code>
-            <Clipboard clipboard_text=clipboard_command />
-        </div>
-    }
 }
 
 /// Builds the item page's `BreadcrumbList` JSON-LD.
@@ -1756,7 +1820,7 @@ fn build_breadcrumb_json_ld(
         "itemListElement": items
     });
 
-    serde_json::to_string(&json_value).unwrap_or_default()
+    escape_for_script_tag(&serde_json::to_string(&json_value).unwrap_or_default())
 }
 
 /// Gates the item page on the `:id` route param actually naming a real item.
@@ -1824,15 +1888,6 @@ fn ItemViewContent() -> impl IntoView {
 
     let item = move || tracked_data().items.get(&ItemId(item_id()));
 
-    let item_description = move || {
-        tracked_data()
-            .items
-            .get(&ItemId(item_id()))
-            .map(|item| item.description.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
-
     let item_category = move || {
         let data = tracked_data();
         data.items.get(&ItemId(item_id())).and_then(|item| {
@@ -1881,7 +1936,6 @@ fn ItemViewContent() -> impl IntoView {
             t_string!(i18n, item_view_meta_title, name = item_name().to_string(), world = world()).to_string()
         } />
         <MetaDescription text=description />
-        <MetaImage url=move || format!("https://ultros.app/itemcard/{}/{}", world(), item_id()) />
         <Meta
             property="thumbnail"
             content=move || format!("https://ultros.app/static/itemicon/{}?size=Large", item_id())
@@ -1893,7 +1947,12 @@ fn ItemViewContent() -> impl IntoView {
                 <div class="flex flex-col gap-4 p-3 sm:p-4 border-b border-[color:var(--color-outline)] pb-6">
                     <div class="flex flex-col md:flex-row items-start gap-4">
                         <div class="flex items-center gap-4 flex-1">
-                            <ItemIcon item_id icon_size=IconSize::Large />
+                            <ItemTooltip item_id=item_id>
+                                // The hero icon is the LCP candidate on the item page —
+                                // eager-load it; every other icon stays lazy.
+                                <ItemIcon item_id icon_size=IconSize::Large loading="eager" />
+                            </ItemTooltip>
+
                             <div class="flex flex-col min-w-0">
                                 <h1 class="text-3xl sm:text-4xl font-bold text-[color:var(--color-text)] flex items-center gap-2 leading-tight">
                                     {item_name}
@@ -1916,13 +1975,6 @@ fn ItemViewContent() -> impl IntoView {
                                                 }
                                             })
                                     }}
-                                </div>
-                                <div class="mt-1.5">
-                                    <DiscordCommandChip
-                                        item_name=Signal::derive(move || item_name().to_string())
-                                        item_id=Signal::derive(move || item_id.get())
-                                        world_name=Signal::derive(move || world.get())
-                                    />
                                 </div>
                             </div>
                         </div>
@@ -1950,27 +2002,30 @@ fn ItemViewContent() -> impl IntoView {
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.8fr)_minmax(320px,1.2fr)] gap-3 pt-3 border-t border-[color:var(--color-outline)] text-[color:var(--color-text)]/90">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="text-brand-300 font-medium tracking-wide text-xs uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
-                            <span class="text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-400/50">
-                                {move || item().map(|item| item.level_item).unwrap_or_default()}
-                            </span>
+                    // Stats are reference material, not market data — collapsed by
+                    // default so listings and sales start higher on the page. Native
+                    // <details> keeps the default state static and SSR-deterministic.
+                    <details class="group pt-3 border-t border-[color:var(--color-outline)]">
+                        <summary class="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-brand-300 hover:text-[color:var(--brand-fg)]">
+                            <Icon icon=icondata::BiChevronDownRegular attr:class="shrink-0 transition-transform group-open:rotate-180" />
+                            {t!(i18n, item_view_item_details)}
+                        </summary>
+                        <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,0.8fr)_minmax(320px,1.2fr)] gap-3 pt-3 text-[color:var(--color-text)]/90">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-brand-300 font-medium tracking-wide text-xs uppercase">{move || t_string!(i18n, item_level).to_string()}</span>
+                                <span class="text-brand-100 px-2 py-0.5 rounded text-sm font-bold border border-brand-400/50">
+                                    {move || item().map(|item| item.level_item).unwrap_or_default()}
+                                </span>
+                            </div>
+                            <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
                         </div>
-                        <div>{move || view! { <ItemStats item_id=ItemId(item_id()) /> }}</div>
-                        <div
-                            class="lg:col-span-2 text-sm sm:text-base text-[color:var(--color-text-muted)] line-clamp-3"
-                            class:hidden=move || { item_description().is_empty() }
-                        >
-                            {move || view! { <UIText text=item_description().to_string() /> }}
-                        </div>
-                    </div>
+                    </details>
                 </div>
             </div>
 
             <WorldMenu world_name=world item_id />
 
-            <SectionNav>
+            <SectionNav item_id>
                 <span class="text-sm font-bold text-brand-200 whitespace-nowrap">
                     {move || Url::unescape(&world())}
                 </span>
@@ -1989,6 +2044,40 @@ fn ItemViewContent() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use leptos_i18n::context::init_i18n_context;
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+
+    fn world_data_for_exclusion_controls() -> LocalWorldData {
+        LocalWorldData(Ok(Arc::new(WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".to_string(),
+                datacenters: vec![
+                    Datacenter {
+                        id: 10,
+                        name: "Aether".to_string(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 100,
+                            name: "Gilgamesh".to_string(),
+                            datacenter_id: 10,
+                        }],
+                    },
+                    Datacenter {
+                        id: 20,
+                        name: "Primal".to_string(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 200,
+                            name: "Excalibur".to_string(),
+                            datacenter_id: 20,
+                        }],
+                    },
+                ],
+            }],
+        }))))
+    }
 
     fn listing(
         id: i32,
@@ -2045,73 +2134,90 @@ mod tests {
     }
 
     #[test]
-    fn item_view_savings_verdict_no_listings() {
-        let listings = Vec::new();
+    fn datacenter_exclusion_controls_render_each_datacenter_once() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            provide_context(world_data_for_exclusion_controls());
+            let world = Memo::new(|_| "North-America".to_string());
+            let excluded_datacenters = RwSignal::new(HashSet::from(["Aether".to_string()]));
 
-        let result = cheapest_savings_verdict(&listings, 100);
+            let html = view! {
+                <DatacenterExclusionControls world excluded_datacenters />
+            }
+            .to_html();
 
-        assert!(result.is_none());
+            assert_eq!(
+                html.matches("data-datacenter=\"Aether\"").count(),
+                1,
+                "{html}"
+            );
+            assert_eq!(
+                html.matches("data-datacenter=\"Primal\"").count(),
+                1,
+                "{html}"
+            );
+            assert_eq!(html.matches("Clear all").count(), 1);
+            assert!(html.contains("aria-pressed=\"true\""));
+            assert!(!html.contains("<h2"));
+        });
+    }
+
+    fn zone_listing(price: i32, world_id: i32) -> CheapestListingData {
+        CheapestListingData { price, world_id }
     }
 
     #[test]
-    fn item_view_savings_verdict_same_world_cheapest() {
-        let listings = vec![listing(1, 100, 5_000, false), listing(2, 200, 6_000, false)];
-
-        let result = cheapest_savings_verdict(&listings, 100);
-
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn item_view_savings_verdict_cross_world_savings() {
-        let listings = vec![listing(1, 100, 5_000, false), listing(2, 200, 3_000, false)];
-
-        let result = cheapest_savings_verdict(&listings, 100).unwrap();
-
-        assert_eq!(result.cheapest_listing.id, 2);
-        assert_eq!(result.cheapest_listing.world_id, 200);
-        assert!(!result.cheapest_listing.hq);
-        assert_eq!(result.current_world_listing.id, 1);
+    fn zone_savings_reports_cheaper_other_world() {
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 200)),
+            hq: None,
+        };
+        let result = zone_savings(Some(5_000), None, &summary, 100).unwrap();
         assert_eq!(result.savings, 2_000);
-        assert_eq!(result.savings_percent, 40.0);
+        assert!(!result.hq);
+        assert_eq!(result.cheapest.world_id, 200);
     }
 
     #[test]
-    fn item_view_savings_verdict_ignores_trivial_savings() {
-        let listings = vec![
-            listing(1, 100, 10_000, false),
-            listing(2, 200, 9_001, false),
-        ];
-
-        let result = cheapest_savings_verdict(&listings, 100);
-
-        assert!(result.is_none());
+    fn zone_savings_none_when_cheapest_is_current_world() {
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 100)),
+            hq: None,
+        };
+        assert!(zone_savings(Some(5_000), None, &summary, 100).is_none());
     }
 
     #[test]
-    fn item_view_savings_verdict_matches_quality() {
-        let listings = vec![
-            listing(1, 100, 10_000, false),
-            listing(2, 200, 9_000, false),
-            listing(3, 100, 50_000, true),
-            listing(4, 200, 20_000, true),
-        ];
+    fn zone_savings_ignores_trivial_savings() {
+        // Below MEANINGFUL_CROSS_WORLD_SAVINGS_GIL (1_000)
+        let summary = PriceSummary {
+            lq: Some(zone_listing(4_500, 200)),
+            hq: None,
+        };
+        assert!(zone_savings(Some(5_000), None, &summary, 100).is_none());
+    }
 
-        let result = cheapest_savings_verdict(&listings, 100).unwrap();
-
-        assert!(result.cheapest_listing.hq);
-        assert_eq!(result.cheapest_listing.id, 4);
-        assert_eq!(result.current_world_listing.id, 3);
+    #[test]
+    fn zone_savings_picks_larger_quality_saving() {
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 200)),  // saves 2_000
+            hq: Some(zone_listing(10_000, 300)), // saves 30_000
+        };
+        let result = zone_savings(Some(5_000), Some(40_000), &summary, 100).unwrap();
+        assert!(result.hq);
         assert_eq!(result.savings, 30_000);
     }
 
     #[test]
-    fn item_view_savings_verdict_requires_current_world_matching_quality() {
-        let listings = vec![listing(1, 100, 10_000, false), listing(2, 200, 2_000, true)];
-
-        let result = savings_verdict_for_quality(&listings, 100, true);
-
-        assert!(result.is_none());
+    fn zone_savings_none_without_local_floor() {
+        // Nothing listed locally to compare against — no claim to make.
+        let summary = PriceSummary {
+            lq: Some(zone_listing(3_000, 200)),
+            hq: None,
+        };
+        assert!(zone_savings(None, None, &summary, 100).is_none());
     }
 
     #[test]
@@ -2167,6 +2273,40 @@ mod tests {
         // Once it is disposed they must fall back rather than panic.
         assert!(with_or(&filtered_listings, true, |listings| listings.is_empty()));
         assert!(get_or_default(&filtered_listings).is_empty());
+    }
+
+    #[test]
+    fn carried_world_switch_query_forwards_exclude_worlds_only() {
+        assert_eq!(
+            carried_world_switch_query(Some("100,200"), None),
+            "exclude-worlds=100%2C200",
+        );
+    }
+
+    #[test]
+    fn carried_world_switch_query_forwards_compare_buy_from_only() {
+        assert_eq!(
+            carried_world_switch_query(None, Some("Jenova")),
+            "compare-buy-from=Jenova",
+        );
+    }
+
+    #[test]
+    fn carried_world_switch_query_forwards_both_params() {
+        assert_eq!(
+            carried_world_switch_query(Some("100,200"), Some("Jenova")),
+            "exclude-worlds=100%2C200&compare-buy-from=Jenova",
+        );
+    }
+
+    #[test]
+    fn carried_world_switch_query_empty_when_neither_present() {
+        assert_eq!(carried_world_switch_query(None, None), "");
+    }
+
+    #[test]
+    fn carried_world_switch_query_ignores_empty_values() {
+        assert_eq!(carried_world_switch_query(Some(""), Some("")), "");
     }
 
     #[test]

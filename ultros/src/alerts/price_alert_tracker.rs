@@ -57,13 +57,20 @@ pub(crate) fn rule_matches_listing(
 /// Build the Discord embed title + body for a threshold-alert firing. Pure.
 pub(crate) fn format_threshold_alert_message(
     item_name: &str,
-    item_id: i32,
     matched_price: i32,
     price_threshold: i32,
+    click_url: &str,
 ) -> (String, String) {
     let title = format!("🎯 {item_name} dropped to {matched_price} gil");
-    let body = format!("Threshold: {price_threshold} gil\nhttps://ultros.app/item/{item_id}");
+    let body = format!("Threshold: {price_threshold} gil\nhttps://ultros.app{click_url}");
     (title, body)
+}
+
+fn item_click_url(item_id: i32, world_name: Option<&str>) -> String {
+    world_name.map_or_else(
+        || format!("/item/{item_id}"),
+        |world_name| format!("/item/{world_name}/{item_id}"),
+    )
 }
 
 /// Build the Discord embed title + body for a list-threshold alert firing. Pure.
@@ -359,7 +366,14 @@ impl PriceAlertListener {
                         match msg {
                             Ok(event) => {
                                 if let EventType::Add(added) = event {
-                                    handle_added(&added, &state_for_loop, &db_for_loop, &ctx).await;
+                                    handle_added(
+                                        &added,
+                                        &state_for_loop,
+                                        &db_for_loop,
+                                        &ctx,
+                                        &world_cache_for_loop,
+                                    )
+                                    .await;
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -401,9 +415,10 @@ async fn handle_added(
     state: &Arc<Mutex<TrackerState>>,
     db: &UltrosDb,
     ctx: &serenity_prelude::Context,
+    world_cache: &WorldCache,
 ) {
     let now = Utc::now();
-    let mut to_fire: Vec<(ActiveRule, i32)> = vec![];
+    let mut to_fire: Vec<(ActiveRule, i32, i32)> = vec![];
     let mut to_fire_list: Vec<(ListActiveRule, i32)> = vec![];
 
     {
@@ -415,7 +430,7 @@ async fn handle_added(
                         continue;
                     }
                     rule.last_fired_at = Some(now);
-                    to_fire.push((rule.clone(), listing.price_per_unit));
+                    to_fire.push((rule.clone(), listing.price_per_unit, listing.world_id));
                 }
             }
             if let Some(list_rules) = guard.by_item_list_rules.get_mut(&listing.item_id) {
@@ -447,16 +462,22 @@ async fn handle_added(
         }
     }
 
-    for (rule, matched_price) in to_fire {
+    for (rule, matched_price, world_id) in to_fire {
         let item_name = resolve_item_name(rule.item_id);
+        let world_name = world_cache
+            .lookup_selector(&DbAnySelector::World(world_id))
+            .ok()
+            .map(|world| world.get_name().to_string());
+        let click_url = item_click_url(rule.item_id, world_name.as_deref());
         let (title, body) = format_threshold_alert_message(
             &item_name,
-            rule.item_id,
             matched_price,
             rule.price_threshold,
+            &click_url,
         );
 
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, db, ctx).await;
+        let delivery_result =
+            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
@@ -495,7 +516,9 @@ async fn handle_added(
             rule.target_price,
         );
 
-        let delivery_result = dispatch_alert(rule.alert_id, &title, &body, db, ctx).await;
+        let click_url = format!("/list/{}", rule.list_id);
+        let delivery_result =
+            dispatch_alert(rule.alert_id, &title, &body, &click_url, db, ctx).await;
         let delivered = delivery_result.is_ok();
         let delivery_error = delivery_result.err().map(|e| e.to_string());
 
@@ -671,22 +694,33 @@ mod test {
 
     #[test]
     fn format_message_includes_item_name_and_matched_price_in_title() {
-        let (title, _) = format_threshold_alert_message("Eternity Ring", 36687, 99000, 100000);
+        let (title, _) =
+            format_threshold_alert_message("Eternity Ring", 99000, 100000, "/item/Seraph/36687");
         assert!(title.contains("Eternity Ring"));
         assert!(title.contains("99000"));
     }
 
     #[test]
-    fn format_message_body_includes_threshold_and_universalis_link() {
-        let (_, body) = format_threshold_alert_message("Cordial", 6141, 500, 1000);
+    fn format_message_body_includes_threshold_and_item_link() {
+        let (_, body) = format_threshold_alert_message("Cordial", 500, 1000, "/item/Seraph/6141");
         assert!(body.contains("1000"));
-        assert!(body.contains("ultros.app/item/6141"));
+        assert!(body.contains("ultros.app/item/Seraph/6141"));
     }
 
     #[test]
     fn format_message_handles_unicode_item_names() {
-        let (title, body) = format_threshold_alert_message("水晶", 100, 50, 60);
+        let (title, body) = format_threshold_alert_message("水晶", 50, 60, "/item/Tiamat/100");
         assert!(title.contains("水晶"));
-        assert!(body.contains("ultros.app/item/100"));
+        assert!(body.contains("ultros.app/item/Tiamat/100"));
+    }
+
+    #[test]
+    fn item_click_url_includes_triggering_world() {
+        assert_eq!(item_click_url(6141, Some("Seraph")), "/item/Seraph/6141");
+    }
+
+    #[test]
+    fn item_click_url_falls_back_to_default_price_zone() {
+        assert_eq!(item_click_url(6141, None), "/item/6141");
     }
 }

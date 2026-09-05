@@ -591,14 +591,18 @@ pub(crate) async fn resend_alert_event(
         let result = if needs_ctx {
             match serenity_ctx.as_ref() {
                 Some(ctx) => {
-                    crate::alerts::delivery::deliver_to_endpoint(&endpoint, title, &body, &db, ctx)
-                        .await
+                    crate::alerts::delivery::deliver_to_endpoint(
+                        &endpoint, title, &body, "/alerts", &db, ctx,
+                    )
+                    .await
                 }
                 None => Err(anyhow::anyhow!("Discord client not ready")),
             }
         } else {
-            crate::alerts::delivery::deliver_non_discord_endpoint(&endpoint, title, &body, &db)
-                .await
+            crate::alerts::delivery::deliver_non_discord_endpoint(
+                &endpoint, title, &body, "/alerts", &db,
+            )
+            .await
         };
         match result {
             Ok(()) => any_ok = true,

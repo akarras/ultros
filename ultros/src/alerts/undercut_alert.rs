@@ -7,12 +7,12 @@ use anyhow::Result;
 use futures::future::{self, Either};
 use poise::serenity_prelude::{self, Color, UserId};
 use serde::Serialize;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 use ultros_api_types::{user::OwnedRetainer, websocket::ListingEventData};
 use ultros_db::UltrosDb;
 
 use crate::{
-    alerts::delivery::dispatch_alert,
+    alerts::delivery::{DispatchOutcome, dispatch_alert_detailed, permanent_failure_reason},
     event::{EventBus, EventType},
 };
 
@@ -30,6 +30,13 @@ pub(crate) fn is_undercut_by_more_than_margin(
     let factor = 1.0 - (margin_percent as f64 / 100.0);
     let threshold = (our_lowest_price as f64 * factor) as i32;
     threshold > competitor_price
+}
+
+fn retainer_undercut_click_url(retainer_id: Option<i32>) -> String {
+    retainer_id.map_or_else(
+        || "/retainers/undercuts".to_string(),
+        |retainer_id| format!("/retainers/undercuts#retainer-{retainer_id}"),
+    )
 }
 
 pub(crate) struct RetainerAlertListener {
@@ -73,6 +80,18 @@ async fn get_user_unique_retainer_ids_and_listing_ids_by_price(
     Ok((user_retainer_ids, user_lowest_listings))
 }
 
+/// Result of the legacy `alert_discord_destination` fallback.
+enum LegacyOutcome {
+    /// At least one legacy channel accepted the message.
+    Delivered,
+    /// This alert has no legacy destinations at all. Distinct from success:
+    /// sending to nothing used to report `Ok(())`, which marked the alert
+    /// event as delivered even though nobody was notified.
+    NoDestinations,
+    /// Every legacy destination failed.
+    Failed(anyhow::Error),
+}
+
 #[instrument(skip(ultros_db, ctx))]
 async fn send_discord_alerts(
     alert_id: i32,
@@ -80,11 +99,18 @@ async fn send_discord_alerts(
     ultros_db: &UltrosDb,
     ctx: &serenity_prelude::Context,
     undercut_msg: &str,
-) -> Result<()> {
+) -> Result<LegacyOutcome> {
     let destinations = ultros_db.get_alert_discord_destinations(alert_id).await?;
+    if destinations.is_empty() {
+        return Ok(LegacyOutcome::NoDestinations);
+    }
+    let mut last_err = None;
+    let mut any_ok = false;
     for destination in &destinations {
         let channel_id = serenity_prelude::ChannelId::new(destination.channel_id as u64);
-        let _ = channel_id
+        // Keep going after a failure. One deleted channel used to abort the
+        // whole loop, so every destination after it silently went unnotified.
+        match channel_id
             .send_message(
                 ctx,
                 serenity_prelude::CreateMessage::new()
@@ -100,9 +126,16 @@ async fn send_discord_alerts(
                     )
                     .content(format!("<@{discord_user_id}>")),
             )
-            .await?;
+            .await
+        {
+            Ok(_) => any_ok = true,
+            Err(e) => last_err = Some(e),
+        }
     }
-    Ok(())
+    Ok(match last_err {
+        Some(e) if !any_ok => LegacyOutcome::Failed(e.into()),
+        _ => LegacyOutcome::Delivered,
+    })
 }
 
 pub(crate) enum RetainerAlertTx {
@@ -338,6 +371,9 @@ impl RetainerAlertListener {
                                 }) => {
                                     let items = &xiv_gen_db::data().items;
                                     if let Some(item) = items.get(&xiv_gen::ItemId(item_id)) {
+                                        let click_url = retainer_undercut_click_url(
+                                            undercut_retainers.iter().map(|r| r.id).min(),
+                                        );
                                         let retainer_names = undercut_retainers
                                             .into_iter()
                                             .map(|r| r.name)
@@ -345,37 +381,79 @@ impl RetainerAlertListener {
                                             .join(", ");
                                         let item_name = &item.name;
                                         let undercut_msg = format!(
-                                            "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app/retainers/undercuts"
+                                            "Your retainers {retainer_names} have been undercut on {item_name}\n\nhttps://ultros.app{click_url}"
                                         );
                                         let title = "Undercut Alert";
                                         let mut delivered = false;
                                         let mut delivery_error = None;
-                                        match dispatch_alert(
+                                        // Tracks whether every destination failed
+                                        // for a reason a retry can't change (the
+                                        // channel is gone, the bot was removed).
+                                        // Those are recorded on the event but not
+                                        // re-reported as a new error every fire.
+                                        let mut permanent = false;
+                                        let endpoint_failure = match dispatch_alert_detailed(
                                             alert_id,
                                             title,
                                             &undercut_msg,
+                                            &click_url,
                                             &ultros_db,
                                             &ctx,
                                         )
                                         .await
                                         {
-                                            Ok(()) => delivered = true,
-                                            Err(endpoint_error) => {
-                                                match send_discord_alerts(
-                                                    alert_id,
-                                                    discord_user,
-                                                    &ultros_db,
-                                                    &ctx,
-                                                    &undercut_msg,
-                                                )
-                                                .await
-                                                {
-                                                    Ok(()) => delivered = true,
-                                                    Err(legacy_error) => {
-                                                        delivery_error = Some(format!(
-                                                            "{endpoint_error}; legacy Discord destinations failed: {legacy_error}"
-                                                        ));
-                                                    }
+                                            DispatchOutcome::Delivered => {
+                                                delivered = true;
+                                                None
+                                            }
+                                            DispatchOutcome::PermanentFailure(reason) => {
+                                                permanent = true;
+                                                Some(reason)
+                                            }
+                                            DispatchOutcome::TransientFailure(e) => {
+                                                Some(format!("{e}"))
+                                            }
+                                        };
+                                        // Always give the legacy destinations a
+                                        // turn — they're a separate set of
+                                        // channels, and some pre-endpoint alerts
+                                        // still have nothing else.
+                                        if let Some(endpoint_failure) = endpoint_failure {
+                                            match send_discord_alerts(
+                                                alert_id,
+                                                discord_user,
+                                                &ultros_db,
+                                                &ctx,
+                                                &undercut_msg,
+                                            )
+                                            .await
+                                            {
+                                                Ok(LegacyOutcome::Delivered) => {
+                                                    delivered = true;
+                                                    permanent = false;
+                                                }
+                                                Ok(LegacyOutcome::NoDestinations) => {
+                                                    // Nothing else to try, so the
+                                                    // endpoint verdict stands.
+                                                    delivery_error = Some(endpoint_failure);
+                                                }
+                                                Ok(LegacyOutcome::Failed(legacy_error)) => {
+                                                    // Only stays "permanent" if
+                                                    // the fallback is dead too.
+                                                    permanent = permanent
+                                                        && permanent_failure_reason(&legacy_error)
+                                                            .is_some();
+                                                    delivery_error = Some(format!(
+                                                        "{endpoint_failure}; legacy Discord destinations failed: {legacy_error}"
+                                                    ));
+                                                }
+                                                Err(lookup_error) => {
+                                                    // Couldn't even read the
+                                                    // destinations — transient.
+                                                    permanent = false;
+                                                    delivery_error = Some(format!(
+                                                        "{endpoint_failure}; legacy Discord destinations failed: {lookup_error}"
+                                                    ));
                                                 }
                                             }
                                         }
@@ -401,7 +479,18 @@ impl RetainerAlertListener {
                                                 );
                                             }
                                         } else if let Some(error) = delivery_error {
-                                            error!("Error sending undercut alerts {error}");
+                                            if permanent {
+                                                // Steady state we've already
+                                                // acted on (endpoint disabled).
+                                                // Keep it out of the error
+                                                // reporter — it fired ~150
+                                                // times a day for six alerts.
+                                                warn!(
+                                                    "undercut alert {alert_id} has no working destinations: {error}"
+                                                );
+                                            } else {
+                                                error!("Error sending undercut alerts {error}");
+                                            }
                                         }
                                     }
                                 }
@@ -472,6 +561,19 @@ mod tests {
         // our 5, margin 10 → 5 * 0.9 = 4.5 → truncates to 4. Competitor must be < 4.
         assert!(!is_undercut_by_more_than_margin(5, 4, 10));
         assert!(is_undercut_by_more_than_margin(5, 3, 10));
+    }
+
+    #[test]
+    fn retainer_click_url_targets_the_retainer_anchor() {
+        assert_eq!(
+            retainer_undercut_click_url(Some(42)),
+            "/retainers/undercuts#retainer-42"
+        );
+    }
+
+    #[test]
+    fn retainer_click_url_falls_back_when_no_retainer_was_found() {
+        assert_eq!(retainer_undercut_click_url(None), "/retainers/undercuts");
     }
 
     // ---------- ListingValue Ord behavior (used by the fold in user-listings aggregation) ----------

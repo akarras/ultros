@@ -6,28 +6,28 @@ use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
-        skeleton::BoxSkeleton,
+        skeleton::{BoxSkeleton, InlineStatusSkeleton},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
+    query_defaults::filter_query_signal,
 };
-use icondata as i;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal, use_navigate, use_query_map},
 };
-use std::{cmp::Reverse, collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -57,6 +57,10 @@ struct LeveProfitData {
 enum SortMode {
     Profit,
     Level,
+    Revenue,
+    Cost,
+    AvgPrice,
+    DailySales,
 }
 
 impl std::str::FromStr for SortMode {
@@ -66,6 +70,10 @@ impl std::str::FromStr for SortMode {
         match s {
             "profit" => Ok(SortMode::Profit),
             "level" => Ok(SortMode::Level),
+            "revenue" => Ok(SortMode::Revenue),
+            "cost" => Ok(SortMode::Cost),
+            "avg-price" => Ok(SortMode::AvgPrice),
+            "daily-sales" => Ok(SortMode::DailySales),
             _ => Err(()),
         }
     }
@@ -76,8 +84,65 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Profit => "profit",
             SortMode::Level => "level",
+            SortMode::Revenue => "revenue",
+            SortMode::Cost => "cost",
+            SortMode::AvgPrice => "avg-price",
+            SortMode::DailySales => "daily-sales",
         };
         f.write_str(val)
+    }
+}
+
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+
+    /// Cost reads best-first ascending — the cheapest turn-in is the
+    /// interesting one. Everything else is a biggest-first metric.
+    fn default_dir(self) -> SortDir {
+        match self {
+            SortMode::Cost => SortDir::Asc,
+            _ => SortDir::Desc,
+        }
+    }
+}
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_JOB: &str = "job";
+const FILTER_OUTLIERS: &str = "filter-outliers";
+
+/// Filters the `+ Filter` menu can add, in menu order.
+const ADDABLE_FILTERS: &[&str] = &[FILTER_PROFIT, FILTER_JOB, FILTER_OUTLIERS];
+
+/// The job-select's values, in menu order. Values are the class-job-category
+/// name substrings the old `<select>` matched against — kept verbatim so
+/// `?job=` deep links survive the conversion.
+const JOB_VALUES: &[&str] = &[
+    "Carpenter",
+    "Blacksmith",
+    "Armorer",
+    "Goldsmith",
+    "Leatherworker",
+    "Weaver",
+    "Alchemist",
+    "Culinarian",
+];
+
+fn compare_leves(mode: SortMode, a: &LeveProfitData, b: &LeveProfitData) -> Ordering {
+    match mode {
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Level => a.class_job_level.cmp(&b.class_job_level),
+        SortMode::Revenue => a.revenue.cmp(&b.revenue),
+        SortMode::Cost => a.cost.cmp(&b.cost),
+        SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
+        SortMode::DailySales => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
     }
 }
 
@@ -108,9 +173,21 @@ fn LeveAnalyzerTable(
     let class_job_categories = &data.class_job_categorys;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (job_filter, set_job_filter) = query_signal::<String>("job");
-    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // editing a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
+    let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
+    let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input/selection (see
+    // currency_exchange.rs for the same pattern). The boolean toggle commits
+    // immediately on add instead, so this only ever holds `FILTER_PROFIT` or
+    // `FILTER_JOB`.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let computed_data = Memo::new(move |_| {
         let mut results = Vec::new();
@@ -323,23 +400,9 @@ fn LeveAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Level => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.class_job_level));
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Level => results.sort_unstable_by_key(|d| Reverse(d.class_job_level)),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_leves(mode, a, b));
 
         results
             .into_iter()
@@ -348,72 +411,165 @@ fn LeveAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
+            active.push(FILTER_PROFIT);
+        }
+        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
+            active.push(FILTER_JOB);
+        }
+        if filter_outliers().unwrap_or(false) {
+            active.push(FILTER_OUTLIERS);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, leve_analyzer_filter_profit_min_label).to_string(),
+            FILTER_JOB => t_string!(i18n, leve_analyzer_filter_job_label).to_string(),
+            FILTER_OUTLIERS => t_string!(i18n, leve_analyzer_filter_outliers).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // Localized label for one job-select value.
+    let job_label = move |value: &str| -> String {
+        match value {
+            "Carpenter" => t_string!(i18n, carpenter).to_string(),
+            "Blacksmith" => t_string!(i18n, blacksmith).to_string(),
+            "Armorer" => t_string!(i18n, armorer).to_string(),
+            "Goldsmith" => t_string!(i18n, goldsmith).to_string(),
+            "Leatherworker" => t_string!(i18n, leatherworker).to_string(),
+            "Weaver" => t_string!(i18n, weaver).to_string(),
+            "Alchemist" => t_string!(i18n, alchemist).to_string(),
+            "Culinarian" => t_string!(i18n, culinarian).to_string(),
+            other => other.to_string(),
+        }
+    };
+    let job_chip_options = Memo::new(move |_| {
+        JOB_VALUES
+            .iter()
+            .map(|v| (*v, job_label(v)))
+            .collect::<Vec<_>>()
+    });
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
+        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
+        // Boolean toggle: the chip's presence *is* the value, so it commits
+        // straight to `true` rather than mounting an editable chip.
+        FILTER_OUTLIERS => set_filter_outliers(Some(true)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_minimum_profit(None);
+        set_job_filter(None);
+        set_filter_outliers(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, leve_analyzer_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-32"
-                        min=0
-                        step=1000
-                        placeholder=t_string!(i18n, placeholder_eg_10000)
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit))
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, leve_analyzer_result_count, n = move || computed_data().len())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, leve_analyzer_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, leve_analyzer_chip_profit_min).to_string()
+                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="1000"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, leve_analyzer_filter_job_label).to_string()>
-                    <select
-                        class="input input-sm"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if val.is_empty() {
-                                set_job_filter(None);
-                            } else {
-                                set_job_filter(Some(val));
+                        })
+                }}
+                {move || {
+                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, leve_analyzer_filter_job_label).to_string()
+                                    value=Signal::derive(job_filter)
+                                    options=job_chip_options.get()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_job_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    >
-                        <option value="">{t!(i18n, all_jobs)}</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, carpenter)}</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, blacksmith)}</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, armorer)}</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, goldsmith)}</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leatherworker)}</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, weaver)}</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
-                    <div class="flex flex-row gap-2 items-center">
-                        <input
-                            type="checkbox"
-                            id="filter-outliers"
-                            class="checkbox"
-                            prop:checked=move || filter_outliers().unwrap_or(false)
-                            on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
-                        />
-                        <label for="filter-outliers">{t!(i18n, leve_analyzer_filter_outliers)}</label>
-                        <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, leve_analyzer_filter_outliers_tooltip).to_string()>
-                            <Icon icon=i::AiQuestionCircleOutlined />
-                        </div>
-                    </div>
-                </ToolbarField>
-                <div class="flex-1 flex justify-end">
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                    />
-                </div>
-            </Toolbar>
+                        })
+                }}
+                {move || {
+                    filter_outliers()
+                        .unwrap_or(false)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, leve_analyzer_filter_outliers).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_filter_outliers(None))
+                                />
+                            }
+                        })
+                }}
+            </ControlBar>
 
             <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
                 <VirtualScroller
@@ -425,30 +581,48 @@ fn LeveAnalyzerTable(
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 p-4">{t!(i18n, leve_analyzer_col_leve_item)}</div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, leve_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">{t!(i18n, leve_analyzer_col_revenue)}</div>
-                             <div role="columnheader" class="w-30 p-4">{t!(i18n, leve_analyzer_col_cost)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, leve_analyzer_col_avg_price)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, leve_analyzer_col_daily_sales)}</div>
-                             <div role="columnheader" class="w-40 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="level"
-                                >
-                                    {t!(i18n, leve_analyzer_col_level)}
-                                </QueryButton>
-                             </div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, leve_analyzer_col_profit).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Revenue
+                                label=t_string!(i18n, leve_analyzer_col_revenue).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Cost
+                                label=t_string!(i18n, leve_analyzer_col_cost).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::AvgPrice
+                                label=t_string!(i18n, leve_analyzer_col_avg_price).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::DailySales
+                                label=t_string!(i18n, leve_analyzer_col_daily_sales).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Level
+                                label=t_string!(i18n, leve_analyzer_col_level).to_string()
+                                class="w-40 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -599,40 +773,31 @@ pub fn LeveAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, leve_analyzer_tool_context).to_string()
                     help_href="/help/leve-analyzer"
                     help_body=t_string!(i18n, leve_analyzer_tool_help).to_string()
-                />
-                <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, leve_analyzer_loading_sales)}</div> }>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, leve_analyzer_error_sales)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-
-                <div class="flex flex-col md:flex-row items-center gap-2">
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, leve_analyzer_calc_title).to_string(),
+                        t_string!(i18n, leve_analyzer_calc_formula).to_string(),
+                        t_string!(i18n, leve_analyzer_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, leve_analyzer_assumption_baseline_nq).to_string(),
+                        t_string!(i18n, leve_analyzer_assumption_expected_value).to_string(),
+                        t_string!(i18n, leve_analyzer_assumption_recent_sales).to_string(),
+                    ]
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, leve_analyzer_error_sales)}</div> })
+                        }}
+                    </Suspense>
                     <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, leve_analyzer_select_world)}</label>
-                    <div class="w-full md:w-auto">
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
-                    </div>
-                </div>
-                <CalculationSummary
-                    title=t_string!(i18n, leve_analyzer_calc_title).to_string()
-                    formula=t_string!(i18n, leve_analyzer_calc_formula).to_string()
-                    details=t_string!(i18n, leve_analyzer_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_baseline_nq).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_expected_value).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, leve_analyzer_assumption_recent_sales).to_string() />
-                </div>
-
+                    <WorldOnlyPicker
+                        current_world=selected_world.into()
+                        set_current_world=set_selected_world.into()
+                    />
+                </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
@@ -671,5 +836,27 @@ pub fn LeveAnalyzer() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Profit,
+            SortMode::Level,
+            SortMode::Revenue,
+            SortMode::Cost,
+            SortMode::AvgPrice,
+            SortMode::DailySales,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
     }
 }

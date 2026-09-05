@@ -1,16 +1,13 @@
 use leptos::{either::Either, prelude::*};
 use ultros_api_types::world_helper::AnySelector;
 
-use crate::global_state::LocalWorldData;
+use crate::global_state::use_world_helper;
 
 use super::world_name::*;
 
 #[component]
 pub(crate) fn DatacenterName(world_id: i32) -> impl IntoView {
-    match use_context::<LocalWorldData>()
-        .expect("Local world data must be verified")
-        .0
-    {
+    match use_world_helper() {
         Ok(data) => {
             if let Some(world) = data.lookup_selector(AnySelector::World(world_id)) {
                 let world = match world {

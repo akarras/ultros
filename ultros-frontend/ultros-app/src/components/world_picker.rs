@@ -19,7 +19,7 @@ use ultros_api_types::{world::World, world_helper::AnySelector};
 /// badge crowding the name. The kind is still exposed as text via `title` and
 /// an `sr-only` label, so nothing is icon-only.
 #[component]
-fn SelectorKind(selector: AnySelector) -> impl IntoView {
+pub fn SelectorKind(selector: AnySelector) -> impl IntoView {
     let i18n = crate::i18n::use_i18n();
     let icon = match selector {
         AnySelector::World(_) => i::BsGeoAltFill,

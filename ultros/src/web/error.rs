@@ -4,10 +4,7 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use axum_extra::extract::{
-    PrivateCookieJar,
-    cookie::{Cookie, Key},
-};
+use axum_extra::extract::{PrivateCookieJar, cookie::Key};
 use hyper::StatusCode;
 use oauth2::{
     ConfigurationError, RequestTokenError, RevocationErrorResponseType, StandardErrorResponse,
@@ -25,7 +22,51 @@ use ultros_db::{
 
 use crate::{analyzer_service::AnalyzerError, event};
 
-use super::character_verifier_service::VerifierError;
+use crate::character_claim::ClaimError;
+use crate::lodestone_profile::ProfileError;
+
+/// A ClickHouse call that failed, tagged with which query it was and why it
+/// failed.
+///
+/// Exists so ClickHouse failures stop falling into [`AnyhowError`]'s
+/// `"Generic error {0}"` catch-all. Two things were wrong with going through
+/// `anyhow`: the typed error was flattened to a string at the call site, and the
+/// string it was flattened into carried ClickHouse's live memory figures, which
+/// differ on every occurrence.
+///
+/// `query` is a `&'static str` and `kind` is a small enum precisely so
+/// [`Display`](std::fmt::Display) stays low-cardinality: `query × kind` is a
+/// handful of possible messages, each one alertable. Per-occurrence detail lives
+/// on `source`, which callers log as a structured field.
+///
+/// Note the `Display` here *does* include `source`, volatile figures and all —
+/// deliberately. It renders into the `error` **field**, which is not part of the
+/// grouping key, so an operator still sees "would use 5.44 GiB, maximum: 5.40
+/// GiB" on the issue. Only [`report_title`], which builds the grouping key,
+/// leaves it out.
+///
+/// [`AnyhowError`]: WebError::AnyhowError
+#[derive(Debug, Error)]
+#[error("ClickHouse {query} query failed ({kind}): {source}")]
+pub struct ClickHouseQueryError {
+    /// Which query failed — the function name in `ultros_clickhouse::queries`.
+    pub query: &'static str,
+    pub kind: ultros_clickhouse::ClickHouseErrorKind,
+    #[source]
+    pub source: ultros_clickhouse::ClickHouseError,
+}
+
+impl ClickHouseQueryError {
+    /// Classify `source` and tag it with the query that produced it.
+    pub fn new(query: &'static str, source: ultros_clickhouse::ClickHouseError) -> Self {
+        let kind = source.kind();
+        Self {
+            query,
+            kind,
+            source,
+        }
+    }
+}
 
 /// Generates an `Error`-deriving enum with the variants shared between `ApiError` and `WebError`.
 /// The shared variants and their `#[from]` / `#[error]` attributes are kept in one place so the
@@ -46,6 +87,11 @@ macro_rules! define_error_enum {
             ),
             #[error("Generic error {0}")]
             AnyhowError(#[from] anyhow::Error),
+            // Kept ahead of the `anyhow` catch-all on purpose: a ClickHouse
+            // failure that reaches `AnyhowError` loses its type and, with it,
+            // any hope of being alerted on specifically.
+            #[error(transparent)]
+            ClickHouse(#[from] ClickHouseQueryError),
             #[error("Parse int failed {0}")]
             ParseIntError(#[from] ParseIntError),
             #[error("{0}")]
@@ -73,8 +119,8 @@ macro_rules! define_error_enum {
             TimeoutElapsed(#[from] Elapsed),
             #[error("Analyzer Error: {0}")]
             AnalyzerError(#[from] AnalyzerError),
-            #[error("Verifier error {0}")]
-            VerificationError(#[from] VerifierError),
+            #[error("Character claim error {0}")]
+            CharacterClaimError(#[from] ClaimError),
             #[error("Error generating sitemap {0}")]
             SiteMapError(#[from] SitemapIndexError),
             #[error("Error generating url set {0}")]
@@ -101,6 +147,8 @@ define_error_enum!(ApiError {
     DiscordTokenInvalid(PrivateCookieJar<Key>),
     #[error("{0}")]
     Forbidden(&'static str),
+    #[error("{0}")]
+    BadRequest(&'static str),
 });
 
 impl ApiError {
@@ -119,6 +167,13 @@ impl ApiError {
             // failure at error level (the GlitchTip 2218/2210 lineage).
             ApiError::NoAuthCookie | ApiError::DiscordTokenInvalid(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            // A character id that the Lodestone doesn't know is a bad request
+            // parameter, not a server fault - answering 500 both lied to the
+            // caller and reported the typo to GlitchTip.
+            ApiError::CharacterClaimError(ClaimError::Lodestone(
+                ProfileError::CharacterNotFound(_),
+            )) => StatusCode::NOT_FOUND,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => StatusCode::FORBIDDEN,
                 Some(ListError::NotFound | ListError::InviteNotFound) => StatusCode::NOT_FOUND,
@@ -136,6 +191,12 @@ impl ApiError {
         match self {
             ApiError::NoAuthCookie => ultros_api_types::result::ApiError::NotAuthenticated,
             ApiError::Forbidden(_) => ultros_api_types::result::ApiError::Forbidden,
+            ApiError::BadRequest(message) => {
+                ultros_api_types::result::ApiError::BadRequest((*message).into())
+            }
+            ApiError::CharacterClaimError(ClaimError::Lodestone(
+                ProfileError::CharacterNotFound(_),
+            )) => ultros_api_types::result::ApiError::NotFound,
             ApiError::AnyhowError(e) => match e.downcast_ref::<ListError>() {
                 Some(ListError::Forbidden(_)) => ultros_api_types::result::ApiError::Forbidden,
                 Some(ListError::NotFound | ListError::InviteNotFound) => {
@@ -185,12 +246,25 @@ impl RetainerStatus for StatusCode {
     }
 }
 
+/// [`report_title`]'s counterpart for [`ApiError`]. Kept as two small functions
+/// rather than a trait: the enums are macro-generated and only share variants,
+/// not a common type, and two three-line matches read better than the generic
+/// machinery needed to unify them.
+fn api_report_title(error: &ApiError) -> std::borrow::Cow<'static, str> {
+    match error {
+        ApiError::ClickHouse(e) => {
+            std::borrow::Cow::Owned(format!("ClickHouse {} query failed ({})", e.query, e.kind))
+        }
+        _ => std::borrow::Cow::Borrowed("Generic API error"),
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         if let ApiError::DiscordTokenInvalid(mut cookies) = self {
             // remove the discord user cookie
             info!("Removed invalid Discord token");
-            cookies = cookies.remove(Cookie::from("discord_auth"));
+            cookies = cookies.remove(super::oauth::discord_auth_removal_cookie());
             // An expired/revoked token is an auth failure like any other, so it
             // gets the same 401. Without an explicit status this tuple response
             // defaulted to `200`.
@@ -205,7 +279,13 @@ impl IntoResponse for ApiError {
         }
         let status = self.as_status_code();
         if status.is_server_error() {
-            error!(error = ?self, "Generic API error");
+            // Same grouping rule as `WebError` — see `report_title`. The API
+            // routes are where the ClickHouse-backed endpoints live
+            // (item_stats, movers, resale_quality, market_heat), so collapsing
+            // them all under "Generic API error" is what made a ClickHouse
+            // outage indistinguishable from any other 500.
+            let title = api_report_title(&self);
+            error!(error = ?self, "{title}");
         }
         (
             status,
@@ -218,15 +298,33 @@ impl IntoResponse for ApiError {
 define_error_enum!(WebError {
     #[error("Not authorized to view this page")]
     NotAuthenticated,
-    #[error("Item id {0} is not valid")]
-    InvalidItemId(i32),
-    #[error("World not found {0}")]
-    WorldNotFound(String),
     #[error("Not found")]
     NotFound,
     #[error("Bad request")]
     BadRequest,
+    #[error("Service temporarily unavailable")]
+    TemporarilyUnavailable,
 });
+
+/// The title error reporting groups this error under.
+///
+/// `tracing`'s *message* is the grouping key — structured fields are not — so a
+/// constant message collapses every 5xx into a single undifferentiated issue.
+/// That is what `"Returning web error"` did: a ClickHouse outage and an OAuth
+/// failure landed in the same bucket, so neither could be alerted on. Naming the
+/// failure class here splits them, while `query × kind` keeps the number of
+/// distinct titles small enough that each accumulates a count instead of
+/// splintering.
+///
+/// Everything else keeps the original title so existing issues stay continuous.
+fn report_title(error: &WebError) -> std::borrow::Cow<'static, str> {
+    match error {
+        WebError::ClickHouse(e) => {
+            std::borrow::Cow::Owned(format!("ClickHouse {} query failed ({})", e.query, e.kind))
+        }
+        _ => std::borrow::Cow::Borrowed("Returning web error"),
+    }
+}
 
 impl WebError {
     fn as_status_code(&self) -> StatusCode {
@@ -234,7 +332,7 @@ impl WebError {
             WebError::NotAuthenticated => StatusCode::UNAUTHORIZED,
             WebError::NotFound => StatusCode::NOT_FOUND,
             WebError::BadRequest => StatusCode::BAD_REQUEST,
-            WebError::InvalidItemId(_) | WebError::WorldNotFound(_) => StatusCode::BAD_REQUEST,
+            WebError::TemporarilyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             // Analyzer warm-up isn't a server bug — it's a transient state at
             // startup. 503 lets clients retry instead of treating it as fatal.
             WebError::AnalyzerError(AnalyzerError::Uninitialized) => {
@@ -251,23 +349,31 @@ impl WebError {
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
         let status = self.as_status_code();
-        // Analyzer warm-up (503) is an expected transient state at startup, not
-        // a real server bug. Keep it out of `tracing::error!` so the
-        // `sentry_tracing` layer doesn't capture it as a GlitchTip issue
-        // (see issues 5033/5034 — e2e harness racing the warm-up window).
-        let is_transient_warmup =
-            matches!(self, WebError::AnalyzerError(AnalyzerError::Uninitialized));
+        // Expected 503s are transient states, not server bugs. Keep them out
+        // of `tracing::error!` so the `sentry_tracing` layer doesn't capture
+        // them as GlitchTip issues (see issues 5033/5034 for the analyzer
+        // warm-up case).
+        let is_expected_transient = matches!(
+            self,
+            WebError::AnalyzerError(AnalyzerError::Uninitialized)
+                | WebError::TemporarilyUnavailable
+        );
 
-        let message = if status.is_server_error() && !is_transient_warmup {
+        let message = if status.is_server_error() && !is_expected_transient {
             "Internal server error".to_string()
         } else {
             format!("{self}")
         };
 
-        if status.is_server_error() && !is_transient_warmup {
-            tracing::error!(error = %self, %status, "Returning web error");
+        // `error = %self` is a *field*, not the message, so it never affects
+        // grouping — which is why the per-occurrence detail (ClickHouse's live
+        // memory figures, the failing item id) can safely ride along here while
+        // the title stays stable.
+        let title = report_title(&self);
+        if status.is_server_error() && !is_expected_transient {
+            tracing::error!(error = %self, %status, "{title}");
         } else {
-            tracing::debug!(error = %self, %status, "Returning web error");
+            tracing::debug!(error = %self, %status, "{title}");
         }
         (status, message).into_response()
     }
@@ -276,6 +382,16 @@ impl IntoResponse for WebError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bad_request_preserves_client_error_message() {
+        let error = ApiError::BadRequest("unsupported push provider");
+        assert_eq!(
+            error.as_api_error(),
+            ultros_api_types::result::ApiError::BadRequest("unsupported push provider".into())
+        );
+        assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+    }
 
     /// An unauthenticated request must answer `401`, not `200`.
     ///
@@ -325,6 +441,54 @@ mod tests {
             ApiError::NoAuthCookie.as_api_error(),
             ultros_api_types::result::ApiError::NotAuthenticated
         );
+    }
+
+    /// The typed ClickHouse title only survives if the error stays a
+    /// [`WebError::ClickHouse`] all the way to `into_response`.
+    ///
+    /// Regression test for the 2026-08-23 outage: the item-card chart generator
+    /// returned `anyhow::Result`, so `build_price_series`'s typed error was
+    /// flattened into `AnyhowError` at the first `?`. Every item-card request
+    /// during the outage reported as the generic "Returning web error" — the
+    /// exact failure mode the `ClickHouse` variant was added to prevent.
+    ///
+    /// The second half of this test is what the *old* code did, kept so the
+    /// hazard stays visible: any call site that routes a `WebError` through
+    /// `anyhow` silently loses its grouping.
+    #[test]
+    fn clickhouse_errors_keep_their_title_unless_laundered_through_anyhow() {
+        let typed: WebError = ClickHouseQueryError::new(
+            "price_series",
+            ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
+        )
+        .into();
+        assert_eq!(
+            report_title(&typed),
+            "ClickHouse price_series query failed (timeout)"
+        );
+
+        let laundered: WebError = anyhow::Error::from(ClickHouseQueryError::new(
+            "price_series",
+            ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
+        ))
+        .into();
+        assert_eq!(
+            report_title(&laundered),
+            "Returning web error",
+            "an `anyhow` hop erases the grouping — call sites must return WebError"
+        );
+    }
+
+    /// A ClickHouse failure is still a 500: only the reporting title changes,
+    /// not what the client sees.
+    #[test]
+    fn clickhouse_failure_is_a_server_error() {
+        let err: WebError = ClickHouseQueryError::new(
+            "price_series",
+            ultros_clickhouse::ClickHouseError::Client(clickhouse::error::Error::TimedOut),
+        )
+        .into();
+        assert_eq!(err.as_status_code(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     /// 401 is a *client* error, so it must not trip the `is_server_error()`

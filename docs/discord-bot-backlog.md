@@ -136,8 +136,8 @@ Currently the web app and the bot are siloed. The user can hit the same intent o
 **Treatment.** Banner with copyable commands `/ffxiv retainer check_listings`, `/ffxiv retainer check_undercuts`.
 
 ### B-4.4 · Settings "Connect your character" CTA · P2 · M
-**Problem.** A user who logs in via Discord OAuth has no on-rails path to character verification. The only path today is the Discord slash command, which is undiscoverable from the web.
-**Treatment.** On profile/settings, if `verified_characters` is empty, show a CTA: *"Connect your FFXIV character to unlock retainer features."* Two paths: in-browser Lodestone flow (new — see B-5.1) or "register via Discord" with the slash-command snippet.
+**Problem.** A user who logs in via Discord OAuth has no on-rails path to adding a character, so retainer grouping goes undiscovered.
+**Treatment.** On profile/settings, if the user has no characters, show a CTA: *"Add your FFXIV character to organize your retainers."* Since #1061 the claim itself is one click from either the web profile or `/ffxiv character register` — this ticket is now purely about discoverability.
 
 ### B-4.5 · Home-page bot invite CTA · P3 · S
 **Location.** [ultros-frontend/ultros-app/src/lib.rs:116](ultros-frontend/ultros-app/src/lib.rs) (already links to Discord community).
@@ -153,8 +153,11 @@ Currently the web app and the bot are siloed. The user can hit the same intent o
 
 Backlog of new commands worth considering once Epics 1–4 land. Triage these against real demand before building.
 
-### B-5.1 · Web-based character verification · P2 · L
-Currently character verification is Discord-only. Building it in the web app would let users self-serve from settings (B-4.4) and unblock the broader "claim retainers from the web" story.
+### B-5.1 · Web-based character verification · ~~P2 · L~~ · obsolete
+Resolved by dropping verification entirely (#1061). Discord OAuth already
+establishes who the user is, and a character claim only groups that user's own
+retainers, so both the web and the bot now claim directly with no Lodestone
+challenge.
 
 ### B-5.2 · Per-guild bot config command · P2 · M
 `/ffxiv config set default_world <world>` so users in a guild don't have to specify `world` on every command. Stored per-guild, with per-user override.

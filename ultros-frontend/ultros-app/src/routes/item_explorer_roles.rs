@@ -1,4 +1,4 @@
-//! Role grouping for the item explorer's subcategory popovers.
+//! Role grouping for the item explorer's subcategory accordion.
 //!
 //! FFXIV's game data has no per-job "role" field in the sheets we ship
 //! (`ClassJob` carries only indices/priorities), so the grouping is a
@@ -8,7 +8,8 @@
 //! categories added by future expansions group automatically as long as
 //! their job's abbreviation is in the table.
 
-use xiv_gen::{ClassJobId, ItemSearchCategory};
+use crate::routes::item_explorer::canonical_job_acronym;
+use xiv_gen::{ClassJob, ClassJobId, ItemSearchCategory};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub(crate) enum RoleGroup {
@@ -23,7 +24,7 @@ pub(crate) enum RoleGroup {
 }
 
 impl RoleGroup {
-    /// Display order of the popover sections.
+    /// Display order of the accordion's role sections.
     pub(crate) const ORDERED: [RoleGroup; 8] = [
         RoleGroup::Tank,
         RoleGroup::Healer,
@@ -55,6 +56,23 @@ pub(crate) fn role_for_job_abbr(abbr: &str) -> RoleGroup {
     }
 }
 
+/// Map a [`ClassJob`] to its role.
+///
+/// Keyed on the job's **id**, not its `abbreviation`: that field is a
+/// localized display string ("FST" in German for the job English calls "PGL"),
+/// so matching it against the English table below buckets 23 of 36 German and
+/// 22 of 36 French jobs into [`RoleGroup::Other`]. Ids are locale-independent,
+/// so this resolves identically for every visitor.
+pub(crate) fn role_for_job(job: &ClassJob) -> RoleGroup {
+    match canonical_job_acronym(job.key_id) {
+        Some(acronym) => role_for_job_abbr(acronym),
+        None => {
+            tracing::warn!(id = job.key_id.0, "Class job id outside the acronym table");
+            RoleGroup::Other
+        }
+    }
+}
+
 /// Map a weapon search category (group 1) to a role via its `class_job`.
 pub(crate) fn role_for_weapon_category(
     cat: &ItemSearchCategory,
@@ -62,19 +80,23 @@ pub(crate) fn role_for_weapon_category(
 ) -> RoleGroup {
     data.class_jobs
         .get(&ClassJobId(cat.class_job as i32))
-        .map(|job| role_for_job_abbr(&job.abbreviation))
+        .map(role_for_job)
         .unwrap_or(RoleGroup::Other)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::item_explorer_toolbar::{category_chips_for_group, job_chips_sorted};
+    // `category_chips_for_group` went with `non_weapon_groups_have_expected_sizes`:
+    // that test pinned the deleted >8-categories popover/chip-strip fork, and
+    // nothing else in this module reads it.
+    use crate::routes::item_explorer_toolbar::{job_chips_sorted, job_chips_sorted_in};
+    use xiv_gen::Language;
 
     #[test]
     fn every_visible_job_maps_to_a_role() {
         for job in job_chips_sorted() {
-            let role = role_for_job_abbr(&job.abbreviation);
+            let role = role_for_job(job);
             assert_ne!(
                 role,
                 RoleGroup::Other,
@@ -82,6 +104,47 @@ mod tests {
                 job.abbreviation,
                 job.name,
             );
+        }
+    }
+
+    /// `every_visible_job_maps_to_a_role` passed even while the grouping was
+    /// broken, because the test process loads English data. Keying the lookup
+    /// on the localized `abbreviation` dropped 23 of 36 German and 22 of 36
+    /// French jobs into `Other`, collapsing the role sections of the Job Sets
+    /// accordion into one undifferentiated list.
+    #[test]
+    fn role_grouping_is_identical_in_every_locale() {
+        let en = xiv_gen_db::data_for(Language::En);
+        for lang in [
+            Language::En,
+            Language::Ja,
+            Language::De,
+            Language::Fr,
+            Language::Cn,
+            Language::Ko,
+            Language::Tc,
+        ] {
+            let data = xiv_gen_db::data_for(lang);
+            for job in job_chips_sorted_in(data) {
+                let role = role_for_job(job);
+                assert_ne!(
+                    role,
+                    RoleGroup::Other,
+                    "{lang:?}: job {:?} ({}) has no role mapping",
+                    job.abbreviation,
+                    job.name,
+                );
+                let en_role = en
+                    .class_jobs
+                    .get(&job.key_id)
+                    .map(role_for_job)
+                    .expect("the same job id exists in every locale");
+                assert_eq!(
+                    role, en_role,
+                    "{lang:?}: job id {} buckets differently than under English data",
+                    job.key_id.0,
+                );
+            }
         }
     }
 
@@ -101,22 +164,6 @@ mod tests {
                 cat.name,
                 id.0,
                 cat.class_job,
-            );
-        }
-    }
-
-    /// Documents the chips-vs-dropdown decision for the non-grouped tabs:
-    /// with >8 subcategories a tab renders the popover, with <=8 it keeps
-    /// the inline chip strip. If game data ever changes these counts the
-    /// toolbar adapts automatically — this test just makes the change
-    /// visible in review.
-    #[test]
-    fn non_weapon_groups_have_expected_sizes() {
-        for group in 2..=4u8 {
-            let count = category_chips_for_group(group).len();
-            assert!(
-                count > 8,
-                "group {group} has {count} subcategories; expected >8 (popover branch)",
             );
         }
     }

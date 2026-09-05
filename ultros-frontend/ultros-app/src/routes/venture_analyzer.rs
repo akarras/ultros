@@ -6,22 +6,22 @@ use crate::{
     analysis::{SalesStats, analyze_sales},
     api::{get_cheapest_listings, get_recent_sales_for_world},
     components::{
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
-        query_button::QueryButton,
         realtime_status::RealtimeStatus,
-        skeleton::BoxSkeleton,
+        skeleton::{BoxSkeleton, InlineStatusSkeleton},
+        sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
     global_state::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
+    query_defaults::filter_query_signal,
 };
-use icondata as i;
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos_router::{
@@ -29,7 +29,7 @@ use leptos_router::{
     hooks::{query_signal, use_location, use_navigate, use_query_map},
 };
 use std::{
-    cmp::Reverse,
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -53,6 +53,9 @@ struct VentureProfitData {
 enum SortMode {
     Profit,
     Level,
+    UnitPrice,
+    AvgPrice,
+    DailySales,
 }
 
 impl std::str::FromStr for SortMode {
@@ -62,6 +65,9 @@ impl std::str::FromStr for SortMode {
         match s {
             "profit" => Ok(SortMode::Profit),
             "level" => Ok(SortMode::Level),
+            "unit-price" => Ok(SortMode::UnitPrice),
+            "avg-price" => Ok(SortMode::AvgPrice),
+            "daily-sales" => Ok(SortMode::DailySales),
             _ => Err(()),
         }
     }
@@ -72,8 +78,41 @@ impl std::fmt::Display for SortMode {
         let val = match self {
             SortMode::Profit => "profit",
             SortMode::Level => "level",
+            SortMode::UnitPrice => "unit-price",
+            SortMode::AvgPrice => "avg-price",
+            SortMode::DailySales => "daily-sales",
         };
         f.write_str(val)
+    }
+}
+
+/// Every column reads best-first descending — ventures cost venture coins,
+/// not gil, so there is no cost-like column to default ascending.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::Profit
+    }
+}
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_PROFIT: &str = "profit";
+const FILTER_OUTLIERS: &str = "filter-outliers";
+
+/// Filters the `+ Filter` menu can add, in menu order.
+const ADDABLE_FILTERS: &[&str] = &[FILTER_PROFIT, FILTER_OUTLIERS];
+
+fn compare_ventures(mode: SortMode, a: &VentureProfitData, b: &VentureProfitData) -> Ordering {
+    match mode {
+        SortMode::Profit => a.profit.cmp(&b.profit),
+        SortMode::Level => a.task_level.cmp(&b.task_level),
+        SortMode::UnitPrice => a.market_price.cmp(&b.market_price),
+        SortMode::AvgPrice => a.avg_price.cmp(&b.avg_price),
+        SortMode::DailySales => a
+            .daily_sales
+            .partial_cmp(&b.daily_sales)
+            .unwrap_or(Ordering::Equal),
     }
 }
 
@@ -101,11 +140,22 @@ fn VentureAnalyzerTable(
     let retainer_task_normals = &data.retainer_task_normals;
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
-    let (minimum_profit, set_minimum_profit) = query_signal::<i32>("profit");
-    let (filter_outliers, set_filter_outliers) = query_signal::<bool>("filter-outliers");
+    let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // typing into a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (minimum_profit, set_minimum_profit) = filter_query_signal::<i32>(FILTER_PROFIT);
+    let (filter_outliers, set_filter_outliers) = filter_query_signal::<bool>(FILTER_OUTLIERS);
     let query = use_query_map();
     let location = use_location();
     let nav = use_navigate();
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). Booleans commit immediately on add instead, so
+    // this only ever holds `FILTER_PROFIT`.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     let categories = Memo::new(move |_| {
         retainer_tasks
@@ -257,23 +307,9 @@ fn VentureAnalyzerTable(
 
         // Sort
         // ⚡ Bolt: Optimization: In-place filtering and truncation for Top N lists using select_nth_unstable.
-        let limit = 100;
-        if results.len() > limit {
-            match sort_mode().unwrap_or(SortMode::Profit) {
-                SortMode::Profit => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.profit));
-                }
-                SortMode::Level => {
-                    results.select_nth_unstable_by_key(limit, |d| Reverse(d.task_level));
-                }
-            }
-            results.truncate(limit);
-        }
-
-        match sort_mode().unwrap_or(SortMode::Profit) {
-            SortMode::Profit => results.sort_unstable_by_key(|d| Reverse(d.profit)),
-            SortMode::Level => results.sort_unstable_by_key(|d| Reverse(d.task_level)),
-        }
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
+        let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
+        sort_and_truncate(&mut results, dir, 100, |a, b| compare_ventures(mode, a, b));
 
         results
             .into_iter()
@@ -282,49 +318,118 @@ fn VentureAnalyzerTable(
             .collect::<Vec<_>>()
     });
 
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT) {
+            active.push(FILTER_PROFIT);
+        }
+        if filter_outliers().unwrap_or(false) {
+            active.push(FILTER_OUTLIERS);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_PROFIT => t_string!(i18n, venture_analyzer_filter_profit_min_label).to_string(),
+            FILTER_OUTLIERS => t_string!(i18n, venture_analyzer_filter_outliers).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_PROFIT => pending_filter.set(Some(FILTER_PROFIT)),
+        // Boolean toggle: the chip's presence *is* the value, so it commits
+        // straight to `true` rather than mounting an editable chip.
+        FILTER_OUTLIERS => set_filter_outliers(Some(true)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_minimum_profit(None);
+        set_filter_outliers(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
-            // Simple scalar filters in a Toolbar row
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, venture_analyzer_filter_profit_min_label).to_string()>
-                    <input
-                        class="input input-sm w-36"
-                        min=0
-                        step=1000
-                        placeholder="e.g. 50000"
-                        type="number"
-                        prop:value=minimum_profit
-                        on:input=move |input| {
-                            let value = event_target_value(&input);
-                            if let Ok(profit) = value.parse::<i32>() {
-                                set_minimum_profit(Some(profit))
-                            } else if value.is_empty() {
-                                set_minimum_profit(None);
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, venture_analyzer_result_count, n = move || computed_data().len())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, venture_analyzer_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, venture_analyzer_chip_profit_min).to_string()
+                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                    numeric=true
+                                    min="0"
+                                    step="1000"
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    />
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, filter_outliers).to_string()>
-                    <div class="flex flex-row gap-2 items-center">
-                        <input
-                            type="checkbox"
-                            id="filter-outliers"
-                            class="checkbox"
-                            prop:checked=move || filter_outliers().unwrap_or(false)
-                            on:change=move |ev| set_filter_outliers(Some(event_target_checked(&ev)))
-                        />
-                        <div class="text-brand-300 cursor-help" title=move || t_string!(i18n, venture_analyzer_filter_outliers_tooltip).to_string()>
-                            <Icon icon=i::AiQuestionCircleOutlined />
-                        </div>
-                    </div>
-                </ToolbarField>
-                <div class="flex-1 flex justify-end">
-                    <RealtimeStatus
-                        status=realtime_status
-                        last_update=last_update
-                    />
-                </div>
-            </Toolbar>
+                        })
+                }}
+                {move || {
+                    filter_outliers()
+                        .unwrap_or(false)
+                        .then(|| {
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, venture_analyzer_filter_outliers).to_string()
+                                    readonly=true
+                                    value=Signal::derive(|| None::<String>)
+                                    on_commit=Callback::new(move |_| set_filter_outliers(None))
+                                />
+                            }
+                        })
+                }}
+            </ControlBar>
 
             // Job category multi-select: complex tag-cloud widget, kept as panel
             <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
@@ -369,29 +474,41 @@ fn VentureAnalyzerTable(
                     header=view! {
                         <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
                              <div role="columnheader" class="w-84 p-4">{t!(i18n, venture_analyzer_col_venture_item)}</div>
-                             <div role="columnheader" class="w-30 p-4">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="profit"
-                                >
-                                    {t!(i18n, venture_analyzer_col_profit)}
-                                </QueryButton>
-                             </div>
-                             <div role="columnheader" class="w-30 p-4">{t!(i18n, venture_analyzer_col_unit_price)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, venture_analyzer_col_avg_price)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">{t!(i18n, venture_analyzer_col_daily_sales)}</div>
-                             <div role="columnheader" class="w-30 p-4 hidden md:block">
-                                <QueryButton
-                                    class="!text-brand-300 hover:text-brand-200"
-                                    active_classes="!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                                    key="sort"
-                                    value="level"
-                                >
-                                    {t!(i18n, venture_analyzer_col_level)}
-                                </QueryButton>
-                             </div>
+                             <SortableHeaderCell
+                                mode=SortMode::Profit
+                                label=t_string!(i18n, venture_analyzer_col_profit).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::UnitPrice
+                                label=t_string!(i18n, venture_analyzer_col_unit_price).to_string()
+                                class="w-30 p-4"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::AvgPrice
+                                label=t_string!(i18n, venture_analyzer_col_avg_price).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::DailySales
+                                label=t_string!(i18n, venture_analyzer_col_daily_sales).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
+                             <SortableHeaderCell
+                                mode=SortMode::Level
+                                label=t_string!(i18n, venture_analyzer_col_level).to_string()
+                                class="w-30 p-4 hidden md:block"
+                                sort_mode
+                                sort_dir
+                             />
                         </div>
                     }.into_any()
                     each=computed_data.into()
@@ -538,39 +655,31 @@ pub fn VentureAnalyzer() -> impl IntoView {
                     context=t_string!(i18n, venture_analyzer_tool_context).to_string()
                     help_href="/help/venture-analyzer"
                     help_body=t_string!(i18n, venture_analyzer_tool_help).to_string()
-                />
-                <div class="flex flex-row justify-end items-center">
-                    <div class="flex flex-row gap-2 items-center">
-                        <Suspense fallback=move || view! { <div class="text-brand-300 text-sm animate-pulse">{t!(i18n, venture_analyzer_loading_sales)}</div> }>
-                            {move || {
-                                recent_sales_clone
-                                    .get()
-                                    .and_then(|r| r.err())
-                                    .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, venture_analyzer_error_sales)}</div> })
-                            }}
-                        </Suspense>
-                    </div>
-                </div>
-
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, world).to_string()>
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
-                    </ToolbarField>
-                </Toolbar>
-                <CalculationSummary
-                    title=t_string!(i18n, venture_analyzer_calc_title).to_string()
-                    formula=t_string!(i18n, venture_analyzer_calc_formula).to_string()
-                    details=t_string!(i18n, venture_analyzer_calc_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, venture_analyzer_assumption_gross_revenue).to_string() />
-                    <AssumptionBadge text="Normal ventures only" />
-                    <AssumptionBadge text="Recent sales affect confidence" />
-                </div>
-
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, venture_analyzer_calc_title).to_string(),
+                        t_string!(i18n, venture_analyzer_calc_formula).to_string(),
+                        t_string!(i18n, venture_analyzer_calc_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, venture_analyzer_assumption_gross_revenue).to_string(),
+                        "Normal ventures only".to_string(),
+                        "Recent sales affect confidence".to_string(),
+                    ]
+                >
+                    <Suspense fallback=InlineStatusSkeleton>
+                        {move || {
+                            recent_sales_clone
+                                .get()
+                                .and_then(|r| r.err())
+                                .map(|_| view! { <div class="text-red-400 text-sm">{t!(i18n, venture_analyzer_error_sales)}</div> })
+                        }}
+                    </Suspense>
+                    <label class="text-[color:var(--brand-fg)] font-semibold">{t!(i18n, world)}</label>
+                    <WorldOnlyPicker
+                        current_world=selected_world.into()
+                        set_current_world=set_selected_world.into()
+                    />
+                </ToolHeader>
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
@@ -609,5 +718,54 @@ pub fn VentureAnalyzer() -> impl IntoView {
                 </Suspense>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Display must produce exactly the token FromStr parses back — the
+    /// shared SortHeader's hrefs depend on that round trip.
+    #[test]
+    fn sort_mode_round_trips_through_the_url() {
+        for mode in [
+            SortMode::Profit,
+            SortMode::Level,
+            SortMode::UnitPrice,
+            SortMode::AvgPrice,
+            SortMode::DailySales,
+        ] {
+            assert_eq!(mode.to_string().parse::<SortMode>(), Ok(mode));
+        }
+        assert!("bogus".parse::<SortMode>().is_err());
+    }
+
+    #[test]
+    fn compare_ventures_orders_ascending_by_column() {
+        let row = |profit: i32, daily_sales: f32| VentureProfitData {
+            task_level: profit,
+            item_id: 1,
+            quantity: 1,
+            market_price: profit,
+            profit,
+            avg_price: profit,
+            daily_sales,
+        };
+        let low = row(10, 0.5);
+        let high = row(20, 2.0);
+        for mode in [
+            SortMode::Profit,
+            SortMode::Level,
+            SortMode::UnitPrice,
+            SortMode::AvgPrice,
+            SortMode::DailySales,
+        ] {
+            assert_eq!(
+                compare_ventures(mode, &low, &high),
+                Ordering::Less,
+                "{mode:?}"
+            );
+        }
     }
 }

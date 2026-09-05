@@ -13,8 +13,9 @@ There are **no git submodules** in this repo anymore. FFXIV game data (item/reci
 
 - **Fresh clone**: run `git lfs install && git lfs pull` once. Without it, the `data/` files are LFS pointer text, not real content, and the build fails with an actionable error message rather than a cryptic panic.
 - **Worktrees**: no setup needed — `git worktree add` checks out LFS content the same as a normal clone as long as `git lfs install` has been run once on the machine.
-- **Regenerating packs**: `cargo run --release -p game-data-pack -- --pinned` rebuilds the packs from the pins already recorded in `data/manifest.toml` (reproducible, no version bump). Pass `--latest` instead to bump the pins to the newest upstream data and regenerate against that.
-- **`data/manifest.toml`**: records exactly which upstream commit/release each pack was generated from — this is the source of truth for "what version of game data is this."
+- **Regenerating packs**: `cargo run --release -p game-data-pack -- --pinned` rebuilds the packs from the pins already recorded in `data/manifest.toml` (reproducible for the CSV packs, no version bump). Pass `--latest` instead to bump the pins to the newest upstream data and regenerate against that.
+- **Icons need a local FFXIV install**: the icon pack is extracted straight out of the game's SqPack files (via the `icon-extract` crate), not fetched from a repo. The generator searches the standard install locations (`--game-path <install root>` to override) and hard-requires the install; pass `--skip-icons` to rebuild only the CSV packs on a machine without the game. **Patch the game before regenerating** — the run reports how many named items have no icon in the install, and a triple-digit count means the client is older than the pinned CSVs.
+- **`data/manifest.toml`**: records exactly which upstream commit/release each pack was generated from, plus (under `[icons]`) the FFXIV client version the icon pack was extracted from — this is the source of truth for "what version of game data is this."
 - **Updating game data**: done by hand (in practice, by an agent), not on a schedule. A game-data
   bump can break consumers — a renamed sheet or column shifts `xiv-gen`'s generated types — so the
   regeneration and the fallout need fixing in the same change. Run

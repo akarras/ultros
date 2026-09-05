@@ -3,6 +3,7 @@ pub mod bootstrap;
 pub mod cheapest_listings;
 mod ffxiv_character;
 pub mod freshness;
+pub mod game_history;
 pub mod icon_size;
 pub mod item_stats;
 pub mod list;
@@ -16,6 +17,7 @@ pub mod resale_quality;
 pub mod result;
 pub mod retainer;
 mod sale_history;
+pub mod sale_stats;
 pub mod search;
 pub mod sparklines;
 pub mod trends;
@@ -111,9 +113,14 @@ impl CurrentlyShownItem {
                 }
             }
         }
+        // ⚡ Bolt: Optimization: Extract top N elements in O(N) time with select_nth_unstable_by_key before sorting
+        if self.sales.len() > 200 {
+            self.sales
+                .select_nth_unstable_by_key(200, |sale| std::cmp::Reverse(sale.sold_date));
+            self.sales.truncate(200);
+        }
         self.sales
-            .sort_by_key(|sale| std::cmp::Reverse(sale.sold_date));
-        self.sales.truncate(200);
+            .sort_unstable_by_key(|sale| std::cmp::Reverse(sale.sold_date));
     }
 
     fn upsert_sales(&mut self, sales: Vec<SaleHistory>) {

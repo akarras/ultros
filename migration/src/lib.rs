@@ -30,6 +30,14 @@ mod m20260513_000002_alert_list_threshold;
 mod m20260514_000001_notification_endpoint_created_at_tz;
 mod m20260514_000002_alert_list_update;
 mod m20260514_000003_list_activity;
+mod m20260802_000001_authless_character_claims;
+mod m20260802_000002_user_group_discord_guild;
+mod m20260804_000001_active_listing_cheapest_index;
+mod m20260805_000001_group_invite;
+mod m20260808_000001_active_listing_identity_columns;
+mod m20260809_000001_notification_endpoint_health;
+mod m20260811_000001_drop_unused_sale_history_full_index;
+mod m20260828_000001_active_listing_world_index;
 
 pub struct Migrator;
 
@@ -69,6 +77,14 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000001_notification_endpoint_created_at_tz::Migration),
             Box::new(m20260514_000002_alert_list_update::Migration),
             Box::new(m20260514_000003_list_activity::Migration),
+            Box::new(m20260802_000001_authless_character_claims::Migration),
+            Box::new(m20260802_000002_user_group_discord_guild::Migration),
+            Box::new(m20260804_000001_active_listing_cheapest_index::Migration),
+            Box::new(m20260805_000001_group_invite::Migration),
+            Box::new(m20260808_000001_active_listing_identity_columns::Migration),
+            Box::new(m20260809_000001_notification_endpoint_health::Migration),
+            Box::new(m20260811_000001_drop_unused_sale_history_full_index::Migration),
+            Box::new(m20260828_000001_active_listing_world_index::Migration),
         ]
     }
 }

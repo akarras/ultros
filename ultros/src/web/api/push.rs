@@ -19,7 +19,7 @@ use ultros_api_types::alert::{
 };
 use ultros_db::UltrosDb;
 
-use crate::alerts::delivery::get_web_push_config;
+use crate::alerts::delivery::{get_web_push_config, validate_web_push_endpoint};
 use crate::web::error::ApiError;
 use crate::web::oauth::AuthDiscordUser;
 
@@ -57,15 +57,16 @@ pub(crate) async fn create_push_subscription(
     // Basic sanity: the browser MUST give us non-empty endpoint + keys, or the
     // push service will refuse later anyway. Fail fast with a clear message.
     if req.endpoint.is_empty() || req.p256dh.is_empty() || req.auth.is_empty() {
-        return Err(ApiError::AnyhowError(anyhow::anyhow!(
-            "push subscription missing required fields"
-        )));
+        return Err(ApiError::BadRequest(
+            "push subscription missing required fields",
+        ));
     }
+    let endpoint = validate_web_push_endpoint(&req.endpoint).map_err(ApiError::BadRequest)?;
 
     let subscription_id = db
         .create_push_subscription(
             user.id as i64,
-            &req.endpoint,
+            endpoint.as_str(),
             &req.p256dh,
             &req.auth,
             req.user_agent.as_deref(),
@@ -83,6 +84,7 @@ pub(crate) async fn create_push_subscription(
         id,
         name,
         method: EndpointMethod::WebPush { subscription_id },
+        disabled_reason: None,
     }))
 }
 
@@ -108,12 +110,14 @@ fn endpoint_name_from_user_agent(ua: Option<&str>) -> String {
     };
     let os = if ua.contains("Windows") {
         Some("Windows")
+    } else if ua.contains("iPhone") || ua.contains("iPad") || ua.contains("iOS") {
+        // Mobile Apple UAs also contain "like Mac OS X"; prefer their
+        // explicit device identity before the generic macOS marker.
+        Some("iOS")
     } else if ua.contains("Macintosh") || ua.contains("Mac OS X") {
         Some("macOS")
     } else if ua.contains("Android") {
         Some("Android")
-    } else if ua.contains("iPhone") || ua.contains("iPad") || ua.contains("iOS") {
-        Some("iOS")
     } else if ua.contains("Linux") {
         Some("Linux")
     } else {
@@ -150,9 +154,19 @@ mod tests {
     #[test]
     fn label_for_safari_on_ios() {
         let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1";
-        // iPhone wins for OS even though Safari/ matches the browser check.
-        let name = endpoint_name_from_user_agent(Some(ua));
-        assert!(name.contains("iOS"), "got {name}");
+        assert_eq!(
+            endpoint_name_from_user_agent(Some(ua)),
+            "Browser (Safari on iOS)"
+        );
+    }
+
+    #[test]
+    fn label_for_safari_on_ipad() {
+        let ua = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1";
+        assert_eq!(
+            endpoint_name_from_user_agent(Some(ua)),
+            "Browser (Safari on iOS)"
+        );
     }
 
     #[test]

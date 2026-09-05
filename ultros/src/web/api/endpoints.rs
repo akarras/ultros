@@ -4,8 +4,8 @@ use axum::{
 };
 use serde_json::Value as JsonValue;
 use ultros_api_types::alert::{
-    CreateEndpointRequest, DiscordWritableGuild, Endpoint, EndpointMethod, ResendResult,
-    UpdateEndpointRequest,
+    CreateEndpointRequest, DeleteEndpointResponse, DiscordWritableGuild, Endpoint, EndpointMethod,
+    ResendResult, UpdateEndpointRequest,
 };
 use ultros_db::UltrosDb;
 
@@ -127,25 +127,37 @@ pub(crate) async fn list_endpoints(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let method = db_to_method(&r.method, &r.config).map_err(ApiError::from)?;
+        // Only surface the reason while the endpoint is actually disabled.
+        // Recovery clears both columns together, so this is belt-and-braces: a
+        // stray `last_error` can never make a working endpoint look broken.
+        let disabled_reason = r.disabled_at.and(r.last_error);
         out.push(Endpoint {
             id: r.id,
             name: r.name,
             method,
+            disabled_reason,
         });
     }
     Ok(Json(out))
 }
 
 pub(crate) async fn list_discord_writable_guilds(
+    State(cache): State<crate::web::oauth::AuthUserCache>,
     user: AuthDiscordUser,
+    cookies: axum_extra::extract::PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordWritableGuild>>, ApiError> {
     let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
         ApiError::from(anyhow::anyhow!(
             "Discord bot is not connected; cannot load shared servers right now"
         ))
     })?;
-    let guilds =
-        crate::web::api::discord_lookup::writable_guilds_for_user(&ctx, user.id as i64).await?;
+    let guilds = crate::web::api::discord_lookup::writable_guilds_for_user(
+        &ctx,
+        user.id as i64,
+        &cookies,
+        &cache,
+    )
+    .await?;
     Ok(Json(guilds))
 }
 
@@ -205,7 +217,12 @@ pub(crate) async fn create_endpoint(
         .create_endpoint(user.id as i64, &name, method_str, config)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(Endpoint { id, name, method }))
+    Ok(Json(Endpoint {
+        id,
+        name,
+        method,
+        disabled_reason: None,
+    }))
 }
 
 pub(crate) async fn update_endpoint(
@@ -232,11 +249,43 @@ pub(crate) async fn delete_endpoint(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
     Path(id): Path<i32>,
-) -> Result<Json<()>, ApiError> {
+) -> Result<Json<DeleteEndpointResponse>, ApiError> {
+    // Look the endpoint up before deleting it: a WebPush endpoint references
+    // its push_subscription row only through the JSON config (there's no FK),
+    // so the subscription has to be cleaned up here or it's orphaned forever.
+    let endpoint = db
+        .get_endpoint_owned_by(user.id as i64, id)
+        .await
+        .map_err(ApiError::from)?;
     db.delete_endpoint(user.id as i64, id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(()))
+
+    let mut push_endpoint = None;
+    if let Ok(EndpointMethod::WebPush { subscription_id }) =
+        db_to_method(&endpoint.method, &endpoint.config)
+    {
+        // The lookup can miss legitimately: delivery deletes the subscription
+        // row itself when the push service reports it revoked, leaving the
+        // endpoint row behind. Nothing to clean up in that case.
+        if let Ok(sub) = db.get_push_subscription_by_id(subscription_id).await
+            && sub.user_id == user.id as i64
+        {
+            match db
+                .delete_push_subscription_by_id(user.id as i64, subscription_id)
+                .await
+            {
+                Ok(()) => push_endpoint = Some(sub.endpoint),
+                Err(e) => tracing::warn!(
+                    error = ?e,
+                    endpoint_id = id,
+                    subscription_id,
+                    "endpoint deleted but linked push subscription was not"
+                ),
+            }
+        }
+    }
+    Ok(Json(DeleteEndpointResponse { push_endpoint }))
 }
 
 pub(crate) async fn test_endpoint(
@@ -283,6 +332,7 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            "/alerts",
             &db,
             ctx,
         )
@@ -293,16 +343,25 @@ pub(crate) async fn test_endpoint(
             &endpoint,
             "Ultros test notification",
             "If you can read this, your endpoint is wired up correctly.",
+            "/alerts",
             &db,
         )
         .await
     };
 
     match result {
-        Ok(()) => Ok(Json(ResendResult {
-            delivered: true,
-            error: None,
-        })),
+        Ok(()) => {
+            // Testing successfully is how a user un-breaks an endpoint that the
+            // delivery path disabled: fix the channel (or re-invite the bot),
+            // hit Test, and it re-enters the alert rotation.
+            if let Err(e) = db.clear_endpoint_delivery_failure(id).await {
+                tracing::error!("failed to clear delivery failure for endpoint {id}: {e}");
+            }
+            Ok(Json(ResendResult {
+                delivered: true,
+                error: None,
+            }))
+        }
         Err(e) => Ok(Json(ResendResult {
             delivered: false,
             error: Some(format!("{e}")),
@@ -422,6 +481,17 @@ mod tests {
             let back = db_to_method(method, &config).unwrap();
             assert_eq!(m, back);
         }
+    }
+
+    #[test]
+    fn method_to_db_round_trip_web_push() {
+        // delete_endpoint relies on this parse to find the push_subscription
+        // row linked through the JSON config — there is no FK.
+        let m = EndpointMethod::WebPush { subscription_id: 7 };
+        let (method, config) = method_to_db(&m);
+        assert_eq!(method, "WebPush");
+        assert_eq!(config, json!({"subscription_id": 7}));
+        assert_eq!(db_to_method(method, &config).unwrap(), m);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::components::app_link::AppLink;
 use crate::components::{
     icon::Icon,
     meta::{MetaDescription, MetaTitle},
@@ -6,7 +7,7 @@ use crate::i18n::*;
 use icondata as i;
 use leptos::prelude::*;
 use leptos_i18n::I18nContext;
-use leptos_router::{components::A, hooks::use_params_map};
+use leptos_router::hooks::use_params_map;
 
 /// A screenshot illustrating a help topic, served from `ultros/static/help/`.
 ///
@@ -369,11 +370,11 @@ pub fn HelpIndex() -> impl IntoView {
                 </section>
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {HELP_TOPICS.iter().map(|topic| view! {
-                        <A href=format!("/help/{}", topic.slug) attr:class="panel p-5 rounded-xl hover:border-brand-300 transition-colors flex flex-col gap-2">
+                        <AppLink href=format!("/help/{}", topic.slug) attr:class="panel p-5 rounded-xl hover:border-brand-300 transition-colors flex flex-col gap-2">
                             <span class="text-xs uppercase tracking-wide text-brand-300 font-bold">{topic.category}</span>
                             <h2 class="text-xl font-bold text-[color:var(--brand-fg)]">{topic.title}</h2>
                             <p class="text-sm text-[color:var(--color-text-muted)]">{topic.summary}</p>
-                        </A>
+                        </AppLink>
                     }).collect_view()}
                 </div>
             </div>
@@ -398,10 +399,10 @@ pub fn HelpArticle() -> impl IntoView {
                     Some(topic) => view! {
                         <MetaTitle title=format!("{} - Ultros Help", topic.title) />
                         <MetaDescription text=topic.summary />
-                        <A href="/help" attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-2">
+                        <AppLink href="/help" attr:class="text-sm text-brand-300 hover:text-[color:var(--brand-fg)] inline-flex items-center gap-2">
                             <Icon icon=i::FaArrowLeftSolid width="0.85em" height="0.85em" />
                             {t!(i18n, help_all_topics_link)}
-                        </A>
+                        </AppLink>
                         <section class="panel p-6 sm:p-8 rounded-2xl">
                             <span class="text-xs uppercase tracking-wide text-brand-300 font-bold">{topic.category}</span>
                             <h1 class="text-3xl font-bold text-[color:var(--brand-fg)] mt-2 mb-3">{topic.title}</h1>
@@ -433,7 +434,7 @@ pub fn HelpArticle() -> impl IntoView {
                         <section class="panel p-6 rounded-2xl text-center">
                             <h1 class="text-2xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, help_not_found_heading)}</h1>
                             <p class="mt-2 text-[color:var(--color-text-muted)]">{t!(i18n, help_not_found_body)}</p>
-                            <A href="/help" attr:class="btn-primary mt-4">{t!(i18n, help_browse_link)}</A>
+                            <AppLink href="/help" attr:class="btn-primary mt-4">{t!(i18n, help_browse_link)}</AppLink>
                         </section>
                     }.into_any(),
                 }}

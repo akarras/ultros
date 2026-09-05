@@ -14,9 +14,9 @@ use universalis::UniversalisClient;
 use ultros_clickhouse::ClickHouseClient;
 
 use crate::analyzer_service::AnalyzerService;
+use crate::character_claim::CharacterClaimService;
 use crate::event::{EventReceivers, EventSenders};
 use crate::search_service::SearchService;
-use crate::web::character_verifier_service::CharacterVerifierService;
 use crate::web::oauth::{AuthUserCache, DiscordAuthConfig};
 
 #[derive(Clone)]
@@ -31,7 +31,7 @@ pub(crate) struct WebState {
     /// Common variant of world_cache. Maybe get rid of world_cache?
     pub(crate) world_helper: Arc<WorldHelper>,
     pub(crate) analyzer_service: AnalyzerService,
-    pub(crate) character_verification: CharacterVerifierService,
+    pub(crate) character_claim: CharacterClaimService,
     pub(crate) leptos_options: LeptosOptions,
     pub(crate) search_service: SearchService,
     pub(crate) token: CancellationToken,
@@ -44,6 +44,9 @@ pub(crate) struct WebState {
     /// Absorbs bursts of identical chart requests. See
     /// [`crate::web::price_series_cache`].
     pub(crate) price_series_cache: crate::web::price_series_cache::PriceSeriesCache,
+    /// Coalesces and serves stale bulk market-stat snapshots so page traffic
+    /// cannot multiply ClickHouse work. See [`crate::web::sale_stats_cache`].
+    pub(crate) sale_stats_cache: crate::web::sale_stats_cache::SaleStatsCache,
 }
 
 impl FromRef<WebState> for UltrosDb {
@@ -100,9 +103,9 @@ impl FromRef<WebState> for EventSenders {
     }
 }
 
-impl FromRef<WebState> for CharacterVerifierService {
+impl FromRef<WebState> for CharacterClaimService {
     fn from_ref(input: &WebState) -> Self {
-        input.character_verification.clone()
+        input.character_claim.clone()
     }
 }
 
@@ -133,5 +136,11 @@ impl FromRef<WebState> for UniversalisClient {
 impl FromRef<WebState> for crate::web::price_series_cache::PriceSeriesCache {
     fn from_ref(input: &WebState) -> Self {
         input.price_series_cache.clone()
+    }
+}
+
+impl FromRef<WebState> for crate::web::sale_stats_cache::SaleStatsCache {
+    fn from_ref(input: &WebState) -> Self {
+        input.sale_stats_cache.clone()
     }
 }

@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "title": "Sort by any column that has a number",
+  "blurb": "Vendor resale now sorts by vendor price, market price, and average sale time, and Flip Finder by buy price, price drift, and last sold. Cost and time columns start best-first: cheapest buy-in, most recent sale.",
+  "link": "/vendor-resale",
+  "importance": "medium"
+}

@@ -3,7 +3,7 @@ use crate::{
     common::try_update_value::ActiveValueCmpSet,
     common_type_conversions::{ListSharedGroupReturn, ListSharedUserReturn, UserGroupMemberReturn},
     entity::{
-        active_listing, discord_user, list, list_activity, list_invite, list_item,
+        active_listing, discord_user, group_invite, list, list_activity, list_invite, list_item,
         list_shared_group, list_shared_user, retainer, user_group, user_group_member,
     },
     world_data::world_cache::{AnySelector, WorldCache},
@@ -23,6 +23,7 @@ use std::{
 use thiserror::Error;
 use tracing::instrument;
 use ultros_api_types::list::{ListActivityKind, ListPermission};
+use ultros_api_types::user::group::GroupSource;
 use universalis::ItemId;
 
 #[derive(Debug, Error)]
@@ -685,11 +686,60 @@ impl UltrosDb {
     // --- Group Management ---
 
     pub async fn create_group(&self, name: String, owner_id: i64) -> Result<user_group::Model> {
+        self.insert_group(name, owner_id, None, None, GroupSource::Manual)
+            .await
+    }
+
+    /// Create a group backed by a Discord guild. The caller is responsible for
+    /// having verified that `owner_id` may manage `guild_id` and that the bot
+    /// is present there — this layer only enforces one group per guild.
+    pub async fn create_group_from_guild(
+        &self,
+        name: String,
+        owner_id: i64,
+        guild_id: i64,
+        guild_icon_url: Option<String>,
+    ) -> Result<user_group::Model> {
+        // Checked up front so the common case gets a useful message instead of
+        // a unique-constraint violation. The index is still the real guarantee:
+        // two concurrent creates can both pass this check, and the loser gets a
+        // database error rather than a duplicate row.
+        if user_group::Entity::find()
+            .filter(user_group::Column::GuildId.eq(guild_id))
+            .one(&self.db)
+            .await?
+            .is_some()
+        {
+            return Err(
+                ListError::BadRequest("A group already exists for that Discord server").into(),
+            );
+        }
+        self.insert_group(
+            name,
+            owner_id,
+            Some(guild_id),
+            guild_icon_url,
+            GroupSource::DiscordGuild,
+        )
+        .await
+    }
+
+    async fn insert_group(
+        &self,
+        name: String,
+        owner_id: i64,
+        guild_id: Option<i64>,
+        guild_icon_url: Option<String>,
+        source: GroupSource,
+    ) -> Result<user_group::Model> {
         let txn = self.db.begin().await?;
         let group = user_group::ActiveModel {
             id: Default::default(),
             name: ActiveValue::Set(name),
             owner_id: ActiveValue::Set(owner_id),
+            guild_id: ActiveValue::Set(guild_id),
+            guild_icon_url: ActiveValue::Set(guild_icon_url),
+            source: ActiveValue::Set(source as i16),
         }
         .insert(&txn)
         .await?;
@@ -701,6 +751,22 @@ impl UltrosDb {
         .await?;
         txn.commit().await?;
         Ok(group)
+    }
+
+    /// Map of `guild_id -> group_id` for the given guilds, so the guild picker
+    /// can mark the ones that are already taken. Scoped to the guilds asked
+    /// about rather than returning every linked guild in the database.
+    pub async fn group_ids_for_guilds(&self, guild_ids: &[i64]) -> Result<HashMap<i64, i32>> {
+        if guild_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        Ok(user_group::Entity::find()
+            .filter(user_group::Column::GuildId.is_in(guild_ids.iter().copied()))
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .filter_map(|group| group.guild_id.map(|guild_id| (guild_id, group.id)))
+            .collect())
     }
 
     pub async fn delete_group(&self, group_id: i32, owner_id: i64) -> Result<()> {
@@ -769,6 +835,144 @@ impl UltrosDb {
         all_groups.sort_by_key(|g| g.id);
         all_groups.dedup_by_key(|g| g.id);
         Ok(all_groups)
+    }
+
+    // --- Group Invite Management ---
+    //
+    // Mirrors the list invites below, minus the permission column: group
+    // membership is binary, so there is nothing for an invite to grant beyond
+    // membership itself. Guild-linked groups are deliberately included — in
+    // phase 1 the guild link supplies the group's identity, not its membership,
+    // so an invite is no more privileged there than on a manual group.
+
+    pub async fn create_group_invite(
+        &self,
+        group_id: i32,
+        owner_id: i64,
+        max_uses: Option<i32>,
+    ) -> Result<group_invite::Model> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden("Only the owner can create invites").into());
+        }
+        if matches!(max_uses, Some(max_uses) if max_uses <= 0) {
+            return Err(ListError::BadRequest("Invite max uses must be positive").into());
+        }
+        Ok(group_invite::ActiveModel {
+            id: ActiveValue::Set(new_invite_id()?),
+            group_id: ActiveValue::Set(group_id),
+            max_uses: ActiveValue::Set(max_uses),
+            uses: ActiveValue::Set(0),
+        }
+        .insert(&self.db)
+        .await?)
+    }
+
+    /// Redeem an invite, returning the group the user now belongs to.
+    ///
+    /// Redeeming twice is a no-op that does *not* consume a second use — unlike
+    /// a list share there is no permission to re-apply, so burning a use for a
+    /// member who is already in the group would just punish double-clicks.
+    pub async fn use_group_invite(&self, invite_id: String, user_id: i64) -> Result<i32> {
+        let txn = self.db.begin().await?;
+
+        let invite = group_invite::Entity::find_by_id(invite_id.clone())
+            .one(&txn)
+            .await?
+            .ok_or(ListError::InviteNotFound)?;
+
+        let already_member = user_group_member::Entity::find_by_id((invite.group_id, user_id))
+            .one(&txn)
+            .await?
+            .is_some();
+        if already_member {
+            txn.rollback().await?;
+            return Ok(invite.group_id);
+        }
+
+        // Atomic conditional increment: only succeeds if the invite still has
+        // uses left. This closes the TOCTOU window where two concurrent
+        // redemptions could both pass a pre-check and then both increment.
+        let update = group_invite::Entity::update_many()
+            .col_expr(
+                group_invite::Column::Uses,
+                Expr::col(group_invite::Column::Uses).add(1),
+            )
+            .filter(group_invite::Column::Id.eq(invite_id))
+            .filter(
+                Condition::any()
+                    .add(group_invite::Column::MaxUses.is_null())
+                    .add(
+                        Expr::col(group_invite::Column::Uses)
+                            .lt(Expr::col(group_invite::Column::MaxUses)),
+                    ),
+            )
+            .exec(&txn)
+            .await?;
+
+        if update.rows_affected == 0 {
+            txn.rollback().await?;
+            // The invite was read above, so the only way to get here is the
+            // max-uses filter rejecting it.
+            return Err(ListError::InviteExhausted.into());
+        }
+
+        user_group_member::Entity::insert(user_group_member::ActiveModel {
+            group_id: ActiveValue::Set(invite.group_id),
+            user_id: ActiveValue::Set(user_id),
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                user_group_member::Column::GroupId,
+                user_group_member::Column::UserId,
+            ])
+            // A no-op update rather than `do_nothing`, which would make the
+            // insert report `RecordNotInserted` on the losing side of a race.
+            .update_column(user_group_member::Column::UserId)
+            .to_owned(),
+        )
+        .exec(&txn)
+        .await?;
+
+        txn.commit().await?;
+        Ok(invite.group_id)
+    }
+
+    pub async fn delete_group_invite(&self, invite_id: String, owner_id: i64) -> Result<()> {
+        let invite = group_invite::Entity::find_by_id(invite_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::InviteNotFound)?;
+        let group = user_group::Entity::find_by_id(invite.group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != owner_id {
+            return Err(ListError::Forbidden("Only the owner can delete invites").into());
+        }
+        invite.delete(&self.db).await?;
+        Ok(())
+    }
+
+    pub async fn get_group_invites(
+        &self,
+        group_id: i32,
+        user_id: i64,
+    ) -> Result<Vec<group_invite::Model>> {
+        let group = user_group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .ok_or(ListError::BadRequest("Group not found"))?;
+        if group.owner_id != user_id {
+            return Err(ListError::Forbidden("Only the owner can view invites").into());
+        }
+        Ok(group_invite::Entity::find()
+            .filter(group_invite::Column::GroupId.eq(group_id))
+            .all(&self.db)
+            .await?)
     }
 
     // --- Sharing Management ---
@@ -1103,5 +1307,111 @@ mod tests {
         assert_eq!(first.len(), 48);
         assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(first, second);
+    }
+}
+
+/// Covers `remove_group_member`'s self-removal permission: the owner OR the
+/// member themselves may remove a membership row, but no one else may.
+///
+/// Same situation as `alerts.rs`'s `endpoint_tests`: no `test_helpers::test_db`
+/// convention exists in this crate yet, so these are `#[ignore]`d and only
+/// exercised against a disposable database with:
+///
+/// ```bash
+/// cargo test -p ultros-db group_member_tests -- --ignored --test-threads=1
+/// ```
+#[cfg(test)]
+mod group_member_tests {
+    use super::*;
+
+    async fn test_db() -> UltrosDb {
+        UltrosDb::connect().await.expect("connect to test DB")
+    }
+
+    /// Checks membership directly against the join table rather than through
+    /// `get_group_members`, which joins on `discord_user` and would silently
+    /// drop these synthetic test user ids (they have no matching row there).
+    async fn is_member(db: &UltrosDb, group_id: i32, user_id: i64) -> bool {
+        user_group_member::Entity::find_by_id((group_id, user_id))
+            .one(&db.db)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn member_can_remove_themselves() {
+        let db = test_db().await;
+        let owner_id = 9001;
+        let member_id = 9002;
+        let group = db
+            .create_group("Self-removal test group".to_string(), owner_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+
+        // The member removes themselves: `owner_id` param is the requester,
+        // and it's the member's own id here, not the group's actual owner.
+        db.remove_group_member(group.id, member_id, member_id)
+            .await
+            .unwrap();
+
+        assert!(
+            !is_member(&db, group.id, member_id).await,
+            "member should no longer be in the group after leaving"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn owner_can_remove_another_member() {
+        let db = test_db().await;
+        let owner_id = 9003;
+        let member_id = 9004;
+        let group = db
+            .create_group("Owner-removal test group".to_string(), owner_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+
+        db.remove_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+
+        assert!(!is_member(&db, group.id, member_id).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn non_owner_cannot_remove_another_member() {
+        let db = test_db().await;
+        let owner_id = 9005;
+        let member_id = 9006;
+        let bystander_id = 9007;
+        let group = db
+            .create_group("Forbidden-removal test group".to_string(), owner_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, member_id)
+            .await
+            .unwrap();
+        db.add_group_member(group.id, owner_id, bystander_id)
+            .await
+            .unwrap();
+
+        let err = db
+            .remove_group_member(group.id, bystander_id, member_id)
+            .await;
+        assert!(
+            err.is_err(),
+            "a non-owner should not be able to remove someone else"
+        );
+
+        assert!(is_member(&db, group.id, member_id).await);
     }
 }

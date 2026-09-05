@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Scrip Sources shows results again",
+  "blurb": "The page was reading the wrong field and came up empty for most scrip types. It lists collectables properly now.",
+  "link": "/scrip-sources",
+  "importance": "medium"
+}

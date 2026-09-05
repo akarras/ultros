@@ -6,7 +6,10 @@ use crate::api::{
     create_endpoint, delete_endpoint, list_discord_writable_guilds, list_endpoints, test_endpoint,
 };
 use crate::components::icon::Icon;
-use crate::components::push_subscribe::enable_browser_notifications;
+use crate::components::push_subscribe::{
+    disable_browser_notifications, enable_browser_notifications,
+};
+use crate::components::skeleton::BoxSkeleton;
 use crate::global_state::toasts::use_toast;
 use crate::i18n::{t, t_string, use_i18n};
 
@@ -21,9 +24,18 @@ pub fn EndpointsPanel() -> impl IntoView {
     let on_delete = move |id: i32| {
         spawn_local(async move {
             match delete_endpoint(id).await {
-                Ok(()) => {
+                Ok(resp) => {
                     if let Some(t) = toasts {
                         t.success(t_string!(i18n, endpoints_deleted_toast));
+                    }
+                    // For WebPush endpoints the server also removed the push
+                    // subscription row and told us its push-service URL; if it
+                    // was this browser's own subscription, drop the live
+                    // registration too so the push service isn't left holding
+                    // a dead one. Best-effort — the server rows are gone
+                    // either way, and other devices' URLs simply won't match.
+                    if let Some(url) = resp.push_endpoint {
+                        let _ = disable_browser_notifications(&url).await;
                     }
                     version.update(|v| *v += 1);
                 }
@@ -106,7 +118,7 @@ pub fn EndpointsPanel() -> impl IntoView {
                 />
             </Show>
 
-            <Suspense fallback=move || view! { <div>{t!(i18n, loading)}</div> }>
+            <Suspense fallback=move || view! { <BoxSkeleton rows=3 /> }>
                 {move || endpoints.get().map(|r| match r {
                     Ok(rows) if rows.is_empty() => view! {
                         <p class="opacity-70">{t!(i18n, endpoints_empty_state)}</p>
@@ -161,11 +173,24 @@ pub fn EndpointsPanel() -> impl IntoView {
                                         }
                                     };
                                     let id = e.id;
+                                    // Delivery disabled this endpoint after Discord
+                                    // rejected it permanently (channel deleted, bot
+                                    // removed). Without this the endpoint just looks
+                                    // fine while silently sending nothing — say why,
+                                    // and point at Test as the way back.
+                                    let disabled_reason = e.disabled_reason.clone();
                                     view! {
                                         <li class="flex items-center justify-between py-2">
                                             <div>
                                                 <div class="font-medium">{e.name.clone()}</div>
                                                 <div class="text-xs opacity-70">{label}</div>
+                                                {disabled_reason.map(|reason| view! {
+                                                    <div class="text-xs text-amber-400 mt-1">
+                                                        {t!(i18n, endpoints_disabled_notice)}
+                                                        " "
+                                                        <span class="opacity-80">{reason}</span>
+                                                    </div>
+                                                })}
                                             </div>
                                             <div class="flex gap-1">
                                                 <button class="btn-ghost" on:click=move |_| on_test(id)>

@@ -1,0 +1,23 @@
+[package]
+name = "ultros-item-card"
+version = "0.1.0"
+edition = "2024"
+license = "MIT or Apache-2.0"
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+fontdue = "0.7.3"
+icondata_bi = "0.1.0"
+icondata_core.workspace = true
+resvg = { version = "0.47.0", default-features = false }
+unicode-linebreak = "0.1.5"
+unicode-normalization = "0.1"
+unicode-segmentation = "1.12"
+ultros-api-types = { path = "../ultros-api-types" }
+ultros-xiv-icons = { path = "../ultros-frontend/ultros-xiv-icons" }
+
+[dev-dependencies]
+serde_json.workspace = true
+xiv-gen.workspace = true
+xiv-gen-db = { path = "../xiv-gen-db", features = ["embed"] }

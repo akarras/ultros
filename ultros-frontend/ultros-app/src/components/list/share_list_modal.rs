@@ -3,6 +3,7 @@ use crate::api::{
     share_list_with_group, share_list_with_user, unshare_list_from_group, unshare_list_from_user,
 };
 use crate::components::icon::Icon;
+use crate::components::invite_link;
 use crate::components::loading::*;
 use crate::components::modal::Modal;
 use crate::global_state::clipboard_text::GlobalLastCopiedText;
@@ -31,16 +32,12 @@ pub(crate) fn editable_permission(value: &str) -> ListPermission {
     }
 }
 
+/// Route prefix for list invites. Groups use `/group/invite` — see
+/// [`crate::components::invite_link`].
+const LIST_INVITE_PATH: &str = "/list/invite";
+
 pub(crate) fn invite_url(invite_id: &str) -> String {
-    #[cfg(feature = "hydrate")]
-    {
-        if let Some(window) = web_sys::window()
-            && let Ok(origin) = window.location().origin()
-        {
-            return format!("{origin}/list/invite/{invite_id}");
-        }
-    }
-    format!("/list/invite/{invite_id}")
+    invite_link::invite_url(LIST_INVITE_PATH, invite_id)
 }
 
 pub(crate) fn copy_invite_url(
@@ -48,40 +45,17 @@ pub(crate) fn copy_invite_url(
     last_copied: Option<GlobalLastCopiedText>,
     toasts: Option<Toasts>,
 ) {
-    let url = invite_url(invite_id);
-    #[cfg(feature = "hydrate")]
-    if let Some(window) = web_sys::window() {
-        use leptos::task::spawn_local;
-        use wasm_bindgen_futures::JsFuture;
-        let clipboard = window.navigator().clipboard();
-        // `write_text` returns a Promise that rejects when the browser blocks the
-        // write. Dropping it leaks an unhandled promise rejection that our error
-        // reporter flags as an error (see GlitchTip #5767). Await it so a blocked
-        // best-effort copy is consumed instead of reported.
-        let promise = clipboard.write_text(&url);
-        spawn_local(async move {
-            if JsFuture::from(promise).await.is_err() {
-                leptos::logging::warn!("clipboard write_text was blocked by the browser");
-            }
-        });
-    }
-    if let Some(last_copied) = last_copied {
-        last_copied.0.set(Some(url));
-    }
-    if let Some(toasts) = toasts {
-        toasts.success("Invite link copied");
-    }
+    invite_link::copy_invite_url(
+        LIST_INVITE_PATH,
+        invite_id,
+        last_copied,
+        toasts,
+        "Invite link copied".to_string(),
+    );
 }
 
 pub(crate) fn invite_uses_label(invite: &ListInvite) -> String {
-    format!(
-        "{}/{} uses",
-        invite.uses,
-        invite
-            .max_uses
-            .map(|max_uses| max_uses.to_string())
-            .unwrap_or_else(|| "∞".to_string())
-    )
+    invite_link::uses_label(invite.uses, invite.max_uses)
 }
 
 #[component]

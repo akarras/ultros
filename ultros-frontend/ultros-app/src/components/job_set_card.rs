@@ -4,8 +4,8 @@
 //! current price zone (region/DC/world). Clicking the card navigates
 //! to the per-set detail page.
 
+use crate::components::app_link::AppLink;
 use leptos::prelude::*;
-use leptos_router::components::A;
 use ultros_api_types::cheapest_listings::CheapestListingsMap;
 
 use crate::components::gil::GilOrDash;
@@ -302,14 +302,14 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                             {move || t_string!(i18n, job_set_card_pieces).to_string().replace("%count%", &item_count.to_string())}
                         </span>
                     </div>
-                    <A
+                    <AppLink
                         href=href.clone()
                         attr:class="font-bold text-base leading-snug text-[color:var(--color-text)] \
                                    group-hover:text-brand-300 transition-colors line-clamp-2 \
                                    hover:underline decoration-brand-300/30 underline-offset-4"
                     >
                         {stem}
-                    </A>
+                    </AppLink>
                 </div>
             </div>
 
@@ -321,7 +321,7 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                     let id = item.id.0;
                     let title = item.name.clone();
                     view! {
-                        <A
+                        <AppLink
                             href=format!("/item/{}", id)
                             attr:class="block aspect-square rounded-md overflow-hidden \
                                        ring-1 ring-white/5 hover:ring-brand-500/50 \
@@ -329,7 +329,7 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                             attr:title=title
                         >
                             <ItemIcon item_id=id icon_size=IconSize::Large fill=true />
-                        </A>
+                        </AppLink>
                     }
                 }).collect::<Vec<_>>()}
             </div>
@@ -352,14 +352,14 @@ pub fn JobSetCard(group: JobSetGroup, jobset: String) -> impl IntoView {
                         <GilOrDash amount=total_hq />
                     </div>
                 </div>
-                <A
+                <AppLink
                     href=href
                     attr:class="mt-1 inline-flex items-center justify-center text-xs font-medium px-3 py-1.5 rounded-lg \
                                bg-brand-500/10 hover:bg-brand-500/20 text-brand-300 \
                                border border-brand-500/20 transition-colors"
                 >
                     {t!(i18n, job_set_card_view_details)}
-                </A>
+                </AppLink>
             </div>
         </div>
     }

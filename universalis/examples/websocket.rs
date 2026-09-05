@@ -15,6 +15,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // The workspace enables both rustls backends, so no provider is picked
+    // automatically; without this the first TLS connection panics.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     // subscribe to several items
     tracing_subscriber::fmt::init();
     let universalis_client = UniversalisClient::new("ultros-universalis-examples");

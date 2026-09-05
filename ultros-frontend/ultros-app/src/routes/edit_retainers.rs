@@ -8,8 +8,9 @@ use crate::api::{
     assign_retainer_character, claim_retainer, get_characters, get_login, get_retainers,
     search_retainers, unclaim_retainer, update_retainer_order,
 };
+use crate::components::skeleton::BoxSkeleton;
 use crate::components::tool_help::ActionableEmptyState;
-use crate::components::{loading::*, meta::*, reorderable_list::*, world_name::*};
+use crate::components::{meta::*, reorderable_list::*, world_name::*};
 use crate::i18n::*;
 
 #[component]
@@ -105,13 +106,13 @@ pub fn EditRetainers() -> impl IntoView {
     };
 
     view! {
-        <div class="container mx-auto p-4 flex flex-col lg:flex-row gap-6 items-start justify-center">
+        <div class="flex flex-col lg:flex-row gap-6 items-start justify-center">
             <MetaTitle title=t_string!(i18n, retainers_edit_title).to_string() />
             <MetaRobotsNoIndex />
 
-            <Suspense fallback=move || view! { <Loading /> }>
+            <Suspense fallback=move || view! { <BoxSkeleton rows=4 /> }>
                 {move || match login.get() {
-                    None => view! { <Loading /> }.into_any(),
+                    None => view! { <BoxSkeleton rows=4 /> }.into_any(),
                     Some(Err(_)) => {
                         view! {
                             <ActionableEmptyState
@@ -129,9 +130,7 @@ pub fn EditRetainers() -> impl IntoView {
                         view! {
                             <div class="retainer-list panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
                                 <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_title)}</h2>
-                                <Transition fallback=move || {
-                                    view! { <div class="loading loading-spinner loading-lg"></div> }
-                                }>
+                                <Transition fallback=move || view! { <BoxSkeleton rows=3 /> }>
                                     {move || {
                                         retainers
                                             .get()
@@ -218,7 +217,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                         let current_character_id = owned.character_id;
 
                                                                                         view! {
-                                                                                            <div class="card bg-base-200 border border-base-300 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 shadow-sm">
+                                                                                            <div class="panel p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
                                                                                                 <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden flex-grow">
                                                                                                     <div class="flex flex-col">
                                                                                                         <span class="font-bold truncate text-lg">{retainer_name}</span>
@@ -232,7 +231,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                                             {t!(i18n, retainers_assign_character)}
                                                                                                         </label>
                                                                                                         <select
-                                                                                                            class="select select-sm select-bordered w-full"
+                                                                                                            class="select input-sm w-full"
                                                                                                             class:opacity-50=move || {
                                                                                                                 assign_character.pending().get() &&
                                                                                                                 assign_character.input().get().map(|(id, _)| id == owned_id).unwrap_or_default()
@@ -276,7 +275,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                                                 && input_id == owned_id
                                                                                                             {
                                                                                                                 return Some(view! {
-                                                                                                                    <span class="text-error text-xs ml-1">
+                                                                                                                    <span class="text-red-400 text-xs ml-1">
                                                                                                                         {t!(i18n, retainers_assign_error)} ": " {e.to_string()}
                                                                                                                     </span>
                                                                                                                 }.into_any());
@@ -287,7 +286,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                                 </div>
                                                                                                 <div class="flex items-center">
                                                                                                     <button
-                                                                                                        class="btn btn-sm btn-error btn-outline"
+                                                                                                        class="btn-danger"
                                                                                                         on:pointerdown=move |e| e.stop_propagation()
                                                                                                         on:click=move |_| {
                                                                                                             let _ = remove_retainer.dispatch(owned_id);
@@ -311,7 +310,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                     Err(e) => {
                                                         Either::Right(
                                                             view! {
-                                                                <div class="alert alert-error">
+                                                                <div class="text-red-400 bg-red-950/20 rounded-lg border border-red-500/30 p-3">
                                                                     <span>{t!(i18n, retainers_error_loading)} {e.to_string()}</span>
                                                                 </div>
                                                             },
@@ -325,14 +324,14 @@ pub fn EditRetainers() -> impl IntoView {
                             <div class="retainer-search panel p-6 flex flex-col w-full lg:w-1/2 gap-4">
                                 <h2 class="text-2xl font-bold mb-2">{t!(i18n, retainers_add_title)}</h2>
                                 <input
-                                    class="input w-full bg-base-200"
+                                    class="input w-full"
                                     prop:value=retainer_search
                                     on:input=move |input| set_retainer_search(event_target_value(&input))
                                     placeholder=t_string!(i18n, retainers_search_placeholder).to_string()
                                 />
                                 <div class="retainer-results flex flex-col gap-2">
                                     <Suspense fallback=move || {
-                                        view! { <Loading /> }
+                                        view! { <BoxSkeleton rows=3 /> }
                                     }>
                                         {move || {
                                             search_results
@@ -349,7 +348,7 @@ pub fn EditRetainers() -> impl IntoView {
                                                                             children=move |retainer| {
                                                                                 let world = AnySelector::World(retainer.world_id);
                                                                                 view! {
-                                                                                    <div class="card bg-base-200 border border-base-300 flex-row gap-2 p-3 items-center rounded-xl shadow-sm justify-between">
+                                                                                    <div class="panel flex-row gap-2 p-3 items-center rounded-xl justify-between">
                                                                                         <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 overflow-hidden">
                                                                                             <span class="font-bold truncate">{retainer.name}</span>
                                                                                             <div class="opacity-80 text-sm">
@@ -357,8 +356,9 @@ pub fn EditRetainers() -> impl IntoView {
                                                                                             </div>
                                                                                         </div>
                                                                                         <button
-                                                                                            class:btn-disabled=move || is_retainer_owned(retainer.id)
-                                                                                            class="btn btn-primary btn-sm"
+                                                                                            class="btn-primary"
+                                                                                            class:opacity-50=move || is_retainer_owned(retainer.id)
+                                                                                            disabled=move || is_retainer_owned(retainer.id)
                                                                                             on:click=move |_| {
                                                                                                 let _ = claim.dispatch(retainer.id);
                                                                                             }

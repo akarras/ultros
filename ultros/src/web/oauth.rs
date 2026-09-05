@@ -13,15 +13,18 @@ use oauth2::{
     EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RevocationUrl, Scope,
     StandardRevocableToken, TokenResponse, TokenUrl, basic::BasicClient,
 };
-use poise::serenity_prelude::Http;
+use poise::serenity_prelude::{self as serenity, Http};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Formatter},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Instant};
 use ultros_db::UltrosDb;
 
 use super::error::{ApiError, WebError};
@@ -132,6 +135,64 @@ impl Display for OAuthScope {
 
 const LOGIN_NEXT_COOKIE: &str = "login_next";
 
+/// The cookie the Discord OAuth access token is stored in.
+pub(crate) const DISCORD_AUTH_COOKIE: &str = "discord_auth";
+
+/// Whether `discord_auth` is written with `Secure`.
+///
+/// Production is https-only, so the cookie is `Secure` there. The `test-auth`
+/// build exists so the E2E harness can drive login over plain http, where a
+/// `Secure` cookie is dropped on arrival — so that build, and only that build,
+/// omits the flag. The write and the removal both read this one constant: a
+/// removal that disagreed with the write here would be thrown away in exactly
+/// the build where the write was kept.
+const DISCORD_AUTH_SECURE: bool = !cfg!(feature = "test-auth");
+
+/// The attributes every `discord_auth` cookie carries, applied by both the
+/// write and the removal so the two cannot drift apart.
+///
+/// A browser files a stored cookie under `(name, domain, path)` alone.
+/// `SameSite`, `Secure` and `HttpOnly` are not part of that key, but `Path`
+/// is — so a removal that leaves `Path` off is matched against the *document's*
+/// default path rather than the cookie's `/`. From `/` the delete happens to
+/// land; from a nested route such as `/api/v1/list/5`, which is where
+/// [`ApiError::DiscordTokenInvalid`] is answered, it does not, and an invalid
+/// Discord token never clears — the user stays in a broken auth state until
+/// they clear cookies by hand. Neither sets `Domain`, which leaves both
+/// host-only for the serving host and keeps that half of the key matching too.
+///
+/// This is the server-side counterpart of the client-side fix in #1258.
+fn set_discord_auth_attributes(cookie: &mut Cookie<'static>) {
+    cookie.set_secure(DISCORD_AUTH_SECURE);
+    cookie.set_same_site(SameSite::Lax);
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+}
+
+/// The cookie that stores `token` for a logged-in session.
+pub(crate) fn discord_auth_cookie(token: String) -> Cookie<'static> {
+    let mut cookie = Cookie::new(DISCORD_AUTH_COOKIE, token);
+    set_discord_auth_attributes(&mut cookie);
+    cookie.make_permanent();
+    cookie
+}
+
+/// The cookie that tells a browser to drop the stored `discord_auth`.
+///
+/// Hand this to `CookieJar::remove` instead of a bare
+/// `Cookie::from("discord_auth")`. `remove` calls [`Cookie::make_removal`] on
+/// whatever it is given (cookie 0.18.2, `jar.rs:233`), which blanks the value
+/// and back-dates the expiry but keeps only the attributes already on that
+/// cookie — so they have to be put there first. A cookie read back out of the
+/// jar is no substitute: a browser sends `Cookie:` name/value pairs with no
+/// attributes at all, so the parsed cookie has an empty `Path` too.
+pub(crate) fn discord_auth_removal_cookie() -> Cookie<'static> {
+    let mut cookie = Cookie::new(DISCORD_AUTH_COOKIE, "");
+    set_discord_auth_attributes(&mut cookie);
+    cookie.make_removal();
+    cookie
+}
+
 #[derive(Deserialize, Default)]
 pub struct LoginParameters {
     next: Option<String>,
@@ -181,13 +242,16 @@ pub async fn begin_login(
         CookieBuilder::new("pkce_challenge", pkce_challenge.as_str().to_string())
             .same_site(SameSite::Strict)
             .secure(true)
-            .http_only(true),
+            .http_only(true)
+            .path("/")
+            .build(),
     );
     let cookies = cookies.add(
         CookieBuilder::new("pkce_verifier", pkce_verifier.secret().clone())
             .same_site(SameSite::Lax)
             .secure(true)
             .http_only(true)
+            .path("/")
             .build(),
     );
 
@@ -206,6 +270,7 @@ pub async fn begin_login(
             .same_site(SameSite::Lax)
             .secure(true)
             .http_only(true)
+            .path("/")
             .build(),
     );
 
@@ -250,19 +315,15 @@ pub async fn redirect(
     };
     let mut request = config.inner.client.exchange_code(code);
     request = request.set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier));
-    let token = request
-        .request_async(&config.inner.http_client)
-        .await?
-        .access_token()
-        .secret()
-        .clone();
+    let response = request.request_async(&config.inner.http_client).await?;
+    let token = response.access_token().secret().clone();
     // store the token into a cookie
-    let mut cookie = Cookie::new("discord_auth", token);
-    cookie.set_secure(true);
-    cookie.set_same_site(SameSite::Lax);
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.make_permanent();
+    let mut cookie = discord_auth_cookie(token);
+    if let Some(expires_in) = response.expires_in() {
+        cookie.set_max_age(Duration::seconds(
+            expires_in.as_secs().min(i64::MAX as u64) as i64
+        ));
+    }
     cookies = cookies.add(cookie);
     Ok((cookies, Redirect::to(&redirect_to)))
 }
@@ -278,53 +339,143 @@ pub async fn logout(
         .ok_or(WebError::NotAuthenticated)?;
 
     let token_value = cookie.value().to_string();
-    cache.remove_token(&token_value).await;
-
-    let token = AccessToken::new(token_value);
-    // now try to revoke it async style
-    if let Ok(revocable_token) = config
-        .inner
-        .client
-        .revoke_token(StandardRevocableToken::AccessToken(token))
-    {
-        if let Err(e) = revocable_token
-            .request_async(&config.inner.http_client)
-            .await
+    invalidate_session_on_logout(&cache, &token_value, async {
+        let token = AccessToken::new(token_value.clone());
+        if let Ok(revocable_token) = config
+            .inner
+            .client
+            .revoke_token(StandardRevocableToken::AccessToken(token))
         {
-            tracing::warn!("Failed to revoke discord token on logout: {}", e);
+            if let Err(e) = revocable_token
+                .request_async(&config.inner.http_client)
+                .await
+            {
+                tracing::warn!("Failed to revoke discord token on logout: {}", e);
+            }
         }
-    }
+    })
+    .await;
 
-    let cookie_jar = cookie_jar.remove(cookie);
+    let cookie_jar = cookie_jar.remove(discord_auth_removal_cookie());
     Ok((cookie_jar, Redirect::to("/")))
 }
 
-#[derive(Debug, Clone)]
+async fn invalidate_session_on_logout(
+    cache: &AuthUserCache,
+    token: &str,
+    revoke: impl std::future::Future<Output = ()>,
+) {
+    cache.remove_token(token).await;
+    revoke.await;
+    // A validation may have started after the first invalidation but before
+    // Discord processed the revocation. Evict its result and invalidate its
+    // generation too, including when revocation failed or timed out.
+    cache.remove_token(token).await;
+}
+
+/// Positive authentication results are valid for at most five minutes. Reads
+/// never extend this deadline, so active sessions also revalidate with Discord.
+const AUTH_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const AUTH_CACHE_CAPACITY: usize = 10_000;
+
+#[derive(Clone)]
 pub struct AuthUserCache {
-    users: Arc<RwLock<HashMap<String, AuthDiscordUser>>>,
+    users: Arc<RwLock<HashMap<String, CachedAuthUser>>>,
+    invalidation: Arc<AtomicU64>,
+}
+
+struct CachedAuthUser {
+    user: AuthDiscordUser,
+    expires_at: Instant,
+}
+
+// Cache keys are bearer credentials; never include them in diagnostic output.
+impl fmt::Debug for AuthUserCache {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthUserCache").finish_non_exhaustive()
+    }
 }
 
 impl AuthUserCache {
     pub fn new() -> Self {
         Self {
             users: Arc::default(),
+            invalidation: Arc::default(),
         }
     }
 
-    async fn store_user(&self, token: &str, user: AuthDiscordUser) {
-        let mut users = self.users.write().await;
-        users.insert(token.to_string(), user);
+    #[cfg(any(test, feature = "test-auth"))]
+    pub(crate) async fn store_user(&self, token: &str, user: AuthDiscordUser) {
+        self.store_user_with_capacity(
+            token,
+            user,
+            AUTH_CACHE_CAPACITY,
+            self.invalidation.load(Ordering::Relaxed),
+        )
+        .await;
     }
 
-    async fn get_user(&self, token: &str) -> Option<AuthDiscordUser> {
+    async fn store_user_with_capacity(
+        &self,
+        token: &str,
+        user: AuthDiscordUser,
+        capacity: usize,
+        validation_generation: u64,
+    ) {
+        let mut users = self.users.write().await;
+        // A validation that started before logout/account deletion must not
+        // repopulate the cache after invalidation. An unrelated logout may
+        // cause one extra validation, but keeps coordination state bounded.
+        if self.invalidation.load(Ordering::Relaxed) != validation_generation {
+            return;
+        }
+        let now = Instant::now();
+        users.retain(|_, entry| entry.expires_at > now);
+        if capacity == 0 {
+            return;
+        }
+        if users.len() >= capacity && !users.contains_key(token) {
+            let oldest = users
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(token, _)| token.clone());
+            if let Some(oldest) = oldest {
+                users.remove(&oldest);
+            }
+        }
+        users.insert(
+            token.to_string(),
+            CachedAuthUser {
+                user,
+                expires_at: now + AUTH_CACHE_TTL,
+            },
+        );
+    }
+
+    pub(crate) async fn get_user(&self, token: &str) -> Option<AuthDiscordUser> {
         let users = self.users.read().await;
-        users.get(token).cloned()
+        users
+            .get(token)
+            .filter(|entry| entry.expires_at > Instant::now())
+            .map(|entry| entry.user.clone())
     }
 
     pub(crate) async fn remove_token(&self, token: &str) {
         let mut users = self.users.write().await;
         users.remove(token);
+        self.invalidation.fetch_add(1, Ordering::Relaxed);
     }
+
+    pub(crate) async fn remove_user(&self, user_id: u64) {
+        let mut users = self.users.write().await;
+        users.retain(|_, entry| entry.user.id != user_id);
+        self.invalidation.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn invalid_discord_credentials(error: &serenity::Error) -> bool {
+    matches!(error, serenity::Error::Http(error)
+        if error.status_code().is_some_and(|status| matches!(status.as_u16(), 401 | 403)))
 }
 
 #[derive(Debug, Clone)]
@@ -354,15 +505,26 @@ where
         let State(user_cache): State<AuthUserCache> =
             State::from_request_parts(parts, state).await.unwrap();
 
+        let validation_generation = user_cache.invalidation.load(Ordering::Relaxed);
         if let Some(user) = user_cache.get_user(discord_auth.value()).await {
             return Ok(user);
         }
 
         let http = Http::new(&format!("Bearer {}", discord_auth.value()));
-        let user = http
-            .get_current_user()
-            .await
-            .map_err(|_| ApiError::DiscordTokenInvalid(cookie_jar))?;
+        let user =
+            match tokio::time::timeout(std::time::Duration::from_secs(10), http.get_current_user())
+                .await
+            {
+                Ok(Ok(user)) => user,
+                Ok(Err(error)) if invalid_discord_credentials(&error) => {
+                    user_cache.remove_token(discord_auth.value()).await;
+                    return Err(ApiError::DiscordTokenInvalid(cookie_jar));
+                }
+                // Fail closed, but preserve the browser's cookie on a Discord
+                // outage or rate limit so retrying doesn't require another login.
+                Ok(Err(error)) => return Err(anyhow::anyhow!(error).into()),
+                Err(_) => return Err(anyhow::anyhow!("Discord authentication timed out").into()),
+            };
         let avatar_url = user
             .static_avatar_url()
             .unwrap_or_else(|| user.default_avatar_url());
@@ -375,7 +537,12 @@ where
             .get_or_create_discord_user(user.id, user.name.clone())
             .await?;
         user_cache
-            .store_user(discord_auth.value(), user.clone())
+            .store_user_with_capacity(
+                discord_auth.value(),
+                user.clone(),
+                AUTH_CACHE_CAPACITY,
+                validation_generation,
+            )
             .await;
         Ok(user)
     }
@@ -453,7 +620,217 @@ impl DiscordAuthConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_login_next;
+    use super::*;
+
+    fn cached_user(id: u64) -> AuthDiscordUser {
+        AuthDiscordUser {
+            id,
+            name: format!("user-{id}"),
+            avatar_url: String::new(),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn active_sessions_expire_without_sliding_the_deadline() {
+        let cache = AuthUserCache::new();
+        cache.store_user("token", cached_user(1)).await;
+        tokio::time::advance(AUTH_CACHE_TTL / 2).await;
+        assert_eq!(cache.get_user("token").await.unwrap().id, 1);
+        tokio::time::advance(AUTH_CACHE_TTL / 2).await;
+        assert!(cache.get_user("token").await.is_none());
+        // A newly validated result is usable again, with fresh profile data.
+        cache.store_user("token", cached_user(2)).await;
+        assert_eq!(cache.get_user("token").await.unwrap().id, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cache_is_bounded_and_reclaims_expired_entries() {
+        let cache = AuthUserCache::new();
+        cache
+            .store_user_with_capacity("old", cached_user(1), 2, 0)
+            .await;
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        cache
+            .store_user_with_capacity("new", cached_user(2), 2, 0)
+            .await;
+        cache
+            .store_user_with_capacity("third", cached_user(3), 2, 0)
+            .await;
+        assert!(cache.get_user("old").await.is_none());
+        assert_eq!(cache.users.read().await.len(), 2);
+        cache
+            .store_user_with_capacity("new", cached_user(4), 2, 0)
+            .await;
+        assert!(cache.get_user("third").await.is_some());
+        tokio::time::advance(AUTH_CACHE_TTL).await;
+        cache
+            .store_user_with_capacity("last", cached_user(5), 2, 0)
+            .await;
+        assert_eq!(cache.users.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn logout_removes_one_token_and_account_deletion_removes_all_sessions() {
+        let cache = AuthUserCache::new();
+        cache.store_user("first", cached_user(1)).await;
+        cache.store_user("second", cached_user(1)).await;
+        cache.store_user("other-user", cached_user(2)).await;
+        cache.remove_token("first").await;
+        assert!(cache.get_user("first").await.is_none());
+        assert!(cache.get_user("second").await.is_some());
+        cache.remove_user(1).await;
+        assert!(cache.get_user("second").await.is_none());
+        assert!(cache.get_user("other-user").await.is_some());
+        assert!(!format!("{cache:?}").contains("other-user"));
+    }
+
+    #[tokio::test]
+    async fn validation_started_before_logout_cannot_repopulate_cache() {
+        let cache = AuthUserCache::new();
+        let generation = cache.invalidation.load(Ordering::Relaxed);
+        cache.remove_token("token").await;
+        cache
+            .store_user_with_capacity("token", cached_user(1), 2, generation)
+            .await;
+        assert!(cache.get_user("token").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn logout_invalidates_validations_started_during_revocation() {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let request_entered = entered.clone();
+        let release_request = release.clone();
+        let cache = AuthUserCache::new();
+        cache.store_user("token", cached_user(1)).await;
+        let logout_cache = cache.clone();
+        // OAuth2 deliberately refuses HTTP revocation endpoints. Inject the
+        // awaited operation instead of relying on an insecure local mock URL.
+        let logout = tokio::spawn(async move {
+            invalidate_session_on_logout(&logout_cache, "token", async move {
+                request_entered.notify_one();
+                release_request.acquire().await.unwrap().forget();
+            })
+            .await;
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        // This validation started after logout's first invalidation while
+        // Discord could still consider the token valid.
+        let generation = cache.invalidation.load(Ordering::Relaxed);
+        cache
+            .store_user_with_capacity("token", cached_user(1), 2, generation)
+            .await;
+        assert!(cache.get_user("token").await.is_some());
+        release.add_permits(1);
+        tokio::time::timeout(std::time::Duration::from_secs(2), logout)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            cache.get_user("token").await.is_none(),
+            "logout must evict validation completed during revocation"
+        );
+        cache
+            .store_user_with_capacity("token", cached_user(1), 2, generation)
+            .await;
+        assert!(
+            cache.get_user("token").await.is_none(),
+            "a late completion from that generation must also be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn discord_outages_and_rate_limits_do_not_invalidate_credentials() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        for status in [401, 403, 429, 500] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let app = axum::Router::new().fallback(move || async move {
+                (
+                    axum::http::StatusCode::from_u16(status).unwrap(),
+                    axum::Json(serde_json::json!({"code": 0, "message": "test response"})),
+                )
+            });
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let http = serenity::HttpBuilder::new("Bearer test-token")
+                .proxy(format!("http://{address}"))
+                .ratelimiter_disabled(true)
+                .build();
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(5), http.get_current_user())
+                    .await;
+            server.abort();
+            let error = result.unwrap().unwrap_err();
+            assert_eq!(
+                invalid_discord_credentials(&error),
+                matches!(status, 401 | 403),
+                "status {status}"
+            );
+        }
+    }
+
+    /// Every attribute the browser matches a removal on must be repeated from
+    /// the write, or the removal is filed against a different stored cookie
+    /// and the real one survives. This is the invariant that keeps `logout`,
+    /// `delete_user` and `ApiError::DiscordTokenInvalid` able to log a user
+    /// out at all from a nested route.
+    #[test]
+    fn discord_auth_removal_matches_the_writes_attributes() {
+        let write = discord_auth_cookie("a-token".to_string());
+        let removal = discord_auth_removal_cookie();
+
+        assert_eq!(removal.name(), write.name());
+        assert_eq!(
+            removal.path(),
+            write.path(),
+            "Path is part of the match key"
+        );
+        assert_eq!(
+            removal.domain(),
+            write.domain(),
+            "Domain is part of the match key"
+        );
+        assert_eq!(removal.secure(), write.secure());
+        assert_eq!(removal.http_only(), write.http_only());
+        assert_eq!(removal.same_site(), write.same_site());
+    }
+
+    /// ...and it has to actually expire. Matching attributes alone would just
+    /// overwrite the token with an empty value the browser keeps forever.
+    #[test]
+    fn discord_auth_removal_expires_in_the_past() {
+        let removal = discord_auth_removal_cookie();
+
+        assert_eq!(removal.value(), "");
+        assert_eq!(removal.max_age(), Some(Duration::seconds(0)));
+        let expires = removal
+            .expires_datetime()
+            .expect("a removal must carry an expiry");
+        assert!(
+            expires < cookie::time::OffsetDateTime::now_utc(),
+            "expiry must be in the past, got {expires}"
+        );
+    }
+
+    /// The end-to-end shape, through the jar the handlers actually use: what
+    /// reaches the browser as `Set-Cookie` must still carry `Path=/`.
+    ///
+    /// `CookieJar::remove` calls `make_removal` on the cookie it is handed and
+    /// keeps only the attributes already on it, so passing a bare
+    /// `Cookie::from("discord_auth")` — what all three removal sites did
+    /// before — produced `Path: None` here.
+    #[test]
+    fn discord_auth_removal_reaches_the_browser_with_the_path() {
+        let mut jar = cookie::CookieJar::new();
+        jar.add_original(discord_auth_cookie("a-token".to_string()));
+        jar.remove(discord_auth_removal_cookie());
+
+        let removal = jar.delta().next().expect("a removal must be emitted");
+        assert_eq!(removal.path(), Some("/"));
+        assert_eq!(removal.value(), "");
+    }
 
     #[test]
     fn safe_login_next_accepts_same_origin_relative_paths() {
@@ -503,10 +880,7 @@ pub mod test_auth {
         extract::{Query, State},
         response::Redirect,
     };
-    use axum_extra::extract::{
-        PrivateCookieJar,
-        cookie::{Cookie, SameSite},
-    };
+    use axum_extra::extract::PrivateCookieJar;
     use serde::Deserialize;
     use ultros_db::UltrosDb;
 
@@ -549,13 +923,10 @@ pub mod test_auth {
         };
         cache.store_user(&token, user).await;
 
-        let mut cookie = Cookie::new("discord_auth", token);
-        // Mirror oauth::redirect, but allow non-https so local E2E works.
-        cookie.set_secure(false);
-        cookie.set_same_site(SameSite::Lax);
-        cookie.set_http_only(true);
-        cookie.set_path("/");
-        cookie.make_permanent();
+        // Same builder as `oauth::redirect`. It drops `Secure` under this
+        // feature so local E2E works over plain http — see
+        // `DISCORD_AUTH_SECURE` — and the removal follows it there.
+        let cookie = super::discord_auth_cookie(token);
 
         let redirect = if params.redirect.starts_with('/') {
             params.redirect.as_str()

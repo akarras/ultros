@@ -34,7 +34,7 @@ pub(crate) async fn get_market_heat(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, world_id, "market_heat CH query failed");
-            anyhow::anyhow!("ClickHouse market_heat query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("market_heat", e)
         })?;
 
     // The query returns only categories that had activity. We pad to the

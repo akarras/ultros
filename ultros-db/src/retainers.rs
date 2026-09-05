@@ -525,4 +525,60 @@ mod tests {
                 .unwrap()
         );
     }
+
+    /// A claim is per-user bookkeeping, not proof of identity, so a character
+    /// already claimed by someone else must still be claimable. Before the
+    /// primary key became `(ffxiv_character_id, discord_user_id)` the second
+    /// claim collided with the first and the earliest claimer squatted the
+    /// character permanently.
+    #[tokio::test]
+    #[ignore = "requires live DB; no test_helpers scaffolding in this crate yet"]
+    async fn two_users_can_claim_the_same_character() {
+        let db = test_db().await;
+        let owner: u64 = 9_000_000_000_000_006;
+        let other_user: u64 = 9_000_000_000_000_007;
+        let seed = unique_seed();
+        let (_owned, character) = create_owned_retainer_fixture(&db, seed, owner).await;
+
+        db.get_or_create_discord_user(other_user, format!("other-{seed}"))
+            .await
+            .unwrap();
+        db.create_owned_character(other_user as i64, character.id)
+            .await
+            .unwrap();
+
+        assert!(
+            db.user_owns_character(owner as i64, character.id)
+                .await
+                .unwrap(),
+            "the first claim must survive a second user claiming the same character"
+        );
+        assert!(
+            db.user_owns_character(other_user as i64, character.id)
+                .await
+                .unwrap()
+        );
+
+        // Claiming again is a no-op rather than an error.
+        db.create_owned_character(other_user as i64, character.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_all_characters_for_discord_user(other_user as i64)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Unclaiming is scoped to the user: the other claimant keeps theirs.
+        db.delete_owned_character(other_user as i64, character.id)
+            .await
+            .unwrap();
+        assert!(
+            db.user_owns_character(owner as i64, character.id)
+                .await
+                .unwrap()
+        );
+    }
 }

@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "title": "Turning ads back on works again",
+  "blurb": "Switching \"hide ads\" off in Settings had no effect: the setting was never actually cleared, so ads stayed hidden and the toggle flipped itself back on after a reload. Turning the setting off now sticks, and ads come back.",
+  "link": "/settings",
+  "importance": "medium"
+}

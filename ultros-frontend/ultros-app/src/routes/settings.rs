@@ -1,11 +1,10 @@
 use crate::api::{
-    check_character_verification, claim_character, delete_user, get_character_verifications,
-    get_characters, search_characters, unclaim_character,
+    claim_character, delete_user, get_characters, search_characters, unclaim_character,
 };
 use crate::components::meta::{MetaDescription, MetaRobotsNoIndex, MetaTitle};
 use crate::components::{
-    ad::*, crafter_settings::CrafterSettings, loading::*, toggle::Toggle, world_name::*,
-    world_picker::*,
+    ad::*, crafter_settings::CrafterSettings, loading::*, skeleton::BoxSkeleton, toggle::Toggle,
+    world_name::*, world_picker::*,
 };
 use crate::error::AppResult;
 use crate::global_state::cookies::Cookies;
@@ -19,13 +18,15 @@ use leptos::either::{Either, EitherOf3};
 use leptos::prelude::*;
 use leptos::reactive::wrappers::write::IntoSignalSetter;
 use leptos::task::spawn_local;
+use leptos_i18n::I18nContext;
 
 use icondata as i;
 use log::info;
+use ultros_api_types::FfxivCharacter;
 use ultros_api_types::world_helper::AnySelector;
 
 #[component]
-fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> impl IntoView {
+fn AddCharacterMenu(claim_character: Action<i32, AppResult<FfxivCharacter>>) -> impl IntoView {
     let (is_open, set_is_open) = signal(false);
     let (character_search, set_character_search) = signal("".to_string());
     let search_action = Action::new(move |search: &String| search_characters(search.to_string()));
@@ -50,13 +51,16 @@ fn AddCharacterMenu(claim_character: Action<i32, AppResult<(i32, String)>>) -> i
                     view! {
                         <div class="mt-4 p-4 rounded-xl bg-brand-900/20 border border-white/10 ">
                             {match result {
-                                Ok((_id, value)) => {
+                                Ok(character) => {
+                                    let name = format!(
+                                        "{} {}",
+                                        character.first_name,
+                                        character.last_name,
+                                    );
                                     Either::Left(
                                         view! {
                                             <div class="text-green-400">
-                                                {t!(i18n, claim_success_1)}
-                                                <span class="font-medium">{value}</span>
-                                                {t!(i18n, claim_success_2)}
+                                                {t!(i18n, character_claimed, name = name)}
                                             </div>
                                         },
                                     )
@@ -335,22 +339,89 @@ fn LanguageSettings() -> impl IntoView {
 }
 
 #[component]
+fn LabsSettings() -> impl IntoView {
+    use crate::global_state::labs::{LABS, LABS_COOKIE, Labs};
+    // Shipping the last experiment deletes its `LABS` entry; an empty
+    // "Labs" box with nothing to toggle would outlive it.
+    if LABS.is_empty() {
+        return ().into_any();
+    }
+    let cookies = use_context::<Cookies>().unwrap();
+    let (labs, set_labs) = cookies.use_cookie_typed::<_, Labs>(LABS_COOKIE);
+    let i18n = use_i18n();
+    view! {
+        <div class="panel p-6 rounded-xl">
+            <h3 class="text-2xl font-bold text-[color:var(--brand-fg)] mb-2">{t!(i18n, labs_title)}</h3>
+            <p class="text-sm text-[color:var(--color-text-muted)] mb-4">{t!(i18n, labs_desc)}</p>
+            <div class="flex flex-col gap-4">
+                {LABS.iter().map(|lab| {
+                    let token = lab.token;
+                    view! {
+                        <div class="grid md:grid-cols-3 gap-4 items-center">
+                            <div class="col-span-2">
+                                <div class="font-semibold text-[color:var(--color-text)]">{lab_title(i18n, token)}</div>
+                                <div class="text-sm text-[color:var(--color-text-muted)]">{lab_desc(i18n, token)}</div>
+                            </div>
+                            <Toggle
+                                checked=Signal::derive(move || labs().unwrap_or_default().has(token))
+                                set_checked=(move |checked: bool| {
+                                    let mut current = labs.get_untracked().unwrap_or_default();
+                                    if checked { current.enabled.insert(token.to_string()); } else { current.enabled.remove(token); }
+                                    // Always write the set, even when it is empty: the shared cookie
+                                    // helper's removal path does not carry the path/SameSite/Secure
+                                    // attributes the write used, so a delete is silently ignored by the
+                                    // browser and the lab could never be switched off. An empty set
+                                    // serializes to `LABS=` and parses back to "nothing enabled".
+                                    set_labs(Some(current));
+                                }).into_signal_setter()
+                                checked_label=t_string!(i18n, labs_on)
+                                unchecked_label=t_string!(i18n, labs_off)
+                            />
+                        </div>
+                    }
+                }).collect_view()}
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn lab_title(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
+    match token {
+        crate::global_state::labs::LAB_ANALYZER_RECIPE => {
+            t_string!(i18n, labs_analyzer_recipe_title).to_string()
+        }
+        _ => token.to_string(),
+    }
+}
+
+fn lab_desc(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
+    match token {
+        crate::global_state::labs::LAB_ANALYZER_RECIPE => {
+            t_string!(i18n, labs_analyzer_recipe_desc).to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+#[component]
 pub fn Settings() -> impl IntoView {
     use crate::components::theme_picker::ThemePicker;
     let i18n = use_i18n();
     view! {
-        <div class="main-content p-6">
+        <div class="main-content p-2 sm:p-6">
             <MetaTitle title=move || t_string!(i18n, settings_page_title).to_string() />
             <MetaDescription text=move || t_string!(i18n, settings_page_desc).to_string() />
             <MetaRobotsNoIndex />
 
-            <div class="container mx-auto max-w-7xl space-y-6">
+            <div class="space-y-6">
                 <h1 class="text-3xl font-bold text-[color:var(--brand-fg)]">{t!(i18n, settings)}</h1>
                 <LanguageSettings />
                 <HomeWorldPicker />
                 <CrafterSettings />
                 <ThemePicker />
                 <AdChoice />
+                <LabsSettings />
             </div>
         </div>
     }
@@ -360,28 +431,18 @@ pub fn Settings() -> impl IntoView {
 pub fn Profile() -> impl IntoView {
     let claim_character = Action::new(move |id: &i32| claim_character(*id));
     let unclaim_character = Action::new(move |id: &i32| unclaim_character(*id));
-    let check_verification = Action::new(move |id: &i32| check_character_verification(*id));
     let i18n = use_i18n();
 
     let characters = Resource::new(
-        move || {
-            (
-                unclaim_character.version()(),
-                check_verification.version()(),
-            )
-        },
+        move || (unclaim_character.version()(), claim_character.version()()),
         move |_| get_characters(),
-    );
-    let pending_verifications = Resource::new(
-        move || (check_verification.version()(), claim_character.version()()),
-        move |_| get_character_verifications(),
     );
 
     view! {
         <MetaTitle title=move || t_string!(i18n, profile_meta_title).to_string() />
         <MetaRobotsNoIndex />
-        <div class="main-content p-6">
-            <div class="container mx-auto max-w-7xl space-y-6">
+        <div class="main-content p-2 sm:p-6">
+            <div class="space-y-6">
                 <div class="flex items-center justify-between">
                     <h1 class="text-3xl font-bold text-brand-300">{t!(i18n, profile_settings)}</h1>
                 </div>
@@ -397,64 +458,8 @@ pub fn Profile() -> impl IntoView {
                         <AddCharacterMenu claim_character />
                     </div>
 
-                    // Pending Verifications
-                    <Suspense fallback=move || {
-                        view! {
-                            <div class="flex items-center justify-center p-8">
-                                <Loading />
-                            </div>
-                        }
-                            .into_any()
-                    }>
-                        {move || {
-                            pending_verifications
-                                .get()
-                                .map(|verifications| match verifications {
-                                    Ok(verifications) if !verifications.is_empty() => {
-                                        EitherOf3::A(
-                                            view! {
-                                                <div class="mb-6 space-y-4">
-                                                    <h3 class="text-xl font-semibold text-brand-200">
-                                                        {t!(i18n, pending_verifications)}
-                                                    </h3>
-                                                    <div class="space-y-3">
-                                                        {verifications
-                                                            .into_iter()
-                                                            .map(|_verification| {
-                                                                view! {
-                                                                    // ... rest of the verification view ...
-                                                                    <div class="p-4 rounded-lg bg-brand-950/30 border border-white/5 space-y-2"></div>
-                                                                }
-                                                            })
-                                                            .collect::<Vec<_>>()
-                                                            .into_any()}
-                                                    </div>
-                                                </div>
-                                            },
-                                        )
-                                    }
-                                    Ok(_) => EitherOf3::B(view! { <div></div> }),
-                                    Err(e) => {
-                                        EitherOf3::C(
-                                            view! {
-                                                <div class="p-4 rounded-lg bg-red-900/20 border border-red-800/30 text-red-400">
-                                                    {t!(i18n, unable_to_fetch_verifications)} {e.to_string()}
-                                                </div>
-                                            },
-                                        )
-                                    }
-                                })
-                        }}
-                    </Suspense>
-
                     // Character List
-                    <Suspense fallback=move || {
-                        view! {
-                            <div class="flex items-center justify-center p-8">
-                                <Loading />
-                            </div>
-                        }
-                    }>
+                    <Suspense fallback=move || view! { <BoxSkeleton rows=2 /> }>
                         {move || {
                             characters
                                 .get()

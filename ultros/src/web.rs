@@ -1,13 +1,14 @@
 mod alerts_websocket;
 pub(crate) mod api;
-pub(crate) mod character_verifier_service;
 pub(crate) mod country_code_decoder;
 pub(crate) mod error;
 pub(crate) mod item_card;
 pub(crate) mod list_permission;
 pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
+pub(crate) mod sale_stats_cache;
 pub(crate) mod sitemap;
+pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
 
@@ -17,8 +18,7 @@ use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
-use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::Cookie;
+use axum_extra::extract::PrivateCookieJar;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use futures::future::{try_join_all, try_join3};
 use hyper::header;
@@ -46,18 +46,23 @@ use ultros_api_types::price_series::{
     HqFilter, PriceBucket, PriceSeries, PriceSeriesEntry, SeriesGroup,
 };
 use ultros_api_types::retainer::RetainerListings;
-use ultros_api_types::user::group::{CreateGroup, UserGroup, UserGroupMember};
+use ultros_api_types::user::group::{
+    CreateGroup, CreateGroupFromGuild, CreateGroupInvite, DiscordManageableGuild, GroupInvite,
+    UserGroup, UserGroupMember,
+};
 use ultros_api_types::user::{
     AssignRetainerCharacter, OwnedRetainer, UserData, UserRetainerListings, UserRetainers,
 };
 use ultros_api_types::websocket::{ListEventData, ListingEventData};
 use ultros_api_types::world::WorldData;
 use ultros_api_types::{
-    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter,
-    FfxivCharacterVerification, Retainer, WorldItemLastUpdated,
+    ActiveListing, CompactSale, CurrentlyShownItem, ExtendedSaleHistory, FfxivCharacter, Retainer,
+    WorldItemLastUpdated,
 };
 use ultros_app::{LocalWorldData, shell};
-use ultros_charts::data::buckets::{bucket_seconds_for_span, snap_bucket_seconds, widen_bucket};
+use ultros_charts::data::buckets::{
+    bucket_seconds_for_span, narrow_bucket_for_actual_span, snap_bucket_seconds, widen_bucket,
+};
 use ultros_clickhouse::ClickHouseClient;
 use ultros_clickhouse::queries::PriceSeriesRow;
 use ultros_db::ActiveValue;
@@ -65,7 +70,8 @@ use ultros_db::world_data::world_cache::{AnyResult, AnySelector};
 use ultros_db::{UltrosDb, world_data::world_cache::WorldCache};
 use universalis::{ItemId, ListingView, UniversalisClient, WorldId};
 
-use self::character_verifier_service::CharacterVerifierService;
+use crate::character_claim::CharacterClaimService;
+
 use self::country_code_decoder::Region;
 use self::error::{ApiError, WebError};
 use self::oauth::{AuthDiscordUser, AuthUserCache};
@@ -83,9 +89,9 @@ use crate::web::api::endpoints::{
 use crate::web::api::real_time_data::real_time_data;
 use crate::web::api::{
     cheapest_per_world, get_best_deals, get_item_stats, get_market_heat, get_market_pulse,
-    get_movers, get_trends, post_resale_quality, post_sparklines, recent_sales,
+    get_movers, get_sale_stats, get_trends, post_resale_quality, post_sparklines, recent_sales,
 };
-use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index, world_sitemap};
+use crate::web::sitemap::{generic_pages_sitemap, item_sitemap, sitemap_index};
 use crate::web::{
     alerts_websocket::connect_websocket,
     item_card::item_card,
@@ -435,6 +441,43 @@ fn resolve_bucket_seconds(bucket: Option<i64>, span_secs: i64) -> i64 {
     }
 }
 
+/// How long a cached response stays servable, and — for an open-ended window
+/// — the grain [`open_window_cache_stamp`] quantizes its cache key onto.
+/// Deriving both from one place means exactly one entry per item/scope is live
+/// at a time: the key rolls over on the same schedule the entry expires on.
+///
+/// Capped at an hour so an open window is never served staler than that, and
+/// floored at a minute so a hypothetical sub-minute bucket couldn't turn the
+/// cache into a no-op. A closed window is immutable, so it just takes the cap.
+fn cache_ttl_secs(closed: bool, bucket_seconds: i64) -> u64 {
+    if closed {
+        3_600
+    } else {
+        (bucket_seconds as u64).clamp(60, 3_600)
+    }
+}
+
+/// Quantize an open-ended window's end onto a `grain`-second grid, for use in
+/// the **cache key only** — never for the window actually queried.
+///
+/// An open-ended request ends at "now", so feeding that raw timestamp into the
+/// cache key mints a fresh entry every second and the cache never hits.
+/// Rounding it onto the same grid as the entry's TTL keeps one live entry per
+/// item/scope, which is all the quantization was ever for.
+///
+/// This deliberately moves the *key* and not the queried window. Flooring the
+/// window itself — which both handlers used to do, at `bucket_seconds`
+/// granularity — drags the query's exclusive upper bound backwards, excluding
+/// every sale after the boundary. An open-ended "full history" request
+/// resolves to a 12-year span, the ladder duly picks its widest step (30
+/// days), and so the newest 0–30 days of sales silently vanished from every
+/// chart. Serving a slightly stale snapshot is the cache's job and is bounded
+/// by the TTL; narrowing the window is data loss and is not.
+fn open_window_cache_stamp(to_ts: i64, grain: i64) -> i64 {
+    let grain = grain.max(1);
+    to_ts - to_ts.rem_euclid(grain)
+}
+
 /// Uniform bin height covering `[lo, hi]` inclusive in `bins` steps, floored
 /// at 1 gil so degenerate windows (every sale at one price) still bin sanely.
 fn density_bin_width(lo: u32, hi: u32, bins: u16) -> f64 {
@@ -496,32 +539,59 @@ pub(crate) async fn build_price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let mut bucket_seconds = resolve_bucket_seconds(bucket, span_secs);
 
+    // The starting width is derived from the *requested* span, which for an
+    // open-ended "full history" request is years — while the data may only
+    // cover months. At that mismatch the ladder picks 30-day buckets and the
+    // whole history collapses into one or two points. So after the first
+    // pass, re-derive the width from the span the rows actually cover and
+    // re-query once if the ladder picks a narrower step (`may_narrow` keeps
+    // this to a single extra query; the inner loop still widens whenever a
+    // response would exceed MAX_BUCKETS).
+    let mut may_narrow = true;
     let rows = loop {
-        let rows = ultros_clickhouse::queries::price_series(
-            ch,
-            item_id,
-            &world_to_group,
-            group,
-            hq,
-            from,
-            to,
-            bucket_seconds,
-        )
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = ?e, item_id, "price_series CH query failed");
-            anyhow::anyhow!("ClickHouse price_series query failed: {e}")
-        })?;
+        let rows = loop {
+            let rows = ultros_clickhouse::queries::price_series(
+                ch,
+                item_id,
+                &world_to_group,
+                group,
+                hq,
+                from,
+                to,
+                bucket_seconds,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = ?e, item_id, "price_series CH query failed");
+                crate::web::error::ClickHouseQueryError::new("price_series", e)
+            })?;
 
-        if rows.len() <= MAX_BUCKETS {
-            break rows;
+            if rows.len() <= MAX_BUCKETS {
+                break rows;
+            }
+            match widen_bucket(bucket_seconds) {
+                Some(wider) => bucket_seconds = wider,
+                // Already at the top of the ladder: ship what we have rather
+                // than looping forever.
+                None => break rows,
+            }
+        };
+
+        if may_narrow {
+            may_narrow = false;
+            let first = rows.iter().map(|r| r.bucket).min();
+            let last = rows.iter().map(|r| r.bucket).max();
+            if let (Some(first), Some(last)) = (first, last) {
+                // Bucket timestamps are starts, so the last bucket extends
+                // one width past its own ts.
+                let actual_span = (last - first).num_seconds() + bucket_seconds;
+                if let Some(narrower) = narrow_bucket_for_actual_span(actual_span, bucket_seconds) {
+                    bucket_seconds = narrower;
+                    continue;
+                }
+            }
         }
-        match widen_bucket(bucket_seconds) {
-            Some(wider) => bucket_seconds = wider,
-            // Already at the top of the ladder: ship what we have rather
-            // than looping forever.
-            None => break rows,
-        }
+        break rows;
     };
 
     let total_sales: u64 = rows.iter().map(|r| r.sales).sum();
@@ -550,7 +620,7 @@ pub(crate) async fn build_price_series(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, item_id, "price_series raw_sales CH query failed");
-            anyhow::anyhow!("ClickHouse raw_sales query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("raw_sales", e)
         })?;
         Some(
             sales
@@ -637,19 +707,24 @@ async fn price_series(
     let span_secs = (to - from).num_seconds().max(1);
     let bucket_seconds = resolve_bucket_seconds(query.bucket, span_secs);
 
-    // Snap an open-ended `to` down to the current bucket boundary so live
-    // views share a cache entry instead of minting a unique key per second.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    // A closed window is immutable; an open one is a snapshot of "now" and
+    // stays servable until its TTL expires.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+
+    // `to` itself is left at `now`: only the cache key is quantized, so live
+    // views still share an entry without the query window losing its newest
+    // sales. See [`open_window_cache_stamp`] for why flooring `to` is a bug.
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
     } else {
-        to
+        to.timestamp()
     };
 
     // The cache key is built from the *pre-widening* `bucket_seconds` — the
     // value resolved above from the request, before `build_price_series`'s
-    // internal loop potentially widens it in response to how much data comes
-    // back. This is deliberate: checking the cache has to happen before
+    // internal loop potentially widens (or narrows) it in response to how
+    // much data comes back. This is deliberate: checking the cache has to happen before
     // running the query at all (that's the entire point — skip the CH scan
     // on a hit), and the widened bucket is only known *after* the query
     // runs. Building the key post-query would mean always querying first,
@@ -669,18 +744,11 @@ async fn price_series(
         item_id,
         scope: world.clone(),
         from: from.timestamp(),
-        to: to.timestamp(),
+        to: cache_to,
         bucket: bucket_seconds,
         group: group.as_str(),
         hq: hq.as_str(),
         bins: 0,
-    };
-    // A closed window is immutable; an open one only changes when the current
-    // bucket rolls over.
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
     };
     if let Some(hit) = cache.get(&cache_key) {
         return Ok(cached_json(hit, ttl));
@@ -723,6 +791,36 @@ fn cached_json(body: String, ttl: std::time::Duration) -> axum::response::Respon
         body,
     )
         .into_response()
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct GameHistoryQuery {
+    track: Option<String>,
+}
+
+/// `GET /api/v1/game-history` — the patch/expansion release calendar
+/// backing the chart's milestone bands. The WASM chart reads the seed table
+/// directly from `ultros_api_types::game_history` (no round trip); this
+/// endpoint exists for external consumers and as the future seam where a
+/// Postgres-backed table could override the seed. A few KB, changes ~4
+/// times a year, hence the day-long `Cache-Control`.
+async fn game_history(
+    axum::extract::Query(query): axum::extract::Query<GameHistoryQuery>,
+) -> Result<axum::response::Response, WebError> {
+    use ultros_api_types::game_history::{GAME_PATCHES, PatchTrack};
+    let track = match query.track.as_deref() {
+        Some("global") => Some(PatchTrack::Global),
+        Some("china") => Some(PatchTrack::China),
+        Some("korea") => Some(PatchTrack::Korea),
+        Some(_) => return Err(WebError::BadRequest),
+        None => None,
+    };
+    let patches: Vec<_> = GAME_PATCHES
+        .iter()
+        .filter(|p| track.is_none_or(|t| p.track == t))
+        .collect();
+    let body = serde_json::to_string(&patches).map_err(anyhow::Error::from)?;
+    Ok(cached_json(body, std::time::Duration::from_secs(86_400)))
 }
 
 /// `GET /api/v1/price_density/{world}/{itemid}` — sale counts on a
@@ -771,29 +869,25 @@ async fn price_density(
         }
     }
 
-    // Snap an open-ended `to` to the bucket boundary — same cache-sharing
-    // rationale as price_series.
-    let to = if query.to.is_none() {
-        let secs = to.timestamp() - to.timestamp().rem_euclid(bucket_seconds);
-        chrono::DateTime::from_timestamp(secs, 0).unwrap_or(to)
+    // Quantize an open-ended `to` for the cache key only — same rationale, and
+    // same data-loss trap, as price_series.
+    let ttl_secs = cache_ttl_secs(query.to.is_some(), bucket_seconds);
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let cache_to = if query.to.is_none() {
+        open_window_cache_stamp(to.timestamp(), ttl_secs as i64)
     } else {
-        to
+        to.timestamp()
     };
 
     let cache_key = crate::web::price_series_cache::CacheKey {
         item_id,
         scope: world.clone(),
         from: from.timestamp(),
-        to: to.timestamp(),
+        to: cache_to,
         bucket: bucket_seconds,
         group: "density",
         hq: hq.as_str(),
         bins,
-    };
-    let ttl = if query.to.is_some() {
-        std::time::Duration::from_secs(3_600)
-    } else {
-        std::time::Duration::from_secs((bucket_seconds as u64).clamp(60, 3_600))
     };
     if let Some(hit) = cache.get(&cache_key) {
         return Ok(cached_json(hit, ttl));
@@ -808,7 +902,7 @@ async fn price_density(
         .await
         .map_err(|e| {
             tracing::warn!(error = ?e, item_id, "price_density min_max CH query failed");
-            anyhow::anyhow!("ClickHouse price_min_max query failed: {e}")
+            crate::web::error::ClickHouseQueryError::new("price_min_max", e)
         })?;
 
     let payload = match extent {
@@ -838,7 +932,7 @@ async fn price_density(
             .await
             .map_err(|e| {
                 tracing::warn!(error = ?e, item_id, "price_density CH query failed");
-                anyhow::anyhow!("ClickHouse price_density query failed: {e}")
+                crate::web::error::ClickHouseQueryError::new("price_density", e)
             })?;
             ultros_api_types::price_density::PriceDensity {
                 bucket_seconds,
@@ -864,6 +958,92 @@ async fn price_density(
     Ok(cached_json(body, ttl))
 }
 
+/// How loudly `TraceLayer`'s `on_failure` should report a failed response.
+///
+/// `Error` is what the `sentry_tracing` layer turns into a GlitchTip issue, so
+/// this decides what lands in the backlog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureReportLevel {
+    Debug,
+    Warn,
+    Error,
+}
+
+/// `on_failure` fires *in addition to* whatever produced the response, so a
+/// 5xx that came from a [`WebError`]/[`ApiError`] has already been reported —
+/// with its error type, its typed title, and its breadcrumbs
+/// ([`error::report_title`]). This layer only sees a bare status code and a
+/// latency, so re-reporting it at `error!` buys nothing and costs double:
+/// every incident lands in the backlog twice, once as an actionable issue and
+/// once as a content-free `"response failed"`.
+///
+/// The 2026-08-23 ClickHouse outage is the worked example — each failing item
+/// card produced a `"Returning web error"` *and* a `"response failed"` under
+/// the same trace id, and because the reporter groups by request URL, one
+/// outage splintered into dozens of count-1 issues of both kinds.
+///
+/// So:
+/// - **503** stays at `debug` — the analyzer's warm-up window is a transient
+///   startup state, not a bug (issues 5033/5034).
+/// - Any other **status code** drops to `warn`: still in the logs, no longer a
+///   duplicate issue.
+/// - A [`ServerErrorsFailureClass::Error`] stays at `error`. That class is a
+///   transport- or body-level failure with no response behind it, so *nothing
+///   else reports it* — this layer is the only witness.
+fn failure_report_level(class: &ServerErrorsFailureClass) -> FailureReportLevel {
+    match class {
+        ServerErrorsFailureClass::StatusCode(status)
+            if *status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
+        {
+            FailureReportLevel::Debug
+        }
+        ServerErrorsFailureClass::StatusCode(_) => FailureReportLevel::Warn,
+        ServerErrorsFailureClass::Error(_) => FailureReportLevel::Error,
+    }
+}
+
+#[cfg(test)]
+mod failure_report_level_tests {
+    use super::*;
+
+    /// Warm-up 503s never reach the backlog.
+    #[test]
+    fn service_unavailable_stays_quiet() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::StatusCode(
+                hyper::StatusCode::SERVICE_UNAVAILABLE
+            )),
+            FailureReportLevel::Debug
+        );
+    }
+
+    /// Regression test for the duplicate reporting the 2026-08-23 ClickHouse
+    /// outage exposed: the 500 is already reported by `WebError`, so this
+    /// layer must not report it a second time.
+    #[test]
+    fn internal_server_error_is_not_reported_twice() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::StatusCode(
+                hyper::StatusCode::INTERNAL_SERVER_ERROR
+            )),
+            FailureReportLevel::Warn,
+            "the error type already reported this one with a typed title"
+        );
+    }
+
+    /// A transport/body failure has no response behind it, so no error type
+    /// reported it — this layer is the only place it can surface.
+    #[test]
+    fn transport_failures_are_still_reported() {
+        assert_eq!(
+            failure_report_level(&ServerErrorsFailureClass::Error(
+                "connection reset".to_string()
+            )),
+            FailureReportLevel::Error
+        );
+    }
+}
+
 #[cfg(test)]
 mod price_series_tests {
     use super::*;
@@ -874,6 +1054,75 @@ mod price_series_tests {
         assert_eq!(density_bin_width(100, 400, 4), 301.0 / 4.0);
         // Degenerate flat price: floor at 1.0 so floor((p-lo)/w) stays 0.
         assert_eq!(density_bin_width(100, 100, 32), 1.0);
+    }
+
+    /// 2026-08-01T12:00:00Z — an arbitrary but fixed "now" so these tests
+    /// don't depend on when they run.
+    const NOW: i64 = 1_785_585_600;
+
+    /// The whole point of quantizing: requests seconds apart must land on one
+    /// cache entry rather than minting a key each.
+    #[test]
+    fn cache_stamp_is_stable_across_the_grain() {
+        let grain = cache_ttl_secs(false, 30 * 86_400) as i64;
+        let base = open_window_cache_stamp(NOW, grain);
+        for offset in [0, 1, 59, 600, grain - 1] {
+            assert_eq!(
+                open_window_cache_stamp(NOW + offset, grain),
+                base,
+                "+{offset}s should still hit the same cache entry"
+            );
+        }
+        assert_ne!(
+            open_window_cache_stamp(NOW + grain, grain),
+            base,
+            "the key must roll over once the entry expires"
+        );
+    }
+
+    /// Regression, and the reason this function exists at all.
+    ///
+    /// An open-ended "full history" request (the item page's default — no
+    /// `from`, no `to`) resolves `from` to 12 years back, which puts the
+    /// bucket ladder at its widest step. Both handlers used to floor the
+    /// *queried* window's exclusive upper bound onto that step, so every sale
+    /// in the current bucket — up to a month of the newest data — was
+    /// excluded from the response. Pin that the quantization applied now is
+    /// bounded by the TTL instead of the bucket width, at every ladder step.
+    #[test]
+    fn cache_stamp_never_discards_more_than_the_ttl() {
+        let span_secs = 365 * 12 * 86_400;
+        assert_eq!(
+            resolve_bucket_seconds(None, span_secs),
+            30 * 86_400,
+            "full history sits on the widest rung — the old floor's grain"
+        );
+
+        // What the old code did to the window itself, at that rung.
+        let floored = NOW - NOW.rem_euclid(30 * 86_400);
+        assert!(
+            NOW - floored > 26 * 86_400,
+            "the old floor dropped {} days of the newest sales",
+            (NOW - floored) / 86_400
+        );
+
+        // What the fix does: bounded by the TTL, whatever the bucket width.
+        for step in ultros_charts::data::buckets::BUCKET_LADDER {
+            let grain = cache_ttl_secs(false, step) as i64;
+            let stamp = open_window_cache_stamp(NOW, grain);
+            assert!(
+                grain <= 3_600 && NOW - stamp < 3_600,
+                "at a {step}s bucket the stamp discarded {}s",
+                NOW - stamp
+            );
+        }
+    }
+
+    /// A grain of zero (or negative) must not panic on `rem_euclid`.
+    #[test]
+    fn cache_stamp_tolerates_a_degenerate_grain() {
+        assert_eq!(open_window_cache_stamp(NOW, 0), NOW);
+        assert_eq!(open_window_cache_stamp(NOW, -5), NOW);
     }
 
     // `world_group_map` at `SeriesGroup::World` is intentionally not tested
@@ -1133,17 +1382,6 @@ pub(crate) async fn user_retainer_listings(
         retainers: listings,
     };
     Ok(Json(retainers))
-}
-
-pub(crate) async fn verify_character(
-    State(character): State<CharacterVerifierService>,
-    Path(verification_id): Path<i32>,
-    user: AuthDiscordUser,
-) -> Result<Json<bool>, ApiError> {
-    character
-        .check_verification(verification_id, user.id as i64)
-        .await?;
-    Ok(Json(true))
 }
 
 pub(crate) async fn retainer_search(
@@ -1652,27 +1890,6 @@ async fn user_characters(
     ))
 }
 
-async fn pending_verifications(
-    State(db): State<UltrosDb>,
-    user: AuthDiscordUser,
-) -> Result<Json<Vec<FfxivCharacterVerification>>, ApiError> {
-    let verifications = db
-        .get_all_pending_verification_challenges(user.id as i64)
-        .await?;
-    Ok(Json(
-        verifications
-            .into_iter()
-            .flat_map(|(verification, character)| {
-                character.map(|character| FfxivCharacterVerification {
-                    id: verification.id,
-                    character: character.into(),
-                    verification_string: verification.challenge,
-                })
-            })
-            .collect::<Vec<_>>(),
-    ))
-}
-
 async fn character_search(
     _user: AuthDiscordUser, // user required just to prevent this endpoint from being abused.
     Path(name): Path<String>,
@@ -1708,16 +1925,18 @@ async fn character_search(
     Ok(Json(characters))
 }
 
+/// Claims a character for the logged-in user.
+///
+/// There's no verification step: the Discord login already says who the user
+/// is, and a claim only groups their retainers. Several users may hold the same
+/// character.
 async fn claim_character(
     user: AuthDiscordUser,
     Path(character_id): Path<u32>,
-    State(verifier): State<CharacterVerifierService>,
-) -> Result<Json<(i32, String)>, ApiError> {
-    let result = verifier
-        .start_verification(character_id, user.id as i64)
-        .await?;
-    // db.create_character_challenge(character_id, user.id as i64, challenge)
-    Ok(Json(result))
+    State(claim): State<CharacterClaimService>,
+) -> Result<Json<FfxivCharacter>, ApiError> {
+    let character = claim.claim_character(character_id, user.id as i64).await?;
+    Ok(Json(character.into()))
 }
 
 #[derive(Deserialize)]
@@ -1762,6 +1981,73 @@ pub(crate) async fn create_group(
     Ok(Json(UserGroup::from(group)))
 }
 
+/// Discord servers the user could turn into a group, annotated with whether a
+/// group already exists for each.
+pub(crate) async fn get_group_discord_guilds(
+    State(db): State<UltrosDb>,
+    State(cache): State<AuthUserCache>,
+    user: AuthDiscordUser,
+    cookies: PrivateCookieJar,
+) -> Result<Json<Vec<DiscordManageableGuild>>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot load your servers right now"
+        ))
+    })?;
+    let guilds = crate::web::api::discord_lookup::manageable_guilds_for_user(
+        &ctx,
+        user.id as i64,
+        &cookies,
+        &cache,
+    )
+    .await?;
+
+    let guild_ids: Vec<i64> = guilds.iter().map(|(id, _, _)| *id).collect();
+    let existing = db.group_ids_for_guilds(&guild_ids).await?;
+
+    Ok(Json(
+        guilds
+            .into_iter()
+            .map(|(id, name, icon_url)| DiscordManageableGuild {
+                id,
+                name,
+                icon_url,
+                existing_group_id: existing.get(&id).copied(),
+            })
+            .collect(),
+    ))
+}
+
+pub(crate) async fn create_group_from_guild(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Json(CreateGroupFromGuild { guild_id }): Json<CreateGroupFromGuild>,
+) -> Result<Json<UserGroup>, ApiError> {
+    let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
+        ApiError::from(anyhow::anyhow!(
+            "Discord bot is not connected; cannot create a group from a server right now"
+        ))
+    })?;
+
+    // Re-check against Discord rather than trusting the picker: the guild id
+    // arrives from the client, and the user's roles may have changed since the
+    // list was rendered. This also proves the bot is in the guild, and hands
+    // back the name and icon so a group can't claim to be a server it isn't.
+    let guild =
+        crate::web::api::discord_lookup::require_manageable_guild(&ctx, guild_id, user.id as i64)
+            .await?;
+
+    let group = db
+        .create_group_from_guild(
+            guild.name.clone(),
+            user.id as i64,
+            guild_id,
+            guild.icon_url(),
+        )
+        .await?;
+    Ok(Json(UserGroup::from(group)))
+}
+
 pub(crate) async fn delete_group(
     State(db): State<UltrosDb>,
     user: AuthDiscordUser,
@@ -1799,6 +2085,45 @@ pub(crate) async fn remove_group_member(
 ) -> Result<Json<()>, ApiError> {
     db.remove_group_member(group_id, user.id as i64, member_id)
         .await?;
+    Ok(Json(()))
+}
+
+pub(crate) async fn get_group_invites(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Vec<GroupInvite>>, ApiError> {
+    let invites = db.get_group_invites(id, user.id as i64).await?;
+    Ok(Json(invites.into_iter().map(GroupInvite::from).collect()))
+}
+
+pub(crate) async fn create_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<i32>,
+    Json(CreateGroupInvite { max_uses }): Json<CreateGroupInvite>,
+) -> Result<Json<GroupInvite>, ApiError> {
+    let invite = db.create_group_invite(id, user.id as i64, max_uses).await?;
+    Ok(Json(GroupInvite::from(invite)))
+}
+
+/// Redeem an invite and return the group joined, so the client can navigate
+/// straight to it. Redeeming an invite you've already used is a success.
+pub(crate) async fn use_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<i32>, ApiError> {
+    let group_id = db.use_group_invite(id, user.id as i64).await?;
+    Ok(Json(group_id))
+}
+
+pub(crate) async fn delete_group_invite(
+    State(db): State<UltrosDb>,
+    user: AuthDiscordUser,
+    Path(id): Path<String>,
+) -> Result<Json<()>, ApiError> {
+    db.delete_group_invite(id, user.id as i64).await?;
     Ok(Json(()))
 }
 
@@ -2064,19 +2389,12 @@ async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
     State(db): State<UltrosDb>,
-    cookie_jar: CookieJar,
-) -> Result<(CookieJar, Redirect), ApiError> {
+    cookie_jar: PrivateCookieJar,
+) -> Result<(PrivateCookieJar, Redirect), ApiError> {
     let id = user.id;
     db.delete_discord_user(id as i64).await?;
-    let token = cookie_jar
-        .get("discord_auth")
-        .ok_or(anyhow::anyhow!("Failed to get icon"))?
-        .value()
-        .to_owned();
-    cache.remove_token(&token).await;
-    let cookie_jar = cookie_jar.remove(Cookie::from("discord_auth"));
-    // remove the token from the cache
-    // remove the auth cookie from the cache
+    cache.remove_user(id).await;
+    let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
     Ok((cookie_jar, Redirect::to("/")))
 }
 
@@ -2147,6 +2465,7 @@ pub(crate) async fn start_web(
         .route("/api/v1/resale_quality/{world}", post(post_resale_quality))
         .route("/api/v1/market_heat/{world}", get(get_market_heat))
         .route("/api/v1/recentSales/{world}", get(recent_sales))
+        .route("/api/v1/sale_stats/{world}", get(get_sale_stats))
         .route("/api/v1/alerts/events", get(list_alert_events))
         .route(
             "/api/v1/alerts/events/{id}/resend",
@@ -2188,6 +2507,7 @@ pub(crate) async fn start_web(
         )
         .route("/api/v1/price_series/{world}/{itemid}", get(price_series))
         .route("/api/v1/price_density/{world}/{itemid}", get(price_density))
+        .route("/api/v1/game-history", get(game_history))
         .route(
             "/api/v1/bulkListings/{world}/{itemids}",
             get(bulk_item_listings),
@@ -2207,6 +2527,14 @@ pub(crate) async fn start_web(
         .route("/api/v1/list/item/hq", post(bulk_edit_list_items_hq))
         .route("/api/v1/group", get(get_groups))
         .route("/api/v1/group/create", post(create_group))
+        .route(
+            "/api/v1/group/discord-guilds",
+            get(get_group_discord_guilds),
+        )
+        .route(
+            "/api/v1/group/create-from-guild",
+            post(create_group_from_guild),
+        )
         .route("/api/v1/group/{id}", delete(delete_group))
         .route("/api/v1/group/{id}/members", get(get_group_members))
         .route(
@@ -2217,6 +2545,16 @@ pub(crate) async fn start_web(
             "/api/v1/group/{group_id}/member/remove/{member_id}",
             delete(remove_group_member),
         )
+        .route("/api/v1/group/{id}/invites", get(get_group_invites))
+        .route(
+            "/api/v1/group/{id}/invite/create",
+            post(create_group_invite),
+        )
+        // Kept off the `/api/v1/group/{id}/...` prefix: the invite id is a
+        // string where that prefix takes an i32, and a sibling path can't hold
+        // both without the router treating one as a malformed group id.
+        .route("/api/v1/group-invite/{id}/use", post(use_group_invite))
+        .route("/api/v1/group-invite/{id}", delete(delete_group_invite))
         .route("/api/v1/list/{id}/shares", get(get_list_shares))
         .route("/api/v1/list/{id}/share/user", post(share_list_with_user))
         .route("/api/v1/list/{id}/share/group", post(share_list_with_group))
@@ -2255,12 +2593,7 @@ pub(crate) async fn start_web(
         .route("/api/v1/characters/search/{name}", get(character_search))
         .route("/api/v1/characters/claim/{id}", get(claim_character))
         .route("/api/v1/characters/unclaim/{id}", get(unclaim_character))
-        .route("/api/v1/characters/verify/{id}", get(verify_character))
         .route("/api/v1/characters", get(user_characters))
-        .route(
-            "/api/v1/characters/verifications",
-            get(pending_verifications),
-        )
         .route("/api/v1/detectregion", get(detect_region))
         .route("/retainers/add/{id}", get(add_retainer))
         .route("/retainers/remove/{id}", get(remove_owned_retainer))
@@ -2277,7 +2610,10 @@ pub(crate) async fn start_web(
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
-        .route("/sitemap/world/{s}", get(world_sitemap))
+        .route(
+            "/social/v2/{locale}/{kind}/{key}",
+            get(social_card::social_card),
+        )
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
@@ -2299,27 +2635,26 @@ pub(crate) async fn start_web(
         .route_layer(middleware::from_fn(track_metrics))
         .layer(middleware::from_fn(redirect_legacy_book_host))
         // tower-http's default `on_failure` logs every 5xx via `tracing::error!`,
-        // which the `sentry_tracing` layer turns into a GlitchTip issue. The
-        // analyzer service returns 503 during its warm-up window — those aren't
-        // bugs, just a transient startup state (see WebError::as_status_code and
-        // issues 5033/5034). Drop 503 to debug so it stays out of error logs.
+        // which the `sentry_tracing` layer turns into a GlitchTip issue.
+        // See `failure_report_level` for which failures still warrant one.
         .layer(TraceLayer::new_for_http().on_failure(
-            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| match class {
-                ServerErrorsFailureClass::StatusCode(status)
-                    if status == hyper::StatusCode::SERVICE_UNAVAILABLE =>
-                {
-                    tracing::debug!(
-                        %status,
+            |class: ServerErrorsFailureClass, latency: Duration, _: &Span| {
+                match failure_report_level(&class) {
+                    FailureReportLevel::Debug => tracing::debug!(
+                        classification = %class,
                         ?latency,
                         "response failed (likely warm-up)",
-                    );
-                }
-                _ => {
-                    tracing::error!(
+                    ),
+                    FailureReportLevel::Warn => tracing::warn!(
                         classification = %class,
                         ?latency,
                         "response failed",
-                    );
+                    ),
+                    FailureReportLevel::Error => tracing::error!(
+                        classification = %class,
+                        ?latency,
+                        "response failed",
+                    ),
                 }
             },
         ))
@@ -2350,6 +2685,29 @@ pub(crate) async fn start_web(
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::STRICT_TRANSPORT_SECURITY,
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
+        // `same-origin` would strip the Referer from every cross-origin
+        // request, AdSense and Sentry included. `strict-origin-when-cross-origin`
+        // is the modern browser default: full URL same-origin, bare origin
+        // cross-origin, nothing on an HTTPS->HTTP downgrade. Stating it
+        // explicitly pins the behaviour for older clients without changing
+        // what third parties already receive.
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        // The standards-track spelling of the `X-Frame-Options: DENY` above,
+        // not additional protection — every browser we serve honours one or
+        // the other. It is here so scanners stop flagging its absence.
+        //
+        // CAREFUL: this claims the CSP header, and the layer is `overriding`.
+        // Adding a directive here is not free — the app loads Google
+        // Analytics, AdSense and Sentry from other origins, so a `script-src`
+        // or `connect-src` added to this string silently kills all three.
+        // Ship any new directive in report-only first.
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("frame-ancestors 'none'"),
         ));
 
     // run our app with hyper
@@ -2359,6 +2717,7 @@ pub(crate) async fn start_web(
         .ok()
         .flatten()
         .unwrap_or(8080);
+    let metrics_token = token.clone();
     let (_main_app, _metrics_app) = futures::future::join(
         async move {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -2371,7 +2730,7 @@ pub(crate) async fn start_web(
                 .await
                 .unwrap();
         },
-        start_metrics_server(prometheus_handle),
+        start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
 }

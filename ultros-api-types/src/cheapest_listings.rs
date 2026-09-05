@@ -78,7 +78,7 @@ impl<'de> Deserialize<'de> for CheapestListingMapKey {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, PartialOrd)]
 pub struct CheapestListingData {
     pub price: i32,
     pub world_id: i32,
@@ -109,6 +109,23 @@ impl PriceSummary {
             (_, Some(hq)) => Some(hq.price),
             (Some(lq), _) => Some(lq.price),
             (_, _) => None,
+        }
+    }
+
+    /// The listing `lowest_gil` (prefer_hq = false) or `price_preferring_hq`
+    /// (prefer_hq = true) would price from, entry and all, so a caller can
+    /// keep its world. LQ wins an equal-price tie under lowest; HQ under
+    /// prefer.
+    pub fn chosen(&self, prefer_hq: bool) -> Option<CheapestListingData> {
+        match (self.lq, self.hq) {
+            (None, None) => None,
+            (None, Some(hq)) => Some(hq),
+            (Some(lq), None) => Some(lq),
+            (Some(lq), Some(hq)) => Some(if prefer_hq || hq.price < lq.price {
+                hq
+            } else {
+                lq
+            }),
         }
     }
 }
@@ -350,5 +367,45 @@ mod tests {
         .into();
         let summary = map.find_matching_listings(999);
         assert!(summary.lq.is_none() && summary.hq.is_none());
+    }
+
+    /// `chosen` replays `lowest_gil` / `price_preferring_hq` but keeps the
+    /// entry: LQ wins an equal-price tie under lowest, HQ under prefer.
+    #[test]
+    fn chosen_matches_lowest_gil_and_prefer_hq_with_tie_rule() {
+        let prices: [Option<i32>; 5] = [None, Some(1), Some(2), Some(3), Some(4)];
+        for lq in prices {
+            for hq in prices {
+                let s = PriceSummary {
+                    lq: lq.map(|p| data(p, 11)),
+                    hq: hq.map(|p| data(p, 22)),
+                };
+                assert_eq!(
+                    s.chosen(false).map(|c| c.price),
+                    s.lowest_gil(),
+                    "{lq:?} {hq:?}"
+                );
+                assert_eq!(
+                    s.chosen(true).map(|c| c.price),
+                    s.price_preferring_hq(),
+                    "{lq:?} {hq:?}"
+                );
+                if lq.is_some() && lq == hq {
+                    assert_eq!(
+                        s.chosen(false).unwrap().world_id,
+                        11,
+                        "lowest: LQ wins a tie"
+                    );
+                    assert_eq!(
+                        s.chosen(true).unwrap().world_id,
+                        22,
+                        "prefer: HQ wins a tie"
+                    );
+                }
+            }
+        }
+        let s = PriceSummary { lq: None, hq: None };
+        assert!(s.chosen(false).is_none());
+        assert!(s.chosen(true).is_none());
     }
 }

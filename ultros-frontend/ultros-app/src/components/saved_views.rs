@@ -6,15 +6,36 @@
 //! are captured automatically because the payload is opaque.
 
 use codee::string::JsonSerdeCodec;
+use leptos::html::Div;
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
+use leptos_router::params::ParamsMap;
 use leptos_use::storage::{UseStorageOptions, use_local_storage_with_options};
 use serde::{Deserialize, Serialize};
 
+use crate::components::dismissable::use_dismissable;
 use crate::components::icon::Icon;
 use crate::i18n::*;
 
 pub const SAVED_VIEWS_KEY: &str = "ultros.flipfinder.views";
+
+/// A saved market view must not change the reader's selected language.
+fn view_query_string(mut query: ParamsMap) -> String {
+    query.remove("lang");
+    query.to_query_string()
+}
+
+/// The query string seeded when the Flip Finder is opened with no filters at
+/// all (see `seed_flip_finder_default_view` in `query_defaults.rs`). Stored as a
+/// raw query string, not JSON: it's written and read only by the helpers
+/// below, and a plain string survives hand-editing in devtools.
+///
+/// Only the `hydrate` build touches storage, so the `ssr` build — the one
+/// clippy checks — genuinely never reads this. Same cfg-gated false positive
+/// `on_hand_input.rs` blankets with a file-wide allow; scoped to the one item
+/// here so the rest of this module keeps its dead-code checking.
+#[cfg_attr(feature = "ssr", allow(dead_code))]
+pub const DEFAULT_VIEW_KEY: &str = "ultros.flipfinder.default_view";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedView {
@@ -86,6 +107,70 @@ pub fn built_in_views() -> Vec<SavedView> {
     .collect()
 }
 
+/// The built-in view a visitor lands on when they open the Flip Finder with
+/// no filters at all. "Realistic flips" rather than the unfiltered list,
+/// which is topped by items whose one sale last month was a fluke.
+pub const FALLBACK_DEFAULT_VIEW: &str = "analyzer_preset_realistic";
+
+/// Query string of the fallback default view, read out of [`built_in_views`]
+/// rather than repeated here so the landing view and the menu entry that
+/// claims to be the same thing cannot drift apart.
+pub fn fallback_default_query() -> String {
+    built_in_views()
+        .into_iter()
+        .find(|v| v.name == FALLBACK_DEFAULT_VIEW)
+        .map(|v| v.query)
+        .unwrap_or_default()
+}
+
+/// The user's saved default view, if they set one.
+///
+/// An empty stored string is a real answer, not a missing one: it's what
+/// saving a filterless view produces, and it means "land me on the whole
+/// list". Only an *absent* key falls back to [`fallback_default_query`].
+///
+/// Client-only: on the server there is no storage to read, and the seeding
+/// path that calls this runs in an `Effect`, which the server never executes.
+pub fn saved_default_query() -> Option<String> {
+    #[cfg(not(feature = "ssr"))]
+    {
+        web_sys::window()?
+            .local_storage()
+            .ok()??
+            .get_item(DEFAULT_VIEW_KEY)
+            .ok()?
+    }
+    #[cfg(feature = "ssr")]
+    {
+        None
+    }
+}
+
+/// Store (or, with `None`, forget) the user's default view.
+pub fn set_saved_default_query(query: Option<&str>) {
+    #[cfg(not(feature = "ssr"))]
+    {
+        // Storage-disabled browsers must degrade to "no default", never panic
+        // — same contract as the saved-views list above.
+        if let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) {
+            let _ = match query {
+                Some(q) => storage.set_item(DEFAULT_VIEW_KEY, q),
+                None => storage.remove_item(DEFAULT_VIEW_KEY),
+            };
+        }
+    }
+    #[cfg(feature = "ssr")]
+    {
+        let _ = query;
+    }
+}
+
+/// The query string to seed onto a bare Flip Finder URL: the user's own
+/// default if they saved one, otherwise "Realistic flips".
+pub fn default_view_query() -> String {
+    saved_default_query().unwrap_or_else(fallback_default_query)
+}
+
 /// Views menu mounted in the sticky bar's first row. Combines two
 /// affordances behind one component so the Flip Finder toolbar stays a
 /// single mount point:
@@ -94,7 +179,8 @@ pub fn built_in_views() -> Vec<SavedView> {
 ///   that navigates to `view_href`. Saved (not built-in) entries also get a
 ///   delete button.
 /// - **Save view**: names the *current* URL query string and appends it to
-///   the saved list, optionally pinned to `current_world`.
+///   the saved list, optionally pinned to `current_world` and optionally
+///   made the default that a bare `/flip-finder/{world}` seeds.
 #[component]
 pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoView {
     let i18n = use_i18n();
@@ -113,6 +199,20 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
     let save_open = RwSignal::new(false);
     let new_name = RwSignal::new(String::new());
     let pin_to_world = RwSignal::new(false);
+    // Whether the query being saved should become the landing view. Seeded
+    // from storage when the popover *opens* rather than at setup: reading
+    // localStorage during component setup is the hydration race the storage
+    // options above go out of their way to avoid, and a click is
+    // unambiguously post-hydration.
+    let make_default = RwSignal::new(false);
+
+    // Route change, click outside, Escape. Both popovers hang off the same
+    // container, so one call closes both.
+    let container = NodeRef::<Div>::new();
+    use_dismissable(container, move || {
+        list_open.set(false);
+        save_open.set(false);
+    });
 
     // Built-in `name`s are i18n keys (see `built_in_views`); resolve them the
     // same way `col_label` resolves column ids in analyzer.rs. Any name that
@@ -137,10 +237,20 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
         if name.is_empty() {
             return;
         }
-        let query_string = query.get_untracked().to_query_string();
+        let query_string = view_query_string(query.get_untracked());
         let world = pin_to_world
             .get_untracked()
             .then(|| current_world.get_untracked());
+        // The checkbox describes a fact — "this query is my default" — so
+        // committing it unchecked clears the default when it *was* this
+        // query, and leaves someone else's default alone otherwise. That
+        // gives the setting a way back off, which a set-only checkbox
+        // wouldn't.
+        if make_default.get_untracked() {
+            set_saved_default_query(Some(&query_string));
+        } else if saved_default_query().as_deref() == Some(query_string.as_str()) {
+            set_saved_default_query(None);
+        }
         set_views.update(|vs| {
             vs.push(SavedView {
                 name,
@@ -150,30 +260,48 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
         });
         new_name.set(String::new());
         pin_to_world.set(false);
+        make_default.set(false);
         save_open.set(false);
     };
 
     view! {
-        <div class="relative flex items-center gap-2">
+        <div class="relative flex items-center gap-2" node_ref=container>
+            // Icon-only below `md`. The Flip Finder's control bar is
+            // height-locked and its first row cannot wrap, so on a phone the
+            // labels are what pushed it past the viewport (#1055). The
+            // `aria-label` carries the name at every width.
             <button
-                class="sticky-bar-button"
+                class="sticky-bar-button sticky-bar-button-shrink"
+                aria-label=t_string!(i18n, analyzer_saved_views)
                 aria-expanded=move || list_open.get().to_string()
                 on:click=move |_| {
                     save_open.set(false);
                     list_open.update(|v| *v = !*v);
                 }
             >
-                {t!(i18n, analyzer_saved_views)}
+                <Icon icon=icondata::MdiBookmarkMultipleOutline />
+                <span class="hidden md:inline sticky-bar-button-label">
+                    {t!(i18n, analyzer_saved_views)}
+                </span>
             </button>
             <button
-                class="sticky-bar-button"
+                class="sticky-bar-button sticky-bar-button-shrink"
+                aria-label=t_string!(i18n, analyzer_save_view)
                 aria-expanded=move || save_open.get().to_string()
                 on:click=move |_| {
                     list_open.set(false);
-                    save_open.update(|v| *v = !*v);
+                    let opening = !save_open.get_untracked();
+                    if opening {
+                        let current = view_query_string(query.get_untracked());
+                        make_default.set(saved_default_query().as_deref() == Some(current.as_str()));
+                    }
+                    save_open.set(opening);
                 }
             >
-                {t!(i18n, analyzer_save_view)}
+                <Icon icon=icondata::MdiContentSaveOutline />
+                <span class="hidden md:inline sticky-bar-button-label">
+                    {t!(i18n, analyzer_save_view)}
+                </span>
             </button>
 
             <Show when=move || list_open.get()>
@@ -184,7 +312,18 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                             .map(|v| {
                                 let href = view_href(&v, &current_world.get());
                                 let label = built_in_label(&v.name);
-                                view! { <a class="btn-ghost justify-start" href=href>{label}</a> }
+                                // An unpinned view only changes the query
+                                // string, so the route-change dismissal
+                                // never fires — close it here.
+                                view! {
+                                    <a
+                                        class="btn-ghost justify-start"
+                                        href=href
+                                        on:click=move |_| list_open.set(false)
+                                    >
+                                        {label}
+                                    </a>
+                                }
                             })
                             .collect_view()
                     }}
@@ -206,7 +345,11 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                                 let name = v.name.clone();
                                 view! {
                                     <div class="flex items-center gap-1">
-                                        <a class="btn-ghost flex-1 justify-start" href=href>
+                                        <a
+                                            class="btn-ghost flex-1 justify-start"
+                                            href=href
+                                            on:click=move |_| list_open.set(false)
+                                        >
                                             {name}
                                         </a>
                                         <button
@@ -249,6 +392,15 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
                         />
                         <span>{t!(i18n, analyzer_pin_view_to_world)}</span>
                     </label>
+                    <label class="inline-flex items-center gap-2 cursor-pointer text-[color:var(--color-text)]">
+                        <input
+                            type="checkbox"
+                            class="accent-brand-300"
+                            prop:checked=move || make_default.get()
+                            on:change=move |ev| make_default.set(event_target_checked(&ev))
+                        />
+                        <span>{t!(i18n, analyzer_make_default_view)}</span>
+                    </label>
                     <button class="btn-secondary" on:click=save_current_view>
                         {t!(i18n, analyzer_save_view)}
                     </button>
@@ -262,6 +414,22 @@ pub fn SavedViewsMenu(#[prop(into)] current_world: Signal<String>) -> impl IntoV
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_a_localized_view_does_not_capture_its_language() {
+        assert_eq!(
+            view_query_string(ParamsMap::from_iter([
+                ("lang", "ja"),
+                ("roi", "30"),
+                ("name", "Iron"),
+            ])),
+            "?name=Iron&roi=30"
+        );
+        assert_eq!(
+            view_query_string(ParamsMap::from_iter([("lang", "de")])),
+            ""
+        );
+    }
 
     #[test]
     fn unpinned_view_keeps_the_current_world() {

@@ -1,16 +1,18 @@
 use crate::components::meta::{MetaDescription, MetaTitle};
 use crate::global_state::xiv_data::tracked_data;
+use crate::query_defaults::filter_query_signal;
 use crate::ws::realtime::use_realtime;
 use crate::{
     api::get_cheapest_listings,
     components::{
+        control_bar::{ControlBar, FilterOption},
+        filter_chip::FilterChip,
         gil::*,
-        icon::Icon,
         item_icon::*,
         realtime_status::RealtimeStatus,
         skeleton::BoxSkeleton,
+        sort_header::{SortColumn, SortDir, SortHeader},
         tool_help::*,
-        toolbar::{Toolbar, ToolbarField},
         virtual_scroller::*,
         world_picker::WorldOnlyPicker,
     },
@@ -18,12 +20,10 @@ use crate::{
         LocalWorldData, home_world::use_home_world, region_for_world::use_region_for_world,
     },
 };
-use icondata as i;
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
-    hooks::{query_signal, use_location, use_navigate, use_query_map},
-    location::Location,
+    hooks::{query_signal, use_navigate, use_query_map},
 };
 use std::{collections::HashSet, sync::Arc};
 use thousands::Separable;
@@ -158,6 +158,99 @@ fn passes_scrip_filter(scrip_type: ScripType, filter: Option<&str>) -> bool {
     }
 }
 
+/// A single collectables turn-in: the item handed in, the scrip it pays and how
+/// much it pays at maximum collectability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScripTurnIn {
+    item_id: i32,
+    scrip_type: ScripType,
+    scrip_amount: u32,
+}
+
+/// `CollectablesShop.RewardType` for the turn-in counters that pay scrip.
+const SCRIP_REWARD_TYPE: i32 = 1;
+/// `CollectablesShop.RewardType` for the material exchanges, which hand back
+/// items and pay no scrip.
+const MATERIAL_EXCHANGE_REWARD_TYPE: i32 = 2;
+
+/// `CollectablesShopItem` groups that belong *only* to material-exchange shops.
+///
+/// `CollectablesShop.ShopItems[..]` lists a shop's item groups, and a group is
+/// the integer half of `CollectablesShopItem`'s `<group>.<index>` key — which is
+/// how `collectables_shop_items` is keyed, so the two join directly.
+///
+/// This deliberately collects the groups to *exclude* rather than the ones to
+/// keep. A group nobody claims, an unknown future `RewardType`, or a renamed
+/// sheet that leaves `collectables_shops` empty then all degrade to today's
+/// behaviour — a few oddly-labelled rows — instead of blanking the page, which
+/// is the failure mode this route has already shipped once. A group claimed by
+/// a scrip shop *and* an exchange shop stays visible for the same reason.
+fn material_exchange_groups(data: &xiv_gen::Data) -> HashSet<i32> {
+    let mut scrip_paying = HashSet::new();
+    let mut exchange_only = HashSet::new();
+
+    for shop in data.collectables_shops.values() {
+        let bucket = match shop.reward_type {
+            SCRIP_REWARD_TYPE => &mut scrip_paying,
+            MATERIAL_EXCHANGE_REWARD_TYPE => &mut exchange_only,
+            _ => continue,
+        };
+        for group in shop.shop_items {
+            if group != 0 {
+                bucket.insert(group);
+            }
+        }
+    }
+
+    exchange_only.retain(|group| !scrip_paying.contains(group));
+    exchange_only
+}
+
+/// Every turn-in the collectables shops offer, before any UI filtering or
+/// pricing.
+///
+/// Material-exchange trades are dropped here: they populate the same
+/// `CollectablesShopRewardScrip.Currency` column the real turn-ins do, so
+/// reading that column alone lists every one of them as a scrip source paying a
+/// scrip it never awards.
+fn scrip_turn_ins(data: &xiv_gen::Data) -> Vec<ScripTurnIn> {
+    let exchange_only = material_exchange_groups(data);
+    let mut turn_ins = Vec::new();
+
+    for (group, item_vec) in &data.collectables_shop_items {
+        if exchange_only.contains(&group.0) {
+            continue;
+        }
+        for item_entry in item_vec {
+            let reward_scrip_id = item_entry.collectables_shop_reward_scrip;
+            if reward_scrip_id == 0 {
+                continue;
+            }
+
+            let reward = match data
+                .collectables_shop_reward_scrips
+                .get(&CollectablesShopRewardScripId(reward_scrip_id))
+            {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let scrip_amount = reward.high_reward as u32;
+            if scrip_amount == 0 {
+                continue;
+            }
+
+            turn_ins.push(ScripTurnIn {
+                item_id: item_entry.item,
+                scrip_type: ScripType::from_currency(reward.currency as u32),
+                scrip_amount,
+            });
+        }
+    }
+
+    turn_ins
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum SortMode {
     CostPerScrip,
@@ -189,10 +282,13 @@ impl std::fmt::Display for SortMode {
     }
 }
 
-impl SortMode {
-    /// The direction each column sorts in when first clicked (and when no
-    /// `?dir=` is present). Costs read best-first ascending; the scrip payout
-    /// reads best-first descending.
+impl SortColumn for SortMode {
+    fn fallback() -> Self {
+        SortMode::CostPerScrip
+    }
+
+    /// Costs read best-first ascending; the scrip payout reads best-first
+    /// descending.
     fn default_dir(self) -> SortDir {
         match self {
             SortMode::CostPerScrip | SortMode::Cost => SortDir::Asc,
@@ -201,36 +297,18 @@ impl SortMode {
     }
 }
 
-/// `?dir=` — sort direction override. Absent means the active mode's
-/// [`SortMode::default_dir`].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum SortDir {
-    Asc,
-    Desc,
-}
-
-impl std::str::FromStr for SortDir {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "asc" => Ok(SortDir::Asc),
-            "desc" => Ok(SortDir::Desc),
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for SortDir {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            SortDir::Asc => "asc",
-            SortDir::Desc => "desc",
-        })
-    }
-}
-
 /// Maximum rows rendered by the table.
 const ROW_LIMIT: usize = 100;
+
+// --- Filter registry -------------------------------------------------------
+// Each id is the `filter_query_signal` key it drives, so the list doubles as
+// the URL contract (mirrors the analyzer/currency-exchange convention).
+const FILTER_SCRIP: &str = "scrip";
+const FILTER_JOB: &str = "job";
+
+/// Filters the `+ Filter` menu can add, in the old toolbar's left-to-right
+/// order.
+const ADDABLE_FILTERS: &[&str] = &[FILTER_SCRIP, FILTER_JOB];
 
 /// Rank the collected rows, collapse repeated items, and cap the list.
 ///
@@ -288,71 +366,6 @@ fn rank_scrip_sources(
     results
 }
 
-/// One sortable column header, after the analyzer's pattern.
-///
-/// Clicking an inactive column sorts by it in that column's default
-/// direction; clicking the active column flips the direction. The arrow
-/// reflects the direction actually applied. `dir` is omitted from the href
-/// when it matches the mode's default so the common case stays a clean
-/// `?sort=…`.
-#[component]
-fn SortHeader(
-    mode: SortMode,
-    #[prop(into)] label: String,
-    sort_mode: Memo<Option<SortMode>>,
-    sort_dir: Memo<Option<SortDir>>,
-) -> impl IntoView {
-    let Location {
-        pathname, query, ..
-    } = use_location();
-    let is_active = Signal::derive(move || sort_mode().unwrap_or(SortMode::CostPerScrip) == mode);
-    let dir = Signal::derive(move || {
-        sort_dir().unwrap_or_else(|| sort_mode().unwrap_or(SortMode::CostPerScrip).default_dir())
-    });
-    view! {
-        <a
-            class=move || {
-                if is_active() {
-                    "!text-[color:var(--brand-fg)] hover:!text-[color:var(--brand-fg)]"
-                } else {
-                    "!text-brand-300 hover:text-brand-200"
-                }
-            }
-            aria-current=move || if is_active() { "true" } else { "false" }
-            href=move || {
-                let mut q = query();
-                q.remove("sort");
-                q.remove("dir");
-                q.insert("sort".to_string(), mode.to_string());
-                let next = if is_active() {
-                    match dir() {
-                        SortDir::Desc => SortDir::Asc,
-                        SortDir::Asc => SortDir::Desc,
-                    }
-                } else {
-                    mode.default_dir()
-                };
-                if next != mode.default_dir() {
-                    q.insert("dir".to_string(), next.to_string());
-                }
-                format!("{}{}", pathname(), q.to_query_string())
-            }
-        >
-            <div class="flex items-center gap-2">
-                {label}
-                {move || {
-                    is_active()
-                        .then(|| match dir() {
-                            SortDir::Asc => view! { <Icon icon=i::BiSortUpRegular /> },
-                            SortDir::Desc => view! { <Icon icon=i::BiSortDownRegular /> },
-                        })
-                }}
-            </div>
-        </a>
-    }
-    .into_any()
-}
-
 #[component]
 fn ScripSourceTable(
     global_cheapest_listings: CheapestListings,
@@ -375,8 +388,18 @@ fn ScripSourceTable(
 
     let (sort_mode, _set_sort_mode) = query_signal::<SortMode>("sort");
     let (sort_dir, _set_sort_dir) = query_signal::<SortDir>("dir");
-    let (scrip_filter, set_scrip_filter) = query_signal::<String>("scrip");
-    let (job_filter, set_job_filter) = query_signal::<String>("job");
+    // Filter params use `filter_query_signal` (replace: true, scroll: false):
+    // typing into a chip writes the URL on every keystroke, and plain
+    // `query_signal`'s defaults would push a history entry and yank the
+    // window to the top each time.
+    let (scrip_filter, set_scrip_filter) = filter_query_signal::<String>(FILTER_SCRIP);
+    let (job_filter, set_job_filter) = filter_query_signal::<String>(FILTER_JOB);
+
+    // A filter picked from the `+ Filter` menu but not yet committed — its
+    // chip mounts in edit state with an empty input (see currency_exchange.rs
+    // for the same pattern). Neither select has an "obviously correct"
+    // default value, so both mount blank rather than seeding one.
+    let pending_filter: RwSignal<Option<&'static str>> = RwSignal::new(None);
 
     // Global websocket health, same wiring as the other sales-driven tools —
     // the prices here come from the realtime-fed cheapest-listings store.
@@ -398,122 +421,103 @@ fn ScripSourceTable(
         let scrip_filter_val = scrip_filter();
         let job_filter_val = job_filter();
 
-        for item_vec in data.collectables_shop_items.values() {
-            for item_entry in item_vec {
-                let reward_scrip_id = item_entry.collectables_shop_reward_scrip;
-                if reward_scrip_id == 0 {
-                    continue;
-                }
+        for turn_in in scrip_turn_ins(data) {
+            let ScripTurnIn {
+                item_id,
+                scrip_type,
+                scrip_amount,
+            } = turn_in;
 
-                let reward = match data
-                    .collectables_shop_reward_scrips
-                    .get(&CollectablesShopRewardScripId(reward_scrip_id))
-                {
-                    Some(r) => r,
-                    None => continue,
-                };
+            if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
+                continue;
+            }
 
-                // Reward has `currency` and `low/mid/high_reward`
-                let scrip_type = ScripType::from_currency(reward.currency as u32);
+            let item_def = match items.get(&ItemId(item_id)) {
+                Some(i) => i,
+                None => continue,
+            };
 
-                if !passes_scrip_filter(scrip_type, scrip_filter_val.as_deref()) {
-                    continue;
-                }
+            // Recipe lookup
+            let recipe = recipes_lookup.get(&item_id).copied();
 
-                // Reward amount (High Reward for max collectability)
-                let scrip_amount = reward.high_reward as u32;
-                if scrip_amount == 0 {
-                    continue;
-                }
-
-                let item_id = item_entry.item;
-                let item_def = match items.get(&ItemId(item_id)) {
-                    Some(i) => i,
-                    None => continue,
-                };
-
-                // Recipe lookup
-                let recipe = recipes_lookup.get(&item_id).copied();
-
-                // Filter Job
-                if let Some(ref j_filter) = job_filter_val {
-                    if let Some(r) = recipe {
-                        let job_abbrev = match r.craft_type {
-                            0 => "Carpenter",
-                            1 => "Blacksmith",
-                            2 => "Armorer",
-                            3 => "Goldsmith",
-                            4 => "Leatherworker",
-                            5 => "Weaver",
-                            6 => "Alchemist",
-                            7 => "Culinarian",
-                            _ => "",
-                        };
-                        if job_abbrev != j_filter {
-                            continue;
-                        }
-                    } else if !j_filter.is_empty() {
-                        // If no recipe (gathering?), skip if job filter is active for crafting jobs
-                        // Unless we add gathering job filters later
+            // Filter Job
+            if let Some(ref j_filter) = job_filter_val {
+                if let Some(r) = recipe {
+                    let job_abbrev = match r.craft_type {
+                        0 => "Carpenter",
+                        1 => "Blacksmith",
+                        2 => "Armorer",
+                        3 => "Goldsmith",
+                        4 => "Leatherworker",
+                        5 => "Weaver",
+                        6 => "Alchemist",
+                        7 => "Culinarian",
+                        _ => "",
+                    };
+                    if job_abbrev != j_filter {
                         continue;
                     }
-                }
-
-                // Cost Calculation. An ingredient with no market listing used
-                // to be priced at zero, which *understated* the cost and
-                // floated exactly the least trustworthy rows to the top of
-                // the best-efficiency sort. Instead, track how many
-                // ingredients could actually be priced: rows with partial
-                // coverage stay visible (badged, ranked below fully-priced
-                // rows), rows with *no* priced ingredient are dropped.
-                let mut cost = 0;
-                let mut priced_ingredients = 0u32;
-                let mut total_ingredients = 0u32;
-
-                if let Some(r) = recipe {
-                    // Sum ingredients
-                    for i in 0..8 {
-                        let ing_id = r.ingredient[i];
-                        let amount = r.amount_ingredient[i];
-                        if ing_id == 0 || amount == 0 {
-                            continue;
-                        }
-                        total_ingredients += 1;
-                        let price_summary = prices.find_matching_listings(ing_id);
-                        if let Some(price) = price_summary.lowest_gil() {
-                            priced_ingredients += 1;
-                            cost += price * amount;
-                        }
-                    }
-                } else {
-                    // Skip non-craftables for now
+                } else if !j_filter.is_empty() {
+                    // If no recipe (gathering?), skip if job filter is active for crafting jobs
+                    // Unless we add gathering job filters later
                     continue;
                 }
-
-                if priced_ingredients == 0 || cost == 0 {
-                    continue;
-                } // Nothing priceable, or free items: no cost to compare
-
-                let cost_per_scrip = cost as f32 / scrip_amount as f32;
-
-                results.push(ScripSourceData {
-                    item_id: ItemId(item_id),
-                    item_name: item_def.name.to_string(),
-                    level: item_def.level_item as u16,
-                    craft_type: recipe.map(|r| r.craft_type),
-                    scrip_type,
-                    scrip_amount,
-                    cost,
-                    cost_per_scrip,
-                    priced_ingredients,
-                    total_ingredients,
-                    cheapest_world_id: 0, // Not tracked per ingredient
-                    recipe,
-                });
             }
+
+            // Cost Calculation. An ingredient with no market listing used
+            // to be priced at zero, which *understated* the cost and
+            // floated exactly the least trustworthy rows to the top of
+            // the best-efficiency sort. Instead, track how many
+            // ingredients could actually be priced: rows with partial
+            // coverage stay visible (badged, ranked below fully-priced
+            // rows), rows with *no* priced ingredient are dropped.
+            let mut cost = 0;
+            let mut priced_ingredients = 0u32;
+            let mut total_ingredients = 0u32;
+
+            if let Some(r) = recipe {
+                // Sum ingredients
+                for i in 0..8 {
+                    let ing_id = r.ingredient[i];
+                    let amount = r.amount_ingredient[i];
+                    if ing_id == 0 || amount == 0 {
+                        continue;
+                    }
+                    total_ingredients += 1;
+                    let price_summary = prices.find_matching_listings(ing_id);
+                    if let Some(price) = price_summary.lowest_gil() {
+                        priced_ingredients += 1;
+                        cost += price * amount;
+                    }
+                }
+            } else {
+                // Skip non-craftables for now
+                continue;
+            }
+
+            if priced_ingredients == 0 || cost == 0 {
+                continue;
+            } // Nothing priceable, or free items: no cost to compare
+
+            let cost_per_scrip = cost as f32 / scrip_amount as f32;
+
+            results.push(ScripSourceData {
+                item_id: ItemId(item_id),
+                item_name: item_def.name.to_string(),
+                level: item_def.level_item as u16,
+                craft_type: recipe.map(|r| r.craft_type),
+                scrip_type,
+                scrip_amount,
+                cost,
+                cost_per_scrip,
+                priced_ingredients,
+                total_ingredients,
+                cheapest_world_id: 0, // Not tracked per ingredient
+                recipe,
+            });
         }
 
-        let mode = sort_mode().unwrap_or(SortMode::CostPerScrip);
+        let mode = sort_mode().unwrap_or_else(SortMode::fallback);
         let dir = sort_dir().unwrap_or_else(|| mode.default_dir());
         // Rank the *full* set so the result count below is exact; the render
         // memo applies `ROW_LIMIT`.
@@ -544,75 +548,169 @@ fn ScripSourceTable(
             .is_some_and(|s| s.is_gatherer())
     });
 
+    let scrip_options = move || {
+        vec![
+            (
+                "OrangeCrafters",
+                t_string!(i18n, scrip_sources_orange_crafters).to_string(),
+            ),
+            (
+                "OrangeGatherers",
+                t_string!(i18n, scrip_sources_orange_gatherers).to_string(),
+            ),
+            (
+                "PurpleCrafters",
+                t_string!(i18n, scrip_sources_purple_crafters).to_string(),
+            ),
+            (
+                "WhiteCrafters",
+                t_string!(i18n, scrip_sources_white_crafters).to_string(),
+            ),
+            (
+                "PurpleGatherers",
+                t_string!(i18n, scrip_sources_purple_gatherers).to_string(),
+            ),
+            (
+                "WhiteGatherers",
+                t_string!(i18n, scrip_sources_white_gatherers).to_string(),
+            ),
+        ]
+    };
+    let job_options = move || {
+        vec![
+            ("Carpenter", t_string!(i18n, carpenter).to_string()),
+            ("Blacksmith", t_string!(i18n, blacksmith).to_string()),
+            ("Armorer", t_string!(i18n, armorer).to_string()),
+            ("Goldsmith", t_string!(i18n, goldsmith).to_string()),
+            ("Leatherworker", t_string!(i18n, leatherworker).to_string()),
+            ("Weaver", t_string!(i18n, weaver).to_string()),
+            ("Alchemist", t_string!(i18n, alchemist).to_string()),
+            ("Culinarian", t_string!(i18n, culinarian).to_string()),
+        ]
+    };
+
+    // Filters currently drawn as a chip. Drives the "no active filters" hint
+    // and keeps `+ Filter` from offering a second copy of something the user
+    // can already see.
+    let active_filters = Memo::new(move |_| {
+        let mut active: Vec<&'static str> = Vec::new();
+        if scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP) {
+            active.push(FILTER_SCRIP);
+        }
+        if job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB) {
+            active.push(FILTER_JOB);
+        }
+        active
+    });
+
+    // Menu label for a filter: the long, explanatory label the old toolbar
+    // fields carried.
+    let filter_label = move |id: &str| -> String {
+        match id {
+            FILTER_SCRIP => t_string!(i18n, scrip_sources_scrip_type).to_string(),
+            FILTER_JOB => t_string!(i18n, scrip_sources_job_filter).to_string(),
+            _ => String::new(),
+        }
+    };
+
+    // What the `+ Filter` menu offers: everything addable that is not already
+    // on screen as a chip.
+    let filter_options = Memo::new(move |_| {
+        ADDABLE_FILTERS
+            .iter()
+            .copied()
+            .filter(|id| !active_filters().contains(id))
+            .map(|id| FilterOption {
+                id,
+                label: filter_label(id),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let add_filter = Callback::new(move |id: &'static str| match id {
+        FILTER_SCRIP => pending_filter.set(Some(FILTER_SCRIP)),
+        FILTER_JOB => pending_filter.set(Some(FILTER_JOB)),
+        _ => {}
+    });
+
+    let clear_all = Callback::new(move |_| {
+        pending_filter.set(None);
+        set_scrip_filter(None);
+        set_job_filter(None);
+    });
+
     view! {
         <div class="flex flex-col gap-6">
-            <Toolbar>
-                <ToolbarField label=t_string!(i18n, scrip_sources_scrip_type).to_string()>
-                    <select
-                        class="input input-sm w-48"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if val.is_empty() {
-                                set_scrip_filter(None);
-                            } else {
-                                set_scrip_filter(Some(val));
+            <ControlBar
+                summary=move || {
+                    view! {
+                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                            {move || t!(i18n, scrip_sources_results_count, n = move || total_count())}
+                        </span>
+                        <Show when=move || { total_count() > ROW_LIMIT }>
+                            <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                                {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
+                            </span>
+                        </Show>
+                        <span class="text-xs text-[color:var(--color-text-muted)] whitespace-nowrap truncate">
+                            {move || t!(i18n, scrip_sources_region_pricing, region = world())}
+                        </span>
+                    }
+                    .into_any()
+                }
+                actions=move || {
+                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                        .into_any()
+                }
+                available_filters=Signal::derive(filter_options)
+                on_add_filter=add_filter
+                on_clear_all=clear_all
+                empty_label=Signal::derive(move || {
+                    t_string!(i18n, scrip_sources_no_filters_hint).to_string()
+                })
+                is_empty=Signal::derive(move || active_filters().is_empty())
+            >
+                {move || {
+                    (scrip_filter().is_some() || pending_filter.get() == Some(FILTER_SCRIP))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_SCRIP);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, scrip_sources_scrip_type).to_string()
+                                    value=Signal::derive(scrip_filter)
+                                    options=scrip_options()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_scrip_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_SCRIP) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    >
-                        <option value="">{t!(i18n, scrip_sources_all_scrips)}</option>
-                        <option value="OrangeCrafters" selected=move || scrip_filter() == Some("OrangeCrafters".to_string())>{t!(i18n, scrip_sources_orange_crafters)}</option>
-                        <option value="OrangeGatherers" selected=move || scrip_filter() == Some("OrangeGatherers".to_string())>{t!(i18n, scrip_sources_orange_gatherers)}</option>
-                        <option value="PurpleCrafters" selected=move || scrip_filter() == Some("PurpleCrafters".to_string())>{t!(i18n, scrip_sources_purple_crafters)}</option>
-                        <option value="WhiteCrafters" selected=move || scrip_filter() == Some("WhiteCrafters".to_string())>{t!(i18n, scrip_sources_white_crafters)}</option>
-                        <option value="PurpleGatherers" selected=move || scrip_filter() == Some("PurpleGatherers".to_string())>{t!(i18n, scrip_sources_purple_gatherers)}</option>
-                        <option value="WhiteGatherers" selected=move || scrip_filter() == Some("WhiteGatherers".to_string())>{t!(i18n, scrip_sources_white_gatherers)}</option>
-                    </select>
-                </ToolbarField>
-                <ToolbarField label=t_string!(i18n, scrip_sources_job_filter).to_string()>
-                    <select
-                        class="input input-sm w-40"
-                        on:change=move |ev| {
-                            let val = event_target_value(&ev);
-                            if val.is_empty() {
-                                set_job_filter(None);
-                            } else {
-                                set_job_filter(Some(val));
+                        })
+                }}
+                {move || {
+                    (job_filter().is_some() || pending_filter.get() == Some(FILTER_JOB))
+                        .then(|| {
+                            let start_editing = pending_filter.get_untracked() == Some(FILTER_JOB);
+                            view! {
+                                <FilterChip
+                                    label=t_string!(i18n, scrip_sources_job_filter).to_string()
+                                    value=Signal::derive(job_filter)
+                                    options=job_options()
+                                    start_editing=start_editing
+                                    on_commit=Callback::new(move |v: Option<String>| {
+                                        set_job_filter(v);
+                                        if pending_filter.get_untracked() == Some(FILTER_JOB) {
+                                            pending_filter.set(None);
+                                        }
+                                    })
+                                />
                             }
-                        }
-                    >
-                        <option value="">{t!(i18n, all_jobs)}</option>
-                        <option value="Carpenter" selected=move || job_filter() == Some("Carpenter".to_string())>{t!(i18n, carpenter)}</option>
-                        <option value="Blacksmith" selected=move || job_filter() == Some("Blacksmith".to_string())>{t!(i18n, blacksmith)}</option>
-                        <option value="Armorer" selected=move || job_filter() == Some("Armorer".to_string())>{t!(i18n, armorer)}</option>
-                        <option value="Goldsmith" selected=move || job_filter() == Some("Goldsmith".to_string())>{t!(i18n, goldsmith)}</option>
-                        <option value="Leatherworker" selected=move || job_filter() == Some("Leatherworker".to_string())>{t!(i18n, leatherworker)}</option>
-                        <option value="Weaver" selected=move || job_filter() == Some("Weaver".to_string())>{t!(i18n, weaver)}</option>
-                        <option value="Alchemist" selected=move || job_filter() == Some("Alchemist".to_string())>{t!(i18n, alchemist)}</option>
-                        <option value="Culinarian" selected=move || job_filter() == Some("Culinarian".to_string())>{t!(i18n, culinarian)}</option>
-                    </select>
-                </ToolbarField>
-            </Toolbar>
-
-            // Results summary: count, truncation note, pricing scope, and
-            // realtime health. The world picker resolves to a *region* and
-            // the fetch is region-cheapest, so say so — a "Gilgamesh"
-            // selection otherwise silently produces NA-wide prices.
-            <div class="panel px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                <div>
-                    <span class="text-brand-300 font-semibold">{move || total_count()}</span>
-                    " "
-                    {t!(i18n, scrip_sources_results)}
-                </div>
-                <Show when=move || { total_count() > ROW_LIMIT }>
-                    <div class="text-[color:var(--color-text-muted)]">
-                        {t!(i18n, scrip_sources_top_note, limit = ROW_LIMIT)}
-                    </div>
-                </Show>
-                <div class="text-[color:var(--color-text-muted)]">
-                    {move || t!(i18n, scrip_sources_region_pricing, region = world())}
-                </div>
-                <RealtimeStatus status=realtime_status last_update=last_update />
-            </div>
+                        })
+                }}
+            </ControlBar>
 
             // Empty states render as *siblings* of the scroller container,
             // never by unmounting it in a <Show>: the VirtualScroller wires
@@ -839,31 +937,29 @@ pub fn ScripSources() -> impl IntoView {
                     context=t_string!(i18n, scrip_sources_context).to_string()
                     help_href="/help/scrip-sources"
                     help_body=t_string!(i18n, scrip_sources_help_body).to_string()
-                />
-
-                <Toolbar>
-                    <ToolbarField label=t_string!(i18n, scrip_sources_select_world).to_string()>
-                        <WorldOnlyPicker
-                            current_world=selected_world.into()
-                            set_current_world=set_selected_world.into()
-                        />
-                    </ToolbarField>
-                </Toolbar>
+                    calculation=ToolCalculation::new(
+                        t_string!(i18n, scrip_sources_efficiency_model).to_string(),
+                        t_string!(i18n, scrip_sources_efficiency_formula).to_string(),
+                        t_string!(i18n, scrip_sources_efficiency_details).to_string(),
+                    )
+                    assumptions=vec![
+                        t_string!(i18n, scrip_sources_assumption_high_reward).to_string(),
+                        t_string!(i18n, scrip_sources_assumption_market_cost).to_string(),
+                        t_string!(i18n, scrip_sources_assumption_lower_better).to_string(),
+                    ]
+                >
+                    <label class="text-[color:var(--brand-fg)] font-semibold">
+                        {t!(i18n, scrip_sources_select_world)}
+                    </label>
+                    <WorldOnlyPicker
+                        current_world=selected_world.into()
+                        set_current_world=set_selected_world.into()
+                    />
+                </ToolHeader>
 
                 <div class="text-sm text-[color:var(--color-text-muted)]">
                     {t!(i18n, scrip_sources_description)}
                 </div>
-                <CalculationSummary
-                    title=t_string!(i18n, scrip_sources_efficiency_model).to_string()
-                    formula=t_string!(i18n, scrip_sources_efficiency_formula).to_string()
-                    details=t_string!(i18n, scrip_sources_efficiency_details).to_string()
-                />
-                <div class="flex flex-wrap gap-2">
-                    <AssumptionBadge text=t_string!(i18n, scrip_sources_assumption_high_reward).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, scrip_sources_assumption_market_cost).to_string() />
-                    <AssumptionBadge text=t_string!(i18n, scrip_sources_assumption_lower_better).to_string() />
-                </div>
-
                 <Suspense fallback=move || view! { <BoxSkeleton /> }>
                     {move || {
                         let listings = global_cheapest_listings.get();
@@ -1244,5 +1340,109 @@ mod tests {
         for filter in [None, Some(""), Some("nonsense")] {
             assert!(passes_scrip_filter(ScripType::PurpleCrafters, filter));
         }
+    }
+
+    /// The material exchanges (`CollectablesShop.RewardType == 2`) hand back
+    /// *items*, not scrip — but they populate the same
+    /// `CollectablesShopRewardScrip.Currency` column the turn-in counters do, so
+    /// reading that column without joining `RewardType` lists every one of their
+    /// trades as a scrip source paying a scrip it never awards.
+    ///
+    /// These four are the craftable head of each `RewardType == 2` shop on the
+    /// pinned 7.55 data; ids are used rather than names because `Item.name` is
+    /// per-locale.
+    #[test]
+    fn material_exchange_trades_are_not_scrip_turn_ins() {
+        let data = xiv_gen_db::data();
+        let turn_ins = scrip_turn_ins(data);
+
+        for (item_id, shop) in [
+            (31101, "Oddly Specific Materials Exchange (Crafting)"),
+            (31750, "Oddly Delicate Materials Exchange"),
+            (36311, "Resplendent Materials Exchange"),
+            (38756, "Trade Goods Exchange"),
+        ] {
+            assert!(
+                !turn_ins.iter().any(|t| t.item_id == item_id),
+                "item {item_id} is traded at the {shop}, which pays no scrip, \
+                 but it is listed as a scrip turn-in"
+            );
+        }
+    }
+
+    /// Excluding the material exchanges must not empty the page — this route has
+    /// already shipped once rendering zero rows, and a join that silently
+    /// matches nothing would put it straight back there.
+    #[test]
+    fn the_real_turn_in_counters_survive_the_exclusion() {
+        let data = xiv_gen_db::data();
+        let turn_ins = scrip_turn_ins(data);
+
+        assert!(
+            turn_ins.len() > 1000,
+            "only {} turn-ins survived; the RewardType join has stopped matching",
+            turn_ins.len()
+        );
+        // A Dwarven collectable handed in for Orange Crafters' Scrip.
+        assert!(
+            turn_ins.iter().any(|t| t.item_id == 26271),
+            "a known scrip turn-in was excluded along with the material exchanges"
+        );
+    }
+
+    /// The exclusion set has to be non-empty, and must never swallow a group
+    /// that a scrip-paying shop offers.
+    #[test]
+    fn only_material_exchange_groups_are_excluded() {
+        let data = xiv_gen_db::data();
+        let excluded = material_exchange_groups(data);
+
+        assert!(
+            !excluded.is_empty(),
+            "no material-exchange groups found; CollectablesShop did not load"
+        );
+        for shop in data.collectables_shops.values() {
+            if shop.reward_type != SCRIP_REWARD_TYPE {
+                continue;
+            }
+            for group in shop.shop_items {
+                assert!(
+                    group == 0 || !excluded.contains(&group),
+                    "group {group} pays scrip but was excluded"
+                );
+            }
+        }
+    }
+
+    /// Gatherer scrips are paid for collectables that are *gathered*, so no
+    /// turn-in awarding one can have a recipe. The page relies on this: it
+    /// prices craft costs, skips anything without a recipe, and tells the user
+    /// the gatherer filters are empty by design instead of rendering a blank
+    /// table.
+    ///
+    /// Before the `RewardType` join this was false — 59 craftable material
+    /// exchange trades carried `Currency = 4`, so `?scrip=PurpleGatherers`
+    /// rendered 59 rows, every one of them wrong.
+    #[test]
+    fn no_craftable_turn_in_pays_a_gatherer_scrip() {
+        let data = xiv_gen_db::data();
+        let mut craftable = std::collections::HashSet::new();
+        for recipe in data.recipes.values() {
+            craftable.insert(recipe.item_result);
+        }
+
+        let offenders: Vec<i32> = scrip_turn_ins(data)
+            .into_iter()
+            .filter(|t| t.scrip_type.is_gatherer() && craftable.contains(&t.item_id))
+            .map(|t| t.item_id)
+            .collect();
+
+        assert!(
+            offenders.is_empty(),
+            "{} craftable turn-ins are labelled a gatherer scrip, so the \
+             gatherer filters render rows the page says can never exist: {:?}",
+            offenders.len(),
+            &offenders[..offenders.len().min(8)]
+        );
     }
 }

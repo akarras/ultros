@@ -11,15 +11,12 @@ use crate::manifest::{Manifest, Source};
 /// source is checked out *inside* it (see [`source_dir`]).
 pub const DATAMINING_SOURCE: &str = "ffxiv-datamining";
 
-/// The name of the source holding the upstream icon PNGs.
-pub const ICONS_SOURCE: &str = "universalis-assets";
-
 /// Languages that `ffxiv-datamining` itself ships under `csv/<lang>/`.
 pub const DATAMINING_LANGS: [&str; 4] = ["en", "ja", "de", "fr"];
 
 /// Every sheet `xiv_gen::csv_to_rkyv::read_data_from` reads. Adding a sheet
 /// there means adding it here, or the sparse checkout will not contain it.
-pub const SHEETS: [&str; 31] = [
+pub const SHEETS: [&str; 32] = [
     "Item",
     "Recipe",
     "ClassJob",
@@ -48,6 +45,7 @@ pub const SHEETS: [&str; 31] = [
     "RetainerTask",
     "RetainerTaskNormal",
     "RecipeLevelTable",
+    "CollectablesShop",
     "CollectablesShopItem",
     "CollectablesShopRewardScrip",
     "CraftLeve",
@@ -72,7 +70,6 @@ pub fn sparse_paths_for(name: &str) -> Vec<String> {
             .collect(),
         // The ko fork nests its CSVs under `csv/`; cn and tc keep theirs at the root.
         "ffxiv-datamining-ko" => sheet_patterns("/csv"),
-        ICONS_SOURCE => vec!["/icon2x/".to_string()],
         _ => sheet_patterns(""),
     }
 }
@@ -87,28 +84,20 @@ pub fn source_dir(cache_root: &Path, name: &str, source: &Source) -> PathBuf {
     }
 }
 
-/// Where the generator reads its inputs from.
+/// Where the generator reads its CSV inputs from. Icons are not fetched — they
+/// come out of the local FFXIV install via `icon-extract`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     /// An ffxiv-datamining tree, i.e. a directory containing `csv/<lang>/*.csv`.
     pub datamining: PathBuf,
-    /// The upstream `icon2x` PNG directory, unless icons were skipped.
-    pub icons: Option<PathBuf>,
 }
 
 impl Layout {
     /// Layout of an already-populated ultros checkout (`--offline-source`),
-    /// where both trees are still present as submodules.
-    pub fn offline(checkout: &Path, skip_icons: bool) -> Layout {
+    /// where the CSV tree is still present as a submodule.
+    pub fn offline(checkout: &Path) -> Layout {
         Layout {
             datamining: checkout.join("xiv-gen").join("ffxiv-datamining"),
-            icons: (!skip_icons).then(|| {
-                checkout
-                    .join("ultros-frontend")
-                    .join("ultros-xiv-icons")
-                    .join("universalis-assets")
-                    .join("icon2x")
-            }),
         }
     }
 }
@@ -125,18 +114,10 @@ pub fn patterns_for(name: &str, source: &Source) -> Vec<String> {
 
 /// Fetches every source in `manifest` into `cache_root` and returns the
 /// assembled input layout.
-pub fn fetch_all(
-    cache_root: &Path,
-    manifest: &Manifest,
-    skip_icons: bool,
-) -> anyhow::Result<Layout> {
-    // Validate before fetching anything: universalis-assets alone is ~500MB on a
-    // cold cache, and failing after that on a manifest problem is a bad trade.
+pub fn fetch_all(cache_root: &Path, manifest: &Manifest) -> anyhow::Result<Layout> {
+    // Validate before fetching anything.
     if !manifest.sources.contains_key(DATAMINING_SOURCE) {
         bail!("manifest has no `{DATAMINING_SOURCE}` source");
-    }
-    if !skip_icons && !manifest.sources.contains_key(ICONS_SOURCE) {
-        bail!("manifest has no `{ICONS_SOURCE}` source; pass --skip-icons to build without icons");
     }
 
     std::fs::create_dir_all(cache_root)
@@ -148,12 +129,7 @@ pub fn fetch_all(
     names.sort_by_key(|name| (*name != DATAMINING_SOURCE, *name));
 
     let mut datamining = None;
-    let mut icons = None;
     for name in names {
-        if skip_icons && name == ICONS_SOURCE {
-            println!("skipping {name} (--skip-icons)");
-            continue;
-        }
         let source = &manifest.sources[name];
         let patterns = patterns_for(name, source);
         println!(
@@ -162,15 +138,13 @@ pub fn fetch_all(
             patterns.len()
         );
         let dir = fetch_source(cache_root, name, source, &patterns)?;
-        match name {
-            DATAMINING_SOURCE => datamining = Some(dir),
-            ICONS_SOURCE => icons = Some(dir.join("icon2x")),
-            _ => {}
+        if name == DATAMINING_SOURCE {
+            datamining = Some(dir);
         }
     }
 
     let datamining = datamining.expect("presence checked before the fetch loop");
-    Ok(Layout { datamining, icons })
+    Ok(Layout { datamining })
 }
 
 /// Fetches `source` at its pinned SHA into the cache and checks out only the
@@ -266,13 +240,16 @@ mod tests {
 
     #[test]
     fn sheets_list_covers_every_read_sheet() {
-        assert_eq!(SHEETS.len(), 31);
+        assert_eq!(SHEETS.len(), 32);
         let mut sorted = SHEETS.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), SHEETS.len(), "SHEETS contains duplicates");
         assert!(SHEETS.contains(&"Item"));
         assert!(SHEETS.contains(&"CollectablesShopRewardScrip"));
+        // Omitting this one leaves the sparse checkout without the sheet that
+        // separates scrip turn-ins from material exchanges.
+        assert!(SHEETS.contains(&"CollectablesShop"));
     }
 
     #[test]
@@ -321,11 +298,6 @@ mod tests {
     }
 
     #[test]
-    fn universalis_assets_fetches_the_whole_icon_directory() {
-        assert_eq!(sparse_paths_for("universalis-assets"), vec!["/icon2x/"]);
-    }
-
-    #[test]
     fn subdir_sources_check_out_inside_the_datamining_tree() {
         let cache = Path::new("/cache");
         assert_eq!(
@@ -335,10 +307,6 @@ mod tests {
         assert_eq!(
             source_dir(cache, "ffxiv-datamining-cn", &source(Some("csv/cn"))),
             cache.join(DATAMINING_SOURCE).join("csv/cn")
-        );
-        assert_eq!(
-            source_dir(cache, "universalis-assets", &source(None)),
-            cache.join("universalis-assets")
         );
     }
 
@@ -357,14 +325,9 @@ mod tests {
     }
 
     #[test]
-    fn offline_layout_points_at_the_submodule_checkouts() {
+    fn offline_layout_points_at_the_submodule_checkout() {
         let checkout = Path::new("/repo");
-        let layout = Layout::offline(checkout, false);
+        let layout = Layout::offline(checkout);
         assert_eq!(layout.datamining, checkout.join("xiv-gen/ffxiv-datamining"));
-        assert_eq!(
-            layout.icons,
-            Some(checkout.join("ultros-frontend/ultros-xiv-icons/universalis-assets/icon2x"))
-        );
-        assert_eq!(Layout::offline(checkout, true).icons, None);
     }
 }
