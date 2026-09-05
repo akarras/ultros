@@ -5,10 +5,16 @@ use leptos::prelude::*;
 use ultros_api_types::{SaleHistory, world_helper::AnySelector};
 
 use crate::i18n::*;
+use crate::i18n_fallback::use_i18n_or_default;
 
 #[component]
 pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
-    let i18n = use_i18n();
+    // Not `use_i18n()`: the item page builds this table inside a
+    // `<Transition>`, so on the server it can be constructed under the fresh,
+    // empty owner `ScopedFuture` substitutes when the request's owner was
+    // already disposed. The panicking accessor aborts the SSR response there
+    // (GlitchTip #7288); the default locale does not.
+    let i18n = use_i18n_or_default();
     let (show_more, set_show_more) = signal(false);
     // Optimization: Avoid cloning the entire sales vector when we only need a slice.
     // Using `sales.with` allows us to inspect the vector without cloning it.
@@ -97,5 +103,38 @@ pub fn SaleHistoryTable(sales: Signal<Vec<SaleHistory>>) -> impl IntoView {
                     }
                 })
         }}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reproduces GlitchTip #7288 — the sibling of #7289 in
+    /// `listings_table.rs`. The item page builds this table inside a
+    /// `<Transition>`, so on the server it is constructed when the resource
+    /// resolves. If that request's owner was already disposed, `ScopedFuture`
+    /// hands the fragment a fresh, empty owner that never saw
+    /// `<I18nContextProvider>`, and the panicking `use_i18n()` aborts the
+    /// whole SSR response. Rendering under a bare owner is that situation.
+    #[test]
+    fn renders_without_an_i18n_context() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            let sales = vec![SaleHistory {
+                id: 1,
+                quantity: 2,
+                price_per_item: 250,
+                buying_character_id: 1,
+                hq: false,
+                sold_item_id: 1,
+                sold_date: chrono::Utc::now().naive_utc(),
+                world_id: 100,
+                buyer_name: None,
+            }];
+            let html = view! { <SaleHistoryTable sales=Signal::stored(sales) /> }.to_html();
+            assert!(html.contains("250"), "{html}");
+        });
     }
 }
