@@ -18,6 +18,14 @@ pub fn tracked_data() -> &'static xiv_gen::Data {
     if let Some(rev) = use_context::<DataRevision>() {
         rev.0.track();
     }
+    #[cfg(feature = "ssr")]
+    {
+        let locale = use_context::<leptos_i18n::I18nContext<crate::i18n::Locale>>()
+            .map(|i18n| i18n.get_locale())
+            .unwrap_or_default();
+        xiv_gen_db::data_for(crate::social_card::game_language(locale))
+    }
+    #[cfg(not(feature = "ssr"))]
     xiv_gen_db::data()
 }
 

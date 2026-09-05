@@ -3,11 +3,10 @@ use std::sync::{Arc, OnceLock};
 use super::{PriceSeriesArgs, WebState, build_price_series, error::WebError};
 use anyhow::{Result, anyhow};
 use axum::{
-    body::Body,
-    extract::{Path, State},
-    response::{IntoResponse, Response},
+    extract::{Path, Query, State},
+    http::HeaderMap,
+    response::IntoResponse,
 };
-use hyper::header;
 use resvg::{
     tiny_skia,
     usvg::{self, Options},
@@ -20,7 +19,7 @@ use ultros_charts::charts::price_history::{PriceChartOptions, build_price_histor
 use ultros_charts::svg::scene_to_svg;
 use ultros_clickhouse::ClickHouseClient;
 use ultros_db::world_data::world_cache::WorldCache;
-use xiv_gen::{Item, ItemId};
+use xiv_gen::Item;
 
 /// Window shown by the Discord bot's explicit price-history command.
 const HISTORY_WINDOW_DAYS: i64 = 30;
@@ -96,37 +95,13 @@ pub(crate) async fn item_card(
     Path((world, item_id)): Path<(String, i32)>,
     State(world_helper): State<Arc<WorldHelper>>,
 ) -> Result<impl IntoResponse, WebError> {
-    let item = xiv_gen_db::data()
-        .items
-        .get(&ItemId(item_id))
-        .ok_or(WebError::InvalidItemId(item_id))?;
-    let scope = world_helper
-        .lookup_world_by_name(&world)
-        .ok_or_else(|| WebError::WorldNotFound(world))?;
-    // ~430 ms of pure CPU per card (2400x1260 supersampled canvas, Lanczos3
-    // downscale, PNG encode) with no await inside it. Left on the async
-    // worker it pins that thread for the whole render, and social crawlers
-    // fetch these in bursts, so a handful of concurrent unfurls would stall
-    // every other response the runtime is serving. Owned inputs so the
-    // closure can be `'static`.
-    let item_id = item.key_id.0;
-    let item_name = item.name.clone();
-    let scope = scope.get_name().to_string();
-    let bytes = tokio::task::spawn_blocking(move || {
-        ultros_item_card::render_item_card(item_id, &item_name, &scope)
-    })
+    // Existing shares and download links keep returning a PNG. Route them
+    // through the same bounded renderer/cache as the locale-explicit URLs.
+    super::social_card::social_card(
+        Path(("en".into(), "item".into(), item_id.to_string())),
+        Query(super::social_card::SocialCardQuery { world: Some(world) }),
+        State(world_helper),
+        HeaderMap::new(),
+    )
     .await
-    .map_err(|e| anyhow::anyhow!("item card render task failed: {e}"))??;
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, "image/png")
-        // No market values or timestamps are baked into this card, so a
-        // crawler can safely retain it until its normal revalidation cycle.
-        .header(
-            header::CACHE_CONTROL,
-            #[cfg(not(debug_assertions))]
-            header::HeaderValue::from_static("public, max-age=86400"),
-            #[cfg(debug_assertions)]
-            header::HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-        )
-        .body(Body::new(http_body_util::Full::from(bytes)))?)
 }

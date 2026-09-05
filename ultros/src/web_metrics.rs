@@ -75,8 +75,16 @@ pub(crate) async fn start_metrics_server(
 ) {
     let app = metrics_app(recorder_handle);
 
-    // NOTE: expose metrics enpoint on a different port
-    let addr = SocketAddr::from(([0, 0, 0, 0], 9091));
+    // A separate port keeps metrics out of the public router. Allow parallel
+    // local worktrees to choose their own listener while preserving production.
+    let port = std::env::var("METRICS_PORT")
+        .ok()
+        .map(|port| {
+            port.parse::<u16>()
+                .expect("METRICS_PORT must be a valid port")
+        })
+        .unwrap_or(9091);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::debug!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app)
