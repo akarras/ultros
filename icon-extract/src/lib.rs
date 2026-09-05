@@ -21,12 +21,12 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use image::RgbaImage;
 use ironworks::{
+    Ironworks,
     file::tex::{Format, Texture},
     sqpack::{Install, SqPack},
-    Ironworks,
 };
 
 /// SqPack path of an icon's `.tex` file. Icons are grouped in
