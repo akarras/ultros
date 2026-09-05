@@ -1985,15 +1985,22 @@ pub(crate) async fn create_group(
 /// group already exists for each.
 pub(crate) async fn get_group_discord_guilds(
     State(db): State<UltrosDb>,
+    State(cache): State<AuthUserCache>,
     user: AuthDiscordUser,
+    cookies: PrivateCookieJar,
 ) -> Result<Json<Vec<DiscordManageableGuild>>, ApiError> {
     let ctx = crate::alerts::delivery::get_serenity_ctx().ok_or_else(|| {
         ApiError::from(anyhow::anyhow!(
             "Discord bot is not connected; cannot load your servers right now"
         ))
     })?;
-    let guilds =
-        crate::web::api::discord_lookup::manageable_guilds_for_user(&ctx, user.id as i64).await?;
+    let guilds = crate::web::api::discord_lookup::manageable_guilds_for_user(
+        &ctx,
+        user.id as i64,
+        &cookies,
+        &cache,
+    )
+    .await?;
 
     let guild_ids: Vec<i64> = guilds.iter().map(|(id, _, _)| *id).collect();
     let existing = db.group_ids_for_guilds(&guild_ids).await?;

@@ -688,7 +688,7 @@ async fn main() -> Result<()> {
             discord_client_id,
             discord_client_secret,
             format!("{}/redirect", hostname.trim_end_matches('/')),
-            HashSet::from_iter([OAuthScope::Identify]),
+            HashSet::from_iter([OAuthScope::Identify, OAuthScope::Guilds]),
         ),
         user_cache: AuthUserCache::new(),
         event_receivers: receivers,
