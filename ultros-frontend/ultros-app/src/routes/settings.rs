@@ -388,8 +388,8 @@ fn LabsSettings() -> impl IntoView {
 
 fn lab_title(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
     match token {
-        crate::global_state::labs::LAB_ANALYZER_LEDGER => {
-            t_string!(i18n, labs_analyzer_ledger_title).to_string()
+        crate::global_state::labs::LAB_ANALYZER_RECIPE => {
+            t_string!(i18n, labs_analyzer_recipe_title).to_string()
         }
         _ => token.to_string(),
     }
@@ -397,8 +397,8 @@ fn lab_title(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
 
 fn lab_desc(i18n: I18nContext<Locale, I18nKeys>, token: &str) -> String {
     match token {
-        crate::global_state::labs::LAB_ANALYZER_LEDGER => {
-            t_string!(i18n, labs_analyzer_ledger_desc).to_string()
+        crate::global_state::labs::LAB_ANALYZER_RECIPE => {
+            t_string!(i18n, labs_analyzer_recipe_desc).to_string()
         }
         _ => String::new(),
     }

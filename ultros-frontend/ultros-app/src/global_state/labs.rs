@@ -13,9 +13,13 @@ use super::cookies::Cookies;
 
 pub const LABS_COOKIE: &str = "LABS";
 
-/// The recipe analyzer's formula strip, marked headers and live info
-/// panel (kit Phase C).
-pub const LAB_ANALYZER_LEDGER: &str = "analyzer-ledger";
+/// The recipe analyzer's market model: the profit formula as a control
+/// (kit Phase C), a column per price signal with its "use" pill plus Hop
+/// gain and Worlds to visit (Phase D), and the market columns — Profit/day,
+/// Trend, Drift, Volume (30d), VWAP (30d) (Phase E2). One token for the
+/// whole tool: separate flags per phase made "which permutation am I
+/// looking at" a question, and the phases only make sense together.
+pub const LAB_ANALYZER_RECIPE: &str = "analyzer-recipe";
 
 pub struct LabInfo {
     pub token: &'static str,
@@ -23,12 +27,13 @@ pub struct LabInfo {
 
 /// Every live experiment. Adding one here is what makes it appear in
 /// Settings; deleting it is part of shipping the feature. Each entry's
-/// comment names the phase that deletes it (a struct field for that would
-/// have no non-test reader, which `-D warnings` rejects).
+/// comment names when it is deleted (a struct field for that would have
+/// no non-test reader, which `-D warnings` rejects).
 pub const LABS: &[LabInfo] = &[
-    // Deleted in kit Phase D, after Kosyne has used the strip.
+    // Deleted in the phase after Aaron has validated the market model on
+    // prod, which makes it the recipe analyzer's default (kit §11).
     LabInfo {
-        token: LAB_ANALYZER_LEDGER,
+        token: LAB_ANALYZER_RECIPE,
     },
 ];
 
@@ -96,13 +101,32 @@ mod tests {
 
     #[test]
     fn labs_cookie_round_trips_known_tokens_only() {
-        let labs: Labs = "analyzer-ledger,bogus,,analyzer-ledger".parse().unwrap();
+        let labs: Labs = "analyzer-recipe,bogus,,analyzer-recipe".parse().unwrap();
         assert_eq!(labs.enabled.len(), 1);
-        assert!(labs.has(LAB_ANALYZER_LEDGER));
-        assert_eq!(labs.to_string(), "analyzer-ledger");
+        assert!(labs.has(LAB_ANALYZER_RECIPE));
+        assert_eq!(labs.to_string(), "analyzer-recipe");
         let empty: Labs = "".parse().unwrap();
-        assert!(!empty.has(LAB_ANALYZER_LEDGER));
+        assert!(!empty.has(LAB_ANALYZER_RECIPE));
         assert_eq!(empty.to_string(), "");
+    }
+
+    /// The two tokens Phases C and D shipped are gone, not aliased: a
+    /// stored cookie or a bookmarked `?labs=` holding one of them parses to
+    /// the empty set, and the tester re-toggles once in Settings.
+    #[test]
+    fn the_retired_analyzer_tokens_no_longer_parse() {
+        let old: Labs = "analyzer-ledger,analyzer-signal-columns".parse().unwrap();
+        assert!(old.enabled.is_empty(), "{old:?}");
+        assert_eq!(old.to_string(), "");
+    }
+
+    #[test]
+    fn every_lab_token_is_listed_once() {
+        let mut tokens: Vec<&str> = LABS.iter().map(|l| l.token).collect();
+        tokens.sort_unstable();
+        tokens.dedup();
+        assert_eq!(tokens.len(), LABS.len());
+        assert_eq!(tokens, vec![LAB_ANALYZER_RECIPE]);
     }
 
     #[test]

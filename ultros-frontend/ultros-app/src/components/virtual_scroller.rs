@@ -118,8 +118,53 @@ fn viewport_px(
 /// Rows to render for a viewport of `viewport` px, including `overscan` rows
 /// beyond the fold. Extracted so the SSR fallback height can be checked to
 /// round-trip back to exactly [`SSR_FALLBACK_ROWS`] rows.
-fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u32) -> u32 {
+/// Also read by `routes::analyzer`'s window test.
+pub(crate) fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u32) -> u32 {
     ((viewport / avg_row_height).ceil() as u32).max(1) + overscan
+}
+
+/// The first row to render for a scroll offset of `effective_scroll` px past
+/// the header: a binary search for the smallest `i` whose top edge is at or
+/// past that offset, then half the overscan rendered above it.
+///
+/// `prefix_delta(i)` is the measured height difference of rows `0..i` against
+/// `row_height` (the Fenwick prefix sum); it is `0.0` for a fixed-height
+/// list. Pulled out of the memo so the row a scroll position maps to can be
+/// tested without a DOM — `routes::recipe_analyzer`'s window test does, since
+/// its lazy fetch keys on the published range.
+pub(crate) fn first_visible_row(
+    len: usize,
+    row_height: f64,
+    effective_scroll: f64,
+    prefix_delta: impl Fn(usize) -> f64,
+    overscan: u32,
+) -> u32 {
+    let mut lo: i32 = 0;
+    let mut hi: i32 = len as i32;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let base = mid as f64 * row_height;
+        if base + prefix_delta(mid as usize) < effective_scroll {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo.max(0) as u32).saturating_sub(overscan / 2)
+}
+
+/// The rendered row range `(start, end)` published to a parent's
+/// `visible_range`, `end` exclusive: the scroller's first rendered row and
+/// the rows it renders, both clamped to the data it actually has. A parent
+/// fetches for exactly this slice (plus its own prefetch margin), so the
+/// clamping is what keeps a short table from asking for rows that do not
+/// exist and a long one from asking for all of them.
+pub(crate) fn rendered_range(first: usize, shown: usize, len: usize) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+    let start = first.min(len - 1);
+    (start, (start + shown).min(len))
 }
 
 /// Virtual scroller currently mimics the API of the ForEach components, but adds a row_height and viewport_height.
@@ -147,12 +192,17 @@ pub fn VirtualScroller<T, D, V, KF, K>(
     #[prop(optional)] scroller_ref: Option<NodeRef<leptos::html::Div>>,
     /// Handle on the element that holds the rows.
     ///
-    /// That element already computes to `overflow-x: auto` (it declares
-    /// `overflow-y: hidden`, which forces the visible axis to `auto`), so it
-    /// is the list's horizontal scrollport. A caller rendering a grid wider
-    /// than the viewport needs this handle to keep its own header scrollport
-    /// in sync with it — the list itself cannot be wrapped in a scrollport
-    /// without stealing the sticky header's (see [`ScrollSource::Window`]).
+    /// In [`ScrollSource::Window`] mode that element computes to
+    /// `overflow-x: auto` (it declares `overflow-y: hidden`, which forces the
+    /// visible axis to `auto`), so it is the list's horizontal scrollport. A
+    /// caller rendering a grid wider than the viewport needs this handle to
+    /// keep its own header scrollport in sync with it — the list itself cannot
+    /// be wrapped in a scrollport without stealing the sticky header's (see
+    /// [`ScrollSource::Window`]).
+    ///
+    /// [`ScrollSource::Container`] declares no overflow on that element at
+    /// all: the container scroller is already the scrollport for both axes,
+    /// so there is nothing here to sync and this handle is not needed.
     #[prop(optional)]
     list_ref: Option<NodeRef<leptos::html::Div>>,
     /// CSS `min-width` for the column of rows, for a caller whose grid is
@@ -357,26 +407,17 @@ where
         if len == 0 {
             return 0u32;
         }
-        // binary search for smallest i where i*row_height + prefix_sums[i] >= effective_scroll
         let effective_scroll = (scroll_offset() as f64 - header_h).max(0.0);
 
-        let lo_u32 = fenwick.with(|f| {
-            let mut lo: i32 = 0;
-            let mut hi: i32 = len as i32;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let base = mid as f64 * row_height;
-                let delta = f.sum(mid as usize);
-                if base + delta < effective_scroll {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            lo.max(0) as u32
-        });
-
-        lo_u32.saturating_sub(render_ahead / 2)
+        fenwick.with(|f| {
+            first_visible_row(
+                len,
+                row_height,
+                effective_scroll,
+                |i| f.sum(i),
+                render_ahead,
+            )
+        })
     });
     // In container mode this tracks `window_height` and `hydrated` needlessly,
     // but neither ever changes the result there, so the memo's own diffing
@@ -409,13 +450,14 @@ where
     if let Some(range_sig) = visible_range {
         Effect::new(move |_| {
             let len = children_len();
-            if len == 0 {
-                range_sig.set((0, 0));
+            // The empty case reads neither signal, so an empty list does not
+            // subscribe this effect to the scroll position.
+            let range = if len == 0 {
+                (0, 0)
             } else {
-                let start = (child_start() as usize).min(len.saturating_sub(1));
-                let end = (start + children_shown() as usize).min(len);
-                range_sig.set((start, end));
-            }
+                rendered_range(child_start() as usize, children_shown() as usize, len)
+            };
+            range_sig.set(range);
         });
     }
 
@@ -513,6 +555,22 @@ where
     } else {
         format!("height: {}px;", viewport_height.ceil() as u32)
     };
+    // Row-area class. The `overflow` pair exists **only** in window mode,
+    // where this box is deliberately the list's horizontal scrollport and the
+    // caller keeps its own header scrollport in sync with it via `list_ref`
+    // (`overflow-y: hidden` forces the visible x-axis to compute to `auto`).
+    //
+    // Container mode must not declare it: the scroller div above already
+    // scrolls both axes, so a second scrollport here is one nothing ever
+    // writes `scrollLeft` on. It stayed pinned at 0 and clipped every row at
+    // the port width, while the header — a sibling *outside* this box — kept
+    // painting the full grid. That was the shipped recipe-analyzer bug where
+    // the right-hand headers rendered over blank rows.
+    let list_class = if is_window {
+        "overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+    } else {
+        "will-change-[transform] relative w-full contain-layout forced-layer"
+    };
     let virtual_children = Memo::new(move |_| {
         each.with(|children| {
             let array_size = children.len();
@@ -575,20 +633,24 @@ where
                             .into_any()
                     }
                 })}
-            // Row area. `overflow-y: hidden` forces the visible x-axis to
-            // compute to `auto`, so this box is also the list's horizontal
-            // scrollport (see `list_ref` / `row_min_width`).
+            // Row area. In **window mode only** it declares `overflow-y:
+            // hidden`, which forces the visible x-axis to compute to `auto`
+            // and makes this box the list's horizontal scrollport (see
+            // `list_ref` / `row_min_width`); container mode leaves it with no
+            // overflow at all, because the scroller div above is already the
+            // scrollport for both axes (see `list_class`).
             //
-            // Note for anyone tidying a caller's header later: this box is as
-            // tall as the *whole* virtual list, so its horizontal scrollbar
-            // sits at the bottom of all of it — hundreds of thousands of px
-            // down, i.e. never on screen. It scrolls by wheel, trackpad and
-            // touch, but a scrollbar on the caller's sticky header is the only
-            // affordance a user can actually see. Removing that header
-            // scrollbar makes off-screen columns unreachable in practice.
+            // Note for anyone tidying a *window-mode* caller's header later:
+            // this box is as tall as the *whole* virtual list, so its
+            // horizontal scrollbar sits at the bottom of all of it — hundreds
+            // of thousands of px down, i.e. never on screen. It scrolls by
+            // wheel, trackpad and touch, but a scrollbar on the caller's
+            // sticky header is the only affordance a user can actually see.
+            // Removing that header scrollbar makes off-screen columns
+            // unreachable in practice.
             <div
                 node_ref=list
-                class="overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer"
+                class=list_class
                 style=move || {
                     format!(
                         r#"height: {}px;"#,
@@ -613,8 +675,15 @@ where
                             let val = child_start() as f64 * row_height + delta_before;
                             val.max(0.0).round() as i32
                         },
+                        // An empty value is treated exactly like `None`: a
+                        // caller that forwards this prop through a component
+                        // whose own prop is a plain `String` (the `#[component]`
+                        // macro strips the `Option`, so `AnalyzerGrid`'s is)
+                        // hands us `""` when *its* caller passed nothing, and
+                        // `min-width: ;` is an invalid declaration.
                         row_min_width
-                            .as_ref()
+                            .as_deref()
+                            .filter(|w| !w.is_empty())
                             .map(|w| format!("min-width: {w};"))
                             .unwrap_or_default(),
                     )
@@ -715,6 +784,131 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The row area is the only element in the tree carrying
+    /// `will-change-[transform]`, so it is findable without a DOM.
+    fn row_area_class(html: &str) -> &str {
+        let idx = html
+            .find("will-change-[transform]")
+            .unwrap_or_else(|| panic!("row area not rendered: {html}"));
+        let start = html[..idx].rfind("class=\"").expect("class attribute") + 7;
+        let end = start + html[start..].find('"').expect("class attribute closes");
+        &html[start..end]
+    }
+
+    fn with_ssr_owner<F: FnOnce() -> String>(f: F) -> String {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(f)
+    }
+
+    fn container_html() -> String {
+        with_ssr_owner(|| {
+            view! {
+                <VirtualScroller
+                    each=Signal::derive(|| vec![1i32, 2, 3])
+                    key=move |t: &i32| *t
+                    view=move |t: i32| view! { <span>{t}</span> }
+                    viewport_height=720.0
+                    row_height=60.0
+                />
+            }
+            .to_html()
+        })
+    }
+
+    fn container_html_with_min_width(w: &'static str) -> String {
+        with_ssr_owner(move || {
+            view! {
+                <VirtualScroller
+                    each=Signal::derive(|| vec![1i32, 2, 3])
+                    key=move |t: &i32| *t
+                    view=move |t: i32| view! { <span>{t}</span> }
+                    viewport_height=720.0
+                    row_height=60.0
+                    row_min_width=w
+                />
+            }
+            .to_html()
+        })
+    }
+
+    fn window_html() -> String {
+        with_ssr_owner(|| {
+            view! {
+                <VirtualScroller
+                    each=Signal::derive(|| vec![1i32, 2, 3])
+                    key=move |t: &i32| *t
+                    view=move |t: i32| view! { <span>{t}</span> }
+                    scroll_source=ScrollSource::Window { sticky_offset: 76.0 }
+                    viewport_height=720.0
+                    row_height=60.0
+                />
+            }
+            .to_html()
+        })
+    }
+
+    /// The shipped bug: in container mode the scroller div above already
+    /// scrolls both axes, so an `overflow` pair here made the row area a
+    /// second, never-scrolled horizontal scrollport. It clipped every row at
+    /// the viewport width while the header — a sibling *outside* it — kept
+    /// painting the full grid.
+    #[test]
+    fn container_mode_row_area_declares_no_overflow() {
+        let class = {
+            let html = container_html();
+            row_area_class(&html).to_string()
+        };
+        assert!(
+            !class.contains("overflow"),
+            "container-mode row area must not be a scrollport: {class}"
+        );
+        // Everything else about the box is unchanged.
+        assert!(
+            class.contains("relative")
+                && class.contains("w-full")
+                && class.contains("contain-layout")
+                && class.contains("forced-layer"),
+            "{class}"
+        );
+    }
+
+    /// Window mode keeps the pair verbatim: it is the list's own horizontal
+    /// scrollport there, and the caller mirrors its `scrollLeft` via
+    /// `list_ref`.
+    #[test]
+    fn window_mode_row_area_keeps_its_overflow_pair() {
+        let html = window_html();
+        let class = row_area_class(&html);
+        assert_eq!(
+            class,
+            "overflow-y-hidden overflow-x-visible will-change-[transform] relative w-full contain-layout forced-layer",
+            "the flip finder's markup must stay byte-identical",
+        );
+    }
+
+    #[test]
+    fn spacer_sizes_itself_when_row_min_width_is_passed() {
+        let html = container_html_with_min_width("max-content");
+        assert!(html.contains("min-width: max-content;"), "{html}");
+    }
+
+    #[test]
+    fn spacer_emits_no_min_width_when_the_prop_is_omitted_or_empty() {
+        let omitted = container_html();
+        assert!(
+            !omitted.contains("min-width"),
+            "an omitted prop must not size the spacer: {omitted}"
+        );
+        // `AnalyzerGrid` forwards a plain `String` (the macro strips the
+        // `Option`), so a caller that passes nothing forwards `""` here.
+        let empty = container_html_with_min_width("");
+        assert!(
+            !empty.contains("min-width"),
+            "an empty prop must not emit `min-width: ;`: {empty}"
+        );
+    }
 
     #[test]
     fn container_viewport_ignores_window_height() {
@@ -868,21 +1062,11 @@ mod tests {
         }
 
         // This mimics the child_start binary search
-        let find_first_gte = |scroll: f64| {
-            let mut lo: i32 = 0;
-            let mut hi: i32 = n as i32;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let base = mid as f64 * row_height;
-                let delta = f.sum(mid as usize);
-                if base + delta < scroll {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            lo.max(0) as u32
-        };
+        // Calls the production search rather than mimicking it — a copy
+        // of the loop here would let the two drift with both tests green.
+        // Overscan 0 makes `first_visible_row` exactly this search.
+        let find_first_gte =
+            |scroll: f64| first_visible_row(n, row_height, scroll, |i| f.sum(i), 0);
 
         // Before modified items
         assert_eq!(find_first_gte(100.0), 5); // 5 * 20 = 100
@@ -907,21 +1091,11 @@ mod tests {
         // Simulate a row that shrunk
         f.add(1, -5.0); // Item 1 is 15px tall
 
-        let find_first_gte = |scroll: f64| {
-            let mut lo: i32 = 0;
-            let mut hi: i32 = n as i32;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let base = mid as f64 * row_height;
-                let delta = f.sum(mid as usize);
-                if base + delta < scroll {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            lo.max(0) as u32
-        };
+        // Calls the production search rather than mimicking it — a copy
+        // of the loop here would let the two drift with both tests green.
+        // Overscan 0 makes `first_visible_row` exactly this search.
+        let find_first_gte =
+            |scroll: f64| first_visible_row(n, row_height, scroll, |i| f.sum(i), 0);
 
         assert_eq!(find_first_gte(15.0), 1); // 1 * 20 = 20 > 15
         assert_eq!(find_first_gte(20.0), 1); // 1 * 20 = 20 >= 20

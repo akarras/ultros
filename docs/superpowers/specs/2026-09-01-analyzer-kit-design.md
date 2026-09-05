@@ -277,7 +277,7 @@ recipe `w-28` = 112, `w-32` = 128, `w-40` = 160.
 | Item, Hq, Actions | always | RowLocal | no | page cells |
 | Profit, Roi | always / always, `roi` | Computed | yes | ROI clamp in C |
 | ProfitPerDay | `profit-per-day` / `profit_per_day` | recipe Computed = profit × rollup sales/day; flip = profit × buffer velocity | yes | new, zero fetch, default off |
-| RevenueSlot, CostSlot | Price, Cost / unit and each tool's names | recipe SignalView (RowLocal or Bulk); flip RowLocal | yes | marks only; Price sub-line `‹signal›[ · listing][ · vs median ±n%]` |
+| RevenueSlot, CostSlot | Price, Cost / unit and each tool's names | recipe SignalView (RowLocal or Bulk); flip RowLocal | yes | marks only; Price sub-line `‹signal›[ · listing][ · vs median ±n%]`, or `troll listing` alone when the price is over 50x its own median (`is_troll_listing`) |
 | RevSignal ×4, CostSignal ×4 | `rev-*`, `cost-*` / none | rev Bulk(SellWorldStats 7); cost Computed over Bulk(BuyScopeStats 7) for sale signals | yes | v1 Phase 2 (D) |
 | Tax | `tax` / `tax` | Computed `sale_tax_for` | yes | |
 | SalesPerDay 7d raw | always "Daily sales" | Bulk(SellWorldStats 7) | yes | wires the dead `recipe_analyzer_sales_per_day` key |
@@ -327,10 +327,21 @@ non-reactive because the flip finder's filter memo reads the store. The recipe s
 page level so a cost-basis switch that remounts the table does not refetch (the two
 enrichment endpoints are POSTs, which browsers do not cache). Windows: recipe Container mode
 renders 19 rows (viewport 720 minus the 64 px header, over 60 px, plus overscan 8) so 79 keys;
-the flip finder is Window mode, 20 rows on SSR and about 32 at 1080p, so 92 keys; both under
-the 200-key sparkline and 250-key quality caps. The tests compute the window from
-`rows_for_viewport` rather than literals. The ≤100-row tools (leve, venture, FC, scrip) use
-the whole table as the window; vendor resale does not truncate and uses the visible window.
+the flip finder is Window mode, 28 rows on SSR (the 20-row fallback plus overscan 8) and
+about 32 at 1080p, so 88 to 92 keys; both under the 200-key sparkline and 250-key quality
+caps. The tests compute the window from `rows_for_viewport` rather than literals. The
+≤100-row tools (leve, venture, FC, scrip) use the whole table as the window; vendor resale does not truncate and uses the visible window.
+
+**Viewport gate.** A lazy column that is `hidden md:*` draws nothing below `md`, so neither
+gate that feeds one may open there: `analyzer_kit::enrichment::use_wide_viewport()` (a
+`leptos-use` `use_media_query` on `(min-width: 48rem)`, Tailwind's `md` verbatim) is `&&`-ed
+into `stats_30_wanted` and `spark_rows_wanted`. **Fetch path only** — the signal reaches a
+`Memo` an `Effect` consumes and nothing that renders, because it is `false` on the server and
+on the first client render, and a markup branch on it would tear hydration. It is also the
+one coupling the phones decision (#7 below) has to carry: whoever gives the recipe analyzer a
+horizontal-scroll layout and drops `hidden md:*` must drop this gate in the same change, or
+the newly visible columns will never load.
+
 Coverage caveats stated in tooltips: `sales_hourly` accretes from a 30-hour refresh with no
 backfill; `item_stats_window` covers about 7% of traded items.
 
@@ -508,9 +519,11 @@ Mechanism, fitting what the repo already has: a cookie, because the recipe analy
 the server and a client-only flag would hydrate differently. `global_state/labs.rs` holds
 `Labs { enabled: BTreeSet<String> }` with `FromStr`/`Display` as a comma-separated list under
 the cookie name `LABS`, read through `Cookies::use_cookie_typed`, the same pattern as
-`CraftOptions` and the theme cookies. Each experiment is a `&'static str` token
-(`analyzer-ledger` for Phase C, `analyzer-signal-columns` for D, `analyzer-market-columns` for
-E2, `analyzer-sell-scope` for F). `use_lab(token) -> Signal<bool>` is true when the cookie set
+`CraftOptions` and the theme cookies. Each experiment is a `&'static str` token. The
+recipe analyzer has exactly one, `analyzer-recipe`: Phase E2 merged Phase C's
+`analyzer-ledger` and Phase D's `analyzer-signal-columns` into it (one tool, one toggle —
+separate flags per phase made "which permutation is this?" a question), and Phase F's sell
+scope ships under the same token. `use_lab(token) -> Signal<bool>` is true when the cookie set
 contains the token or the page URL carries `?labs=token[,token]`, so a link can be shared with
 a tester without touching their settings. The Settings page gains a "Labs" section listing the
 live experiments as `Toggle`s with a one-line description each, all strings in the seven

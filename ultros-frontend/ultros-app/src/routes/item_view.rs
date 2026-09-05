@@ -341,7 +341,7 @@ pub fn DatacenterExclusionControls(
         let world_data = world_data.clone();
         move |_| {
             let world_name = Url::unescape(&world());
-            world_data
+            let mut datacenters = world_data
                 .lookup_world_by_name(&world_name)
                 .map(|result| {
                     world_data
@@ -350,53 +350,39 @@ pub fn DatacenterExclusionControls(
                         .cloned()
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_default()
-        }
-    });
-    let excluded_visible = Memo::new({
-        let world_data = world_data.clone();
-        move |_| {
+                .unwrap_or_default();
+
+            // Keep an exclusion from a previously selected scope removable,
+            // but render every datacenter exactly once.
             excluded_datacenters.with(|excluded| {
-                let mut datacenters = excluded
-                    .iter()
-                    .filter_map(|name| {
-                        world_data
+                for name in excluded {
+                    let already_visible = datacenters
+                        .iter()
+                        .any(|datacenter| datacenter.name == *name);
+                    if !already_visible
+                        && let Some(datacenter) = world_data
                             .lookup_world_by_name(name)
                             .and_then(|result| result.as_datacenter())
-                            .cloned()
-                    })
-                    .collect::<Vec<_>>();
-                datacenters.sort_by(|a, b| a.name.cmp(&b.name));
-                datacenters
-            })
+                    {
+                        datacenters.push(datacenter.clone());
+                    }
+                }
+            });
+            datacenters.sort_by(|a, b| a.name.cmp(&b.name));
+            datacenters
         }
     });
 
     view! {
         {move || {
-            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty())
-                || excluded_visible.with(|datacenters| !datacenters.is_empty());
+            let has_controls = datacenters.with(|datacenters| !datacenters.is_empty());
             has_controls.then(|| {
                 view! {
-                    <div class="rounded-lg border border-[color:var(--color-outline)] p-3 sm:p-4">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <h2 class="text-sm font-bold uppercase text-brand-200">
-                                {t!(i18n, item_view_exclude_datacenters)}
-                            </h2>
-                            <button
-                                type="button"
-                                class="btn-secondary h-8 px-2 text-xs"
-                                class:hidden=move || excluded_datacenters.with(|set| set.is_empty())
-                                on:click=move |_| {
-                                    excluded_datacenters.update(|set| set.clear());
-                                }
-                            >
-                                <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                {t!(i18n, clear_all)}
-                            </button>
-                        </div>
-
-                        <div class="mt-3 flex flex-wrap gap-2">
+                    <div
+                        class="flex flex-wrap items-center gap-2"
+                        role="group"
+                        aria-label=move || t_string!(i18n, item_view_exclude_datacenters).to_string()
+                    >
                             {move || {
                                 datacenters
                                     .get()
@@ -406,12 +392,14 @@ pub fn DatacenterExclusionControls(
                                         let label_name = name.clone();
                                         let state_name = name.clone();
                                         let click_name = name.clone();
+                                        let hook_name = name.clone();
                                         let is_excluded = Signal::derive(move || {
                                             excluded_datacenters.with(|set| set.contains(&state_name))
                                         });
                                         view! {
                                             <button
                                                 type="button"
+                                                data-datacenter=hook_name
                                                 aria-pressed=move || is_excluded().to_string()
                                                 aria-label=move || {
                                                     if is_excluded() {
@@ -422,11 +410,11 @@ pub fn DatacenterExclusionControls(
                                                 }
                                                 class=move || {
                                                     [
-                                                        "inline-flex min-h-9 items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors",
+                                                        "inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]",
                                                         if is_excluded() {
-                                                            "border-amber-300/60 bg-amber-500/10 text-amber-100"
+                                                            "border-brand-300/60 bg-[color:var(--brand-bg)] font-semibold text-[color:var(--brand-fg)]"
                                                         } else {
-                                                            "border-[color:var(--color-outline)] text-[color:var(--color-text)] hover:border-brand-300/60"
+                                                            "border-[color:var(--color-outline)] bg-[color:var(--color-background-elevated)] text-[color:var(--color-text)] hover:border-brand-300/60"
                                                         },
                                                     ]
                                                         .join(" ")
@@ -441,7 +429,7 @@ pub fn DatacenterExclusionControls(
                                             >
                                                 {move || {
                                                     is_excluded()
-                                                        .then(|| view! { <Icon icon=icondata::BsCheck attr:class="text-sm" /> })
+                                                        .then(|| view! { <Icon icon=icondata::MdiClose attr:class="text-sm" /> })
                                                 }}
                                                 <span>{name.clone()}</span>
                                             </button>
@@ -449,43 +437,24 @@ pub fn DatacenterExclusionControls(
                                     })
                                     .collect_view()
                             }}
-                        </div>
-
-                        <div
-                            class="mt-3 flex flex-wrap gap-2"
-                            class:hidden=move || excluded_visible.with(|datacenters| datacenters.is_empty())
-                        >
                             {move || {
-                                excluded_visible
-                                    .get()
-                                    .into_iter()
-                                    .map(|datacenter: Datacenter| {
-                                        let name = datacenter.name.clone();
-                                        let label_name = name.clone();
-                                        let click_name = name.clone();
+                                (!excluded_datacenters.with(|set| set.is_empty()))
+                                    .then(|| {
                                         view! {
                                             <button
                                                 type="button"
-                                                class="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-100 transition-colors hover:border-amber-200/70"
-                                                aria-label=move || t_string!(
-                                                    i18n,
-                                                    item_view_include_datacenter_aria,
-                                                    datacenter = label_name.clone()
-                                                )
+                                                class="inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] transition-colors hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)] hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-ring)]"
+                                                data-testid="clear-datacenter-exclusions"
                                                 on:click=move |_| {
-                                                    excluded_datacenters.update(|set| {
-                                                        set.remove(&click_name);
-                                                    });
+                                                    excluded_datacenters.update(|set| set.clear());
                                                 }
                                             >
                                                 <Icon icon=icondata::MdiClose attr:class="text-sm" />
-                                                <span>{name.clone()}</span>
+                                                {t!(i18n, clear_all)}
                                             </button>
                                         }
                                     })
-                                    .collect_view()
                             }}
-                        </div>
                     </div>
                 }
             })
@@ -1636,7 +1605,6 @@ fn ListingsContent(
     let world_data = use_context::<LocalWorldData>().unwrap().0.unwrap();
     let excluded_datacenters = RwSignal::new(HashSet::<String>::new());
     let filtered_listings = Memo::new({
-        let world_data = world_data.clone();
         // Every read in here goes through a `try_*` accessor. `ArcMemo` `take()`s
         // its cached value before running this closure, so a panic in the body
         // leaves the memo permanently holding `None` — every later read then dies
@@ -1657,11 +1625,14 @@ fn ListingsContent(
                 })
             })
             .unwrap_or_default();
+            // Datacenter exclusions belong to the Active Listings panel. Keeping
+            // them out of this page-wide dataset prevents a table preference from
+            // changing the price summary, chart, and per-world supply breakdown.
             filter_listing_rows(
                 listings,
-                Some(world_data.as_ref()),
+                None,
                 &get_or_default(&excluded_worlds),
-                &get_or_default(&excluded_datacenters),
+                &HashSet::new(),
             )
         }
     });
@@ -2070,6 +2041,40 @@ fn ItemViewContent() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use leptos_i18n::context::init_i18n_context;
+    use ultros_api_types::world::{Datacenter, Region, World, WorldData};
+    use ultros_api_types::world_helper::WorldHelper;
+
+    fn world_data_for_exclusion_controls() -> LocalWorldData {
+        LocalWorldData(Ok(Arc::new(WorldHelper::new(WorldData {
+            regions: vec![Region {
+                id: 1,
+                name: "North-America".to_string(),
+                datacenters: vec![
+                    Datacenter {
+                        id: 10,
+                        name: "Aether".to_string(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 100,
+                            name: "Gilgamesh".to_string(),
+                            datacenter_id: 10,
+                        }],
+                    },
+                    Datacenter {
+                        id: 20,
+                        name: "Primal".to_string(),
+                        region_id: 1,
+                        worlds: vec![World {
+                            id: 200,
+                            name: "Excalibur".to_string(),
+                            datacenter_id: 20,
+                        }],
+                    },
+                ],
+            }],
+        }))))
+    }
 
     fn listing(
         id: i32,
@@ -2123,6 +2128,37 @@ mod tests {
 
         assert_eq!(result.0.id, 2);
         assert_eq!(result.0.world_id, 200);
+    }
+
+    #[test]
+    fn datacenter_exclusion_controls_render_each_datacenter_once() {
+        let _ = any_spawner::Executor::init_futures_executor();
+        let owner = Owner::new();
+        owner.with(|| {
+            provide_context(init_i18n_context::<crate::i18n::Locale>());
+            provide_context(world_data_for_exclusion_controls());
+            let world = Memo::new(|_| "North-America".to_string());
+            let excluded_datacenters = RwSignal::new(HashSet::from(["Aether".to_string()]));
+
+            let html = view! {
+                <DatacenterExclusionControls world excluded_datacenters />
+            }
+            .to_html();
+
+            assert_eq!(
+                html.matches("data-datacenter=\"Aether\"").count(),
+                1,
+                "{html}"
+            );
+            assert_eq!(
+                html.matches("data-datacenter=\"Primal\"").count(),
+                1,
+                "{html}"
+            );
+            assert_eq!(html.matches("Clear all").count(), 1);
+            assert!(html.contains("aria-pressed=\"true\""));
+            assert!(!html.contains("<h2"));
+        });
     }
 
     fn zone_listing(price: i32, world_id: i32) -> CheapestListingData {

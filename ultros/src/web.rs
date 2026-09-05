@@ -18,7 +18,6 @@ use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
 use axum_extra::extract::CookieJar;
-use axum_extra::extract::cookie::Cookie;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use futures::future::{try_join_all, try_join3};
 use hyper::header;
@@ -2392,7 +2391,7 @@ async fn delete_user(
         .value()
         .to_owned();
     cache.remove_token(&token).await;
-    let cookie_jar = cookie_jar.remove(Cookie::from("discord_auth"));
+    let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
     // remove the token from the cache
     // remove the auth cookie from the cache
     Ok((cookie_jar, Redirect::to("/")))

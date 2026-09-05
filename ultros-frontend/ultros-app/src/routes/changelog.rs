@@ -38,6 +38,42 @@ pub const CHANGELOG: &[ChangelogEntry] = &[
         link: None,
     },
     ChangelogEntry {
+        date: "2026-09-04",
+        title: "Correct iOS notification device labels",
+        blurb: "New browser notification subscriptions that identify as an iPhone or iPad are now labeled iOS instead of macOS.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-09-03",
+        title: "Recipe Analyzer: one Labs toggle, plus Profit/day, a price trend, its drift, and 30-day volume and VWAP",
+        blurb: "The Recipe Analyzer's two Labs toggles are now one, \"Recipe Analyzer: the market model\" under Settings › Labs — turn it back on there if you had either of the old ones. It carries everything they did, plus five new columns in the Columns picker: Profit/day (profit times how fast the item sells), Trend (the last 7 days of prices as a sparkline), Drift (how far that trend moved), and Volume (30d) and VWAP (30d) for a longer view than the 7-day pair. Trend and Drift load only for the rows you can see; the 30-day columns load their own data the first time you show one. Price now says how it compares with the sell world's 7-day median, and the Columns picker groups everything under Market and Location.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-09-03",
+        title: "Active listings are tidier to browse",
+        blurb: "The listings table's Show more control now matches sale history and stays outside the table's scroll area. Datacenter exclusions use one clear, theme-aware toggle per datacenter, show how many listings remain, and offer a reset instead of leaving an empty table behind. They also stay scoped to the listings table, so filtering it no longer blanks the price summary or other item-page sections.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-03",
+        title: "Being signed out no longer leaves you stuck",
+        blurb: "When Discord expired or revoked your login, or when you deleted your account, Ultros often failed to finish signing you out: the site kept showing you as signed in while everything that needed your account quietly failed, and the only way out was clearing your browser's cookies by hand. You are now signed out properly the moment it happens, whatever page you were on.",
+        link: None,
+    },
+    ChangelogEntry {
+        date: "2026-09-02",
+        title: "Recipe Analyzer: every price signal is a column you can sort, and Hop gain tells you whether the trip to another world pays (Labs)",
+        blurb: "Turn on \"Recipe Analyzer: price signals as columns\" under Settings › Labs. The Columns picker gains a column for every cost and revenue signal, each with a \"use\" pill that makes it the formula's input, plus Hop gain / unit (what buying at home would cost minus buying across the buy scope) and Worlds to visit (which worlds hold the cheapest ingredients). Rows with an ingredient that has no listing and no vendor now say how many are unpriced. For everyone, with sub-crafts on, an unlisted intermediate that can be crafted is now costed as a craft instead of as free, so Cost / unit rises on those rows.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
+        date: "2026-09-02",
+        title: "Turning ads back on works again",
+        blurb: "Switching \"hide ads\" off in Settings had no effect: the setting was never actually cleared, so ads stayed hidden and the toggle flipped itself back on after a reload. Turning the setting off now sticks, and ads come back.",
+        link: Some("/settings"),
+    },
+    ChangelogEntry {
         date: "2026-09-02",
         title: "Recipe Analyzer: try the profit formula as a control (Labs)",
         blurb: "Turn on \"Recipe Analyzer: profit formula strip\" under Settings › Labs and the formula behind every row becomes a control above the table: pick the revenue signal and the cost signal, and the columns that feed Profit are marked so you can see exactly what the number is made of. Hover a profit for the row's arithmetic. While it's on, absurd ROIs from one fake listing are capped at 100,000%.",

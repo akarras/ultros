@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use leptos::prelude::RwSignal;
+
 use ultros_api_types::cheapest_listings::{
     CheapestListingData, CheapestListingMapKey, CheapestListingsMap, PriceSummary,
 };
@@ -47,12 +49,55 @@ pub fn stats_index(stats: &BulkSaleStats) -> StatsIndex {
         .collect()
 }
 
+/// A client-only sale-statistics body, filled by a page `Effect` after the
+/// table has rendered: `None` on the server and on the first client paint,
+/// `Some(index)` once it lands — an *empty* index if the fetch failed, so
+/// cells settle to "—" instead of shimmering forever.
+pub type LateStats = RwSignal<Option<Arc<StatsIndex>>>;
+
+/// The statistics row for `(item, quality)`, preferring `prefer_hq` and
+/// falling back to the other quality: the rule the pricing pass applies to
+/// the 7-day body, so a row's 30-day figures come from the same quality its
+/// 7-day ones did.
+pub fn stat_row_either(
+    index: &StatsIndex,
+    item_id: i32,
+    prefer_hq: bool,
+) -> Option<&ItemSaleStats> {
+    index
+        .get(&(item_id, prefer_hq))
+        .or_else(|| index.get(&(item_id, !prefer_hq)))
+}
+
 /// The statistic a signal reads from one row.
 pub fn stat_price(row: &ItemSaleStats, stat: SaleStat) -> i32 {
     match stat {
         SaleStat::Min => row.min_price,
         SaleStat::Median => row.median_price,
         SaleStat::Avg => row.avg_price,
+    }
+}
+
+/// The bare statistic for `(item, hq)`: no listing fallback, `None` when
+/// the row is missing or zero. Alternative revenue columns read this so a
+/// world with no sale history shows "—" rather than a listing.
+pub fn stat_only(index: &StatsIndex, item_id: i32, hq: bool, stat: SaleStat) -> Option<i32> {
+    index
+        .get(&(item_id, hq))
+        .map(|row| stat_price(row, stat))
+        .filter(|p| *p > 0)
+}
+
+/// The cheaper of the NQ and HQ bare statistics — today's revenue rule
+/// (the cheaper quality sells first).
+pub fn stat_only_cheapest(index: &StatsIndex, item_id: i32, stat: SaleStat) -> Option<i32> {
+    match (
+        stat_only(index, item_id, false, stat),
+        stat_only(index, item_id, true, stat),
+    ) {
+        (None, None) => None,
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (Some(a), Some(b)) => Some(a.min(b)),
     }
 }
 
@@ -140,6 +185,15 @@ mod tests {
                     },
                 )
                 .collect(),
+        }
+    }
+
+    fn stat_row(item_id: i32, hq: bool, min_price: i32) -> ItemSaleStats {
+        ItemSaleStats {
+            item_id,
+            hq,
+            min_price,
+            ..Default::default()
         }
     }
 
@@ -258,5 +312,77 @@ mod tests {
         assert_eq!(takes(&base), Some(100));
         assert_eq!(takes(&arc), Some(100));
         assert_eq!(takes(&&base), Some(100));
+    }
+
+    #[test]
+    fn stat_only_has_no_fallback() {
+        let mut index = StatsIndex::new();
+        index.insert(
+            (7, false),
+            ItemSaleStats {
+                item_id: 7,
+                hq: false,
+                min_price: 90,
+                median_price: 100,
+                avg_price: 110,
+                num_sold: 3,
+                ..Default::default()
+            },
+        );
+        index.insert(
+            (7, true),
+            ItemSaleStats {
+                item_id: 7,
+                hq: true,
+                min_price: 0,
+                median_price: 80,
+                avg_price: 0,
+                num_sold: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stat_only(&index, 7, false, SaleStat::Median), Some(100));
+        assert_eq!(
+            stat_only(&index, 7, true, SaleStat::Min),
+            None,
+            "a zero stat is no stat"
+        );
+        assert_eq!(
+            stat_only(&index, 8, false, SaleStat::Median),
+            None,
+            "no row, no number"
+        );
+        assert_eq!(stat_only_cheapest(&index, 7, SaleStat::Median), Some(80));
+        assert_eq!(
+            stat_only_cheapest(&index, 7, SaleStat::Avg),
+            Some(110),
+            "the zero HQ avg is skipped"
+        );
+        assert_eq!(stat_only_cheapest(&index, 8, SaleStat::Min), None);
+    }
+
+    #[test]
+    fn stat_row_either_falls_back_to_the_other_quality() {
+        let mut index: StatsIndex = StatsIndex::new();
+        index.insert((7, false), stat_row(7, false, 100));
+        assert_eq!(
+            stat_row_either(&index, 7, false).map(|r| r.min_price),
+            Some(100)
+        );
+        // HQ preferred but absent: the NQ row is what actually traded.
+        assert_eq!(
+            stat_row_either(&index, 7, true).map(|r| r.min_price),
+            Some(100)
+        );
+        index.insert((7, true), stat_row(7, true, 250));
+        assert_eq!(
+            stat_row_either(&index, 7, true).map(|r| r.min_price),
+            Some(250)
+        );
+        assert_eq!(
+            stat_row_either(&index, 7, false).map(|r| r.min_price),
+            Some(100)
+        );
+        assert!(stat_row_either(&index, 8, false).is_none());
     }
 }

@@ -88,6 +88,9 @@ pub struct IngredientLine {
     pub unit_price: i32,
     pub is_shard: bool,
     pub source: PriceSource,
+    /// World the chosen market listing sits on; 0 for vendor, sub-craft
+    /// and unpriced lines.
+    pub world_id: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +110,11 @@ pub struct CostBreakdown {
     pub on_hand_savings: i32,
     pub ingredient_lines: Vec<IngredientLine>,
     pub sub_crafts: Vec<SubcraftInfo>,
+    /// Lines bought on a market that no listing priced (`unit_price == 0`),
+    /// after the shard flag and the sub-craft pass: shards under
+    /// `ExcludeShards` and vendor-sold items are not counted, and the
+    /// winning sub-run's count propagates up.
+    pub unpriced_market_lines: u16,
 }
 
 /// Iterator over the (non-zero) ingredients of a recipe. Moved from
@@ -142,16 +150,11 @@ pub fn compute_ingredient_cost<P: PriceLookup + ?Sized>(
     prices: &P,
     opts: &CraftingCostOptions<'_>,
 ) -> IngredientLine {
-    // Look up price. HQ-preferred when require_hq, with LQ fallback.
+    // The listing lowest_gil / price_preferring_hq would price from, kept
+    // whole so the line can say which world it was priced on.
     let summary = prices.find_matching_listings(item_id.0);
-    let market_price = if opts.require_hq {
-        summary
-            .price_preferring_hq()
-            .or_else(|| summary.lowest_gil())
-            .unwrap_or(0)
-    } else {
-        summary.lowest_gil().unwrap_or(0)
-    };
+    let chosen = summary.chosen(opts.require_hq);
+    let market_price = chosen.map(|c| c.price).unwrap_or(0);
 
     // Vendor floor: NPC gil-shop goods are always NQ, so never apply when the
     // caller requires HQ. A vendor price of 0 (or missing) is ignored.
@@ -181,6 +184,11 @@ pub fn compute_ingredient_cost<P: PriceLookup + ?Sized>(
     }
     let used_from_market = (amount_needed - used_from_on_hand).max(0);
 
+    let world_id = match source {
+        PriceSource::Market if unit_price > 0 => chosen.map(|c| c.world_id).unwrap_or(0),
+        _ => 0,
+    };
+
     IngredientLine {
         item_id,
         needed_total: amount_needed,
@@ -189,6 +197,7 @@ pub fn compute_ingredient_cost<P: PriceLookup + ?Sized>(
         unit_price,
         is_shard,
         source,
+        world_id,
     }
 }
 
@@ -246,6 +255,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
     let mut on_hand_savings: i64 = 0;
     let mut ingredient_lines: Vec<IngredientLine> = Vec::new();
     let mut sub_crafts: Vec<SubcraftInfo> = Vec::new();
+    let mut unpriced: u16 = 0;
 
     for (item_id, amount) in IngredientsIter::new(recipe) {
         let mut line = compute_ingredient_cost(item_id, amount, prices, opts);
@@ -256,6 +266,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
         // their sub_crafts into the final breakdown.
         let mut unit_cost = line.unit_price;
         let mut best_sub_crafts: Vec<SubcraftInfo> = Vec::new();
+        let mut best_unpriced: u16 = 0;
         if depth < opts.max_subcraft_depth
             && line.used_from_market > 0
             && let Some(sub_recipes) = recipes_by_output.get(&item_id)
@@ -268,7 +279,11 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
                 // yield to get a per-unit comparable price.
                 let yield_per_craft = sub.amount_result.max(1);
                 let sub_unit = sub_breakdown.cost / yield_per_craft;
-                if sub_unit > 0 && sub_unit < unit_cost {
+                // A line no listing priced (unit_cost == 0) is rescued by any
+                // priced sub-recipe: an unlisted intermediate is not free when
+                // it is craftable. A 0-cost sub-run never wins (it would only
+                // relabel "unpriced" as "sub-craft").
+                if sub_unit > 0 && (unit_cost == 0 || sub_unit < unit_cost) {
                     unit_cost = sub_unit;
                     let mut winner = sub_breakdown.sub_crafts;
                     winner.push(SubcraftInfo {
@@ -277,15 +292,18 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
                         unit_cost: sub_unit,
                     });
                     best_sub_crafts = winner;
+                    best_unpriced = sub_breakdown.unpriced_market_lines;
                 }
             }
             // Promote the winning candidate (if any) and re-price the line.
             if !best_sub_crafts.is_empty() {
                 line.unit_price = unit_cost;
                 line.source = PriceSource::Subcraft;
+                line.world_id = 0;
             }
             sub_crafts.extend(best_sub_crafts.into_iter());
         }
+        unpriced = unpriced.saturating_add(best_unpriced);
 
         let line_market_cost = (line.used_from_market as i64) * (unit_cost as i64);
         // On-hand is valued at the same unit cost as the market portion — i.e.
@@ -309,6 +327,24 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
             on_hand_savings = on_hand_savings.saturating_add(line_on_hand_value);
         }
 
+        // Counted after the shard flag and the sub-craft pass: a rescued line
+        // is `Subcraft` by now, an excluded shard is off the books, and an
+        // item the vendor sells is never "unpriced" even when require_hq
+        // skipped its vendor floor.
+        let vendor_sold = opts
+            .vendor_prices
+            .and_then(|m| m.get(&item_id.0))
+            .is_some_and(|p| *p > 0);
+        let off_the_books = line.is_shard && matches!(opts.shards, ShardsMode::ExcludeShards);
+        if line.source == PriceSource::Market
+            && line.used_from_market > 0
+            && line.unit_price == 0
+            && !off_the_books
+            && !vendor_sold
+        {
+            unpriced = unpriced.saturating_add(1);
+        }
+
         ingredient_lines.push(line);
     }
 
@@ -318,6 +354,7 @@ fn compute_cost_inner<P: PriceLookup + ?Sized>(
         on_hand_savings: clamp_i64_to_i32(on_hand_savings),
         ingredient_lines,
         sub_crafts,
+        unpriced_market_lines: unpriced,
     }
 }
 
@@ -906,6 +943,186 @@ mod tests {
         assert_eq!(cb.cost, 30);
         assert_eq!(cb.sub_crafts.len(), 1);
         assert_eq!(cb.sub_crafts[0].item_id, ItemId(2000));
+    }
+
+    #[test]
+    fn ingredient_line_records_the_chosen_listing_world() {
+        let oh = EmptyOnHand;
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: None,
+        };
+        // NQ on world 7, HQ (dearer) on world 9: lowest picks NQ's world.
+        let both = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![
+                CheapestListingItem {
+                    item_id: 1000,
+                    hq: false,
+                    world_id: 7,
+                    cheapest_price: 100,
+                },
+                CheapestListingItem {
+                    item_id: 1000,
+                    hq: true,
+                    world_id: 9,
+                    cheapest_price: 150,
+                },
+            ],
+        });
+        assert_eq!(
+            compute_ingredient_cost(ItemId(1000), 1, &both, &opts).world_id,
+            7
+        );
+        let hq_opts = CraftingCostOptions {
+            require_hq: true,
+            ..opts_copy(&opts, &oh)
+        };
+        assert_eq!(
+            compute_ingredient_cost(ItemId(1000), 1, &both, &hq_opts).world_id,
+            9
+        );
+        // No listing at all: world 0 and price 0.
+        let none = CheapestListingsMap::from(CheapestListings {
+            cheapest_listings: vec![],
+        });
+        let line = compute_ingredient_cost(ItemId(1000), 1, &none, &opts);
+        assert_eq!((line.unit_price, line.world_id), (0, 0));
+        // A cheaper vendor wins: the world is 0 because nothing is bought on a market.
+        let mut vendors = HashMap::new();
+        vendors.insert(1000, 40);
+        let vendor_opts = CraftingCostOptions {
+            vendor_prices: Some(&vendors),
+            ..opts_copy(&opts, &oh)
+        };
+        let line = compute_ingredient_cost(ItemId(1000), 1, &both, &vendor_opts);
+        assert_eq!((line.source, line.world_id), (PriceSource::Vendor, 0));
+    }
+
+    /// `CraftingCostOptions` holds a `&dyn OnHand`, so it is neither `Copy`
+    /// nor `Clone`; rebuild it field by field.
+    fn opts_copy<'a>(o: &CraftingCostOptions<'a>, oh: &'a dyn OnHand) -> CraftingCostOptions<'a> {
+        CraftingCostOptions {
+            require_hq: o.require_hq,
+            max_subcraft_depth: o.max_subcraft_depth,
+            shards: o.shards,
+            on_hand: oh,
+            vendor_prices: o.vendor_prices,
+        }
+    }
+
+    #[test]
+    fn zero_priced_line_can_be_rescued_by_subcraft() {
+        // Outer needs 1x 2000, which has NO listing; 2000 is craftable from 1x 1000 @ 100.
+        let prices = one_listing(1000, false, 100, 1);
+        let cats = fixture_categories();
+        let outer = make_recipe(&[(2000, 1)]);
+        let inner: &'static Recipe =
+            Box::leak(Box::new(make_recipe_yielding(&[(1000, 1)], 2000, 1)));
+        let mut recipes_by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        recipes_by_output.insert(ItemId(2000), vec![inner]);
+        let oh = EmptyOnHand;
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let with_subs = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 2,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: None,
+        };
+        let cb = compute_cost(&outer, &prices, &recipes_by_output, &with_subs, &is_shard);
+        assert_eq!(
+            cb.cost, 100,
+            "the unlisted intermediate is costed as a craft, not as free"
+        );
+        assert_eq!(cb.ingredient_lines[0].source, PriceSource::Subcraft);
+        assert_eq!(cb.ingredient_lines[0].world_id, 0);
+        assert_eq!(cb.unpriced_market_lines, 0);
+        // Sub-crafts off: still free, still counted as unpriced.
+        let no_subs = CraftingCostOptions {
+            max_subcraft_depth: 0,
+            ..opts_copy(&with_subs, &oh)
+        };
+        let cb = compute_cost(&outer, &prices, &recipes_by_output, &no_subs, &is_shard);
+        assert_eq!((cb.cost, cb.unpriced_market_lines), (0, 1));
+        // An all-unpriced sub-recipe cannot rescue anything (the `sub_unit > 0` guard).
+        let inner_unpriced: &'static Recipe =
+            Box::leak(Box::new(make_recipe_yielding(&[(3000, 1)], 2000, 1)));
+        let mut by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        by_output.insert(ItemId(2000), vec![inner_unpriced]);
+        let cb = compute_cost(&outer, &prices, &by_output, &with_subs, &is_shard);
+        assert_eq!(cb.ingredient_lines[0].source, PriceSource::Market);
+        assert_eq!((cb.cost, cb.unpriced_market_lines), (0, 1));
+    }
+
+    #[test]
+    fn unpriced_lines_counted_after_shard_flag_and_subcraft_pass() {
+        // Outer: 1x 1000 (@100), 1x 1001 (shard, unlisted), 1x 2000 (unlisted, craftable
+        // from 1x 1000 @100 + 1x 3000 unlisted).
+        let prices = one_listing(1000, false, 100, 1);
+        let cats = fixture_categories();
+        let outer = make_recipe(&[(1000, 1), (1001, 1), (2000, 1)]);
+        let inner: &'static Recipe = Box::leak(Box::new(make_recipe_yielding(
+            &[(1000, 1), (3000, 1)],
+            2000,
+            1,
+        )));
+        let mut by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        by_output.insert(ItemId(2000), vec![inner]);
+        let oh = EmptyOnHand;
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let opts = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 2,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: None,
+        };
+        let cb = compute_cost(&outer, &prices, &by_output, &opts, &is_shard);
+        // The shard is excluded; 2000 was rescued (sub cost 100 > 0); the sub-run's
+        // own unpriced 3000 propagates from the winning sub-run.
+        assert_eq!(cb.cost, 200);
+        assert_eq!(cb.unpriced_market_lines, 1);
+    }
+
+    #[test]
+    fn unpriced_ignores_excluded_shards_and_vendor_sold() {
+        let prices = one_listing(1000, false, 100, 1);
+        let cats = fixture_categories();
+        let outer = make_recipe(&[(1000, 1), (1001, 1), (2000, 1)]);
+        let by_output: HashMap<ItemId, Vec<&'static Recipe>> = HashMap::new();
+        let oh = EmptyOnHand;
+        let is_shard = |id: ItemId| cats.get(&id.0) == Some(&59);
+        let mut vendors = HashMap::new();
+        vendors.insert(2000, 25);
+        let excl = CraftingCostOptions {
+            require_hq: false,
+            max_subcraft_depth: 0,
+            shards: ShardsMode::ExcludeShards,
+            on_hand: &oh,
+            vendor_prices: Some(&vendors),
+        };
+        // Shard excluded, 2000 vendor-sold: nothing is unpriced.
+        let cb = compute_cost(&outer, &prices, &by_output, &excl, &is_shard);
+        assert_eq!(cb.unpriced_market_lines, 0);
+        // Shards on the books: the unlisted shard counts.
+        let incl = CraftingCostOptions {
+            shards: ShardsMode::IncludeMarket,
+            ..opts_copy(&excl, &oh)
+        };
+        let cb = compute_cost(&outer, &prices, &by_output, &incl, &is_shard);
+        assert_eq!(cb.unpriced_market_lines, 1);
+        // require_hq skips the vendor floor, but a vendor-sold item is still not "unpriced".
+        let hq = CraftingCostOptions {
+            require_hq: true,
+            ..opts_copy(&excl, &oh)
+        };
+        let cb = compute_cost(&outer, &prices, &by_output, &hq, &is_shard);
+        assert_eq!(cb.ingredient_lines[2].source, PriceSource::Market);
+        assert_eq!(cb.ingredient_lines[2].unit_price, 0);
+        assert_eq!(cb.unpriced_market_lines, 0);
     }
 
     #[test]

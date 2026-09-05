@@ -132,6 +132,32 @@ const ADDABLE_FILTERS: &[&str] = &[
     FILTER_USE_ON_HAND,
 ];
 
+/// The `VirtualScroller` here runs in **container** mode, where the scroller
+/// div is the scrollport and the row spacer inside it carries no width of its
+/// own. Left unsized it resolves to the port width, so every row is clipped
+/// there while the header — a sibling outside that box — keeps painting the
+/// full grid: the right-hand columns render over blank rows on any viewport
+/// narrower than the grid (~816px below `md`, ~936px from `md` up).
+///
+/// The width comes from the stylesheet rather than `max-content` (what the
+/// recipe analyzer passes) because this is the one caller with
+/// `variable_height=true`: its rows carry `content-visibility: auto`, and a
+/// skipped off-screen row gains size containment and contributes nothing to an
+/// intrinsic measurement, so a `max-content` spacer would wobble as rows are
+/// skipped and unskipped. `.fc-craft-table` in `style/tailwind.css` defines
+/// the value, with the sixth column's `md` breakpoint mirrored there.
+const FC_ROW_MIN_WIDTH: &str = "var(--fc-craft-row-min-width, 0px)";
+
+/// Wrapper that scopes `--fc-craft-row-min-width` to this grid. It has to sit
+/// on an *ancestor* of the scroller, because the spacer that consumes the
+/// variable is rendered by `VirtualScroller`, not by this route.
+const FC_TABLE_CLASS: &str = "fc-craft-table rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer";
+
+/// `min-w-max` so the header's tint band spans the whole scrolled width
+/// instead of stopping at the viewport edge; the cells are all `shrink-0`, so
+/// its max-content width is exactly the sum `--fc-craft-row-min-width` states.
+const FC_HEADER_CLASS: &str = "min-w-max flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]";
+
 fn compare_fc_crafts(mode: SortMode, a: &FCCraftProfitData, b: &FCCraftProfitData) -> Ordering {
     match mode {
         SortMode::Roi => a.return_on_investment.cmp(&b.return_on_investment),
@@ -643,15 +669,16 @@ fn FCCraftingAnalyzerTable(
                 }}
             </ControlBar>
 
-            <div class="rounded-2xl panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
+            <div class=FC_TABLE_CLASS>
                  <VirtualScroller
                     viewport_height=720.0
                     row_height=60.0
                     overscan=8
                     header_height=64.0
                     variable_height=true
+                    row_min_width=FC_ROW_MIN_WIDTH
                      header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
+                        <div class=FC_HEADER_CLASS role="rowgroup">
                              <div role="columnheader" class="w-84 shrink-0 p-4">{t!(i18n, fc_crafting_analyzer_col_project_result)}</div>
                              <SortableHeaderCell
                                 mode=SortMode::Profit
@@ -901,6 +928,48 @@ pub fn FCCraftingAnalyzer() -> impl IntoView {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// The same wiring check the recipe analyzer carries, plus the half that
+    /// is unique to the stylesheet approach: `var(--x, 0px)` degrades
+    /// *silently* to a 0px spacer if the definition is missing or renamed,
+    /// which is indistinguishable from the bug. So the variable name, both
+    /// measured widths, and the three props are all pinned together.
+    #[test]
+    fn the_scroller_call_opts_into_a_sized_row_spacer() {
+        const SRC: &str = include_str!("fc_crafting_analyzer.rs");
+        const CSS: &str = include_str!("../../../../style/tailwind.css");
+        // Assembled at run time: `include_str!` pulls in this test's own
+        // source too, so a literal needle would satisfy itself.
+        let passes = |prop: &str, konst: &str| SRC.contains(&format!("{prop}={konst}"));
+
+        assert!(
+            passes("row_min_width", "FC_ROW_MIN_WIDTH"),
+            "the <VirtualScroller> call must pass row_min_width, or the spacer resolves to the port width and clips every row"
+        );
+        assert!(
+            passes("class", "FC_TABLE_CLASS") && FC_TABLE_CLASS.contains("fc-craft-table"),
+            "the wrapper must scope the width variable to this grid"
+        );
+        assert!(
+            passes("class", "FC_HEADER_CLASS") && FC_HEADER_CLASS.contains("min-w-max"),
+            "the header band must span the scrolled width: {FC_HEADER_CLASS}"
+        );
+
+        let var_name = FC_ROW_MIN_WIDTH
+            .trim_start_matches("var(")
+            .split(',')
+            .next()
+            .expect("FC_ROW_MIN_WIDTH is a var() reference");
+        assert_eq!(var_name, "--fc-craft-row-min-width");
+        // 21rem (w-84) + 4 x 7.5rem (w-30), and the sixth w-30 column that is
+        // `hidden md:block` on both the header cell and the body cell.
+        for width in ["51rem", "58.5rem"] {
+            assert!(
+                CSS.contains(&format!("{var_name}: {width}")),
+                "style/tailwind.css must define {var_name} as {width}"
+            );
+        }
+    }
 
     /// Display must produce exactly the token FromStr parses back — the
     /// shared SortHeader's hrefs depend on that round trip.
