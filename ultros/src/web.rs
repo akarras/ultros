@@ -8,6 +8,7 @@ pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
 pub(crate) mod sale_stats_cache;
 pub(crate) mod sitemap;
+pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
 
@@ -2602,6 +2603,10 @@ pub(crate) async fn start_web(
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
+        .route(
+            "/social/v2/{locale}/{kind}/{key}",
+            get(social_card::social_card),
+        )
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))

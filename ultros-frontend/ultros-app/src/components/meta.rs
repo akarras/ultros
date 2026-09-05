@@ -3,22 +3,22 @@ use leptos_meta::*;
 
 #[component]
 pub fn MetaTitle(#[prop(into)] title: TextProp) -> impl IntoView {
-    view! {
-        <Title text=title.clone() />
-        // OpenGraph keys are addressed by `property`, not `name`. Emitted as
-        // `name="og:title"` this tag was invisible to every OG consumer
-        // (Discord/Slack/Facebook unfurls), which fell back to <title>.
-        <Meta property="og:title" content=title.clone() />
-        <Meta name="twitter:title" content=title />
-    }
+    // SocialMetadata owns preview copy separately: route titles can include
+    // account names or live market totals that must not enter crawler caches.
+    view! { <Title text=title /> }
 }
 
 /// Creates appropriate meta tags to indicate an image is present on the page
 #[component]
-pub fn MetaImage(#[prop(into)] url: TextProp) -> impl IntoView {
+pub fn MetaImage(#[prop(into)] url: TextProp, #[prop(into)] alt: TextProp) -> impl IntoView {
     view! {
         <Meta name="twitter:image" content=url.clone() />
-        <Meta name="og:image" property="og:image" content=url />
+        <Meta property="og:image" content=url />
+        <Meta name="twitter:image:alt" content=alt.clone() />
+        <Meta property="og:image:alt" content=alt />
+        <Meta property="og:image:type" content="image/png" />
+        <Meta property="og:image:width" content="1200" />
+        <Meta property="og:image:height" content="630" />
     }
 }
 
@@ -26,8 +26,6 @@ pub fn MetaImage(#[prop(into)] url: TextProp) -> impl IntoView {
 #[component]
 pub fn MetaDescription(#[prop(into)] text: TextProp) -> impl IntoView {
     view! {
-        <Meta name="twitter:description" content=text.clone() />
-        <Meta name="og:description" property="og:description" content=text.clone() />
         <Meta name="description" content=text />
     }
 }
