@@ -8,7 +8,37 @@ pub fn GridFixtureRoutes() -> impl leptos_router::MatchNestedRoutes + Clone + Se
         view! { <Route path=path!("__test/virtual-grid") view=GridFixture/> }.into_inner()
     }
     #[cfg(not(debug_assertions))]
-    {}
+    {
+        DisabledFixtureRoutes
+    }
+}
+
+// `()` is a route that matches without consuming the URL, not an empty route
+// list. As the first child of <Routes>, it shadows every real page in release
+// builds. A disabled fixture must both decline matches and generate no routes.
+#[cfg(any(not(debug_assertions), test))]
+#[derive(Clone)]
+struct DisabledFixtureRoutes;
+
+#[cfg(any(not(debug_assertions), test))]
+impl leptos_router::MatchNestedRoutes for DisabledFixtureRoutes {
+    type Data = ();
+    type Match = ();
+
+    fn optional(&self) -> bool {
+        false
+    }
+
+    fn match_nested<'a>(
+        &'a self,
+        path: &'a str,
+    ) -> (Option<(leptos_router::RouteMatchId, Self::Match)>, &'a str) {
+        (None, path)
+    }
+
+    fn generate_routes(&self) -> impl IntoIterator<Item = leptos_router::GeneratedRouteData> + '_ {
+        std::iter::empty()
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -108,3 +138,60 @@ mod development {
 }
 #[cfg(debug_assertions)]
 use development::GridFixture;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use leptos::prelude::*;
+    use leptos_router::{MatchNestedRoutes, components::Route, path};
+
+    #[test]
+    fn disabled_fixture_never_matches_or_registers_a_route() {
+        assert_eq!(
+            DisabledFixtureRoutes.generate_routes().into_iter().count(),
+            0
+        );
+        for path in [
+            "",
+            "/",
+            "/flip-finder",
+            "/recipe-analyzer",
+            "/__test/virtual-grid",
+        ] {
+            let (matched, remaining) = DisabledFixtureRoutes.match_nested(path);
+            assert!(matched.is_none(), "disabled fixture intercepted {path}");
+            assert_eq!(remaining, path);
+        }
+    }
+
+    #[test]
+    fn disabled_fixture_allows_following_pages_to_match() {
+        let routes = (
+            DisabledFixtureRoutes,
+            view! { <Route path=path!("") view=|| "home"/> }.into_inner(),
+            view! { <Route path=path!("flip-finder") view=|| "flips"/> }.into_inner(),
+            view! { <Route path=path!("recipe-analyzer") view=|| "recipes"/> }.into_inner(),
+        );
+        for path in ["/", "/flip-finder", "/recipe-analyzer"] {
+            let (matched, remaining) = routes.match_nested(path);
+            assert!(matched.is_some(), "page did not match: {path}");
+            assert!(remaining.is_empty() || remaining == "/", "{remaining}");
+        }
+        assert!(routes.match_nested("/__test/virtual-grid").0.is_none());
+        assert_eq!(routes.generate_routes().into_iter().count(), 3);
+    }
+
+    #[test]
+    fn fixture_registration_matches_the_build_profile() {
+        let routes = GridFixtureRoutes();
+        assert_eq!(
+            routes.generate_routes().into_iter().count(),
+            usize::from(cfg!(debug_assertions))
+        );
+        assert_eq!(
+            routes.match_nested("/__test/virtual-grid").0.is_some(),
+            cfg!(debug_assertions)
+        );
+        assert!(routes.match_nested("/flip-finder").0.is_none());
+    }
+}
