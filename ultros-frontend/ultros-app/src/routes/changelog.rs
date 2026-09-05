@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Repriced market listings stay visible",
+        blurb: "A listing that has just been repriced is no longer removed by an older update arriving at the same time. Failed listing updates also stop marking incomplete market data as fresh.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Correct iOS notification device labels",
         blurb: "New browser notification subscriptions that identify as an iPhone or iPad are now labeled iOS instead of macOS.",
         link: Some("/settings"),
