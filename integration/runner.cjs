@@ -45,6 +45,47 @@ function sanitizeFileComponent(s) {
   return replaced.length ? replaced : "_root";
 }
 
+/** Check the item jump bar without assuming which sources an item has. */
+async function checkItemSectionNav(page) {
+  return page.evaluate(() => {
+    const nav = document.querySelector("[data-item-section-nav]");
+    if (!nav) return ["item section navigation is missing"];
+    const failures = [];
+    const links = [...nav.querySelectorAll("a")];
+    const sections = ["#overview", "#listings", "#history", "#sources", "#related"];
+    if (JSON.stringify(links.slice(0, 5).map((link) => link.getAttribute("href"))) !== JSON.stringify(sections)) {
+      failures.push("item section navigation changed the existing link order");
+    }
+    const allowed = ["#crafting-recipes", "#exchange-sources", "#leve-sources", "#vendor-sources"];
+    const sources = links.slice(5);
+    const hrefs = sources.map((link) => link.getAttribute("href"));
+    if (new Set(hrefs).size !== hrefs.length) failures.push("duplicate source shortcuts");
+    for (const link of sources) {
+      const href = link.getAttribute("href");
+      if (!allowed.includes(href)) {
+        failures.push(`unexpected source shortcut: ${href}`);
+        continue;
+      }
+      const target = document.querySelector(href);
+      if (!target || !target.getClientRects().length) failures.push(`missing/hidden source destination: ${href}`);
+      if (!(Number(link.lastElementChild.textContent) > 0)) failures.push(`invalid source count: ${href}`);
+      if (target && parseFloat(getComputedStyle(target).scrollMarginTop) < 64) failures.push(`source destination lacks sticky-header clearance: ${href}`);
+    }
+    const top = links[0]?.getBoundingClientRect().top;
+    for (const link of links) {
+      const rect = link.getBoundingClientRect();
+      if (Math.abs(rect.top - top) > 1) failures.push("item navigation wrapped to a second row");
+      if (rect.height < 44) failures.push("item navigation touch target is below 44px");
+    }
+    const rect = nav.getBoundingClientRect();
+    if (rect.right > document.documentElement.clientWidth + 1) failures.push("item navigation overflows the viewport");
+    if (nav.scrollWidth > nav.clientWidth && !["auto", "scroll"].includes(getComputedStyle(nav).overflowX)) {
+      failures.push("overflowing item navigation cannot be scrolled");
+    }
+    return failures;
+  });
+}
+
 /**
  * Per-route assertions. Each entry has:
  *   - titleIncludes:    substring expected in <title>
@@ -383,6 +424,12 @@ async function main() {
         if (!SKIP_ASSERTS && ROUTE_ASSERTS[r]) {
           const fails = await runAsserts(page, r, ROUTE_ASSERTS[r]);
           for (const f of fails) failures.push(`${r}: ${f}`);
+        }
+
+        if (!SKIP_ASSERTS && r.startsWith("/item/")) {
+          for (const failure of await checkItemSectionNav(page)) {
+            failures.push(`${r}: ${failure}`);
+          }
         }
 
         // Applies to every route, not just the ones with content assertions.

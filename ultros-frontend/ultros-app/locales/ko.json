@@ -1723,6 +1723,8 @@
     "item_view_nav_history": "내역",
     "item_view_nav_sources": "획득 방법",
     "item_view_nav_related": "관련",
+    "item_view_nav_levequest": "의뢰",
+    "item_view_nav_vendorable": "NPC 판매",
     "item_view_listings_count": "{{count}}개 판매 중",
     "item_view_quality_filter_aria": "품질별로 판매 목록 필터",
     "item_view_quality_all": "전체",

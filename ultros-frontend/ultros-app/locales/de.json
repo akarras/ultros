@@ -1723,6 +1723,8 @@
     "item_view_nav_history": "Verlauf",
     "item_view_nav_sources": "Bezugsquellen",
     "item_view_nav_related": "Verwandte",
+    "item_view_nav_levequest": "Freibrief",
+    "item_view_nav_vendorable": "Beim Händler",
     "item_view_listings_count": "{{count}} Angebote",
     "item_view_quality_filter_aria": "Angebote nach Qualität filtern",
     "item_view_quality_all": "Alle",

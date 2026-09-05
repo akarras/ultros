@@ -32,6 +32,12 @@ pub struct ChangelogEntry {
 /// belong here.
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
+        date: "2026-09-04",
+        title: "Jump straight to every way to get an item",
+        blurb: "Item pages now show compact, color-coded crafting, exchange, levequest, and vendor shortcuts beside the section links. Each shows how many options are available and jumps straight to the details. Swipe the bar on mobile to see more shortcuts.",
+        link: None,
+    },
+    ChangelogEntry {
         date: "2026-09-02",
         title: "Recipe Analyzer: try the profit formula as a control (Labs)",
         blurb: "Turn on \"Recipe Analyzer: profit formula strip\" under Settings › Labs and the formula behind every row becomes a control above the table: pick the revenue signal and the cost signal, and the columns that feed Profit are marked so you can see exactly what the number is made of. Hover a profit for the row's arithmetic. While it's on, absurd ROIs from one fake listing are capped at 100,000%.",

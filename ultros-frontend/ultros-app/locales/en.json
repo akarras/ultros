@@ -1723,6 +1723,8 @@
     "item_view_nav_history": "History",
     "item_view_nav_sources": "Sources",
     "item_view_nav_related": "Related",
+    "item_view_nav_levequest": "Levequest",
+    "item_view_nav_vendorable": "Vendorable",
     "item_view_listings_count": "{{count}} listings",
     "item_view_quality_filter_aria": "Filter listings by quality",
     "item_view_quality_all": "All",

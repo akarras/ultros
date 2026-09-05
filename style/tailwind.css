@@ -892,12 +892,13 @@
    `.card-link` opts out: on a card-sized anchor the blanket hover:underline
    underlines every text node inside it at once (label, price, badge, …),
    which reads as broken rather than interactive. Those links style their own
-   hover — a background tint plus an underline on the title only. */
+   hover — a background tint plus an underline on the title only.
+   Item section shortcuts also own their colors, including source accents. */
 a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link) {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a) {
     @apply hover:underline rounded-md;
     color: var(--brand-fg);
     background-color: transparent;
@@ -906,7 +907,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link):hover {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a):hover {
     color: color-mix(in srgb, var(--brand-ring) 60%, var(--brand-fg));
     background-color: color-mix(in srgb, var(--brand-ring) 22%, transparent);
 }
@@ -917,7 +918,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link) {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a) {
     color: color-mix(in srgb, var(--brand-ring) 70%, var(--color-text));
 }
 [data-theme="light"]
@@ -925,9 +926,27 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
         .mobile-bar-slot
     ):not(.btn):not(.btn-primary):not(
         .btn-secondary
-    ):not(.btn-ghost):not(.card-link):hover {
+    ):not(.btn-ghost):not(.card-link):not([data-item-section-nav] a):hover {
     color: color-mix(in srgb, var(--brand-ring) 85%, var(--color-text));
     background-color: color-mix(in srgb, var(--brand-ring) 28%, transparent);
+}
+
+[data-item-section-nav] {
+    scrollbar-color: color-mix(in srgb, var(--brand-ring) 45%, transparent) transparent;
+}
+
+/* Source accents need darker shades on the light page surface. */
+[data-theme="light"] [data-item-section-nav] a[href="#crafting-recipes"] {
+    @apply text-orange-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#exchange-sources"] {
+    @apply text-purple-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#leve-sources"] {
+    @apply text-pink-700;
+}
+[data-theme="light"] [data-item-section-nav] a[href="#vendor-sources"] {
+    @apply text-amber-800;
 }
 
 /* Light-mode text utility fixes for contrast */
