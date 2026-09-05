@@ -8,7 +8,7 @@ const BASE = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function main() {
-  const browser = await puppeteer.launch({headless: 'new', args: ['--no-sandbox']});
+  const browser = await puppeteer.launch({headless: true, args: ['--no-sandbox']});
   const page = await browser.newPage();
   await page.setCookie({name:'HIDE_ADS',value:'true',url:BASE});
   await page.evaluateOnNewDocument(()=>{
