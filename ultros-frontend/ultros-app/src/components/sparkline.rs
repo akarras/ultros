@@ -13,6 +13,7 @@ use ultros_charts::charts::sparkline::build_sparkline;
 use ultros_charts::components::color_attr;
 use ultros_charts::scale::short_number;
 
+use crate::components::dismissable::use_dismiss_on_navigate;
 use crate::i18n::{t_string, use_i18n};
 
 /// Hover state for the tooltip. Carries the sparkline's viewport-space
@@ -65,6 +66,17 @@ pub fn Sparkline(
     // Split out so the portal mounts/unmounts once per hover rather than on
     // every index change as the pointer travels along the trace.
     let is_hovered = Memo::new(move |_| hover.with(|h| h.is_some()));
+
+    // Same rule as `HoverCard` (#1283): `pointerleave` is the only thing that
+    // closes this, and a navigation fires none — not when the route keeps the
+    // row and patches it in place, nor when it takes the row out from under a
+    // cursor that never moved. The guard keeps a page of unhovered sparklines
+    // from re-running their trace closures on every navigation.
+    use_dismiss_on_navigate(move || {
+        if hover.with_untracked(Option::is_some) {
+            hover.set(None);
+        }
+    });
 
     let on_pointer_move = move |evt: web_sys::PointerEvent| {
         use web_sys::wasm_bindgen::JsCast;
