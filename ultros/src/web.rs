@@ -8,6 +8,7 @@ pub(crate) mod oauth;
 pub(crate) mod price_series_cache;
 pub(crate) mod sale_stats_cache;
 pub(crate) mod sitemap;
+pub(crate) mod social_card;
 pub(crate) mod state;
 pub(crate) mod static_files;
 
@@ -17,7 +18,7 @@ use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
-use axum_extra::extract::CookieJar;
+use axum_extra::extract::PrivateCookieJar;
 use axum_extra::headers::{CacheControl, HeaderMapExt};
 use futures::future::{try_join_all, try_join3};
 use hyper::header;
@@ -2381,19 +2382,12 @@ async fn delete_user(
     user: AuthDiscordUser,
     State(cache): State<AuthUserCache>,
     State(db): State<UltrosDb>,
-    cookie_jar: CookieJar,
-) -> Result<(CookieJar, Redirect), ApiError> {
+    cookie_jar: PrivateCookieJar,
+) -> Result<(PrivateCookieJar, Redirect), ApiError> {
     let id = user.id;
     db.delete_discord_user(id as i64).await?;
-    let token = cookie_jar
-        .get("discord_auth")
-        .ok_or(anyhow::anyhow!("Failed to get icon"))?
-        .value()
-        .to_owned();
-    cache.remove_token(&token).await;
+    cache.remove_user(id).await;
     let cookie_jar = cookie_jar.remove(oauth::discord_auth_removal_cookie());
-    // remove the token from the cache
-    // remove the auth cookie from the cache
     Ok((cookie_jar, Redirect::to("/")))
 }
 
@@ -2609,6 +2603,10 @@ pub(crate) async fn start_web(
         .route("/robots.txt", get(robots))
         .route("/service-worker.js", get(service_worker_js))
         .route("/itemcard/{world}/{id}", get(item_card))
+        .route(
+            "/social/v2/{locale}/{kind}/{key}",
+            get(social_card::social_card),
+        )
         .route("/sitemap/items.xml", get(item_sitemap))
         .route("/sitemap.xml", get(sitemap_index))
         .route("/sitemap/pages.xml", get(generic_pages_sitemap))
@@ -2712,6 +2710,7 @@ pub(crate) async fn start_web(
         .ok()
         .flatten()
         .unwrap_or(8080);
+    let metrics_token = token.clone();
     let (_main_app, _metrics_app) = futures::future::join(
         async move {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -2724,7 +2723,7 @@ pub(crate) async fn start_web(
                 .await
                 .unwrap();
         },
-        start_metrics_server(prometheus_handle),
+        start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
 }

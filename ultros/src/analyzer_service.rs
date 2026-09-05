@@ -454,7 +454,8 @@ impl std::fmt::Debug for AnalyzerService {
 }
 
 impl AnalyzerService {
-    /// Creates a task that will feed the analyzer and returns Self so that data can be read externally
+    /// Starts the analyzer and returns its shutdown completion handle. Await the
+    /// handle after cancellation to finish ingestion and persist the final snapshot.
     pub async fn start_analyzer(
         ultros_db: UltrosDb,
         event_receivers: EventReceivers,
@@ -462,7 +463,7 @@ impl AnalyzerService {
         ch_writer: ultros_clickhouse::writer::Writer,
         ch_client: ultros_clickhouse::ClickHouseClient,
         token: CancellationToken,
-    ) -> Self {
+    ) -> (Self, tokio::task::JoinHandle<()>) {
         tokio::fs::create_dir_all("analyzer-data")
             .await
             .expect("Unable to create directory for analyzer");
@@ -499,12 +500,25 @@ impl AnalyzerService {
         };
 
         let task_self = temp.clone();
-        let serialize_token = token.clone();
-        tokio::spawn(async move {
+        let worker_token = token.clone();
+        let worker = tokio::spawn(async move {
+            task_self
+                .run_worker(ultros_db, event_receivers, world_cache, worker_token)
+                .await;
+        });
+
+        let task_self = temp.clone();
+        let serialize_token = token;
+        let shutdown = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
             loop {
                 tokio::select! {
                     _ = serialize_token.cancelled() => {
+                        // The worker joins its history consumer before returning,
+                        // so the final snapshot includes any in-flight sale batch.
+                        if let Err(e) = worker.await {
+                            error!("Analyzer worker failed during shutdown: {e:?}");
+                        }
                         if let Err(e) = task_self.serialize_state(true).await {
                             error!("Error serializing state {e:?}");
                         }
@@ -519,13 +533,7 @@ impl AnalyzerService {
             }
         });
 
-        let task_self = temp.clone();
-        tokio::spawn(async move {
-            task_self
-                .run_worker(ultros_db, event_receivers, world_cache, token)
-                .await;
-        });
-        temp
+        (temp, shutdown)
     }
 
     async fn serialize_state(&self, is_shutdown: bool) -> Result<()> {
@@ -868,8 +876,9 @@ impl AnalyzerService {
         self.initiated.store(true, Ordering::Relaxed);
         info!("worker primed, now using live data");
         let second_worker_instance = self.clone();
-        let history_token = token.clone();
-        tokio::spawn(async move {
+        let history_token = token.child_token();
+        let history_shutdown = history_token.clone();
+        let history_worker = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = history_token.cancelled() => {
@@ -893,8 +902,14 @@ impl AnalyzerService {
                                 }
                                 crate::event::EventType::Update(_) => {}
                             },
-                            // Still live, positioned at the oldest survivor.
-                            BusRecv::Lagged => {}
+                            // The surviving events continue, but neither RAM
+                            // history nor ClickHouse can reconstruct the gap
+                            // from this bus. Make the repair requirement explicit.
+                            BusRecv::Lagged => {
+                                metrics::counter!("ultros_analyzer_history_recovery_required_total")
+                                    .increment(1);
+                                warn!("sale history bus lagged; Postgres reconciliation required for analytics");
+                            }
                             // recv() on a closed bus returns instantly forever;
                             // looping here would hot-spin and emit one warn per
                             // iteration. Only happens at shutdown, when the
@@ -956,6 +971,10 @@ impl AnalyzerService {
                     }
                 }
             }
+        }
+        history_shutdown.cancel();
+        if let Err(error) = history_worker.await {
+            error!(?error, "sale history worker failed during shutdown");
         }
     }
 

@@ -12,7 +12,7 @@ use crate::components::{
     market_heat::MarketHeat,
     market_movers::MarketMovers,
     market_pulse::MarketPulse,
-    meta::{MetaCanonical, MetaDescription, MetaImage, MetaTitle},
+    meta::{MetaCanonical, MetaDescription, MetaTitle},
     recently_viewed::RecentlyViewed,
     top_opportunity::TopOpportunities,
 };
@@ -148,7 +148,6 @@ pub fn HomePage() -> impl IntoView {
     view! {
         <MetaTitle title=move || t_string!(i18n, meta_title).to_string() />
         <MetaDescription text=move || t_string!(i18n, meta_description).to_string() />
-        <MetaImage url="https://ultros.app/static/fallback-image.png" />
         <MetaCanonical href="https://ultros.app/" />
         <Script type_="application/ld+json">{HOME_JSON_LD}</Script>
         <div class="main-content p-2 sm:p-6">
