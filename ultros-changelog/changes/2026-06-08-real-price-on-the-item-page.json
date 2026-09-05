@@ -1,0 +1,6 @@
+{
+  "category": "features",
+  "title": "Real Price on the item page",
+  "blurb": "A price estimate that ignores gil-transfer trades between friends, so a single fake 99,999,999 sale stops skewing what an item is worth.",
+  "importance": "medium"
+}

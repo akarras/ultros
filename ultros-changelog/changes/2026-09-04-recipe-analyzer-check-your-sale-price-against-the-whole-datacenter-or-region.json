@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "importance": "medium",
+  "title": "Recipe Analyzer: check your sale price against the whole datacenter or region",
+  "blurb": "With \"Recipe Analyzer: the market model\" on under Settings › Labs, the price the analyzer expects you to sell at can now be read across a whole datacenter or region, next to the scope your ingredients already had. You still sell on your own world — this only changes which market the expected price is read from, so you can see what you are actually competing with. Price, Profit and the alternative revenue columns follow it, and a new Scope vs home column in the Columns picker says how far the wider market sits from your own. Under the cheapest-listing signal it is never above zero, because a bigger market has more sellers undercutting each other; the sale-history signals are where the two can differ in either direction. Expect every profit number to fall, and some rows to drop out of the count, for the same reason. Profit/day moves too, and it is the one number that mixes the two markets: it multiplies the wider market's profit by your own world's sales per day, and its tooltip says so. Sales per day, Confidence, Trend and Drift keep describing your own world, so the speed they report never moves.",
+  "link": "/recipe-analyzer"
+}

@@ -1,0 +1,7 @@
+{
+  "category": "bug_fixes",
+  "importance": "medium",
+  "title": "Flip Finder opens reliably from world links",
+  "blurb": "Opening a Flip Finder world link directly now finishes loading its controls and live updates, instead of leaving the page stuck after its first results appear.",
+  "link": "/flip-finder"
+}

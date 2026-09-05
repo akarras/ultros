@@ -1,0 +1,7 @@
+{
+  "category": "features",
+  "title": "Browse gear by job set",
+  "blurb": "Item Explorer groups equipment into gear sets with their own detail pages, adds a world picker, and tucks subcategories into grouped menus.",
+  "link": "/items",
+  "importance": "medium"
+}

@@ -10322,6 +10322,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ultros-api-types",
+ "ultros-changelog",
  "ultros-charts",
  "ultros-db",
  "uuid",
@@ -10330,6 +10331,15 @@ dependencies = [
  "web-sys",
  "xiv-gen",
  "xiv-gen-db",
+]
+
+[[package]]
+name = "ultros-changelog"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

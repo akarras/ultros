@@ -1,0 +1,6 @@
+{
+  "category": "bug_fixes",
+  "title": "Sort and filter chips no longer break the page",
+  "blurb": "On a slow response, a sort or filter chip could take the whole page down with it while it was still loading. The chips now fall back to a plain link instead of failing the render.",
+  "importance": "medium"
+}
