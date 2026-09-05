@@ -109,12 +109,14 @@ fn endpoint_name_from_user_agent(ua: Option<&str>) -> String {
     };
     let os = if ua.contains("Windows") {
         Some("Windows")
+    } else if ua.contains("iPhone") || ua.contains("iPad") || ua.contains("iOS") {
+        // Mobile Apple UAs also contain "like Mac OS X"; prefer their
+        // explicit device identity before the generic macOS marker.
+        Some("iOS")
     } else if ua.contains("Macintosh") || ua.contains("Mac OS X") {
         Some("macOS")
     } else if ua.contains("Android") {
         Some("Android")
-    } else if ua.contains("iPhone") || ua.contains("iPad") || ua.contains("iOS") {
-        Some("iOS")
     } else if ua.contains("Linux") {
         Some("Linux")
     } else {
@@ -151,9 +153,19 @@ mod tests {
     #[test]
     fn label_for_safari_on_ios() {
         let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1";
-        // iPhone wins for OS even though Safari/ matches the browser check.
-        let name = endpoint_name_from_user_agent(Some(ua));
-        assert!(name.contains("iOS"), "got {name}");
+        assert_eq!(
+            endpoint_name_from_user_agent(Some(ua)),
+            "Browser (Safari on iOS)"
+        );
+    }
+
+    #[test]
+    fn label_for_safari_on_ipad() {
+        let ua = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1";
+        assert_eq!(
+            endpoint_name_from_user_agent(Some(ua)),
+            "Browser (Safari on iOS)"
+        );
     }
 
     #[test]

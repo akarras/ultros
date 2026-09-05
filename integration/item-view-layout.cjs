@@ -11,11 +11,11 @@
 //
 // The fix sizes everything with container queries: the two-column split only
 // happens when the tables' container is >= 94rem (1504px). This probe
-// asserts the *outcomes* at three widths spanning stacked -> split, so it stays valid whatever
+// asserts the *outcomes* from mobile through stacked -> split, so it stays valid whatever
 // mechanism the layout uses next:
 //
-//  1. the sale-history table never actually scrolls horizontally (its
-//     min-width fits the column it was given),
+//  1. desktop tables fit their columns, while narrow-screen horizontal
+//     scrolling reaches the actual cells at both ends,
 //  2. "Show more", when present, sits inside the viewport and is hittable,
 //  3. the sections stack or split according to the width their container
 //     actually has,
@@ -25,22 +25,24 @@
 //  6. datacenter exclusions render once, stay local to the listings panel,
 //     and replace a fully filtered table with a resettable empty state.
 //
-// Document-level overflow (the ad rail bug) is the generic runner's job —
-// its DEVICE=wide pass covers that for every route, not just this one.
+// REQUIRE_MARKET_DATA=1 turns missing rows/footer scenarios into failures;
+// otherwise an empty dev DB explicitly reports those coverage gaps.
 const puppeteer = require('puppeteer');
 
 const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:8080';
 const WORLD = process.env.WORLD || 'Gilgamesh';
-// A craftable item so assertion 5 has a recipes panel to measure.
+// A craftable item so assertion 4 has a recipes panel to measure.
 const ITEM_ID = process.env.ITEM_ID || '46010';
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 60000);
 const SETTLE_MS = Number(process.env.SETTLE || 9000);
+const REQUIRE_MARKET_DATA = process.env.REQUIRE_MARKET_DATA === '1';
 
 // 1280 is the old xl breakpoint that triggered the bad split; 1735 is the
 // width of the issue's screenshots (stacked after the fix, and inside the
 // >=1660px band where the ad rail used to overflow); 2560 is the 1440p-class
-// width where the split is supposed to engage.
-const WIDTHS = [1280, 1735, 2560];
+// width where the split is supposed to engage. Mobile/tablet and intermediate
+// desktop widths guard the gaps between the generic runner's breakpoints.
+const WIDTHS = [390, 768, 1024, 1280, 1440, 1660, 1735, 1920, 2560];
 
 // The split threshold the layout promises: two columns only when the tables'
 // container is at least this wide (94rem at the 16px root font size).
@@ -53,9 +55,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Runs in the page. Everything is located by ids and visible headings so the
  * probe survives class churn. */
 function measure() {
-  const byHeading = (tag, text) =>
-    [...document.querySelectorAll(tag)].find((h) => h.textContent.includes(text));
-
   const listings = document.getElementById('listings');
   const history = document.getElementById('history');
   if (!listings || !history) return { missing: '#listings / #history' };
@@ -80,6 +79,7 @@ function measure() {
     const r = showMore.getBoundingClientRect();
     const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
     showMoreInfo = {
+      left: Math.round(r.left),
       right: Math.round(r.right),
       reachable: Boolean(hit) && (hit === showMore || showMore.contains(hit)),
       obscuredBy:
@@ -100,6 +100,7 @@ function measure() {
     const r = listingsShowMore.getBoundingClientRect();
     const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
     listingsShowMoreInfo = {
+      left: Math.round(r.left),
       right: Math.round(r.right),
       reachable: Boolean(hit) &&
         (hit === listingsShowMore || listingsShowMore.contains(hit)),
@@ -139,6 +140,7 @@ function measure() {
 
   return {
     viewport: document.documentElement.clientWidth,
+    documentSurplus: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     tableScrollSurplus: historyTableBox
       ? historyTableBox.scrollWidth - historyTableBox.clientWidth
       : null,
@@ -149,6 +151,113 @@ function measure() {
     sideBySide,
     recipes,
   };
+}
+
+// Exercise the browser's real scroll geometry. Merely checking scrollWidth
+// misses a nested scrollport that clips row cells while the header still moves.
+async function verifyHorizontalScroll(page, section, width, failures) {
+  const result = await page.evaluate(async (id) => {
+    const panel = document.getElementById(id);
+    const table = panel?.querySelector('table');
+    if (!table) {
+      // Listings intentionally replaces an empty table with a status message.
+      return { missing: panel?.querySelector('[role="status"]') ? 'rows' : 'table' };
+    }
+    const row = table.querySelector('tbody tr');
+    if (!row) return { missing: 'rows' };
+    let scrollport = table.parentElement;
+    while (scrollport && scrollport !== panel &&
+      !['auto', 'scroll'].includes(getComputedStyle(scrollport).overflowX)) {
+      scrollport = scrollport.parentElement;
+    }
+    if (!scrollport || scrollport === panel) return { missing: 'scrollport' };
+    const footer = [...panel.querySelectorAll('button')].find((button) =>
+      /show more/i.test(button.textContent));
+    const footerBounds = () => {
+      if (!footer) return null;
+      const rect = footer.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    };
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const endpoint = async (end) => {
+      scrollport.scrollLeft = end ? scrollport.scrollWidth : 0;
+      scrollport.scrollTop = 0;
+      await frame();
+      const cell = end ? row.lastElementChild : row.firstElementChild;
+      // Scroll only the page's vertical axis. scrollIntoView would also move
+      // any accidentally nested horizontal scrollport, hiding the regression.
+      const cellRect = cell.getBoundingClientRect();
+      window.scrollBy({ top: (cellRect.top + cellRect.bottom - innerHeight) / 2, left: 0, behavior: 'instant' });
+      await frame();
+      const rect = cell.getBoundingClientRect();
+      const box = scrollport.getBoundingClientRect();
+      const left = Math.max(rect.left, box.left, 0);
+      const right = Math.min(rect.right, box.right, innerWidth);
+      const top = Math.max(rect.top, box.top, 0);
+      const bottom = Math.min(rect.bottom, box.bottom, innerHeight);
+      const hit = right > left && bottom > top
+        ? document.elementFromPoint((left + right) / 2, (top + bottom) / 2)
+        : null;
+      return {
+        scrollLeft: scrollport.scrollLeft,
+        reachable: Boolean(hit && (hit === cell || cell.contains(hit))),
+        footer: footerBounds(),
+      };
+    };
+    const start = await endpoint(false);
+    const end = await endpoint(true);
+    const surplus = scrollport.scrollWidth - scrollport.clientWidth;
+    scrollport.scrollLeft = 0;
+    return { start, end, surplus };
+  }, section);
+  if (result.missing) {
+    const message = `${width}px: ${section} horizontal probe has no ${result.missing}`;
+    if (result.missing !== 'rows' || REQUIRE_MARKET_DATA) failures.push(message);
+    else console.log(`[skip] ${message}`);
+    return;
+  }
+  if (result.surplus > 1 && width >= 1280) {
+    failures.push(`${width}px: ${section} table overflows its desktop column by ${result.surplus}px`);
+  }
+  if (!result.start.reachable || !result.end.reachable) {
+    failures.push(`${width}px: ${section} edge cells are clipped or obscured after horizontal scrolling`);
+  }
+  if (result.start.scrollLeft > 1 || Math.abs(result.end.scrollLeft - result.surplus) > 1) {
+    failures.push(`${width}px: ${section} cannot reach both horizontal scroll endpoints`);
+  }
+  if (result.start.footer && result.end.footer &&
+    (Math.abs(result.start.footer.left - result.end.footer.left) > 1 ||
+      Math.abs(result.start.footer.right - result.end.footer.right) > 1)) {
+    failures.push(`${width}px: ${section} Show more moves with horizontal table scrolling`);
+  }
+}
+
+async function verifyExpansion(page, failures) {
+  for (const section of ['listings', 'history']) {
+    const panel = await page.$(`#${section}`);
+    const buttons = await panel.$$('button');
+    let footer;
+    for (const button of buttons) {
+      if (await button.evaluate((node) => /show more/i.test(node.textContent))) {
+        footer = button;
+        break;
+      }
+    }
+    if (!footer) {
+      const message = `${section} expansion probe needs more than 10 fixture rows`;
+      if (REQUIRE_MARKET_DATA) failures.push(message);
+      else console.log(`[skip] ${message}`);
+      continue;
+    }
+    const before = await panel.$$eval('tbody tr', (rows) => rows.length);
+    await footer.click();
+    await page.waitForFunction((id, count) =>
+      document.querySelectorAll(`#${id} tbody tr`).length > count,
+    { timeout: TIMEOUT_MS }, section, before);
+    const after = await panel.$$eval('tbody tr', (rows) => rows.length);
+    console.log(`[info] ${section} Show more expanded ${before} -> ${after} rows`);
+    await verifyHorizontalScroll(page, section, 390, failures);
+  }
 }
 
 async function verifyDatacenterExclusions(page, failures) {
@@ -169,14 +278,18 @@ async function verifyDatacenterExclusions(page, failures) {
   });
 
   if (!fixture.hasSummary || fixture.initialRows === 0) {
-    console.log('[skip] datacenter exclusion probe: fixture has no filterable listings');
+    const message = 'datacenter exclusion probe: fixture has no filterable listings';
+    if (REQUIRE_MARKET_DATA) failures.push(message);
+    else console.log(`[skip] ${message}`);
     return;
   }
 
   await page.click('#listings [data-testid="datacenter-exclusions"] > summary');
   const datacenterButtons = await page.$$('#listings [data-datacenter]');
   if (datacenterButtons.length === 0) {
-    console.log('[skip] datacenter exclusion probe: fixture exposes no datacenter');
+    const message = 'datacenter exclusion probe: fixture exposes no datacenter';
+    if (REQUIRE_MARKET_DATA) failures.push(message);
+    else console.log(`[skip] ${message}`);
     return;
   }
 
@@ -258,7 +371,10 @@ async function main() {
       }
       if (!m.hasTable) throw new Error(`no sale-history table found at ${ROUTE}`);
 
-      if (m.tableScrollSurplus > 0) {
+      if (m.documentSurplus > 1) {
+        failures.push(`${width}px: document overflows horizontally by ${m.documentSurplus}px`);
+      }
+      if (m.tableScrollSurplus > 1 && (width >= 1280 || m.sideBySide)) {
         failures.push(
           `${width}px: sale-history table scrolls horizontally by ${m.tableScrollSurplus}px ` +
             `— the column it was given is narrower than the table's min-width`,
@@ -272,8 +388,8 @@ async function main() {
               `— it will clip whenever the table is wider than the column`,
           );
         }
-        if (m.showMore.right > width) {
-          failures.push(`${width}px: "Show more" ends at x=${m.showMore.right}, past the viewport edge`);
+        if (m.showMore.left < 0 || m.showMore.right > width) {
+          failures.push(`${width}px: "Show more" spans x=${m.showMore.left}..${m.showMore.right}, outside the viewport`);
         } else if (!m.showMore.reachable) {
           failures.push(
             `${width}px: "Show more" is scrolled into view but not hit-testable` +
@@ -288,9 +404,9 @@ async function main() {
             `${width}px: listings "Show more" is inside the table scrollport`,
           );
         }
-        if (m.listingsShowMore.right > width) {
+        if (m.listingsShowMore.left < 0 || m.listingsShowMore.right > width) {
           failures.push(
-            `${width}px: listings "Show more" ends at x=${m.listingsShowMore.right}, past the viewport edge`,
+            `${width}px: listings "Show more" spans x=${m.listingsShowMore.left}..${m.listingsShowMore.right}, outside the viewport`,
           );
         } else if (!m.listingsShowMore.reachable) {
           failures.push(`${width}px: listings "Show more" is not hit-testable`);
@@ -317,8 +433,13 @@ async function main() {
           `table surplus ${m.tableScrollSurplus}px, ` +
           `show-more ${m.showMore ? 'present' : 'absent'}, recipes ${m.recipes ? 'measured' : 'absent'}`,
       );
+      await verifyHorizontalScroll(page, 'listings', width, failures);
+      await verifyHorizontalScroll(page, 'history', width, failures);
     }
 
+    await page.setViewport({ width: 390, height: 1100, deviceScaleFactor: 1 });
+    await sleep(500);
+    await verifyExpansion(page, failures);
     await verifyDatacenterExclusions(page, failures);
   } finally {
     await browser.close();
