@@ -30,14 +30,12 @@ use std::collections::HashSet;
 
 use leptos::prelude::*;
 
-use crate::components::dismissable::use_dismissable;
+use crate::components::dismissable::{provide_popover_group, use_dismissable};
 use crate::components::icon::Icon;
 use crate::i18n::*;
 use icondata as i;
 
-/// Height reserved for the sticky control bar. Feeds
-/// `ScrollSource::Window { sticky_offset }` so rows hidden behind the bar are
-/// not counted as visible, and is pinned by the bar's own `h-[76px]`.
+/// Height of the two-row control bar, independent of grid header positioning.
 pub const STICKY_BAR_HEIGHT: f64 = 76.0;
 
 /// A group heading in the columns picker. Options carrying the same
@@ -304,10 +302,18 @@ pub fn ControlBar(
         columns_picker: show_columns_picker,
     } = popovers;
 
-    // Both popovers are anchored inside the bar, so one container dismisses
-    // both: tap-away, route change, Escape.
+    // Menus mounted in `actions` (the saved-views menu, the recipe
+    // analyzer's Market menu) live *inside* the bar, so a tap on one of
+    // their buttons is not an outside click here and would leave the bar's
+    // own popovers open underneath. The group makes the exclusion explicit:
+    // the bar joins it below, those menus join it as they render, and
+    // whichever opens closes the rest.
+    provide_popover_group();
+
+    // Both of the bar's own popovers are anchored inside it, so one
+    // container dismisses both: tap-away, route change, Escape.
     let bar_ref = NodeRef::<leptos::html::Div>::new();
-    use_dismissable(bar_ref, move || popovers.close());
+    let popover_token = use_dismissable(bar_ref, move || popovers.close());
 
     // `ViewFn` is not `Copy`, and each of these is read from inside a nested
     // reactive closure — stored so those closures stay `FnMut`.
@@ -319,7 +325,7 @@ pub fn ControlBar(
     let has_columns = Signal::derive(move || !columns.get().is_empty());
 
     view! {
-        <div class="sticky-bar h-[76px] px-2 py-1 flex flex-col gap-1" node_ref=bar_ref>
+        <div class="sticky-bar px-2 py-1 flex flex-col gap-1" style=format!("height: {STICKY_BAR_HEIGHT}px;") node_ref=bar_ref>
             // Row 1 — result count and view-level controls.
             <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
                 // The one item allowed to give up space. `overflow-hidden` is
@@ -340,7 +346,11 @@ pub fn ControlBar(
                                     aria-expanded=move || show_columns_picker.get().to_string()
                                     on:click=move |_| {
                                         show_filter_menu.set(false);
-                                        show_columns_picker.update(|v| *v = !*v);
+                                        let opening = !show_columns_picker.get_untracked();
+                                        if opening {
+                                            popover_token.opening();
+                                        }
+                                        show_columns_picker.set(opening);
                                     }
                                 >
                                     <Icon icon=i::FaTableColumnsSolid />
@@ -384,7 +394,11 @@ pub fn ControlBar(
                     aria-expanded=move || show_filter_menu.get().to_string()
                     on:click=move |_| {
                         show_columns_picker.set(false);
-                        show_filter_menu.update(|v| *v = !*v);
+                        let opening = !show_filter_menu.get_untracked();
+                        if opening {
+                            popover_token.opening();
+                        }
+                        show_filter_menu.set(opening);
                     }
                 >
                     <Icon icon=i::FaFilterSolid />

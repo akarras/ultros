@@ -14,13 +14,13 @@ use crate::{
     components::{
         add_recipe_to_list::AddRecipeToList,
         crafting_cost::{
-            CraftingCostOptions, EmptyOnHand, IngredientsIter, ShardsMode, compute_cost,
-            vendor_price_map,
+            CRYSTAL_SEARCH_CATEGORY, CraftingCostOptions, EmptyOnHand, IngredientsIter, ShardsMode,
+            compute_cost, vendor_price_map,
         },
         icon::Icon,
         item_icon::ItemIcon,
         item_tooltip::ItemTooltip,
-        on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap},
+        on_hand_input::{ActiveListBanner, LocalOnHand, OnHandMap, OnHandQuantity},
         skeleton::SingleLineSkeleton,
     },
     global_state::{
@@ -35,7 +35,7 @@ pub(crate) fn is_shard_item(item_id: ItemId) -> bool {
     tracked_data()
         .items
         .get(&item_id)
-        .map(|i| i.item_search_category == 59)
+        .map(|i| i.item_search_category == CRYSTAL_SEARCH_CATEGORY)
         .unwrap_or(false)
 }
 
@@ -176,9 +176,10 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                         ShardsMode::IncludeMarket
                     };
 
-                    // Snapshot the LocalStorage on-hand if available.
+                    // Snapshot the on-hand map. Read tracked (not `get_untracked`)
+                    // so editing an ingredient's on-hand qty re-prices the recipe.
                     let local = on_hand_map
-                        .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                        .map(|m| LocalOnHand::from_map(m.0.get()))
                         .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
                     let empty = EmptyOnHand;
                     let active_on_hand: &dyn crate::components::crafting_cost::OnHand =
@@ -197,7 +198,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 
                     // Re-snapshot on-hand for the HQ pass (the LQ pass consumed it).
                     let local_hq = on_hand_map
-                        .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                        .map(|m| LocalOnHand::from_map(m.0.get()))
                         .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
                     let active_on_hand_hq: &dyn crate::components::crafting_cost::OnHand =
                         if opts_value.use_on_hand { &local_hq } else { &empty };
@@ -218,12 +219,12 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
                             <Gil amount=lq.cost />
                             {(lq.shard_cost > 0 && opts_value.exclude_shards).then(|| view! {
                                 <span class="px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--brand-ring)_8%,transparent)] text-[10px] text-[color:var(--color-text-muted)]">
-                                    "shards excl. " <Gil amount=lq.shard_cost />
+                                    {t!(i18n, related_recipe_shards_excluded)} " " <Gil amount=lq.shard_cost />
                                 </span>
                             })}
                             {(lq.on_hand_savings > 0).then(|| view! {
                                 <span class="px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-300 text-[10px]">
-                                    "saved " <Gil amount=lq.on_hand_savings />
+                                    {t!(i18n, related_recipe_on_hand_saved)} " " <Gil amount=lq.on_hand_savings />
                                 </span>
                             })}
                         </span>
@@ -238,6 +239,7 @@ fn RecipePriceEstimate(recipe: &'static Recipe) -> impl IntoView {
 fn CraftOptionsToggleRow() -> impl IntoView {
     use crate::global_state::cookies::Cookies;
     use crate::global_state::craft_options::{self, CraftOptions};
+    let i18n = use_i18n();
     let cookies = use_context::<Cookies>().unwrap();
     let (opts_signal, set_opts) =
         cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
@@ -261,7 +263,7 @@ fn CraftOptionsToggleRow() -> impl IntoView {
                     prop:checked=move || opts().exclude_shards
                     on:change=move |_| toggle(Box::new(|o| o.exclude_shards = !o.exclude_shards))
                 />
-                "Exclude shards"
+                {t!(i18n, recipe_analyzer_filter_exclude_shards_label)}
             </label>
             <label class="flex flex-row items-center gap-1">
                 <input
@@ -270,7 +272,7 @@ fn CraftOptionsToggleRow() -> impl IntoView {
                     prop:checked=move || opts().use_on_hand
                     on:change=move |_| toggle(Box::new(|o| o.use_on_hand = !o.use_on_hand))
                 />
-                "Use on-hand"
+                {t!(i18n, recipe_analyzer_filter_use_on_hand_label)}
             </label>
         </div>
     }
@@ -282,12 +284,15 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let query = leptos_router::hooks::use_query_map();
     let params = leptos_router::hooks::use_params_map();
     let (home, _) = crate::global_state::home_world::use_home_world();
+    // Share the options signal between the ingredient rows and planner link.
+    let (opts_cookie, _) = use_context::<crate::global_state::cookies::Cookies>()
+        .unwrap()
+        .use_cookie_typed::<_, crate::global_state::craft_options::CraftOptions>(
+            crate::global_state::craft_options::COOKIE_NAME,
+        );
+    let on_hand_map = use_context::<OnHandMap>();
     let analyzer_href = move || {
-        use crate::global_state::cookies::Cookies;
-        use crate::global_state::craft_options::{self, CraftOptions};
-        let cookies = use_context::<Cookies>().unwrap();
-        let (opts, _) = cookies.use_cookie_typed::<_, CraftOptions>(craft_options::COOKIE_NAME);
-        let o = opts.get().unwrap_or_default();
+        let o = opts_cookie.get().unwrap_or_default();
         let world = params
             .get()
             .get("world")
@@ -307,13 +312,56 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
     let ingredients = IngredientsIter::new(recipe)
         .flat_map(|(ingredient, amount)| items.get(&ingredient).map(|item| (item, amount)))
         .map(|(ingredient, amount)| {
+            let ingredient_id = ingredient.key_id;
+            let is_shard = is_shard_item(ingredient_id);
+            let excluded = move || {
+                is_shard && opts_cookie.get().unwrap_or_default().exclude_shards
+            };
+            let use_on_hand = move || opts_cookie.get().unwrap_or_default().use_on_hand;
+            let on_hand_qty = move || {
+                if !use_on_hand() || excluded() {
+                    return 0;
+                }
+                on_hand_map
+                    .map(|m| m.0.with(|map| map.get(&ingredient_id.0).copied().unwrap_or(0)))
+                    .unwrap_or(0)
+                    .clamp(0, amount)
+            };
+            let still_needed = move || amount - on_hand_qty();
+            let muted = move || excluded() || still_needed() == 0;
             view! {
-                <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-1">
-                    <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs tabular-nums text-center min-w-7">{amount.to_string()}</span>
-                    <div class="min-w-0">
+                <div
+                    class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 py-1"
+                    class:opacity-50=muted
+                >
+                    <span class="px-1.5 py-0.5 rounded-md bg-[color:color-mix(in_srgb,_var(--brand-ring)_14%,_transparent)] text-[color:var(--color-text)] text-xs tabular-nums text-center min-w-7">
+                        {move || still_needed().to_string()}
+                    </span>
+                    <div class="min-w-0 flex flex-row items-center gap-2 flex-wrap">
                         <SmallItemDisplay item=ingredient />
+                        <Show when=excluded>
+                            <span class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide border border-[color:var(--color-outline)] text-[color:var(--color-text-muted)]">
+                                {t!(i18n, related_recipe_ingredient_excluded)}
+                            </span>
+                        </Show>
+                        <Show when=move || { on_hand_qty() > 0 }>
+                            <span class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-900/30 text-emerald-300 whitespace-nowrap">
+                                {move || t_string!(i18n, related_recipe_ingredient_on_hand, count = on_hand_qty()).to_string()}
+                            </span>
+                        </Show>
                     </div>
-                    <div class="text-xs justify-self-end whitespace-nowrap"><CheapestPrice item_id=ingredient.key_id /></div>
+                    <div class="flex flex-row items-center gap-2 justify-self-end">
+                        // No input on an excluded shard row: ExcludeShards keeps
+                        // shards off the books entirely, so a qty typed there
+                        // would visibly do nothing.
+                        <Show when=move || { use_on_hand() && !excluded() }>
+                            <OnHandQuantity
+                                item_id=Signal::derive(move || ingredient_id.0)
+                                item_name=Signal::derive(move || ingredient.name.clone())
+                            />
+                        </Show>
+                        <div class="text-xs whitespace-nowrap"><CheapestPrice item_id=ingredient_id /></div>
+                    </div>
                 </div>
             }
         })
@@ -402,7 +450,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             } else { ShardsMode::IncludeMarket };
 
                             let local = on_hand_map
-                                .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                                .map(|m| LocalOnHand::from_map(m.0.get()))
                                 .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
                             let empty = EmptyOnHand;
                             let active: &dyn crate::components::crafting_cost::OnHand =
@@ -416,7 +464,7 @@ fn Recipe(recipe: &'static Recipe, item_id: ItemId) -> impl IntoView {
                             let lq = compute_cost(recipe, data, &recipes_by_output, &lq_opts, &is_shard_item);
 
                             let local_hq = on_hand_map
-                                .map(|m| LocalOnHand::from_map(m.0.get_untracked()))
+                                .map(|m| LocalOnHand::from_map(m.0.get()))
                                 .unwrap_or_else(|| LocalOnHand::from_map(Default::default()));
                             let active_hq: &dyn crate::components::crafting_cost::OnHand =
                                 if opts_value.use_on_hand { &local_hq } else { &empty };
@@ -754,6 +802,34 @@ fn ExchangeSources(#[prop(into)] item_id: Signal<i32>) -> impl IntoView {
 mod tests {
     use super::*;
     use xiv_gen::SpecialShop;
+
+    /// Regression guard for the off-by-one that made "exclude shards" a no-op:
+    /// crystals/shards/clusters are ItemSearchCategory 58, while 59 is
+    /// "Catalysts" (dark matter, glamour prisms).
+    #[test]
+    fn is_shard_item_matches_crystals_and_nothing_else() {
+        let items = &tracked_data().items;
+        let by_name = |name: &str| {
+            items
+                .values()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from game data"))
+                .key_id
+        };
+
+        for name in ["Fire Shard", "Wind Crystal", "Earth Cluster"] {
+            assert!(
+                is_shard_item(by_name(name)),
+                "{name} should count as a shard"
+            );
+        }
+        for name in ["Grade 1 Dark Matter", "Glamour Prism", "Maple Log"] {
+            assert!(
+                !is_shard_item(by_name(name)),
+                "{name} should not count as a shard"
+            );
+        }
+    }
 
     #[test]
     fn source_counts_hide_invalid_items() {

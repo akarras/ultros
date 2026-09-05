@@ -507,6 +507,61 @@ mod tests {
     }
 
     #[test]
+    fn stack_solver_matches_varied_exhaustive_markets() {
+        // A fixed seed keeps failures reproducible. The oracle enumerates all
+        // subsets independently, including partial supply and vendor top-ups.
+        let mut seed = 358_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed >> 32
+        };
+        for case in 0..256 {
+            let offers: Vec<_> = (0..8)
+                .map(|id| {
+                    offer(
+                        id,
+                        1 + (id % 3),
+                        1 + (next() % 12) as i64,
+                        1 + (next() % 30) as i64,
+                    )
+                })
+                .collect();
+            let needed = 1 + (next() % 100) as i64;
+            for vendor in [None, Some(1 + (next() % 30) as i64)] {
+                let expected = (0..1_u32 << offers.len())
+                    .map(|mask| {
+                        let mut quantity = 0;
+                        let mut cost = 0;
+                        for (i, o) in offers.iter().enumerate() {
+                            if mask & (1 << i) != 0 {
+                                quantity += o.quantity;
+                                cost += o.quantity * o.price;
+                            }
+                        }
+                        let missing = (needed - quantity).max(0);
+                        match vendor {
+                            Some(price) => (0, cost + missing * price),
+                            None => (missing, cost),
+                        }
+                    })
+                    .min()
+                    .unwrap();
+                let actual = purchase(needed, &offers, vendor);
+                assert_eq!((actual.missing(), actual.cost), expected, "market {case}");
+                assert_eq!(
+                    actual
+                        .offers
+                        .iter()
+                        .map(|o| o.id)
+                        .collect::<BTreeSet<_>>()
+                        .len(),
+                    actual.offers.len()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn full_scope_can_reuse_a_better_home_plan_for_large_stacks() {
         let materials = [Material {
             item: 1,

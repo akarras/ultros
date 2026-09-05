@@ -15,6 +15,8 @@ pub(crate) mod routes;
 pub(crate) mod sales_cadence;
 pub mod social_card;
 pub(crate) mod social_meta;
+#[cfg(feature = "ssr")]
+pub mod ssr_api;
 pub(crate) mod ws;
 
 include!(concat!(env!("OUT_DIR"), "/i18n/mod.rs"));
@@ -522,6 +524,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
                 <social_meta::SocialMetadata />
                 <AppShell>
                     <Routes fallback=NotFound>
+                        <components::virtual_grid::fixture::GridFixtureRoutes/>
                         <Route path=path!("") view=HomePage />
                         <ParentRoute path=path!("retainers") view=Retainers>
                             <Route path=path!("edit") view=EditRetainers />
