@@ -2710,6 +2710,7 @@ pub(crate) async fn start_web(
         .ok()
         .flatten()
         .unwrap_or(8080);
+    let metrics_token = token.clone();
     let (_main_app, _metrics_app) = futures::future::join(
         async move {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -2722,7 +2723,7 @@ pub(crate) async fn start_web(
                 .await
                 .unwrap();
         },
-        start_metrics_server(prometheus_handle),
+        start_metrics_server(prometheus_handle, metrics_token),
     )
     .await;
 }

@@ -33,6 +33,12 @@ pub struct ChangelogEntry {
 pub const CHANGELOG: &[ChangelogEntry] = &[
     ChangelogEntry {
         date: "2026-09-04",
+        title: "Analytics recovers after temporary connection failures",
+        blurb: "Market analytics now retries temporary connection failures, and repeated sales no longer inflate chart totals while the database catches up. During updates, Ultros gives pending analytics writes time to finish saving.",
+        link: Some("/items"),
+    },
+    ChangelogEntry {
+        date: "2026-09-04",
         title: "Clearer browser notification setup",
         blurb: "Browser notification setup now explains when a push service is unsupported, so you can tell why a subscription could not be saved.",
         link: Some("/items"),
