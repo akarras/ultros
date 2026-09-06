@@ -53,7 +53,9 @@ impl Fenwick {
 
 /// Rows to render for a viewport of `viewport` px, including overscan.
 pub(crate) fn rows_for_viewport(viewport: f64, avg_row_height: f64, overscan: u32) -> u32 {
-    ((viewport / avg_row_height).ceil() as u32).max(1) + overscan
+    ((viewport / avg_row_height.max(1.0)).ceil() as u32)
+        .max(1)
+        .saturating_add(overscan)
 }
 
 /// The first row to render for a scroll offset of `effective_scroll` px past
@@ -97,7 +99,7 @@ pub(crate) fn rendered_range(first: usize, shown: usize, len: usize) -> (usize, 
         return (0, 0);
     }
     let start = first.min(len - 1);
-    (start, (start + shown).min(len))
+    (start, start.saturating_add(shown).min(len))
 }
 
 /// Virtual scroller currently mimics the API of the ForEach components, but adds a row_height and viewport_height.
@@ -314,8 +316,11 @@ where
                 return Vec::new();
             }
             // make sure start + end doesn't go over the length of the vector, and render at least one row
-            let start = (child_start() as usize).min(array_size.saturating_sub(1));
-            let end = (start + children_shown() as usize).min(array_size);
+            let (start, end) = rendered_range(
+                child_start() as usize,
+                children_shown() as usize,
+                array_size,
+            );
             children[start..end]
                 .iter()
                 .cloned()
@@ -433,6 +438,11 @@ where
                                     Effect::new(move |_| {
                                         if let Some(el) = row.get() {
                                             let measure_height = move |measured: f64| {
+                                                // Hidden tabs and skipped content can report zero
+                                                // before layout. Keep the estimate until measurable.
+                                                if !measured.is_finite() || measured <= 0.0 {
+                                                    return;
+                                                }
                                                 let delta = measured - row_height;
                                                 height_deltas.update_value(|v| {
                                                     if idx < v.len() {
@@ -592,6 +602,13 @@ mod tests {
         // overscan added on top.
         assert_eq!(rows_for_viewport(680.0, 32.0, 10), 32);
         assert_eq!(rows_for_viewport(0.0, 32.0, 10), 11);
+    }
+
+    #[test]
+    fn degenerate_measurements_and_extreme_ranges_do_not_overflow() {
+        assert_eq!(rows_for_viewport(680.0, 0.0, 10), 690);
+        assert_eq!(rows_for_viewport(f64::MAX, 0.1, 10), u32::MAX);
+        assert_eq!(rendered_range(5, usize::MAX, 10), (5, 10));
     }
 
     #[test]
