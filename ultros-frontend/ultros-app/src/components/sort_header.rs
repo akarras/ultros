@@ -223,6 +223,9 @@ pub fn SortableHeaderCell<M>(
     /// `<button>` — two focus stops, never nested.
     #[prop(optional)]
     trailing: Option<ViewFn>,
+    /// The containing VirtualGrid cell already owns column semantics.
+    #[prop(optional)]
+    embedded: bool,
 ) -> impl IntoView
 where
     M: SortColumn,
@@ -240,10 +243,10 @@ where
     };
     view! {
         <div
-            role="columnheader"
+            role=(!embedded).then_some("columnheader")
             class=cell_class
             title=title
-            aria-sort=move || column_aria_sort(mode, sort_mode, sort_dir)
+            aria-sort=move || (!embedded).then(|| column_aria_sort(mode, sort_mode, sort_dir))
         >
             // Everything-unset must render a single concrete child with no
             // `Option`-typed slot: an `Option<T>` child that is `None` still

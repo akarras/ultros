@@ -1,4 +1,7 @@
 {
+    "grid_filter_any": "不限",
+    "grid_filter_apply": "套用篩選",
+    "grid_filter_clear": "清除篩選",
     "grid_move_column": "拖曳以移動欄位",
     "grid_column_menu": "欄位選項",
     "grid_resize_hint": "拖曳調整寬度；按兩下依現有結果自動調整",

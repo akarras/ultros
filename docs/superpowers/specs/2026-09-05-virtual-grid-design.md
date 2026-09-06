@@ -1,10 +1,10 @@
 # VirtualGrid and spreadsheet-style column controls
 
-Status: implemented. Native/WASM builds and `check_ci.sh` pass; browser validation is pending recovery of the local PostgreSQL/Docker test environment.
+Status: all seven analyzer migrations and automatic last-view persistence passed native/WASM builds, `check_ci.sh`, the full desktop/mobile/wide E2E suite, and targeted grid, filter, cookie, cross-session, hydration and Chromium touch probes. Physical-device and Safari testing remain outside this local verification.
 
 ## Goal and agreed direction
 
-Give Flip Finder a spreadsheet-style viewport with native horizontal and vertical scrolling, virtualization on both axes, frozen headings, and customizable columns. Introduce `VirtualGrid`, migrate Flip Finder, then remove window-scroll mode from `VirtualScroller`. Keep `VirtualScroller` as a container-scrolling list for its remaining callers.
+Give every analyzer table a spreadsheet-style viewport with native horizontal and vertical scrolling, virtualization on both axes, frozen headings, and customizable columns. `VirtualGrid` now backs Flip Finder, Recipe, Leve, Venture, Vendor Resale, Scrip Sources and FC Crafting. `VirtualScroller` remains a container-scrolling list for search results; its window-scrolling mode is removed.
 
 This supersedes the earlier proposal for a page-scrolling sticky virtual surface. The grid owns vertical scrolling; the page owns the surrounding navigation and controls.
 
@@ -36,7 +36,7 @@ This supersedes the earlier proposal for a page-scrolling sticky virtual surface
 
 Separate header interactions: clicking the sort label sorts; dragging the heading past a movement threshold reorders; dragging or double-clicking the border resizes. Resizing, reordering, and opening the menu must never accidentally sort. Escape cancels an active drag and restores the prior layout; pointer capture handles movement outside the header.
 
-Keep the filter bar outside the grid's clipping area. Fit the grid to available space below the controls, with a usable minimum height on short screens. Measure the viewport with `ResizeObserver`; account for browser chrome and toolbar wrapping. There is no table-header dependency on the filter bar's hardcoded 76px sticky offset. Small result sets and empty results should not leave a large blank panel.
+Keep the filter bar outside the grid's clipping area and in normal page flow on grid-backed analyzers, so page scrolling cannot put it over the headings. Fit the grid to available space below the controls, with a usable minimum height on short screens. Measure the viewport with `ResizeObserver`; account for browser chrome and toolbar wrapping. There is no table-header dependency on the filter bar's height. Small result sets and empty results should not leave a large blank panel.
 
 ## Component design
 
@@ -78,11 +78,17 @@ References: [WAI-ARIA grid pattern](https://www.w3.org/WAI/ARIA/apg/patterns/gri
 
 ## URL and saved-view compatibility
 
-Retain `cols` as the existing optional-column visibility contract. Add a versioned `layout` parameter containing ordered column IDs and width overrides, including IDs for required columns. `cols` determines visibility; `layout` determines ordering and sizing. Missing layout uses the current default order and widths.
+Retain `cols` as the existing optional-column visibility contract. Read existing JSON `layout` links, but write compact `l=2~order-prefix~width-pairs` deltas. Stable column IDs are separated by dots; rounded width overrides use base 36. Store only the shortest reordered prefix and widths differing from defaults. Default layouts omit `l` entirely. This avoids serializing the entire registry after each resize and remains readable when new metrics are added.
 
 Normalize layout at one boundary shared by SSR and client: discard unknown IDs, remove duplicates, append missing known columns in default order, clamp finite widths, bound payload size, and fall back to defaults for malformed or unsupported versions. Hidden columns retain their order and width for re-enabling; inserting a hidden column explicitly moves it to the requested location. Old `cols` links continue to work unchanged.
 
 During drag, update local layout only. Commit one URL update on release, auto-fit, or a discrete menu action, with page scrolling disabled. Browser back/forward restores both layout and column visibility. Saved views and saved defaults naturally capture layout through the existing query string. Cover reset, malformed input, new/removed metrics, and older saved views in compatibility tests.
+
+Each analyzer automatically stores its last query locally. Language and the selected market remain navigation context; Flip Finder's world query filter is retained. Named views remain bookmarks; the former make-default checkbox is removed. Explicit query settings always win. Bare navigation restores the last view, including an explicitly cleared view (`v=1` prevents reseeding landing defaults). Repeated persistence replaces this marker rather than appending duplicate parameters.
+
+A persistent SameSite=Lax cookie scoped to each analyzer path mirrors normal-sized views. HTTP middleware redirects a bare request to that view before SSR. Cookies are bounded to 3,500 encoded bytes including attributes; larger preferences stay in localStorage and expire any stale cookie. LocalStorage restoration runs after hydration on client navigation. Stored queries are limited to 16 KiB. No account or server-side saved-view record is required.
+
+Heading menus use the same query keys as toolbar filters, with localized labels and selection options. Active filters mark their column heading. FC material breakdowns open in a portal dialog so they do not enlarge or clip a virtual row. The shared grid geometry also drives recipe enrichment range tests.
 
 ## Delivery sequence
 
@@ -102,3 +108,9 @@ During drag, update local layout only. Commit one URL update on release, auto-fi
 - Use deterministic market fixtures for essential browser regressions instead of allowing empty live data to silently skip the grid checks.
 - Run `cargo leptos build`, the existing Flip Finder hydration/mobile probes, new grid browser tests, applicable JavaScript regressions, `./check_ci.sh`, and `./scripts/run_e2e.sh` before merging implementation. Run targeted Rust geometry/state tests as each layer lands.
 - Add player-facing changelog entries when the grid behavior ships. This planning document itself needs no changelog entry.
+
+### Mobile verification findings
+
+The touch suite uses native touch events to pan both axes and resize a border, then taps menu actions to insert, reorder, auto-fit, and hide a column. It checks that these gestures never sort, that headings remain aligned, and that the grid clears the fixed mobile navigation. Desktop and touch menu tests hit-test each action before clicking or tapping it; invoking DOM button handlers directly had missed an insert picker that flex layout collapsed to zero height. Menu children now retain their height and scroll within the dialog.
+
+The populated Flip Finder probe also verifies phone touch scrolling after hydration. Broader browser checks exposed zero-height measurements from hidden variable-height lists in the FC crafting page; `VirtualScroller` now retains estimates for hidden rows and uses saturating range arithmetic. The FC crafting probe passes with this fix. FC crafting and dashboard probes use the existing hide-ads cookie, consistently with the other browser tests, to keep external ad-script failures out of application regression checks.

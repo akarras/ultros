@@ -1911,6 +1911,9 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
     .app-shell > .app-shell-content {
         padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
     }
+    .app-shell-content .virtual-grid {
+        --grid-bottom-clearance: calc(4.25rem + env(safe-area-inset-bottom));
+    }
     /* <Footer/> renders outside <AppShell> (see lib.rs), so it doesn't
        inherit .app-shell-content's clearance above — give it the same
        offset directly or its last lines sit under the fixed mobile bar. */
@@ -2676,7 +2679,7 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .virtual-grid {
     position: relative;
     overflow: auto;
-    height: min(var(--grid-content-height, 600px), var(--grid-available-height, max(240px, calc(100dvh - 180px))));
+    height: min(var(--grid-content-height, 600px), max(240px, calc(var(--grid-available-height, max(240px, calc(100dvh - 180px))) - var(--grid-bottom-clearance, 0px))));
     border: 1px solid var(--color-outline);
     background: var(--color-background-panel);
     scrollbar-gutter: stable;
@@ -2711,7 +2714,15 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 .grid-insert-before { border-left: 3px solid var(--brand-ring); }
 .grid-insert-after { border-right: 3px solid var(--brand-ring); }
 .grid-menu-backdrop { position: fixed; inset: 0; z-index: 80; }
+/* Native dialogs have their own default text color, while preflight resets
+   their auto margins. Restore the panel theme and modal centering. */
+dialog.panel { color: var(--color-text); margin: auto; }
 .grid-menu-panel { position: fixed; z-index: 81; width: 272px; max-height: min(420px, calc(100dvh - 16px)); overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--color-outline); border-radius: 8px; background: var(--color-background-panel); color: var(--color-text); box-shadow: 0 8px 32px #0008; font-size: 14px; }
+.grid-menu-panel > * { flex-shrink: 0; }
+.grid-column-filter { padding-bottom: 8px; border-bottom: 1px solid var(--color-outline); }
+.grid-column-filter label { display: grid; gap: 4px; }
+.grid-column-filter select { width: 100%; padding: 6px; background: var(--color-background); }
+.grid-filter-active .grid-column-menu { color: var(--brand-fg); background: color-mix(in srgb, var(--brand-ring) 22%, transparent); border-radius: 4px; }
 .grid-menu-panel button { padding: 6px 8px; text-align: left; border-radius: 4px; }
 .grid-menu-panel button:hover, .grid-menu-panel button:focus-visible { background: color-mix(in srgb, var(--brand-ring) 18%, transparent); }
 .grid-menu-panel input { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--color-outline); border-radius: 4px; background: var(--color-background); }
@@ -2724,34 +2735,6 @@ a:not(.nav-link):not(.side-nav-item):not(.menu-item):not(
 }
 .tool-grid-row {
     min-width: var(--tool-row-min-width, 0px);
-}
-
-/* ----- routes/fc_crafting_analyzer.rs: one width for the header and the rows -----
-   Same shape and the same reason as `.tool-table` above: the analyzer's
-   `VirtualScroller` runs in *container* mode, so the scroller div is the
-   scrollport and the row spacer inside it has to be told how wide the grid
-   really is, or every row is clipped at the port width while the header — a
-   sibling outside that box — keeps painting.
-
-   `max-content` (what the recipe analyzer passes) is deliberately *not* used
-   here: this is the one caller with `variable_height=true`, whose rows carry
-   `content-visibility: auto`, and a skipped off-screen row gains size
-   containment and contributes nothing to an intrinsic measurement. The
-   resolved width would then wobble as rows are skipped and unskipped. An
-   explicit sum is deterministic.
-
-   The sum is the cell widths in the route, which are all `shrink-0`:
-   `w-84` (21rem) + four `w-30` (7.5rem each) = 51rem always on, plus a sixth
-   `w-30` that is `hidden md:block`, giving 58.5rem from `md` up. The media
-   query is Tailwind's `md` (48rem) verbatim, because that is the breakpoint
-   the cells' own `hidden md:block` uses. */
-.fc-craft-table {
-    --fc-craft-row-min-width: 51rem;
-}
-@media (min-width: 48rem) {
-    .fc-craft-table {
-        --fc-craft-row-min-width: 58.5rem;
-    }
 }
 
 /* ----- components/data_table.rs: derived grid template -----

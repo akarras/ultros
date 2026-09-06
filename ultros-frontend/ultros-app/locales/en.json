@@ -1,4 +1,7 @@
 {
+    "grid_filter_any": "Any",
+    "grid_filter_apply": "Apply filter",
+    "grid_filter_clear": "Clear filter",
     "grid_move_column": "Drag to move column",
     "grid_column_menu": "Column options",
     "grid_resize_hint": "Drag to resize; double-click to fit available results",

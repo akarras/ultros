@@ -239,6 +239,10 @@ pub fn ColumnsPickerList(
 /// everything route-specific arrives as a view prop or a callback.
 #[component]
 pub fn ControlBar(
+    /// Grid tools scroll their rows internally, so their toolbar stays in
+    /// normal page flow rather than covering the grid when the page scrolls.
+    #[prop(default = true)]
+    sticky: bool,
     /// Row 1, left: the result count and any data-transparency note. This is
     /// the one thing allowed to give up space, so it truncates first.
     #[prop(into)]
@@ -325,7 +329,7 @@ pub fn ControlBar(
     let has_columns = Signal::derive(move || !columns.get().is_empty());
 
     view! {
-        <div class="sticky-bar px-2 py-1 flex flex-col gap-1" style=format!("height: {STICKY_BAR_HEIGHT}px;") node_ref=bar_ref>
+        <div class="sticky-bar px-2 py-1 flex flex-col gap-1" style=format!("height: {STICKY_BAR_HEIGHT}px; position: {};", if sticky { "sticky" } else { "relative" }) node_ref=bar_ref>
             // Row 1 — result count and view-level controls.
             <div class="h-8 flex items-center gap-2 md:gap-3 min-w-0">
                 // The one item allowed to give up space. `overflow-hidden` is

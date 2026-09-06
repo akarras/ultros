@@ -14,7 +14,7 @@ use crate::{
         skeleton::{BoxSkeleton, InlineStatusSkeleton},
         sort_header::{SortColumn, SortDir, SortableHeaderCell, sort_and_truncate},
         tool_help::*,
-        virtual_scroller::*,
+        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
         world_picker::WorldOnlyPicker,
     },
     global_state::{
@@ -33,6 +33,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use thousands::Separable;
 use ultros_api_types::{
     cheapest_listings::{CheapestListings, CheapestListingsMap},
     recent_sales::{RecentSales, SaleData},
@@ -371,202 +372,200 @@ fn VentureAnalyzerTable(
     });
 
     view! {
-        <div class="flex flex-col gap-6">
-            <ControlBar
-                summary=move || {
-                    view! {
-                        <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
-                            {move || t!(i18n, venture_analyzer_result_count, n = move || computed_data().len())}
-                        </span>
-                    }
-                    .into_any()
-                }
-                actions=move || {
-                    view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+            <div class="flex flex-col gap-6">
+                <ControlBar sticky=false
+                    summary=move || {
+                        view! {
+                            <span class="text-sm font-semibold text-[color:var(--color-text)] whitespace-nowrap truncate">
+                                {move || t!(i18n, venture_analyzer_result_count, n = move || computed_data().len())}
+                            </span>
+                        }
                         .into_any()
-                }
-                available_filters=Signal::derive(filter_options)
-                on_add_filter=add_filter
-                on_clear_all=clear_all
-                empty_label=Signal::derive(move || {
-                    t_string!(i18n, venture_analyzer_no_filters_hint).to_string()
-                })
-                is_empty=Signal::derive(move || active_filters().is_empty())
-            >
-                {move || {
-                    (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
-                        .then(|| {
-                            let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, venture_analyzer_chip_profit_min).to_string()
-                                    value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
-                                    numeric=true
-                                    min="0"
-                                    step="1000"
-                                    start_editing=start_editing
-                                    on_commit=Callback::new(move |v: Option<String>| {
-                                        set_minimum_profit(v.and_then(|v| v.parse().ok()));
-                                        if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
-                                            pending_filter.set(None);
-                                        }
-                                    })
-                                />
-                            }
-                        })
-                }}
-                {move || {
-                    filter_outliers()
-                        .unwrap_or(false)
-                        .then(|| {
-                            view! {
-                                <FilterChip
-                                    label=t_string!(i18n, venture_analyzer_filter_outliers).to_string()
-                                    readonly=true
-                                    value=Signal::derive(|| None::<String>)
-                                    on_commit=Callback::new(move |_| set_filter_outliers(None))
-                                />
-                            }
-                        })
-                }}
-            </ControlBar>
-
-            // Job category multi-select: complex tag-cloud widget, kept as panel
-            <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
-                <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
-                <div class="flex flex-wrap gap-2">
+                    }
+                    actions=move || {
+                        view! { <RealtimeStatus status=realtime_status last_update=last_update /> }
+                            .into_any()
+                    }
+                    available_filters=Signal::derive(filter_options)
+                    on_add_filter=add_filter
+                    on_clear_all=clear_all
+                    empty_label=Signal::derive(move || {
+                        t_string!(i18n, venture_analyzer_no_filters_hint).to_string()
+                    })
+                    is_empty=Signal::derive(move || active_filters().is_empty())
+                >
                     {move || {
-                        let selected = selected_jobs_set.get();
-                        categories
-                            .get()
-                            .into_iter()
-                            .map(|(_id, name)| {
-                                let is_selected = selected.contains(&name);
-                                let name_clone = name.clone();
-                                let toggle_job = toggle_job.clone();
+                        (minimum_profit().is_some() || pending_filter.get() == Some(FILTER_PROFIT))
+                            .then(|| {
+                                let start_editing = pending_filter.get_untracked() == Some(FILTER_PROFIT);
                                 view! {
-                                    <button
-                                        class=move || {
-                                            if is_selected {
-                                                "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
-                                            } else {
-                                                "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
+                                    <FilterChip
+                                        label=t_string!(i18n, venture_analyzer_chip_profit_min).to_string()
+                                        value=Signal::derive(move || minimum_profit().map(|v| v.to_string()))
+                                        numeric=true
+                                        min="0"
+                                        step="1000"
+                                        start_editing=start_editing
+                                        on_commit=Callback::new(move |v: Option<String>| {
+                                            set_minimum_profit(v.and_then(|v| v.parse().ok()));
+                                            if pending_filter.get_untracked() == Some(FILTER_PROFIT) {
+                                                pending_filter.set(None);
                                             }
-                                        }
-                                        on:click=move |_| toggle_job(name_clone.clone())
-                                    >
-                                        {name}
-                                    </button>
+                                        })
+                                    />
                                 }
                             })
-                            .collect_view()
                     }}
+                    {move || {
+                        filter_outliers()
+                            .unwrap_or(false)
+                            .then(|| {
+                                view! {
+                                    <FilterChip
+                                        label=t_string!(i18n, venture_analyzer_filter_outliers).to_string()
+                                        readonly=true
+                                        value=Signal::derive(|| None::<String>)
+                                        on_commit=Callback::new(move |_| set_filter_outliers(None))
+                                    />
+                                }
+                            })
+                    }}
+                </ControlBar>
+
+                // Job category multi-select: complex tag-cloud widget, kept as panel
+                <div class="panel p-4 flex flex-col w-full bg-[color:var(--color-background-elevated)] bg-opacity-100 z-20">
+                    <h3 class="font-bold text-base mb-2 text-[color:var(--brand-fg)]">{t!(i18n, venture_analyzer_filter_by_job)}</h3>
+                    <div class="flex flex-wrap gap-2">
+                        {move || {
+                            let selected = selected_jobs_set.get();
+                            categories
+                                .get()
+                                .into_iter()
+                                .map(|(_id, name)| {
+                                    let is_selected = selected.contains(&name);
+                                    let name_clone = name.clone();
+                                    let toggle_job = toggle_job.clone();
+                                    view! {
+                                        <button
+                                            class=move || {
+                                                if is_selected {
+                                                    "px-3 py-1 rounded-full text-xs font-bold bg-brand-600 text-white transition-colors border border-brand-500"
+                                                } else {
+                                                    "px-3 py-1 rounded-full text-xs font-bold bg-[color:var(--color-base)] hover:bg-[color:var(--brand-ring)]/20 text-[color:var(--color-text)] transition-colors border border-[color:var(--color-outline)]"
+                                                }
+                                            }
+                                            on:click=move |_| toggle_job(name_clone.clone())
+                                        >
+                                            {name}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()
+                        }}
+                    </div>
                 </div>
+
+                <div class="rounded-2xl panel">
+                    <QueryGrid id="venture-analyzer-grid" label=t_string!(i18n, venture_analyzer_col_venture_item).to_string()
+     row_height=60.0
+     columns=Signal::derive(move || vec![GridColumn::new("item",t_string!(i18n, venture_analyzer_col_venture_item).to_string(), 320.0, false, true),
+    { let mut col = GridColumn::new("profit",t_string!(i18n, venture_analyzer_col_profit).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Profit, sort_dir.get().unwrap_or_else(||SortMode::Profit.default_dir()) == SortDir::Asc); col.filters.push(ColumnFilter::new("profit", filter_label("profit"), true)); col },
+    GridColumn::new("unit-price",t_string!(i18n, venture_analyzer_col_unit_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::UnitPrice, sort_dir.get().unwrap_or_else(||SortMode::UnitPrice.default_dir()) == SortDir::Asc),
+    GridColumn::new("avg-price",t_string!(i18n, venture_analyzer_col_avg_price).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::AvgPrice, sort_dir.get().unwrap_or_else(||SortMode::AvgPrice.default_dir()) == SortDir::Asc),
+    GridColumn::new("daily-sales",t_string!(i18n, venture_analyzer_col_daily_sales).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::DailySales, sort_dir.get().unwrap_or_else(||SortMode::DailySales.default_dir()) == SortDir::Asc),
+    GridColumn::new("level",t_string!(i18n, venture_analyzer_col_level).to_string(), 130.0, true, true).sorted(sort_mode.get().unwrap_or_else(SortMode::fallback) == SortMode::Level, sort_dir.get().unwrap_or_else(||SortMode::Level.default_dir()) == SortDir::Asc)])
+     header=move |id| {match id {"item" => view! {<div  class="w-full min-w-0">{t!(i18n, venture_analyzer_col_venture_item)}</div>}.into_any(),
+    "profit" => view! {<SortableHeaderCell embedded=true
+                                    mode=SortMode::Profit
+                                    label=t_string!(i18n, venture_analyzer_col_profit).to_string()
+                                    class="w-full min-w-0"
+                                    sort_mode
+                                    sort_dir
+                                 />}.into_any(),
+    "unit-price" => view! {<SortableHeaderCell embedded=true
+                                    mode=SortMode::UnitPrice
+                                    label=t_string!(i18n, venture_analyzer_col_unit_price).to_string()
+                                    class="w-full min-w-0"
+                                    sort_mode
+                                    sort_dir
+                                 />}.into_any(),
+    "avg-price" => view! {<SortableHeaderCell embedded=true
+                                    mode=SortMode::AvgPrice
+                                    label=t_string!(i18n, venture_analyzer_col_avg_price).to_string()
+                                    class="w-full min-w-0"
+                                    sort_mode
+                                    sort_dir
+                                 />}.into_any(),
+    "daily-sales" => view! {<SortableHeaderCell embedded=true
+                                    mode=SortMode::DailySales
+                                    label=t_string!(i18n, venture_analyzer_col_daily_sales).to_string()
+                                    class="w-full min-w-0"
+                                    sort_mode
+                                    sort_dir
+                                 />}.into_any(),
+    "level" => view! {<SortableHeaderCell embedded=true
+                                    mode=SortMode::Level
+                                    label=t_string!(i18n, venture_analyzer_col_level).to_string()
+                                    class="w-full min-w-0"
+                                    sort_mode
+                                    sort_dir
+                                 />}.into_any(), _ => ().into_any()}}
+     each=computed_data
+                        key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
+
+     measure=move |(_, data): &(usize, Arc<VentureProfitData>), id| {match id {"item" => (items.get(&xiv_gen::ItemId(data.item_id)).map(|i| i.name.as_str()).unwrap_or_default().to_string(), 110.0),
+    "profit" => (data.profit.separate_with_commas(), 42.0),
+    "unit-price" => (data.market_price.separate_with_commas(), 42.0),
+    "avg-price" => (data.avg_price.separate_with_commas(), 42.0),
+    "daily-sales" => (format!("{:.1}", data.daily_sales), 42.0),
+    "level" => (data.task_level.to_string(), 42.0), _ => (String::new(), 0.0)}}
+     view=move |(index, data): (usize, Arc<VentureProfitData>), id| {
+                            let item_id = data.item_id;
+                            let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
+
+
+
+
+     let _ = index;
+     match id {"item" => view! {<div  class="flex flex-row items-center gap-2 w-full min-w-0">
+                                         <a
+                                            class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
+                                            href=format!("/item/{}/{}", world(), item_id)
+                                        >
+                                            <div class="shrink-0">
+                                                <ItemIcon item_id=item_id icon_size=IconSize::Small />
+                                            </div>
+                                            <div class="flex flex-col truncate">
+                                                <span class="font-semibold">{item}</span>
+                                                <span class="text-xs text-[color:var(--color-text-muted)] truncate">
+                                                    {t!(i18n, venture_analyzer_quantity_x)} " " {data.quantity}
+                                                </span>
+                                            </div>
+                                        </a>
+                                    </div>}.into_any(),
+    "profit" => view! {<div  class="text-right w-full min-w-0">
+                                        <Gil amount=data.profit />
+                                    </div>}.into_any(),
+    "unit-price" => view! {<div  class="text-right w-full min-w-0">
+                                        <Gil amount=data.market_price />
+                                    </div>}.into_any(),
+    "avg-price" => view! {<div  class="text-right w-full min-w-0">
+                                        <Gil amount=data.avg_price />
+                                    </div>}.into_any(),
+    "daily-sales" => view! {<div  class="text-right w-full min-w-0">
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, venture_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
+                                        </span>
+                                    </div>}.into_any(),
+    "level" => view! {<div  class="text-right w-full min-w-0">
+                                        <span class="text-xs text-[color:var(--color-text-muted)]">
+                                            {t!(i18n, venture_analyzer_lv)} " " {data.task_level}
+                                        </span>
+                                    </div>}.into_any(), _ => ().into_any()}}
+     />
+                 </div>
             </div>
-
-            <div class="rounded-2xl overflow-x-auto panel content-visible contain-layout contain-paint will-change-scroll forced-layer">
-                <VirtualScroller
-                    viewport_height=720.0
-                    row_height=60.0
-                    overscan=8
-                    header_height=64.0
-                    variable_height=false
-                    header=view! {
-                        <div class="flex flex-row align-top h-16 bg-[color:color-mix(in_srgb,var(--brand-ring)_10%,transparent)]" role="rowgroup">
-                             <div role="columnheader" class="w-84 p-4">{t!(i18n, venture_analyzer_col_venture_item)}</div>
-                             <SortableHeaderCell
-                                mode=SortMode::Profit
-                                label=t_string!(i18n, venture_analyzer_col_profit).to_string()
-                                class="w-30 p-4"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::UnitPrice
-                                label=t_string!(i18n, venture_analyzer_col_unit_price).to_string()
-                                class="w-30 p-4"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::AvgPrice
-                                label=t_string!(i18n, venture_analyzer_col_avg_price).to_string()
-                                class="w-30 p-4 hidden md:block"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::DailySales
-                                label=t_string!(i18n, venture_analyzer_col_daily_sales).to_string()
-                                class="w-30 p-4 hidden md:block"
-                                sort_mode
-                                sort_dir
-                             />
-                             <SortableHeaderCell
-                                mode=SortMode::Level
-                                label=t_string!(i18n, venture_analyzer_col_level).to_string()
-                                class="w-30 p-4 hidden md:block"
-                                sort_mode
-                                sort_dir
-                             />
-                        </div>
-                    }.into_any()
-                    each=computed_data.into()
-                    key=move |(index, data): &(usize, Arc<VentureProfitData>)| (*index, data.item_id)
-                    view=move |(index, data): (usize, Arc<VentureProfitData>)| {
-                        let item_id = data.item_id;
-                        let item = items.get(&xiv_gen::ItemId(item_id)).map(|i| i.name.as_str().to_string()).unwrap_or_else(|| t_string!(i18n, unknown).to_string());
-
-                        let classes = if (index % 2) == 0 {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_6%,transparent)] transition-colors"
-                        } else {
-                            "flex flex-row items-center flex-nowrap h-15 hover:bg-[color:color-mix(in_srgb,var(--brand-ring)_12%,transparent)] hover:ring-1 hover:ring-[color:color-mix(in_srgb,var(--brand-ring)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--color-text)_8%,transparent)] transition-colors"
-                        };
-
-                        view! {
-                            <div class=classes role="row-group">
-                                <div role="cell" class="px-4 py-2 flex flex-row w-84 items-center gap-2">
-                                     <a
-                                        class="flex flex-row items-center gap-2 hover:text-brand-300 transition-colors truncate overflow-x-clip w-full"
-                                        href=format!("/item/{}/{}", world(), item_id)
-                                    >
-                                        <div class="shrink-0">
-                                            <ItemIcon item_id=item_id icon_size=IconSize::Small />
-                                        </div>
-                                        <div class="flex flex-col truncate">
-                                            <span class="font-semibold">{item}</span>
-                                            <span class="text-xs text-[color:var(--color-text-muted)] truncate">
-                                                {t!(i18n, venture_analyzer_quantity_x)} " " {data.quantity}
-                                            </span>
-                                        </div>
-                                    </a>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.profit />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right">
-                                    <Gil amount=data.market_price />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
-                                    <Gil amount=data.avg_price />
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
-                                    <span class="text-xs text-[color:var(--color-text-muted)]">
-                                        {t!(i18n, venture_analyzer_sales_per_day, sales = format!("{:.1}", data.daily_sales))}
-                                    </span>
-                                </div>
-                                <div role="cell" class="px-4 py-2 w-30 text-right hidden md:block">
-                                    <span class="text-xs text-[color:var(--color-text-muted)]">
-                                        {t!(i18n, venture_analyzer_lv)} " " {data.task_level}
-                                    </span>
-                                </div>
-                            </div>
-                        }.into_any()
-                    }
-                />
-             </div>
-        </div>
-    }
+        }
 }
 
 #[component]

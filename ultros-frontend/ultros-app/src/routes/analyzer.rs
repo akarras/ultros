@@ -34,7 +34,7 @@ use crate::{
         toggle::Toggle,
         tool_help::{ActionableEmptyState, ToolHeader},
         tooltip::*,
-        virtual_grid::{GridChange, GridColumn, VirtualGrid},
+        virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid},
         world_picker::*,
     },
     error::{AppError, AppResult},
@@ -1440,64 +1440,24 @@ fn AnalyzerTable(
         }
     };
 
-    let grid_layout = query_signal::<String>("layout").0;
-    let grid_query = use_query_map();
-    let grid_location = use_location();
-    let grid_nav = use_navigate();
-    let on_grid_change = Callback::new(move |change: GridChange| {
-        let mut query = grid_query.get_untracked();
-        query.remove("layout");
-        if let Some(layout) = change.layout {
-            query.insert("layout", layout);
-        }
-        if change.reset {
-            query.remove("cols");
-        }
-        if let Some((id, visible)) = change.visibility {
-            let mut cols = visible_cols.get_untracked();
-            if visible {
-                cols.insert(id);
-            } else {
-                cols.remove(id);
-            }
-            query.insert("cols", serialize_visible_cols(&cols));
-        }
-        grid_nav(
-            &format!(
-                "{}{}",
-                grid_location.pathname.get_untracked(),
-                query.to_query_string()
-            ),
-            NavigateOptions {
-                scroll: false,
-                ..Default::default()
-            },
-        );
-    });
-    let grid_reset = Memo::new(move |_| {
-        let mut q = grid_query.get();
-        q.remove("layout");
-        q.remove("cols");
-        q.to_query_string()
-    });
     let grid_columns = Memo::new(move |_| {
         let visible = visible_cols.get();
         [
             ("hq", 70.0),
             ("item", 330.0),
-            ("profit", 150.0),
-            (COL_PROFIT_PER_DAY, 150.0),
-            (COL_TAX, 150.0),
-            (COL_DRIFT, 130.0),
-            (COL_CONFIDENCE, 150.0),
-            (COL_ROI, 120.0),
-            ("buy_price", 150.0),
+            ("profit", 120.0),
+            (COL_PROFIT_PER_DAY, 125.0),
+            (COL_TAX, 110.0),
+            (COL_DRIFT, 100.0),
+            (COL_CONFIDENCE, 115.0),
+            (COL_ROI, 95.0),
+            ("buy_price", 125.0),
             (COL_WORLD, 150.0),
             (COL_DATACENTER, 160.0),
             (COL_TREND, 140.0),
-            (COL_SALES_PER_DAY, 180.0),
-            (COL_VOLUME_30D, 130.0),
-            (COL_LAST_SOLD, 150.0),
+            (COL_SALES_PER_DAY, 130.0),
+            (COL_VOLUME_30D, 105.0),
+            (COL_LAST_SOLD, 120.0),
         ]
         .into_iter()
         .map(|(id, width)| {
@@ -1509,6 +1469,48 @@ fn AnalyzerTable(
                 optional,
                 !optional || visible.contains(id),
             );
+            let filters: &[(&str, bool)] = match id {
+                "item" => &[(FILTER_NAME, false), (FILTER_CATEGORY, true)],
+                "profit" => &[(FILTER_PROFIT, true)],
+                "buy_price" => &[(FILTER_MIN_BUY, true), (FILTER_MAX_PRICE, true)],
+                "hq" => &[(FILTER_QUALITY, false)],
+                COL_PROFIT_PER_DAY => &[(FILTER_PROFIT_PER_DAY, true)],
+                COL_DRIFT => &[(FILTER_MIN_DRIFT, true)],
+                COL_CONFIDENCE => &[(FILTER_MIN_CONFIDENCE, false)],
+                COL_ROI => &[(FILTER_ROI, true)],
+                COL_SALES_PER_DAY => &[
+                    (FILTER_VELOCITY, true),
+                    (FILTER_SALES, true),
+                    (FILTER_NEXT_SALE, false),
+                ],
+                COL_VOLUME_30D => &[(FILTER_MIN_VOLUME, true)],
+                COL_LAST_SOLD => &[(FILTER_LAST_SOLD, false)],
+                COL_WORLD => &[(FILTER_WORLD, false)],
+                COL_DATACENTER => &[(FILTER_DATACENTER, false)],
+                _ => &[],
+            };
+            col.filters = filters
+                .iter()
+                .map(|&(key, numeric)| {
+                    let mut filter = ColumnFilter::new(key, filter_label(key), numeric);
+                    if key == FILTER_MIN_CONFIDENCE {
+                        filter.options = vec![
+                            ("low", t_string!(i18n, analyzer_confidence_low).to_string()),
+                            (
+                                "medium",
+                                t_string!(i18n, analyzer_confidence_medium).to_string(),
+                            ),
+                            (
+                                "high",
+                                t_string!(i18n, analyzer_confidence_high).to_string(),
+                            ),
+                        ];
+                    } else if key == FILTER_QUALITY {
+                        filter.options = vec![("hq", "HQ".to_string()), ("nq", "NQ".to_string())];
+                    }
+                    filter
+                })
+                .collect();
             let mode = match id {
                 "profit" => Some(SortMode::Profit),
                 "buy_price" => Some(SortMode::BuyPrice),
@@ -2029,7 +2031,7 @@ fn AnalyzerTable(
     let worlds_for_measure = worlds.clone();
     view! {
         <div class="flex flex-col gap-4" data-testid="flip-finder-table">
-            <ControlBar
+            <ControlBar sticky=false
                 chip_row=chip_row
                 summary=move || {
                     view! {
@@ -2541,14 +2543,11 @@ fn AnalyzerTable(
             </ControlBar>
 
 
-            <VirtualGrid
+            <QueryGrid
                 id="flip-finder-grid"
                 label=t_string!(i18n, flip_finder).to_string()
                 each=sorted_data
                 columns=grid_columns
-                layout=grid_layout
-                on_change=on_grid_change
-                reset_scroll=grid_reset
                 visible_range=visible_range
                 row_height=FLIP_ROW_HEIGHT_PX
                 key=move |(_, data): &(usize, CalculatedProfitData)| (data.inner.sale_summary.item_id, data.inner.cheapest_world_id, data.inner.sale_summary.hq)

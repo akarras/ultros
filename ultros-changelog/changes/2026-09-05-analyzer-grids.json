@@ -1,0 +1,7 @@
+{
+  "category": "improvements",
+  "importance": "high",
+  "title": "Arrange every analyzer like a spreadsheet",
+  "blurb": "Resize, auto-fit, reorder and hide columns across the crafting, leve, venture, vendor and scrip analyzers. Scroll to any column on your phone, and edit filters directly from a column's heading menu. Flip Finder also starts with more compact number columns.",
+  "link": "/recipe-analyzer"
+}

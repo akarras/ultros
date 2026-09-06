@@ -1,9 +1,12 @@
 //! A single native scrollport with independently virtualized rows and columns.
+mod filter;
 pub mod fixture;
 pub mod layout;
+pub mod query_grid;
 use crate::i18n::*;
-pub use layout::{GridColumn, GridLayout};
-use layout::{column_range, row_range};
+use layout::column_range;
+pub(crate) use layout::row_range;
+pub use layout::{ColumnFilter, GridColumn, GridLayout};
 use leptos::leptos_dom::helpers::{
     AnimationFrameRequestHandle, request_animation_frame_with_handle,
 };
@@ -63,6 +66,7 @@ where
     M: Fn(&T, &'static str) -> (String, f64) + Send + Sync + 'static,
 {
     let i18n = use_i18n();
+    let filter_query = crate::components::app_link::use_location_or_default().query;
     let grid_id = StoredValue::new(id);
     let key = StoredValue::new(key);
     let header = StoredValue::new(header);
@@ -121,7 +125,7 @@ where
     }
     let commit = move |visibility| {
         on_change.run(GridChange {
-            layout: Some(state.get_untracked().encode()),
+            layout: state.with_untracked(|s| s.compact(&columns.get_untracked())),
             visibility,
             reset: false,
         })
@@ -536,6 +540,8 @@ where
                                 <div class="virtual-grid-heading" role="columnheader" aria-colindex=ci + 1 aria-sort=move || placed.with(|p|p.iter().find(|c|c.column.id==id).map(|c|c.column.aria_sort).unwrap_or("none"))
                                     id=format!("{}-r0-c{ci}",grid_id.get_value()) data-column=id data-grid-row="0" data-grid-col=ci
                                     class:grid-active=move || active.get() == (0,ci)
+                                    class:grid-filter-active=move || columns.with(|defs| defs.iter().find(|c|c.id==id).is_some_and(|c|
+                                        c.filters.iter().any(|f|filter_query.with(|q|q.get(f.key).is_some_and(|v|!v.is_empty())))))
                                     class:grid-insert-before=move || drag.get().is_some_and(|d| d.target == Some((id,false)))
                                     class:grid-insert-after=move || drag.get().is_some_and(|d| d.target == Some((id,true)))
                                     style=move || placed.with(|p| p.iter().find(|c| c.column.id == id).map(|c| format!("left:{}px;width:{}px;",c.left,c.width)).unwrap_or_default())
@@ -601,6 +607,8 @@ where
                         }
                     >
                         <strong>{columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.label.clone()).unwrap_or_default())}</strong>
+                        {columns.with(|defs|defs.iter().find(|c|c.id==m.id).map(|c|c.filters.clone()).unwrap_or_default()).into_iter()
+                            .map(|filter|view! {<filter::ColumnFilterEditor filter/>}).collect_view()}
                         <button type="button" on:click=move |_| {fit(m.id);close_menu();}>{t!(i18n,grid_auto_fit)}</button>
                         <label>{t!(i18n,grid_width)}<input type="number" min="60" max="800" prop:value=move || width_input.get() on:input=move |e|width_input.set(event_target_value(&e))/></label>
                         <button type="button" on:click=move |_| {

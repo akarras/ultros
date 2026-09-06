@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "test:virtual-grid": "node ./virtual-grid.cjs",
+    "test:analyzer-grids": "node ./analyzer-grids.cjs",
     "pretest": "node -e \"const B=(process.env.BASE_URL||'http://127.0.0.1:8080');const C=(process.env.CONCURRENCY||'16');console.log('BASE_URL='+B);console.log('CONCURRENCY='+C)\"",
     "run": "node ./runner.cjs",
     "test": "npm run test:desktop && npm run test:mobile && npm run test:wide",

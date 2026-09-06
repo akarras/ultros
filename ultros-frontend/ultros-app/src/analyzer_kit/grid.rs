@@ -1,8 +1,4 @@
-//! The table host: header and rows rendered from a page's static column
-//! table over the existing `VirtualScroller`, which needs no changes.
-//! Visibility derives only from `?cols=` (URL-borne, identical on server
-//! and client) and is read once per row, replacing one gate closure per
-//! optional cell per row.
+//! Analyzer column metadata rendered by the shared two-dimensional grid.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -14,33 +10,26 @@ use leptos_i18n::I18nContext;
 use crate::components::icon::Icon;
 use crate::components::sort_header::{SortColumn, SortDir, SortableHeaderCell};
 use crate::components::term_badge::TermRole;
-use crate::components::virtual_scroller::VirtualScroller;
+use crate::components::virtual_grid::{ColumnFilter, GridColumn, query_grid::QueryGrid};
 use crate::i18n::*;
 use icondata as i;
+use thousands::Separable;
 
 use super::cells::{CellValue, render_cell};
 use super::columns::{CellCtx, ColumnKind, Sortability, ToolColumnMeta};
 
-/// A row a grid can render: whatever [`VirtualScroller`] needs of it,
+/// A row a grid can render: whatever [`QueryGrid`] needs of it,
 /// plus the identity its keyed `<For>` diffs on.
 pub trait AnalyzerRow: Clone + Send + Sync + PartialEq + 'static {
-    type Key: Eq + Hash + 'static;
+    type Key: Clone + Send + Sync + Eq + Hash + 'static;
     fn key(&self) -> Self::Key;
-}
-
-/// Fixed geometry the host hands the scroller.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct GridLayout {
-    pub viewport_height: f64,
-    pub row_height: f64,
-    pub header_height: f64,
-    pub overscan: u32,
 }
 
 /// Renders the cells whose extractor returned [`CellValue::Custom`].
 /// Named, rather than written inline on the prop, because the closure
 /// type trips `clippy::type_complexity` at every use site.
 pub type CustomCell<T> = Arc<dyn Fn(&T, ColumnKind, &'static str) -> AnyView + Send + Sync>;
+pub type CustomMeasure<T> = Arc<dyn Fn(&T, ColumnKind) -> (String, f64) + Send + Sync>;
 
 /// The sub-label a page hangs off each marked formula column's header
 /// (`"listing · Aether"`, `"per unit · after 5% tax"`). A column with
@@ -189,14 +178,14 @@ fn header_cell<T: 'static, M: SortColumn>(
         // Marked: the badge names the operator, the sub-label says which
         // price this is, and the tint plus hairline tie it to the strip.
         (Sortability::By(mode), Some(role)) => view! {
-            <SortableHeaderCell
+            <SortableHeaderCell embedded=true
                 mode=mode
                 label=label_fn(i18n)
                 // The wide variant is still only `w-40`: clip a long
                 // label (de/ja) rather than widen the column, and hand
                 // the whole label back on hover.
                 title=label_fn(i18n)
-                class=format!("{class} truncate")
+                class=format!("{} truncate",grid_class(class))
                 sort_mode
                 sort_dir
                 badge=role
@@ -211,19 +200,19 @@ fn header_cell<T: 'static, M: SortColumn>(
         .into_any(),
         (Sortability::By(mode), None) => match extra {
             None => view! {
-                <SortableHeaderCell mode=mode label=label_fn(i18n) class=col.header_class sort_mode sort_dir />
+                <SortableHeaderCell embedded=true mode=mode label=label_fn(i18n) class=grid_class(col.header_class) sort_mode sort_dir />
             }
             .into_any(),
             Some(HeaderExtra { title, line2: None, header_class }) => view! {
-                <SortableHeaderCell mode=mode label=label_fn(i18n) title=title class=header_class.unwrap_or(col.header_class) sort_mode sort_dir />
+                <SortableHeaderCell embedded=true mode=mode label=label_fn(i18n) title=title class=grid_class(header_class.unwrap_or(col.header_class)) sort_mode sort_dir />
             }
             .into_any(),
             Some(HeaderExtra { title, line2: Some(HeaderLine2 { sub_label, pill: None }), header_class }) => view! {
-                <SortableHeaderCell
+                <SortableHeaderCell embedded=true
                     mode=mode
                     label=label_fn(i18n)
                     title=title
-                    class=header_class.unwrap_or(col.header_class)
+                    class=grid_class(header_class.unwrap_or(col.header_class))
                     sort_mode
                     sort_dir
                     sub_label=Signal::derive(move || sub_label.clone())
@@ -231,11 +220,11 @@ fn header_cell<T: 'static, M: SortColumn>(
             }
             .into_any(),
             Some(HeaderExtra { title, line2: Some(HeaderLine2 { sub_label, pill: Some(pill) }), header_class }) => view! {
-                <SortableHeaderCell
+                <SortableHeaderCell embedded=true
                     mode=mode
                     label=label_fn(i18n)
                     title=title
-                    class=format!("{} truncate", header_class.unwrap_or(col.header_class))
+                    class=format!("{} truncate", grid_class(header_class.unwrap_or(col.header_class)))
                     sort_mode
                     sort_dir
                     sub_label=Signal::derive(move || sub_label.clone())
@@ -251,17 +240,17 @@ fn header_cell<T: 'static, M: SortColumn>(
         // line 2 renders its text only.
         (Sortability::No | Sortability::LazyNever, _) => match extra {
             None => view! {
-                <div role="columnheader" class=class>{move || label_fn(i18n)}</div>
+                <div  class=grid_class(class)>{move || label_fn(i18n)}</div>
             }
             .into_any(),
             Some(HeaderExtra { title, line2: None, header_class }) => view! {
-                <div role="columnheader" class=header_class.unwrap_or(class) title=title>
+                <div  class=grid_class(header_class.unwrap_or(class)) title=title>
                     {move || label_fn(i18n)}
                 </div>
             }
             .into_any(),
             Some(HeaderExtra { title, line2: Some(HeaderLine2 { sub_label, .. }), header_class }) => view! {
-                <div role="columnheader" class=header_class.unwrap_or(class) title=title>
+                <div  class=grid_class(header_class.unwrap_or(class)) title=title>
                     <span>{move || label_fn(i18n)}</span>
                     <span class=HEADER_SUB_LINE>{sub_label}</span>
                 </div>
@@ -275,9 +264,7 @@ fn header_cell<T: 'static, M: SortColumn>(
 /// by the same `columns` table so a column can never appear in one and
 /// not the other.
 ///
-/// Rows carry their index because the pages stripe by it; `row_class` is
-/// a `fn` rather than a closure so it stays copyable into the scroller's
-/// row view.
+/// Rows retain their stable source index while the grid handles striping.
 #[component]
 pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// The page's whole column table, in DOM order.
@@ -295,9 +282,9 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// Draws the [`CellValue::Custom`] cells, keyed by the column's kind
     /// (always-on columns have no `id` to key on).
     custom: CustomCell<T>,
-    layout: GridLayout,
-    header_class: &'static str,
-    row_class: fn(usize) -> &'static str,
+    #[prop(optional)] custom_measure: Option<CustomMeasure<T>>,
+    #[prop(optional)] column_filters: Option<Callback<ColumnKind, Vec<ColumnFilter>>>,
+    #[prop(default = 60.0)] row_height: f64,
     /// Per-role header sub-labels. `None` leaves every column unmarked.
     #[prop(optional, into)]
     marks: Option<Signal<Option<MarkLabels>>>,
@@ -308,22 +295,6 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// Runs when a header pill is pressed, with the column's kind.
     #[prop(optional)]
     on_pill: Option<Callback<ColumnKind>>,
-    /// CSS `min-width` for the scroller's row spacer, for a table whose
-    /// columns are wider than the viewport.
-    ///
-    /// The scroller's row box carries `contain: layout`, so widening the rows
-    /// alone never reaches the scroller's scrollable overflow region — sizing
-    /// the spacer that holds them is what actually lets the rows paint past
-    /// the port width instead of being clipped at it while the header (a
-    /// sibling outside that box) keeps painting the full grid.
-    ///
-    /// `"max-content"` is the right value for a table of fixed-width `w-*`
-    /// columns: it tracks the real total on its own, including columns that
-    /// only exist above a breakpoint (`hidden md:block`), so no arithmetic
-    /// here has to be kept in step with the column table. Omitting it leaves
-    /// the spacer unsized, exactly as before this prop existed.
-    #[prop(optional, into)]
-    row_min_width: String,
     /// Whether lab-gated columns (`lab.is_some()`) are part of this mount.
     /// Off, they are dropped from the header at build time: a hidden
     /// optional column still writes a `<!>` marker (an `Option` child), so
@@ -331,95 +302,157 @@ pub fn AnalyzerGrid<T: AnalyzerRow, M: SortColumn>(
     /// byte-identical. The page remounts the grid on a lab flip.
     #[prop(optional)]
     lab_columns: bool,
-    /// Writeback of the rendered row range `(start, end)`, forwarded to the
-    /// scroller so the page can fetch data only for rows in view. Omitted,
-    /// the grid keeps a range signal of its own, fresh per mount: the
-    /// scroller's prop is `#[prop(optional, into)]` on an `Option`, which
-    /// strips the `Option`, so there is no `None` to forward.
-    ///
-    /// That means the scroller's range `Effect` runs on every scroll for
-    /// every grid, not only for grids that pass this prop — omitting it
-    /// buys a signal with no subscribers, not a skipped effect. Splitting
-    /// the two would mean duplicating the whole `<VirtualScroller>` call
-    /// across two `view!` branches, which costs more than the effect does.
+    /// Rendered row range for lazy market-data enrichment.
     #[prop(optional)]
     visible_range: Option<RwSignal<(usize, usize)>>,
 ) -> impl IntoView {
     let i18n = crate::i18n_fallback::use_i18n_or_default();
-    let range = visible_range.unwrap_or_else(|| RwSignal::new((0, 0)));
-
-    let header = view! {
-        <div class=header_class role="rowgroup">
-            {columns
-                .iter()
-                .filter(|col| col.lab.is_none() || lab_columns)
-                .map(|col| {
-                    if col.id.is_empty() {
-                        // Reactive even though visibility is fixed: a
-                        // marked column has to re-render when the marks
-                        // (or their labels) change.
-                        (move || {
-                            header_cell(col, sort_mode, sort_dir, i18n, marks, extras, on_pill)
-                        })
-                            .into_any()
+    let defs = Memo::new(move |_| {
+        columns
+            .iter()
+            .filter(|col| col.lab.is_none() || lab_columns)
+            .map(|col| {
+                let id = grid_id(col);
+                let optional = !col.id.is_empty();
+                let mut def = GridColumn::new(
+                    id,
+                    (col.spec.label)(i18n),
+                    if col.spec.kind == ColumnKind::Item {
+                        330.0
                     } else {
-                        (move || {
-                            visible_cols.get().contains(col.id).then(|| {
-                                header_cell(col, sort_mode, sort_dir, i18n, marks, extras, on_pill)
-                            })
-                        })
-                            .into_any()
-                    }
-                })
-                .collect_view()}
-        </div>
-    }
-    .into_any();
-
+                        140.0
+                    },
+                    optional,
+                    !optional || visible_cols.with(|v| v.contains(col.id)),
+                );
+                if let Sortability::By(mode) = col.sort
+                    && sort_mode.get().unwrap_or_else(M::fallback) == mode
+                {
+                    def.aria_sort = if sort_dir.get().unwrap_or(col.default_dir) == SortDir::Asc {
+                        "ascending"
+                    } else {
+                        "descending"
+                    };
+                }
+                def.filters = column_filters
+                    .map(|f| f.run(col.spec.kind))
+                    .unwrap_or_default();
+                def
+            })
+            .collect::<Vec<_>>()
+    });
     view! {
-        <VirtualScroller
-            viewport_height=layout.viewport_height
-            row_height=layout.row_height
-            overscan=layout.overscan
-            header_height=layout.header_height
-            variable_height=false
-            row_min_width=row_min_width
-            visible_range=range
-            header=header
-            each=rows
+        <QueryGrid id="recipe-analyzer-grid" label=t_string!(i18n, recipe_analyzer_title).to_string()
+            each=rows columns=defs row_height=row_height visible_range=visible_range.unwrap_or_else(|| RwSignal::new((0,0)))
             key=move |(index, row): &(usize, T)| (*index, row.key())
-            view=move |(index, row): (usize, T)| {
+            header=move |id| {
+                let col = columns.iter().find(|c| grid_id(c) == id).expect("registered column");
+                (move || header_cell(col, sort_mode, sort_dir, i18n, marks, extras, on_pill)).into_any()
+            }
+            view=move |(_, row): (usize, T), id| {
+                let col = columns.iter().find(|c| grid_id(c) == id).expect("registered column");
                 let custom = custom.clone();
-                view! {
-                    // `role="row-group"` verbatim from the analyzer tables
-                    // this replaces; changing it is a separate change.
-                    <div class=row_class(index) role="row-group">
-                        {move || {
-                            let vis = visible_cols.get();
-                            let c = ctx.get();
-                            columns
-                                .iter()
-                                .filter(|col| col.id.is_empty() || vis.contains(col.id))
-                                .map(|col| {
-                                    let class = marked_class(
-                                        marked_role(col, marks).is_some(),
-                                        col.formula_cell_class,
-                                        col.cell_class,
-                                    );
-                                    match (col.cell)(&row, &c) {
-                                        CellValue::Custom => custom(&row, col.spec.kind, class),
-                                        value => {
-                                            render_cell(class, value, i18n, &c)
-                                                .expect("only Custom renders None")
-                                        }
-                                    }
-                                })
-                                .collect_view()
-                        }}
-                    </div>
+                (move || {
+                    let c = ctx.get();
+                    let class = if col.spec.kind == ColumnKind::Item { "w-full min-w-0 flex items-center gap-2" } else { "w-full min-w-0 text-right" };
+                    let decoration = grid_class(marked_class(marked_role(col, marks).is_some(), col.formula_cell_class, col.cell_class));
+                    let cell = match (col.cell)(&row, &c) {
+                        CellValue::Custom => custom(&row, col.spec.kind, class),
+                        value => render_cell(class, value, i18n, &c).expect("only Custom renders None"),
+                    };
+                    view! { <div class=decoration>{cell}</div> }
+                }).into_any()
+            }
+            measure=move |(_, row): &(usize, T), id| {
+                let col = columns.iter().find(|c| grid_id(c) == id).expect("registered column");
+                match (col.cell)(row, &ctx.get_untracked()) {
+                    CellValue::Custom => custom_measure.as_ref().map(|f| f(row,col.spec.kind)).unwrap_or_else(|| (String::new(), if col.spec.kind == ColumnKind::Item { 330.0 } else { 140.0 })),
+                    value => measure_cell(value, i18n, &ctx.get_untracked()),
                 }
             }
         />
+    }
+}
+
+fn grid_id<T, M>(col: &ToolColumnMeta<T, M>) -> &'static str {
+    if !col.id.is_empty() {
+        return col.id;
+    }
+    match col.spec.kind {
+        ColumnKind::Item => "item",
+        ColumnKind::Profit => "profit",
+        ColumnKind::Roi => "roi",
+        ColumnKind::CostSlot => "cost",
+        ColumnKind::RevenueSlot => "price",
+        ColumnKind::SalesPerDay7 => "daily-sales",
+        ColumnKind::Actions => "actions",
+        _ => col.sort_id,
+    }
+}
+
+fn grid_class(class: &str) -> String {
+    let mut classes = class
+        .split_whitespace()
+        .filter(|c| {
+            !c.starts_with("w-")
+                && !c.starts_with("min-w-")
+                && !c.starts_with("max-w-")
+                && !c.starts_with("p-")
+                && !c.starts_with("px-")
+                && !c.starts_with("py-")
+                && *c != "hidden"
+                && *c != "md:block"
+                && !c.starts_with("md:w-")
+                && *c != "md:flex"
+        })
+        .collect::<Vec<_>>();
+    classes.extend(["w-full", "min-w-0"]);
+    if class.split_whitespace().any(|c| c == "md:flex") && !classes.contains(&"flex") {
+        classes.push("flex");
+    }
+    classes.join(" ")
+}
+
+fn measure_cell(
+    value: CellValue,
+    i18n: I18nContext<Locale, I18nKeys>,
+    ctx: &CellCtx,
+) -> (String, f64) {
+    use super::cells::Enrich;
+    match value {
+        CellValue::Gil(n)
+        | CellValue::GilWithPct { amount: n, .. }
+        | CellValue::GilWithNote { amount: n, .. } => (n.separate_with_commas(), 42.0),
+        CellValue::RoiBadge(n) => (format!("{n}%"), 30.0),
+        CellValue::Count(n) | CellValue::LateCount(Enrich::Ready(n)) => {
+            (n.separate_with_commas(), 24.0)
+        }
+        CellValue::MutedGil { amount, .. } => (
+            amount.map(|n| n.separate_with_commas()).unwrap_or_default(),
+            42.0,
+        ),
+        CellValue::SignedGil { delta, .. } => {
+            (delta.map(|n| format!("{n:+}")).unwrap_or_default(), 42.0)
+        }
+        CellValue::LateGilWithPct(Enrich::Ready((n, _))) => (n.separate_with_commas(), 42.0),
+        CellValue::LazyPct(Enrich::Ready(Some(n))) => (format!("{n:+.0}%"), 24.0),
+        CellValue::LastSoldUnix(unix) => (
+            super::cells::last_sold_label(i18n, unix, ctx.now_unix),
+            24.0,
+        ),
+        CellValue::Confidence(_) => (
+            [
+                t_string!(i18n, analyzer_confidence_low),
+                t_string!(i18n, analyzer_confidence_medium),
+                t_string!(i18n, analyzer_confidence_high),
+            ]
+            .into_iter()
+            .max_by_key(|s| s.len())
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+            32.0,
+        ),
+        _ => (String::new(), 120.0),
     }
 }
 
@@ -543,14 +576,11 @@ mod tests {
         header_class: "w-28",
         cell_class: "w-28",
         // A custom cell, so the only markup this test can see besides the
-        // header is an inert `<div role="cell">` — `BASE`'s Gil cell would
+        // header is an inert `<div >` — `BASE`'s Gil cell would
         // put a `<button>` in the body and blunt the assertion below.
         cell: custom_cell,
         ..BASE
     }];
-    fn stripe(_: usize) -> &'static str {
-        "row"
-    }
 
     #[test]
     fn grid_renders_visible_columns_only() {
@@ -569,28 +599,22 @@ mod tests {
                     sort_dir=Signal::derive(|| None::<SortDir>)
                     ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
-                        view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
+                        view! { <div  class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
                     })
-                    layout=GridLayout {
-                        viewport_height: 720.0,
-                        row_height: 60.0,
-                        header_height: 64.0,
-                        overscan: 8,
-                    }
-                    header_class="thead"
-                    row_class=stripe
+                    row_height=60.0
+
                 />
             }
             .to_html();
             assert!(html.contains("custom Item 7"), "{html}");
             assert!(html.contains("Profit"), "{html}");
             assert!(!html.contains("Extra"), "{html}");
-            assert_eq!(html.matches("role=\"cell\"").count(), 2, "{html}");
+            assert_eq!(html.matches("role=\"gridcell\"").count(), 2, "{html}");
             // The sortable Profit header goes through `SortableHeaderCell`,
             // which emits a live `aria-sort`; the plain unsortable Item
             // header does not.
-            assert_eq!(html.matches("aria-sort=").count(), 1, "{html}");
+            assert_eq!(html.matches("aria-sort=\"descending\"").count(), 1, "{html}");
         });
     }
 
@@ -614,10 +638,9 @@ mod tests {
                             sort_mode=Signal::derive(|| None::<Col>)
                             sort_dir=Signal::derive(|| None::<SortDir>)
                             ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
-                            custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
-                            layout=GridLayout { viewport_height: 720.0, row_height: 60.0, header_height: 64.0, overscan: 8 }
-                            header_class="thead"
-                            row_class=stripe
+                            custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
+                            row_height=60.0
+
                             visible_range=range
                         />
                     }
@@ -630,10 +653,9 @@ mod tests {
                             sort_mode=Signal::derive(|| None::<Col>)
                             sort_dir=Signal::derive(|| None::<SortDir>)
                             ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
-                            custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
-                            layout=GridLayout { viewport_height: 720.0, row_height: 60.0, header_height: 64.0, overscan: 8 }
-                            header_class="thead"
-                            row_class=stripe
+                            custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
+                            row_height=60.0
+
                         />
                     }
                     .to_html(),
@@ -662,22 +684,16 @@ mod tests {
                     sort_dir=Signal::derive(|| None::<SortDir>)
                     ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|r: &Row, kind: ColumnKind, _class: &'static str| {
-                        view! { <div role="cell" class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
+                        view! { <div  class="w-64">{format!("custom {kind:?} {}", r.0)}</div> }
                             .into_any()
                     })
-                    layout=GridLayout {
-                        viewport_height: 720.0,
-                        row_height: 60.0,
-                        header_height: 64.0,
-                        overscan: 8,
-                    }
-                    header_class="thead"
-                    row_class=stripe
+                    row_height=60.0
+
                 />
             }
             .to_html();
             assert!(html.contains("Extra"), "{html}");
-            assert_eq!(html.matches("role=\"cell\"").count(), 3, "{html}");
+            assert_eq!(html.matches("role=\"gridcell\"").count(), 3, "{html}");
         });
     }
 
@@ -704,25 +720,19 @@ mod tests {
                     sort_dir=Signal::derive(|| None::<SortDir>)
                     ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
                     custom=Arc::new(|_: &Row, _: ColumnKind, _: &'static str| {
-                        view! { <div role="cell"></div> }.into_any()
+                        view! { <div ></div> }.into_any()
                     })
-                    layout=GridLayout {
-                        viewport_height: 720.0,
-                        row_height: 60.0,
-                        header_height: 64.0,
-                        overscan: 8,
-                    }
-                    header_class="thead"
-                    row_class=stripe
+                    row_height=60.0
+
                     marks=Signal::derive(move || Some(labels.clone()))
                 />
             }
             .to_html();
             assert!(html.contains("listing · Gilgamesh"), "{html}");
-            assert!(html.contains("w-40 px-3 py-2 leading-tight"), "{html}");
+            assert!(html.contains("leading-tight"), "{html}");
             // The marked *cell* class has to reach the row too, or the
             // header and its cells sit on different widths.
-            assert!(html.contains("class=\"w-40\""), "{html}");
+            assert!(!html.contains("class=\"w-40\""), "grid geometry must own cell widths: {html}");
             assert!(
                 html.contains("shadow-[inset_0_-2px_0_var(--brand-ring)]"),
                 "{html}"
@@ -920,7 +930,7 @@ mod tests {
             assert!(html.contains("7d · Gilgamesh"), "{html}");
             assert!(!html.contains("<button"), "{html}");
             assert!(
-                html.contains("w-28 px-4 py-2 leading-tight hidden md:flex"),
+                html.contains("leading-tight") && !html.contains("hidden md:flex"),
                 "{html}"
             );
         });
@@ -939,7 +949,10 @@ mod tests {
             let none_dir = Signal::derive(|| None::<SortDir>);
             // COLS[0] is the unsortable Item column.
             let plain = header_cell(&COLS[0], none, none_dir, i18n, None, None, None).to_html();
-            assert!(plain.contains("role=\"columnheader\""), "{plain}");
+            assert!(
+                !plain.contains("role=\"columnheader\""),
+                "outer grid cell owns the role: {plain}"
+            );
             assert!(
                 !plain.contains("title=") && !plain.contains("<span"),
                 "{plain}"
@@ -988,7 +1001,7 @@ mod tests {
             assert!(two_line.contains("7d · Gilgamesh"), "{two_line}");
             assert_eq!(
                 two_line.matches("role=\"columnheader\"").count(),
-                1,
+                0,
                 "{two_line}"
             );
             // The arm renders `header_class.unwrap_or(class)`, and this arm
@@ -996,57 +1009,9 @@ mod tests {
             // carries is the whole of what stacks the two lines. The recipe
             // analyzer's lazy columns depend on that reaching the DOM.
             assert!(
-                two_line.contains(COLS[0].header_class),
+                two_line.contains(&grid_class(COLS[0].header_class)),
                 "the column's own header_class must reach the rendered header: {two_line}"
             );
-        });
-    }
-
-    /// A grid whose columns are wider than the viewport has to size the
-    /// scroller's row spacer, or the rows are clipped at the port width while
-    /// the header (outside that box) keeps painting the full grid.
-    #[test]
-    fn row_min_width_reaches_the_scrollers_spacer() {
-        let _ = any_spawner::Executor::init_futures_executor();
-        let owner = Owner::new();
-        owner.with(|| {
-            provide_context(init_i18n_context::<crate::i18n::Locale>());
-            let with_min = view! {
-                <AnalyzerGrid
-                    columns=&COLS
-                    rows=Signal::derive(|| vec![(0usize, Row(7))])
-                    visible_cols=Signal::derive(HashSet::new)
-                    sort_mode=Signal::derive(|| None::<Col>)
-                    sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
-                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
-                    layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
-                    header_class="h"
-                    row_class=stripe
-                    row_min_width="max-content"
-                />
-            }
-            .to_html();
-            assert!(with_min.contains("min-width: max-content;"), "{with_min}");
-
-            // Omitting it forwards `String::default()`, which must not reach
-            // the spacer as an empty `min-width: ;` declaration.
-            let without = view! {
-                <AnalyzerGrid
-                    columns=&COLS
-                    rows=Signal::derive(|| vec![(0usize, Row(7))])
-                    visible_cols=Signal::derive(HashSet::new)
-                    sort_mode=Signal::derive(|| None::<Col>)
-                    sort_dir=Signal::derive(|| None::<SortDir>)
-                    ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
-                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
-                    layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
-                    header_class="h"
-                    row_class=stripe
-                />
-            }
-            .to_html();
-            assert!(!without.contains("min-width"), "{without}");
         });
     }
 
@@ -1068,10 +1033,9 @@ mod tests {
                         sort_mode=Signal::derive(|| None::<Col>)
                         sort_dir=Signal::derive(|| None::<SortDir>)
                         ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
-                        custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
-                        layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
-                        header_class="h"
-                        row_class=|_| "r"
+                        custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
+                        row_height=10.0
+
                         lab_columns=lab
                     />
                 }
@@ -1102,20 +1066,19 @@ mod tests {
                     sort_mode=Signal::derive(|| Some(Col::Profit))
                     sort_dir=Signal::derive(|| Some(SortDir::Desc))
                     ctx=Signal::derive(|| CellCtx { now_unix: 0, preview: false, capped_cost: [false; 4], sparklines: None, stats_30: None })
-                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div role="cell" class=class>"x"</div> }.into_any())
-                    layout=GridLayout { viewport_height: 100.0, row_height: 10.0, header_height: 10.0, overscan: 1 }
-                    header_class="h"
-                    row_class=|_| "r"
+                    custom=Arc::new(|_: &Row, _: ColumnKind, class: &'static str| view! { <div  class=class>"x"</div> }.into_any())
+                    row_height=10.0
+
                     lab_columns=true
                 />
             }
             .to_html();
             assert!(html.contains("role=\"columnheader\""), "{html}");
             assert!(
-                !html.contains("<button"),
+                !html.contains("?sort=") && !html.contains("&sort="),
                 "a lazy column must never render a sort control: {html}"
             );
-            assert!(!html.contains("aria-sort"), "{html}");
+            assert!(!html.contains("aria-sort=\"ascending\"") && !html.contains("aria-sort=\"descending\""), "{html}");
         });
     }
 }
