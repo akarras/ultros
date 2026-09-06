@@ -3077,7 +3077,12 @@ fn RecipeAnalyzerTable(
     let items = &data.items;
     let recipes = &data.recipes;
     let recipe_level_tables = &data.recipe_level_tables;
-    let i18n = use_i18n();
+    // Not `use_i18n()`: this table lives inside the analyzer's `<Transition>`,
+    // so on the server it can be constructed under the fresh, empty owner
+    // `ScopedFuture` substitutes when the request's owner was already
+    // disposed. The panicking accessor aborts the SSR response there
+    // (GlitchTip #7304); the default locale does not.
+    let i18n = crate::i18n_fallback::use_i18n_or_default();
     let recipe_query = use_query_map();
 
     // Index recipes by output item for subcraft lookup
