@@ -1863,5 +1863,8 @@
     "top_opportunities_empty_title": "目前{{world}}没有值得倒卖的物品",
     "top_opportunities_empty_body": "这里只显示真正有成交的物品，市场冷清时自然为空。",
     "top_opportunities_empty_cta": "在 Flip Finder 中查看全部",
-    "top_opportunities_error": "无法加载机会。"
+    "top_opportunities_error": "无法加载机会。",
+    "update_banner_message": "Ultros 已更新。",
+    "update_banner_reload": "重新加载",
+    "update_banner_dismiss": "关闭"
 }

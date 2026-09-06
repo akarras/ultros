@@ -1863,5 +1863,8 @@
     "top_opportunities_empty_title": "Auf {{world}} lohnt sich derzeit nichts",
     "top_opportunities_empty_body": "Hier erscheinen nur Gegenstände, die sich wirklich verkaufen — ein ruhiger Markt bleibt leer.",
     "top_opportunities_empty_cta": "Alles im Flip Finder ansehen",
-    "top_opportunities_error": "Gelegenheiten konnten nicht geladen werden."
+    "top_opportunities_error": "Gelegenheiten konnten nicht geladen werden.",
+    "update_banner_message": "Ultros wurde aktualisiert.",
+    "update_banner_reload": "Neu laden",
+    "update_banner_dismiss": "Schließen"
 }

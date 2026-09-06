@@ -1863,5 +1863,8 @@
     "top_opportunities_empty_title": "現在{{world}}に転売の妙味はありません",
     "top_opportunities_empty_body": "実際に売れている商品のみを表示するため、市場が静かなときは空欄になります。",
     "top_opportunities_empty_cta": "Flip Finderですべて見る",
-    "top_opportunities_error": "チャンスを読み込めませんでした。"
+    "top_opportunities_error": "チャンスを読み込めませんでした。",
+    "update_banner_message": "Ultrosが更新されました。",
+    "update_banner_reload": "再読み込み",
+    "update_banner_dismiss": "閉じる"
 }

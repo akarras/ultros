@@ -1863,5 +1863,8 @@
     "top_opportunities_empty_title": "Nothing worth flipping on {{world}} right now",
     "top_opportunities_empty_body": "Only items that actually sell show up here, so a quiet market means an empty card.",
     "top_opportunities_empty_cta": "Browse everything in Flip Finder",
-    "top_opportunities_error": "Couldn't load opportunities."
+    "top_opportunities_error": "Couldn't load opportunities.",
+    "update_banner_message": "Ultros has been updated.",
+    "update_banner_reload": "Reload",
+    "update_banner_dismiss": "Dismiss"
 }

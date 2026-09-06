@@ -1863,5 +1863,8 @@
     "top_opportunities_empty_title": "지금 {{world}}에는 되팔 만한 물건이 없습니다",
     "top_opportunities_empty_body": "실제로 팔리는 물건만 표시하므로 시장이 한산하면 비어 있습니다.",
     "top_opportunities_empty_cta": "Flip Finder에서 전체 보기",
-    "top_opportunities_error": "기회를 불러오지 못했습니다."
+    "top_opportunities_error": "기회를 불러오지 못했습니다.",
+    "update_banner_message": "Ultros가 업데이트되었습니다.",
+    "update_banner_reload": "새로고침",
+    "update_banner_dismiss": "닫기"
 }

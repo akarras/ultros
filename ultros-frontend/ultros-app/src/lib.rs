@@ -28,14 +28,15 @@ use crate::components::icon::Icon;
 use crate::components::recently_viewed::RecentItems;
 pub use crate::global_state::{BootstrapUser, LocalWorldData, home_world::GuessedRegion};
 use crate::global_state::{
-    cheapest_prices::CheapestPrices, clipboard_text::GlobalLastCopiedText, cookies::Cookies,
-    platform::provide_platform_hotkeys, side_nav::provide_side_nav_settings,
-    theme::provide_theme_settings, toasts::provide_toast_context,
-    xiv_data::provide_xiv_data_revision,
+    app_update::provide_app_update_context, cheapest_prices::CheapestPrices,
+    clipboard_text::GlobalLastCopiedText, cookies::Cookies, platform::provide_platform_hotkeys,
+    side_nav::provide_side_nav_settings, theme::provide_theme_settings,
+    toasts::provide_toast_context, xiv_data::provide_xiv_data_revision,
 };
 use crate::{
     components::{
         app_shell::AppShell, on_hand_input::provide_on_hand_context, patreon::*, toast::*,
+        update_banner::UpdateBanner,
     },
     routes::{
         about::*,
@@ -488,6 +489,7 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
     provide_side_nav_settings();
     provide_platform_hotkeys();
     provide_toast_context();
+    provide_app_update_context();
     provide_xiv_data_revision();
     provide_on_hand_context();
     ws::realtime::provide_realtime_context();
@@ -519,8 +521,10 @@ pub fn AppInner(cookies: Cookies) -> impl IntoView {
         </div>
         <div node_ref=root_node_ref class="min-h-screen flex flex-col m-0">
             <ToastContainer />
+            <UpdateBanner />
             <Router>
                 <SentryRouteTag />
+                <ReloadWhenStale />
                 <social_meta::ShareLocale />
                 <social_meta::SocialMetadata />
                 <AppShell>
@@ -627,6 +631,32 @@ fn SentryRouteTag() -> impl IntoView {
         Effect::new(move |_| {
             let path = location.pathname.get();
             set_sentry_tag("route", &path);
+        });
+    }
+}
+
+/// Once an update is pending, the next client-side route change becomes a
+/// full page load, so the user lands on the requested page with the current
+/// wasm bundle. Only `pathname` is watched: query-string changes (filters,
+/// sort, world pickers) keep the user on the page and never reload. Must be
+/// mounted inside `<Router>` because `use_location()` needs router context.
+#[component]
+fn ReloadWhenStale() -> impl IntoView {
+    #[cfg(feature = "hydrate")]
+    {
+        use crate::global_state::app_update::use_app_update;
+        let location = leptos_router::hooks::use_location();
+        let update = use_app_update();
+        Effect::new(move |previous: Option<String>| {
+            let path = location.pathname.get();
+            // Skip the first run: the path the page loaded on is not a navigation.
+            let navigated = previous.as_deref().is_some_and(|p| p != path);
+            // Untracked on purpose: fire on navigation, not on detection.
+            let stale = update.is_some_and(|u| u.pending.get_untracked().is_some());
+            if navigated && stale {
+                crate::components::update_banner::reload_page();
+            }
+            path
         });
     }
 }

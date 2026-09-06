@@ -1863,5 +1863,8 @@
     "top_opportunities_empty_title": "Rien à revendre sur {{world}} pour le moment",
     "top_opportunities_empty_body": "Seuls les objets qui se vendent vraiment apparaissent ici : un marché calme donne une carte vide.",
     "top_opportunities_empty_cta": "Tout parcourir dans Flip Finder",
-    "top_opportunities_error": "Impossible de charger les opportunités."
+    "top_opportunities_error": "Impossible de charger les opportunités.",
+    "update_banner_message": "Ultros a été mis à jour.",
+    "update_banner_reload": "Recharger",
+    "update_banner_dismiss": "Fermer"
 }
